@@ -13,7 +13,7 @@ import BulkSubmissionForm from './components/BulkSubmissionForm';
 import { Paper, AIReview, Comment } from './types';
 import { reviewPaper, ReviewSource } from './services/reviewService';
 import { formatDistanceToNow } from 'date-fns';
-import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType } from './firebase';
+import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType, isFirebaseConfigured } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
   collection, query, orderBy, onSnapshot, addDoc, serverTimestamp,
@@ -60,6 +60,7 @@ export default function App() {
 
   // Auth listener
   useEffect(() => {
+    if (!isFirebaseConfigured) return;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
       if (firebaseUser) {
@@ -91,6 +92,7 @@ export default function App() {
 
   // Papers listener
   useEffect(() => {
+    if (!isFirebaseConfigured) { setIsLoading(false); return; }
     const q = query(collection(db, 'papers'), orderBy('createdAt', 'desc'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const papersData: Paper[] = [];
@@ -113,6 +115,7 @@ export default function App() {
 
   // Reviews listener
   useEffect(() => {
+    if (!isFirebaseConfigured) return;
     const unsubscribe = onSnapshot(collection(db, 'reviews'), (snapshot) => {
       const reviewsData: Record<string, AIReview> = {};
       snapshot.forEach((d) => {
@@ -130,7 +133,7 @@ export default function App() {
 
   // Comments listener for selected paper
   useEffect(() => {
-    if (!selectedPaperId) { setComments([]); return; }
+    if (!isFirebaseConfigured || !selectedPaperId) { setComments([]); return; }
     const q = query(
       collection(db, 'comments'),
       where('targetId', '==', selectedPaperId),
@@ -153,6 +156,7 @@ export default function App() {
 
   // Increment view count
   useEffect(() => {
+    if (!isFirebaseConfigured || !selectedPaperId) return;
     if (selectedPaperId) {
       const paperRef = doc(db, 'papers', selectedPaperId);
       updateDoc(paperRef, { viewCount: increment(1) }).catch(console.error);
@@ -235,6 +239,47 @@ export default function App() {
     await deleteDoc(doc(db, 'papers', paperId));
     setSelectedPaperId(null);
   };
+
+  if (!isFirebaseConfigured) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+        <div className="bg-white p-10 rounded-3xl shadow-xl border border-slate-200 max-w-lg w-full space-y-6 text-center">
+          <div className="bg-indigo-600 w-14 h-14 rounded-2xl flex items-center justify-center mx-auto shadow-lg shadow-indigo-100">
+            <BookOpen className="w-8 h-8 text-white" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black text-slate-900 tracking-tight">SciReview AI</h1>
+            <p className="text-indigo-600 font-bold text-sm uppercase tracking-widest mt-1">Setup Required</p>
+          </div>
+          <p className="text-slate-600 font-medium leading-relaxed">
+            This app needs Firebase credentials to enable Google login and data storage. Please add the following environment secrets to get started:
+          </p>
+          <div className="bg-slate-900 rounded-2xl p-5 text-left space-y-1.5">
+            {[
+              'VITE_FIREBASE_API_KEY',
+              'VITE_FIREBASE_AUTH_DOMAIN',
+              'VITE_FIREBASE_PROJECT_ID',
+              'VITE_FIREBASE_STORAGE_BUCKET',
+              'VITE_FIREBASE_MESSAGING_SENDER_ID',
+              'VITE_FIREBASE_APP_ID',
+            ].map(v => (
+              <div key={v} className="flex items-center gap-2">
+                <span className="text-emerald-400 font-mono text-xs font-bold">✓</span>
+                <code className="text-slate-300 font-mono text-xs">{v}</code>
+              </div>
+            ))}
+            <div className="flex items-center gap-2 pt-1 border-t border-slate-700">
+              <span className="text-slate-500 font-mono text-xs font-bold">○</span>
+              <code className="text-slate-500 font-mono text-xs">VITE_ADMIN_EMAIL (optional)</code>
+            </div>
+          </div>
+          <p className="text-slate-400 text-xs font-medium">
+            Find these values in Firebase Console → Project Settings → Your apps → SDK setup and configuration
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (error) {
     return (
