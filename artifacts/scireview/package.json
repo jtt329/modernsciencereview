@@ -73,7 +73,7 @@
     "vite": "catalog:",
     "wouter": "^3.3.5",
     "zod": "catalog:",
-    "firebase": "^11.10.0",
+    "@workspace/replit-auth-web": "workspace:*",
     "react-markdown": "^10.1.0",
     "remark-math": "^6.0.0",
     "rehype-katex": "^7.0.1",
