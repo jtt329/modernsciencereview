@@ -84,7 +84,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             </div>
             <div>
               <h2 className="text-xl font-black tracking-tight">Submit Scientific Paper</h2>
-              <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">AI Review via GPT-4.5 Pro</p>
+              <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">AI Review via GPT-5.4 Pro</p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -178,7 +178,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                Reviewing with GPT-4.5 Pro...
+                Reviewing with GPT-5.4 Pro...
               </>
             ) : (
               <>

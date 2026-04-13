@@ -10,7 +10,7 @@ if (!process.env.OPENAI_API_KEY) {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const MODEL = "gpt-4.5-preview";
+const MODEL = "gpt-5.4-pro";
 
 const router = Router();
 
@@ -55,19 +55,19 @@ Return a JSON object with these exact fields:
 - relatedWork: string (related work and references)`;
 
 async function generateReview(paperContent: string) {
-  const response = await openai.chat.completions.create({
+  const response = await openai.responses.create({
     model: MODEL,
-    max_completion_tokens: 8192,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: REVIEW_SYSTEM_INSTRUCTION },
-      { role: "user", content: `Please review the following scientific paper and return your analysis as a JSON object.\n\n--- BEGIN PAPER CONTENT ---\n${paperContent}\n--- END PAPER CONTENT ---` },
-    ],
+    instructions: REVIEW_SYSTEM_INSTRUCTION,
+    input: `Please review the following scientific paper and return your analysis as a JSON object.\n\n--- BEGIN PAPER CONTENT ---\n${paperContent}\n--- END PAPER CONTENT ---`,
+    max_output_tokens: 8192,
   });
 
-  const content = response.choices[0]?.message?.content;
+  const content = response.output_text;
   if (!content) throw new Error("No response from AI model");
-  return JSON.parse(content);
+
+  // Strip markdown code fences if the model wraps JSON in them
+  const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  return JSON.parse(cleaned);
 }
 
 // GET /api/papers — list all papers

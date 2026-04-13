@@ -103,7 +103,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
             <input {...getInputProps()} />
             <FileText className="w-10 h-10 text-slate-400 mx-auto mb-3" />
             <p className="font-bold text-slate-600">Drop multiple PDFs here, or click to select</p>
-            <p className="text-sm text-slate-400 mt-1">Each PDF will be reviewed sequentially by GPT-4.5 Pro</p>
+            <p className="text-sm text-slate-400 mt-1">Each PDF will be reviewed sequentially by GPT-5.4 Pro</p>
           </div>
 
           {files.length > 0 && (
@@ -139,7 +139,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
                         <p className="text-xs text-rose-600 mt-0.5 truncate">{f.error}</p>
                       )}
                       {f.status === 'processing' && (
-                        <p className="text-xs text-indigo-600 mt-0.5">Reviewing with GPT-4.5 Pro...</p>
+                        <p className="text-xs text-indigo-600 mt-0.5">Reviewing with GPT-5.4 Pro...</p>
                       )}
                     </div>
                     <span className="text-[10px] text-slate-400 font-bold uppercase shrink-0">
