@@ -24,7 +24,7 @@ export default function Navbar({ user, onLogin, onLogout, onNewPaper, onBulkUplo
             </div>
             <div className="flex flex-col">
               <span className="text-xl font-black tracking-tight text-slate-900 leading-none">SciReview AI</span>
-              <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mt-1">Powered by GPT-5.2</span>
+              <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mt-1">Powered by GPT-4.5 Pro</span>
             </div>
           </div>
 

@@ -1,8 +1,16 @@
 import { Router } from "express";
 import { db, papersTable, reviewsTable, commentsTable, likesTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
-import { openai } from "@workspace/integrations-openai-ai-server";
+import OpenAI from "openai";
 import { logger } from "../lib/logger";
+
+if (!process.env.OPENAI_API_KEY) {
+  throw new Error("OPENAI_API_KEY environment variable is not set.");
+}
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+const MODEL = "gpt-4.5-preview";
 
 const router = Router();
 
@@ -48,32 +56,9 @@ Return a JSON object with these exact fields:
 
 async function generateReview(paperContent: string) {
   const response = await openai.chat.completions.create({
-    model: "gpt-5.2",
+    model: MODEL,
     max_completion_tokens: 8192,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "paper_review",
-        strict: true,
-        schema: {
-          type: "object",
-          properties: {
-            title: { type: "string" },
-            authorName: { type: "string" },
-            summary: { type: "string" },
-            correctness: { type: "string" },
-            novelty: { type: "string" },
-            overallEvaluation: { type: "string" },
-            score: { type: "number" },
-            field: { type: "string" },
-            subfields: { type: "array", items: { type: "string" } },
-            relatedWork: { type: "string" },
-          },
-          required: ["title", "authorName", "summary", "correctness", "novelty", "overallEvaluation", "score", "field", "subfields", "relatedWork"],
-          additionalProperties: false,
-        },
-      },
-    },
+    response_format: { type: "json_object" },
     messages: [
       { role: "system", content: REVIEW_SYSTEM_INSTRUCTION },
       { role: "user", content: `Please review the following scientific paper and return your analysis as a JSON object.\n\n--- BEGIN PAPER CONTENT ---\n${paperContent}\n--- END PAPER CONTENT ---` },
@@ -147,7 +132,7 @@ router.post("/papers", async (req, res) => {
       field: reviewResult.field,
       subfields: reviewResult.subfields,
       score: Math.round(reviewResult.score),
-      modelName: "gpt-5.2",
+      modelName: MODEL,
     }).returning();
 
     const [review] = await db.insert(reviewsTable).values({
@@ -158,7 +143,7 @@ router.post("/papers", async (req, res) => {
       overallEvaluation: reviewResult.overallEvaluation,
       score: Math.round(reviewResult.score),
       relatedWork: reviewResult.relatedWork || "",
-      modelName: "gpt-5.2",
+      modelName: MODEL,
       systemPrompt: REVIEW_SYSTEM_INSTRUCTION,
     }).returning();
 
