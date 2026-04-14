@@ -16,15 +16,26 @@ const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "
 
 const router = Router();
 
-const REVIEW_SYSTEM_INSTRUCTION = `You are evaluating a scientific paper purely from its contents.
+const REVIEW_SYSTEM_INSTRUCTION = `You are reviewing a scientific manuscript from its contents alone.
 
-Ignore author identity, institution, venue prestige, citation counts, popularity, and historical fame. Judge the work on its own.
+Important: evaluate the manuscript as if author identity, institution, venue, citation counts, publication status, historical fame, and later influence are all unknown and irrelevant. If any of that information appears in the text, ignore it completely.
 
-Your task is to assess the paper's scientific merit with calibrated reasoning. Separate correctness, novelty, explanatory economy, and breadth of impact rather than collapsing them too early.
+Do not use prestige, familiarity, citations, publication history, or historical influence as evidence for or against the paper. If you suspect you recognize the work, do not let that raise or lower any score except insofar as you can state a purely technical overlap or difference in idea-content.
 
-Use a two-pass internal method:
-First identify the paper's main claims, derivations, constructions, examples, evidence, and explicit limitations.
-Then evaluate those claims.
+Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, and explicit comparisons.
+
+Your task is to assess the manuscript's intrinsic scientific merit with calibrated reasoning. Keep the following separate rather than collapsing them too early:
+- correctness
+- originality
+- internal technical traction
+- explanatory economy
+- scope and depth within the stated domain
+- unifying power
+- breadth of consequences if correct
+
+Internal technical traction means:
+- for theoretical work: explicit derivations, worked examples, recovery of known limits, nontrivial consistency checks, sharp consequences, parameter constraints, boundary cases, reductions, or falsifiable implications contained in the manuscript itself
+- for empirical work: evidence quality, identification strategy, robustness, ablations, uncertainty handling, reproducibility, and whether the data actually bear on the central claim
 
 Strongly weight:
 - technical correctness and internal coherence
@@ -33,57 +44,19 @@ Strongly weight:
 - unifying power
 - scope and depth within the stated domain
 - conceptual clarity
-- mathematical or empirical traction
+- internal technical traction
 - likely lasting value if the main claims are correct
 
-Do not reward grand claims that are not well supported.
-Do not penalize unconventional style or outsider status if the arguments are strong.
-Do not over-penalize narrow scope if the work is deep and genuinely clarifying.
-
-Important evaluation rules:
-- Treat "sounds plausible" and "is actually derived or demonstrated" as different things.
+Rules:
+- Ignore author identity, affiliation, institution, venue, citation counts, publication status, popularity, historical fame, career stage, and stylistic conformity entirely.
+- Never reward a paper for being famous, influential, highly cited, institutionally backed, or later validated by the field.
+- Never penalize a paper for being unfamiliar, outsider-authored, unconventional, or imperfectly polished.
 - Never treat absence of contradiction as proof of correctness.
-- Never treat new notation, relabeling, or repackaging as originality unless it yields at least one of:
-  (a) a genuinely new derivation,
-  (b) resolution of a prior ambiguity,
-  (c) clearer unification of previously separate cases,
-  (d) sharper calculations or stronger constraints,
-  (e) broader exact validity,
-  (f) a more primitive or explanatory organizing principle.
-- Judge novelty only relative to prior work explicitly discussed in the paper or clearly standard background. If novelty cannot be determined confidently from the text alone, say so explicitly rather than guessing.
-- For correctness, distinguish:
-  (a) directly established by explicit derivation or data,
-  (b) plausible but not fully proved,
-  (c) speculative or currently under-supported.
-- For theoretical papers, "mathematical traction" includes explicit derivations, worked examples, boundary cases, recovery of known results, special-case reductions, nontrivial consistency checks, or decisive new consequences.
-- For empirical papers, "empirical traction" includes identification strategy, robustness, measurement quality, ablations, uncertainty treatment, reproducibility, and whether the evidence actually bears on the central claim.
-- When the text does not justify a strong conclusion, say "insufficient evidence from the paper alone" instead of filling the gap with background assumptions.
-- Evaluate breadth of impact conditionally: if the main claims are correct, how widely would they matter?
-
-Score calibration:
-- intrinsicScientificMeritScore:
-  0-2 = deeply flawed or nearly empty
-  3-4 = suggestive but weak or substantially unconvincing
-  5-6 = competent incremental work or useful but limited clarification
-  7 = strong specialized contribution
-  8 = major specialty advance
-  9 = rare, exceptional work with both depth and strong support
-  10 = truly outstanding, field-shaping if correct
-- breadthOfImpactScore:
-  0-2 = little consequence outside a narrow corner
-  3-4 = modest reach
-  5-6 = meaningful consequences within a subfield
-  7-8 = broad consequences across a major area
-  9-10 = unusually wide consequences across the field or beyond
-- overallIntrinsicScore:
-  1-100 integrated judgment of intrinsic scientific value, based primarily on merit rather than sociology
-  Rough calibration:
-  20 = weak
-  40 = limited
-  60 = solid
-  75 = strong niche
-  85 = major specialty
-  95+ = field-defining rarity
+- Never treat new notation, relabeling, or reformulation as originality unless it yields a real gain in derivation, clarification, unification, constraint, or explanatory depth.
+- Do not reward grand claims that are weakly supported.
+- You may use technical background knowledge about standard literature to judge novelty and overlap, but not prestige or citation history. If novelty is uncertain, say so explicitly and lower novelty confidence rather than bluffing.
+- Judge breadth of impact conditionally: if the main claims are correct, how widely would they matter?
+- Base all scores entirely on the manuscript's idea-content and evidential support, never on sociology.
 
 Return a JSON object with these exact fields:
 - title: string
@@ -95,6 +68,8 @@ Return a JSON object with these exact fields:
 - speculativeClaims: string
 - correctness: string
 - novelty: string
+- noveltyConfidence: number
+- internalTechnicalTraction: string
 - economy: string
 - scopeDepth: string
 - unifyingPower: string
@@ -110,6 +85,43 @@ Return a JSON object with these exact fields:
 - relatedWork: string
 - finalJudgment: string
 
+For this review, always set:
+- title = "anonymized manuscript"
+- authorName = "anonymized"
+
+Field instructions:
+- summary: describe what the paper actually does, not what it hopes to do
+- centralClaim: state the strongest main claim supported by the manuscript, not a stronger one
+- establishedResults: include only what is directly derived, proved, computed, or empirically supported in the manuscript
+- interpretiveClaims: include plausible readings that are not logically forced by the results
+- speculativeClaims: include extensions, conjectures, or claims needing more proof or evidence
+- correctness: say what seems solid, what seems incomplete, and what remains uncertain from the manuscript alone
+- novelty: assess novelty on technical grounds only; if relying partly on remembered literature rather than explicit comparison in the manuscript, say so
+- noveltyConfidence: number from 0 to 1
+- internalTechnicalTraction: explain whether the manuscript gives real technical grip or mainly suggestive framing
+- economy: reward compression only when it reveals genuine structure rather than relabeling
+- scopeDepth: judge depth within the stated domain, not just breadth
+- unifyingPower: distinguish real unification from merely putting known formulas into one notation
+- strongestCaseForImportance: steelman the paper
+- strongestObjection: give the best skeptical reading
+- decisiveCheck: name the single theorem, derivation, experiment, calculation, counterexample, comparison, or dataset that would most strongly change the verdict
+- relatedWork: mention only technically relevant prior work or standard background; do not mention prestige, fame, citations, or venue status
+- finalJudgment: give a concise plain-language bottom line
+
+Scoring:
+- intrinsicScientificMeritScore: 0-10, based entirely on technical correctness, originality, depth, clarity, and support within the manuscript
+- breadthOfImpactScore: 0-10, conditional on the main claims being correct
+- overallIntrinsicScore: 1-100, integrated judgment based entirely on the manuscript's idea-content and support
+
+Calibration:
+- 0-2: deeply flawed or nearly empty
+- 3-4: suggestive but weak or substantially unconvincing
+- 5-6: competent incremental work or useful but limited clarification
+- 7: strong specialized contribution
+- 8: major specialty advance
+- 9: rare, exceptional work with both depth and strong support
+- 10: truly outstanding, potentially field-shaping if correct
+
 For bestClassification, choose one:
 - field-defining advance
 - major specialty advance
@@ -118,30 +130,39 @@ For bestClassification, choose one:
 - elegant repackaging
 - not yet convincing
 
-Important field instructions:
-- In summary, describe what the paper actually does, not what it hopes to do.
-- In centralClaim, state the main claim at the strongest level supported by the paper, not stronger.
-- In establishedResults, include only what is directly derived, demonstrated, proved, computed, or empirically supported in the paper.
-- In interpretiveClaims, include claims that are plausible readings of the derivations but not logically forced by them.
-- In speculativeClaims, include extensions, conjectures, or claims that would need additional proof or evidence.
-- In correctness, make clear what appears solid, what appears incomplete, and what remains uncertain from the paper alone.
-- In novelty, explicitly say when originality is hard to judge from contents alone.
-- In economy, reward compression only when it reveals real structure rather than relabeling.
-- In scopeDepth, judge depth within the paper's stated domain, not just breadth.
-- In unifyingPower, distinguish true unification from merely putting known formulas into one notation.
-- In strongestCaseForImportance, steelman the paper.
-- In strongestObjection, give the best skeptical reading.
-- In decisiveCheck, name the concrete theorem, derivation, consistency check, experiment, dataset, comparison, or counterexample that would most strongly change the verdict.
-- In relatedWork, mention only prior work that is explicitly discussed in the paper or unmistakably standard background; do not hallucinate obscure comparisons.
-- In finalJudgment, give a concise plain-language bottom line.
+Output valid JSON only.
 
-Output valid JSON only.`;
+The manuscript text begins after this line.`;
+
+// Quick metadata extraction — separate call so the review stays anonymous
+async function extractMetadata(paperContent: string): Promise<{ title: string; authors: string }> {
+  try {
+    const response = await openai.responses.create({
+      model: MODEL,
+      instructions: `Extract the title and authors from the scientific paper text provided.
+Return a JSON object with exactly two fields:
+- title: string (the paper title, or "Unknown Title" if not found)
+- authors: string (comma-separated list of author names as written, or "Unknown Authors" if not found)
+Output valid JSON only.`,
+      input: paperContent.substring(0, 4000), // first ~4000 chars is enough for title/authors
+      max_output_tokens: 256,
+    });
+    const raw = response.output_text?.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim() ?? "{}";
+    const parsed = JSON.parse(raw);
+    return {
+      title: parsed.title || "Unknown Title",
+      authors: parsed.authors || "Unknown Authors",
+    };
+  } catch {
+    return { title: "Unknown Title", authors: "Unknown Authors" };
+  }
+}
 
 async function generateReview(paperContent: string) {
   const response = await openai.responses.create({
     model: MODEL,
     instructions: REVIEW_SYSTEM_INSTRUCTION,
-    input: `Please review the following scientific paper and return your analysis as a JSON object.\n\n--- BEGIN PAPER CONTENT ---\n${paperContent}\n--- END PAPER CONTENT ---`,
+    input: paperContent,
     max_output_tokens: 8192,
   });
 
@@ -180,7 +201,7 @@ router.get("/papers/:id", async (req, res) => {
   }
 });
 
-// POST /api/papers — submit paper (generates AI review and stores both)
+// POST /api/papers — submit paper (extracts metadata, generates AI review, stores all)
 router.post("/papers", async (req, res) => {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
 
@@ -202,31 +223,36 @@ router.post("/papers", async (req, res) => {
       paperContent = source.data;
     }
 
+    // Step 1: extract real title and authors (before anonymous review)
+    const metadata = await extractMetadata(paperContent);
+
+    // Step 2: blind review
     const r = await generateReview(paperContent);
 
-    const displayName = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email || "Anonymous";
+    const submitterName = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email || "Anonymous";
 
     const [paper] = await db.insert(papersTable).values({
-      title: r.title,
-      content: source.type === "pdf" ? `[PDF Upload] ${r.title}` : paperContent,
+      title: metadata.title,
+      content: source.type === "pdf" ? `[PDF Upload] ${metadata.title}` : paperContent,
       authorId: req.user.id,
-      authorName: displayName,
+      authorName: submitterName,
+      paperAuthors: metadata.authors,
       field: r.field,
       subfields: r.subfields,
-      score: Math.round(r.overallIntrinsicScore ?? r.score ?? 0),
+      score: Math.round(r.overallIntrinsicScore ?? 0),
       modelName: MODEL,
     }).returning();
 
+    const noveltyConf = r.noveltyConfidence != null ? String(r.noveltyConfidence) : null;
+
     const [review] = await db.insert(reviewsTable).values({
       paperId: paper.id,
-      // Legacy fields mapped from new prompt
       summary: r.summary ?? "",
       correctness: r.correctness ?? "",
       novelty: r.novelty ?? "",
       overallEvaluation: r.finalJudgment ?? "",
-      score: Math.round(r.overallIntrinsicScore ?? r.score ?? 0),
+      score: Math.round(r.overallIntrinsicScore ?? 0),
       relatedWork: r.relatedWork ?? "",
-      // New structured fields
       centralClaim: r.centralClaim ?? null,
       establishedResults: r.establishedResults ?? null,
       interpretiveClaims: r.interpretiveClaims ?? null,
@@ -237,6 +263,8 @@ router.post("/papers", async (req, res) => {
       strongestCaseForImportance: r.strongestCaseForImportance ?? null,
       strongestObjection: r.strongestObjection ?? null,
       decisiveCheck: r.decisiveCheck ?? null,
+      internalTechnicalTraction: r.internalTechnicalTraction ?? null,
+      noveltyConfidence: noveltyConf,
       intrinsicScientificMeritScore: r.intrinsicScientificMeritScore != null ? Math.round(r.intrinsicScientificMeritScore) : null,
       breadthOfImpactScore: r.breadthOfImpactScore != null ? Math.round(r.breadthOfImpactScore) : null,
       overallIntrinsicScore: r.overallIntrinsicScore != null ? Math.round(r.overallIntrinsicScore) : null,

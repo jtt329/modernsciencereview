@@ -25,7 +25,8 @@ interface Paper {
   title: string;
   content: string;
   authorId: string;
-  authorName: string;
+  authorName: string;      // submitter
+  paperAuthors?: string;   // actual paper authors
   field: string;
   subfields: string[] | null;
   score: number | null;
@@ -414,12 +415,16 @@ export default function App() {
                     <h1 className="text-4xl md:text-6xl font-black text-slate-900 leading-tight">{selectedPaper.title}</h1>
                     <div className="flex items-center justify-between py-6 border-y border-slate-100">
                       <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200">
-                          <User className="w-6 h-6 text-slate-400" />
+                        <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100">
+                          <User className="w-6 h-6 text-indigo-500" />
                         </div>
                         <div>
-                          <span className="font-bold text-slate-900 block leading-tight">{selectedPaper.authorName}</span>
-                          <span className="text-xs text-slate-500">Verified Author</span>
+                          <span className="font-bold text-slate-900 block leading-tight text-lg">
+                            {selectedPaper.paperAuthors || selectedPaper.authorName}
+                          </span>
+                          {selectedPaper.paperAuthors && (
+                            <span className="text-xs text-slate-400">Submitted by {selectedPaper.authorName}</span>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { integer, jsonb, pgTable, text, timestamp, unique, varchar } from "drizzle-orm/pg-core";
+import { integer, jsonb, numeric, pgTable, text, timestamp, unique, varchar } from "drizzle-orm/pg-core";
 import { usersTable } from "./auth";
 
 export const papersTable = pgTable("papers", {
@@ -7,7 +7,8 @@ export const papersTable = pgTable("papers", {
   title: text("title").notNull(),
   content: text("content").notNull(),
   authorId: varchar("author_id").notNull().references(() => usersTable.id),
-  authorName: varchar("author_name").notNull(),
+  authorName: varchar("author_name").notNull(),   // submitter's display name
+  paperAuthors: text("paper_authors"),             // actual authors extracted from the paper
   field: varchar("field").notNull().default("Unknown"),
   subfields: jsonb("subfields").$type<string[]>().default([]),
   score: integer("score"),
@@ -28,7 +29,7 @@ export const reviewsTable = pgTable("reviews", {
   overallEvaluation: text("overall_evaluation").notNull().default(""),
   score: integer("score").notNull().default(0),
   relatedWork: text("related_work").notNull().default(""),
-  // New structured review fields
+  // Structured review fields
   centralClaim: text("central_claim"),
   establishedResults: text("established_results"),
   interpretiveClaims: text("interpretive_claims"),
@@ -39,6 +40,8 @@ export const reviewsTable = pgTable("reviews", {
   strongestCaseForImportance: text("strongest_case_for_importance"),
   strongestObjection: text("strongest_objection"),
   decisiveCheck: text("decisive_check"),
+  internalTechnicalTraction: text("internal_technical_traction"),
+  noveltyConfidence: numeric("novelty_confidence"),
   intrinsicScientificMeritScore: integer("intrinsic_scientific_merit_score"),
   breadthOfImpactScore: integer("breadth_of_impact_score"),
   overallIntrinsicScore: integer("overall_intrinsic_score"),

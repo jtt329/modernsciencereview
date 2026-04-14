@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Heart, MessageSquare, Clock, User, ChevronRight } from 'lucide-react';
+import { Heart, MessageSquare, Clock, Users, ChevronRight, Upload } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { Paper } from '../types';
 
@@ -12,6 +12,8 @@ interface PaperCardProps {
 }
 
 export default function PaperCard({ paper, onClick, onLike, isLiked }: PaperCardProps) {
+  const displayAuthors = paper.paperAuthors || paper.authorName;
+
   return (
     <motion.div
       whileHover={{ y: -4 }}
@@ -20,13 +22,20 @@ export default function PaperCard({ paper, onClick, onLike, isLiked }: PaperCard
       onClick={() => onClick(paper.id)}
     >
       <div className="p-6">
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100">
-            <User className="w-4 h-4 text-indigo-600" />
+        {/* Paper authors — prominent */}
+        <div className="flex items-start gap-2 mb-4">
+          <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100 shrink-0 mt-0.5">
+            <Users className="w-4 h-4 text-indigo-600" />
           </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-semibold text-slate-900">{paper.authorName}</span>
-            <div className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider font-bold">
+          <div className="min-w-0">
+            <span className="text-sm font-bold text-slate-900 leading-snug block">{displayAuthors}</span>
+            {paper.paperAuthors && (
+              <div className="flex items-center gap-1 text-[10px] text-slate-400 font-medium mt-0.5">
+                <Upload className="w-2.5 h-2.5" />
+                Submitted by {paper.authorName}
+              </div>
+            )}
+            <div className="flex items-center gap-1 text-[10px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">
               <Clock className="w-3 h-3" />
               {formatDistanceToNow(paper.createdAt)} ago
             </div>

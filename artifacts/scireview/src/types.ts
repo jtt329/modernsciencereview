@@ -3,7 +3,8 @@ export interface Paper {
   title: string;
   content: string;
   authorId: string;
-  authorName: string;
+  authorName: string;       // submitter's display name
+  paperAuthors?: string;    // actual authors extracted from the paper
   createdAt: number;
   status: 'draft' | 'published';
   aiReviewId?: string;
@@ -26,7 +27,7 @@ export interface AIReview {
   overallEvaluation: string;
   score: number;
   relatedWork: string;
-  // New structured fields
+  // Structured fields
   centralClaim?: string;
   establishedResults?: string;
   interpretiveClaims?: string;
@@ -37,6 +38,8 @@ export interface AIReview {
   strongestCaseForImportance?: string;
   strongestObjection?: string;
   decisiveCheck?: string;
+  internalTechnicalTraction?: string;
+  noveltyConfidence?: number;
   intrinsicScientificMeritScore?: number;
   breadthOfImpactScore?: number;
   overallIntrinsicScore?: number;

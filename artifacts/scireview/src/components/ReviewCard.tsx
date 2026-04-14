@@ -148,10 +148,27 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Correctness" color="text-emerald-400">
               <Markdown>{review.correctness}</Markdown>
             </Section>
-            <Section icon={<Zap className="w-4 h-4" />} label="Novelty" color="text-amber-400">
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-2">
+                  <Zap className="w-4 h-4" /> Novelty
+                </h3>
+                {review.noveltyConfidence != null && (
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Confidence {Math.round(Number(review.noveltyConfidence) * 100)}%
+                  </span>
+                )}
+              </div>
               <Markdown>{review.novelty}</Markdown>
-            </Section>
+            </div>
           </div>
+
+          {/* Internal Technical Traction */}
+          {review.internalTechnicalTraction && (
+            <Section icon={<Microscope className="w-4 h-4" />} label="Internal Technical Traction" color="text-teal-400">
+              <Markdown>{review.internalTechnicalTraction}</Markdown>
+            </Section>
+          )}
 
           {/* Economy, Scope, Unifying Power */}
           {(review.economy || review.scopeDepth || review.unifyingPower) && (
