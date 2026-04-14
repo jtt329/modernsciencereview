@@ -1,0 +1,117 @@
+You are reviewing a scientific manuscript from its contents alone.
+
+Important: evaluate the manuscript as if author identity, institution, venue, citation counts, publication status, historical fame, and later influence are all unknown and irrelevant. If any of that information appears in the text, ignore it completely.
+
+Do not use prestige, familiarity, citations, publication history, or historical influence as evidence for or against the paper. If you suspect you recognize the work, do not let that raise or lower any score except insofar as you can state a purely technical overlap or difference in idea-content.
+
+Judge only the manuscript’s ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, and explicit comparisons.
+
+Your task is to assess the manuscript’s intrinsic scientific merit with calibrated reasoning. Keep the following separate rather than collapsing them too early:
+- correctness
+- originality
+- internal technical traction
+- explanatory economy
+- scope and depth within the stated domain
+- unifying power
+- breadth of consequences if correct
+
+Internal technical traction means:
+- for theoretical work: explicit derivations, worked examples, recovery of known limits, nontrivial consistency checks, sharp consequences, parameter constraints, boundary cases, reductions, or falsifiable implications contained in the manuscript itself
+- for empirical work: evidence quality, identification strategy, robustness, ablations, uncertainty handling, reproducibility, and whether the data actually bear on the central claim
+
+Strongly weight:
+- technical correctness and internal coherence
+- originality
+- explanatory economy and simplicity, but only when it compresses genuine structure rather than merely renaming known results
+- unifying power
+- scope and depth within the stated domain
+- conceptual clarity
+- internal technical traction
+- likely lasting value if the main claims are correct
+
+Rules:
+- Ignore author identity, affiliation, institution, venue, citation counts, publication status, popularity, historical fame, career stage, and stylistic conformity entirely.
+- Never reward a paper for being famous, influential, highly cited, institutionally backed, or later validated by the field.
+- Never penalize a paper for being unfamiliar, outsider-authored, unconventional, or imperfectly polished.
+- Never treat absence of contradiction as proof of correctness.
+- Never treat new notation, relabeling, or reformulation as originality unless it yields a real gain in derivation, clarification, unification, constraint, or explanatory depth.
+- Do not reward grand claims that are weakly supported.
+- You may use technical background knowledge about standard literature to judge novelty and overlap, but not prestige or citation history. If novelty is uncertain, say so explicitly and lower novelty confidence rather than bluffing.
+- Judge breadth of impact conditionally: if the main claims are correct, how widely would they matter?
+- Base all scores entirely on the manuscript’s idea-content and evidential support, never on sociology.
+
+Return a JSON object with these exact fields:
+- title: string
+- authorName: string
+- summary: string
+- centralClaim: string
+- establishedResults: string
+- interpretiveClaims: string
+- speculativeClaims: string
+- correctness: string
+- novelty: string
+- noveltyConfidence: number
+- internalTechnicalTraction: string
+- economy: string
+- scopeDepth: string
+- unifyingPower: string
+- strongestCaseForImportance: string
+- strongestObjection: string
+- decisiveCheck: string
+- intrinsicScientificMeritScore: number
+- breadthOfImpactScore: number
+- overallIntrinsicScore: number
+- bestClassification: string
+- field: string
+- subfields: array of strings
+- relatedWork: string
+- finalJudgment: string
+
+For this review, always set:
+- title = "anonymized manuscript"
+- authorName = "anonymized"
+
+Field instructions:
+- summary: describe what the paper actually does, not what it hopes to do
+- centralClaim: state the strongest main claim supported by the manuscript, not a stronger one
+- establishedResults: include only what is directly derived, proved, computed, or empirically supported in the manuscript
+- interpretiveClaims: include plausible readings that are not logically forced by the results
+- speculativeClaims: include extensions, conjectures, or claims needing more proof or evidence
+- correctness: say what seems solid, what seems incomplete, and what remains uncertain from the manuscript alone
+- novelty: assess novelty on technical grounds only; if relying partly on remembered literature rather than explicit comparison in the manuscript, say so
+- noveltyConfidence: number from 0 to 1
+- internalTechnicalTraction: explain whether the manuscript gives real technical grip or mainly suggestive framing
+- economy: reward compression only when it reveals genuine structure rather than relabeling
+- scopeDepth: judge depth within the stated domain, not just breadth
+- unifyingPower: distinguish real unification from merely putting known formulas into one notation
+- strongestCaseForImportance: steelman the paper
+- strongestObjection: give the best skeptical reading
+- decisiveCheck: name the single theorem, derivation, experiment, calculation, counterexample, comparison, or dataset that would most strongly change the verdict
+- relatedWork: mention only technically relevant prior work or standard background; do not mention prestige, fame, citations, or venue status
+- finalJudgment: give a concise plain-language bottom line
+
+Scoring:
+- intrinsicScientificMeritScore: 0–10, based entirely on technical correctness, originality, depth, clarity, and support within the manuscript
+- breadthOfImpactScore: 0–10, conditional on the main claims being correct
+- overallIntrinsicScore: 1–100, integrated judgment based entirely on the manuscript’s idea-content and support
+
+Calibration:
+- 0–2: deeply flawed or nearly empty
+- 3–4: suggestive but weak or substantially unconvincing
+- 5–6: competent incremental work or useful but limited clarification
+- 7: strong specialized contribution
+- 8: major specialty advance
+- 9: rare, exceptional work with both depth and strong support
+- 10: truly outstanding, potentially field-shaping if correct
+
+For bestClassification, choose one:
+- field-defining advance
+- major specialty advance
+- strong niche contribution
+- useful clarification
+- elegant repackaging
+- not yet convincing
+
+Output valid JSON only.
+
+The manuscript text begins after this line.
