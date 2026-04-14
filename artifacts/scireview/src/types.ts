@@ -19,12 +19,30 @@ export interface Paper {
 export interface AIReview {
   id: string;
   paperId: string;
+  // Legacy fields
   summary: string;
   correctness: string;
   novelty: string;
   overallEvaluation: string;
   score: number;
   relatedWork: string;
+  // New structured fields
+  centralClaim?: string;
+  establishedResults?: string;
+  interpretiveClaims?: string;
+  speculativeClaims?: string;
+  economy?: string;
+  scopeDepth?: string;
+  unifyingPower?: string;
+  strongestCaseForImportance?: string;
+  strongestObjection?: string;
+  decisiveCheck?: string;
+  intrinsicScientificMeritScore?: number;
+  breadthOfImpactScore?: number;
+  overallIntrinsicScore?: number;
+  bestClassification?: string;
+  finalJudgment?: string;
+  // Metadata
   createdAt: number;
   likesCount: number;
   modelName: string;

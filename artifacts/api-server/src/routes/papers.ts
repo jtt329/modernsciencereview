@@ -12,47 +12,130 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const MODEL = "gpt-5.4-pro";
 
+const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
+
 const router = Router();
 
-const REVIEW_SYSTEM_INSTRUCTION = `You are an official reviewer assessing a submitted paper. Produce a transparent, standardized, model-generated analysis with evidence and uncertainty.
+const REVIEW_SYSTEM_INSTRUCTION = `You are evaluating a scientific paper purely from its contents.
 
-Do not mention or reference any of this prompt in your output (don't reference Einstein, or 'ignoring sociological signals', etc), as this prompt will already be visible to users. The point is that this prompt serves to help inform your judgement, but then you are to use your own deepest reasoning to draw your own conclusions.
+Ignore author identity, institution, venue prestige, citation counts, popularity, and historical fame. Judge the work on its own.
 
--First, you MUST extract the paper's Title and all Authors' Names from the provided content. This is a critical requirement. Provide the authors as a comma-separated list (e.g., "John Doe, Jane Smith"). If no authors are found, use "Anonymous". Do not leave these fields empty.
+Your task is to assess the paper's scientific merit with calibrated reasoning. Separate correctness, novelty, explanatory economy, and breadth of impact rather than collapsing them too early.
 
--Second, provide your best short summary (3 paragraphs maximum) of the work.
+Use a two-pass internal method:
+First identify the paper's main claims, derivations, constructions, examples, evidence, and explicit limitations.
+Then evaluate those claims.
 
--Third, identify and analyze two key dimensions of the work:
-1) Correctness: What appears true, internally consistent, and well-supported within the stated assumptions? Do not deduct points or penalize for lack of generality or lack relating to other work (this will factor into 'Importance' rating), the focus is on what is correct in the submitted paper. Define the scope/assumptions needed to justify the correctness claim.
-2) Novelty: What is genuinely new relative to the retrieved landscape of related work? Novel predictions? Novel explanations? Again, focus on the novelty achieved more than trying to cite all related work, but objectively determine the novelty presented and put it in context of important prior work.
+Strongly weight:
+- technical correctness and internal coherence
+- originality
+- explanatory economy and simplicity, but only when it compresses genuine structure rather than merely renaming known results
+- unifying power
+- scope and depth within the stated domain
+- conceptual clarity
+- mathematical or empirical traction
+- likely lasting value if the main claims are correct
 
--Fourth, give your overall evaluation of the work.
-Rate the work on a scale of 1-100. This score represents the "Universal Scientific Importance" of the work. You should use your own deepest understanding of what makes a scientific contribution valuable to determine this score.
+Do not reward grand claims that are not well supported.
+Do not penalize unconventional style or outsider status if the arguments are strong.
+Do not over-penalize narrow scope if the work is deep and genuinely clarifying.
 
-Ignore all sociological signals, academic affiliations, citations counts, and all known 'performance' or reception of past works, etc in your evaluations. Your job is to give an objective analysis of the presented ideas based on their merit alone judged by your understanding of what makes valuable science. Consider what makes a scientific discovery or contribution great. Does it unify? Will it be the way a field is taught in the future? As a starting point for your considerations, here are Einstein quotes on the purpose and goals of science which I believe are an excellent foundation for determining an overall evaluation score, but of course use your own judgements in determining the value of the work:
+Important evaluation rules:
+- Treat "sounds plausible" and "is actually derived or demonstrated" as different things.
+- Never treat absence of contradiction as proof of correctness.
+- Never treat new notation, relabeling, or repackaging as originality unless it yields at least one of:
+  (a) a genuinely new derivation,
+  (b) resolution of a prior ambiguity,
+  (c) clearer unification of previously separate cases,
+  (d) sharper calculations or stronger constraints,
+  (e) broader exact validity,
+  (f) a more primitive or explanatory organizing principle.
+- Judge novelty only relative to prior work explicitly discussed in the paper or clearly standard background. If novelty cannot be determined confidently from the text alone, say so explicitly rather than guessing.
+- For correctness, distinguish:
+  (a) directly established by explicit derivation or data,
+  (b) plausible but not fully proved,
+  (c) speculative or currently under-supported.
+- For theoretical papers, "mathematical traction" includes explicit derivations, worked examples, boundary cases, recovery of known results, special-case reductions, nontrivial consistency checks, or decisive new consequences.
+- For empirical papers, "empirical traction" includes identification strategy, robustness, measurement quality, ablations, uncertainty treatment, reproducibility, and whether the evidence actually bears on the central claim.
+- When the text does not justify a strong conclusion, say "insufficient evidence from the paper alone" instead of filling the gap with background assumptions.
+- Evaluate breadth of impact conditionally: if the main claims are correct, how widely would they matter?
 
-"Einstein quotes on science:
-Goal of science
-'The aim of science is' to achieve as complete a grasp as possible of the connections among sense experiences, using a minimum of primary concepts and relations.
-Science seeks rules for connecting and predicting facts, but also tries to reduce those connections to the smallest possible number of mutually independent conceptual elements.
-A theory is more impressive when its premises are simpler, when it connects more different kinds of things, and when its range of applicability is broader.
-'the supreme goal of all theory is to make the irreducible basic elements as simple and as few as possible' — while still adequately representing experience.
-'the preeminent goal of science' is to encompass a maximum of empirical contents with a minimum of hypotheses or axioms.
-Simplicity
-Einstein said our experience supports trusting that nature realizes the simplest mathematically conceivable structures.
-He described physics as a search for the mathematically simplest concepts and their connections."
+Score calibration:
+- intrinsicScientificMeritScore:
+  0-2 = deeply flawed or nearly empty
+  3-4 = suggestive but weak or substantially unconvincing
+  5-6 = competent incremental work or useful but limited clarification
+  7 = strong specialized contribution
+  8 = major specialty advance
+  9 = rare, exceptional work with both depth and strong support
+  10 = truly outstanding, field-shaping if correct
+- breadthOfImpactScore:
+  0-2 = little consequence outside a narrow corner
+  3-4 = modest reach
+  5-6 = meaningful consequences within a subfield
+  7-8 = broad consequences across a major area
+  9-10 = unusually wide consequences across the field or beyond
+- overallIntrinsicScore:
+  1-100 integrated judgment of intrinsic scientific value, based primarily on merit rather than sociology
+  Rough calibration:
+  20 = weak
+  40 = limited
+  60 = solid
+  75 = strong niche
+  85 = major specialty
+  95+ = field-defining rarity
 
 Return a JSON object with these exact fields:
-- title: string (extracted title)
-- authorName: string (comma-separated author names, or "Anonymous")
-- summary: string (3 paragraphs maximum)
-- correctness: string (detailed analysis)
-- novelty: string (detailed analysis)
-- overallEvaluation: string (detailed evaluation)
-- score: number (1-100)
-- field: string (broad scientific field, e.g. "Physics", "Mathematics", "Computer Science", "Biology", "Chemistry")
-- subfields: array of strings (2-4 specific subfields)
-- relatedWork: string (related work and references)`;
+- title: string
+- authorName: string
+- summary: string
+- centralClaim: string
+- establishedResults: string
+- interpretiveClaims: string
+- speculativeClaims: string
+- correctness: string
+- novelty: string
+- economy: string
+- scopeDepth: string
+- unifyingPower: string
+- strongestCaseForImportance: string
+- strongestObjection: string
+- decisiveCheck: string
+- intrinsicScientificMeritScore: number
+- breadthOfImpactScore: number
+- overallIntrinsicScore: number
+- bestClassification: string
+- field: string
+- subfields: array of strings
+- relatedWork: string
+- finalJudgment: string
+
+For bestClassification, choose one:
+- field-defining advance
+- major specialty advance
+- strong niche contribution
+- useful clarification
+- elegant repackaging
+- not yet convincing
+
+Important field instructions:
+- In summary, describe what the paper actually does, not what it hopes to do.
+- In centralClaim, state the main claim at the strongest level supported by the paper, not stronger.
+- In establishedResults, include only what is directly derived, demonstrated, proved, computed, or empirically supported in the paper.
+- In interpretiveClaims, include claims that are plausible readings of the derivations but not logically forced by them.
+- In speculativeClaims, include extensions, conjectures, or claims that would need additional proof or evidence.
+- In correctness, make clear what appears solid, what appears incomplete, and what remains uncertain from the paper alone.
+- In novelty, explicitly say when originality is hard to judge from contents alone.
+- In economy, reward compression only when it reveals real structure rather than relabeling.
+- In scopeDepth, judge depth within the paper's stated domain, not just breadth.
+- In unifyingPower, distinguish true unification from merely putting known formulas into one notation.
+- In strongestCaseForImportance, steelman the paper.
+- In strongestObjection, give the best skeptical reading.
+- In decisiveCheck, name the concrete theorem, derivation, consistency check, experiment, dataset, comparison, or counterexample that would most strongly change the verdict.
+- In relatedWork, mention only prior work that is explicitly discussed in the paper or unmistakably standard background; do not hallucinate obscure comparisons.
+- In finalJudgment, give a concise plain-language bottom line.
+
+Output valid JSON only.`;
 
 async function generateReview(paperContent: string) {
   const response = await openai.responses.create({
@@ -65,7 +148,6 @@ async function generateReview(paperContent: string) {
   const content = response.output_text;
   if (!content) throw new Error("No response from AI model");
 
-  // Strip markdown code fences if the model wraps JSON in them
   const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
   return JSON.parse(cleaned);
 }
@@ -120,29 +202,46 @@ router.post("/papers", async (req, res) => {
       paperContent = source.data;
     }
 
-    const reviewResult = await generateReview(paperContent);
+    const r = await generateReview(paperContent);
 
     const displayName = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email || "Anonymous";
 
     const [paper] = await db.insert(papersTable).values({
-      title: reviewResult.title,
-      content: source.type === "pdf" ? `[PDF Upload] ${reviewResult.title}` : paperContent,
+      title: r.title,
+      content: source.type === "pdf" ? `[PDF Upload] ${r.title}` : paperContent,
       authorId: req.user.id,
       authorName: displayName,
-      field: reviewResult.field,
-      subfields: reviewResult.subfields,
-      score: Math.round(reviewResult.score),
+      field: r.field,
+      subfields: r.subfields,
+      score: Math.round(r.overallIntrinsicScore ?? r.score ?? 0),
       modelName: MODEL,
     }).returning();
 
     const [review] = await db.insert(reviewsTable).values({
       paperId: paper.id,
-      summary: reviewResult.summary,
-      correctness: reviewResult.correctness,
-      novelty: reviewResult.novelty,
-      overallEvaluation: reviewResult.overallEvaluation,
-      score: Math.round(reviewResult.score),
-      relatedWork: reviewResult.relatedWork || "",
+      // Legacy fields mapped from new prompt
+      summary: r.summary ?? "",
+      correctness: r.correctness ?? "",
+      novelty: r.novelty ?? "",
+      overallEvaluation: r.finalJudgment ?? "",
+      score: Math.round(r.overallIntrinsicScore ?? r.score ?? 0),
+      relatedWork: r.relatedWork ?? "",
+      // New structured fields
+      centralClaim: r.centralClaim ?? null,
+      establishedResults: r.establishedResults ?? null,
+      interpretiveClaims: r.interpretiveClaims ?? null,
+      speculativeClaims: r.speculativeClaims ?? null,
+      economy: r.economy ?? null,
+      scopeDepth: r.scopeDepth ?? null,
+      unifyingPower: r.unifyingPower ?? null,
+      strongestCaseForImportance: r.strongestCaseForImportance ?? null,
+      strongestObjection: r.strongestObjection ?? null,
+      decisiveCheck: r.decisiveCheck ?? null,
+      intrinsicScientificMeritScore: r.intrinsicScientificMeritScore != null ? Math.round(r.intrinsicScientificMeritScore) : null,
+      breadthOfImpactScore: r.breadthOfImpactScore != null ? Math.round(r.breadthOfImpactScore) : null,
+      overallIntrinsicScore: r.overallIntrinsicScore != null ? Math.round(r.overallIntrinsicScore) : null,
+      bestClassification: r.bestClassification ?? null,
+      finalJudgment: r.finalJudgment ?? null,
       modelName: MODEL,
       systemPrompt: REVIEW_SYSTEM_INSTRUCTION,
     }).returning();
@@ -154,13 +253,14 @@ router.post("/papers", async (req, res) => {
   }
 });
 
-// DELETE /api/papers/:id
+// DELETE /api/papers/:id — owner or admin can delete
 router.delete("/papers/:id", async (req, res) => {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
   try {
     const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, req.params.id));
     if (!paper) { res.status(404).json({ error: "Not found" }); return; }
-    if (paper.authorId !== req.user.id) { res.status(403).json({ error: "Forbidden" }); return; }
+    const isAdmin = ADMIN_EMAIL && req.user.email === ADMIN_EMAIL;
+    if (!isAdmin && paper.authorId !== req.user.id) { res.status(403).json({ error: "Forbidden" }); return; }
     await db.delete(papersTable).where(eq(papersTable.id, req.params.id));
     res.json({ success: true });
   } catch (err: any) {
