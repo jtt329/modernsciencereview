@@ -162,10 +162,20 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
               <p className="text-rose-700 text-sm font-medium">{error}</p>
             </div>
           )}
+
+          {isSubmitting && (
+            <div className="flex items-start gap-3 bg-indigo-50 border border-indigo-100 rounded-2xl p-5">
+              <Loader2 className="w-5 h-5 text-indigo-500 animate-spin shrink-0 mt-0.5" />
+              <div>
+                <p className="text-indigo-800 text-sm font-bold">Generating blind peer review…</p>
+                <p className="text-indigo-500 text-xs mt-1">This runs two AI passes — metadata extraction then a full structured review. It typically takes 60–120 seconds. Please keep this window open.</p>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="p-6 border-t border-slate-100 flex justify-end gap-4">
-          <button onClick={onClose} className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:text-slate-700 transition-colors">
+          <button onClick={onClose} disabled={isSubmitting} className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:text-slate-700 disabled:opacity-40 transition-colors">
             Cancel
           </button>
           <motion.button
@@ -178,7 +188,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                Reviewing with GPT-5.4 Pro...
+                Reviewing with GPT-5.4 Pro…
               </>
             ) : (
               <>
