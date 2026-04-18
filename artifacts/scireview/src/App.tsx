@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2 } from 'lucide-react';
+import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -85,6 +85,9 @@ export default function App() {
   const [userLikes, setUserLikes] = useState<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPapers, setSelectedPapers] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [papersLoading, setPapersLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -213,6 +216,32 @@ export default function App() {
     await apiFetch(`/api/papers/${paperId}`, { method: 'DELETE' });
     setSelectedPaperId(null);
     fetchPapers();
+  };
+
+  const toggleSelectPaper = (id: string) => {
+    setSelectedPapers(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedPapers(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (!user || selectedPapers.size === 0) return;
+    if (!window.confirm(`Delete ${selectedPapers.size} paper(s) and their reviews? This cannot be undone.`)) return;
+    setIsBulkDeleting(true);
+    try {
+      await Promise.all([...selectedPapers].map(id => apiFetch(`/api/papers/${id}`, { method: 'DELETE' })));
+    } finally {
+      exitSelectionMode();
+      setIsBulkDeleting(false);
+      fetchPapers();
+    }
   };
 
   const getSubfields = () => {
@@ -352,6 +381,33 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Paper Grid header row */}
+              {user && filteredPapers.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-400">{filteredPapers.length} paper{filteredPapers.length !== 1 ? 's' : ''}</span>
+                  {selectionMode ? (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setSelectedPapers(new Set(filteredPapers.map(p => p.id)))}
+                        className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors"
+                      >
+                        Select all
+                      </button>
+                      <button onClick={exitSelectionMode} className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 transition-colors">
+                        <XSquare className="w-4 h-4" /> Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setSelectionMode(true)}
+                      className="flex items-center gap-1.5 text-xs font-bold text-slate-400 hover:text-rose-600 transition-colors"
+                    >
+                      <CheckSquare className="w-4 h-4" /> Select to delete
+                    </button>
+                  )}
+                </div>
+              )}
+
               {/* Paper Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {papersLoading ? (
@@ -372,9 +428,37 @@ export default function App() {
                     onClick={handleSelectPaper}
                     onLike={handleLikePaper}
                     isLiked={userLikes.has(paper.id)}
+                    isSelectable={selectionMode}
+                    isSelected={selectedPapers.has(paper.id)}
+                    onSelect={(id) => toggleSelectPaper(id)}
                   />
                 ))}
               </div>
+
+              {/* Floating bulk delete toolbar */}
+              <AnimatePresence>
+                {selectionMode && selectedPapers.size > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 40 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 40 }}
+                    className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50"
+                  >
+                    <div className="bg-slate-900 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 border border-slate-700">
+                      <span className="font-bold text-sm">{selectedPapers.size} selected</span>
+                      <button
+                        onClick={handleBulkDelete}
+                        disabled={isBulkDeleting}
+                        className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 disabled:opacity-60 text-white px-5 py-2.5 rounded-xl font-bold text-sm transition-colors"
+                      >
+                        {isBulkDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                        Delete {selectedPapers.size} paper{selectedPapers.size !== 1 ? 's' : ''}
+                      </button>
+                      <button onClick={exitSelectionMode} className="text-slate-400 hover:text-white transition-colors font-bold text-sm">Cancel</button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           ) : (
             <motion.div

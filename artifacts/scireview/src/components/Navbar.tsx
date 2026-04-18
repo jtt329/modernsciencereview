@@ -31,17 +31,15 @@ export default function Navbar({ user, onLogin, onLogout, onNewPaper, onBulkUplo
           <div className="flex items-center gap-4">
             {user ? (
               <>
-                {isAdmin && (
-                  <motion.button
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={onBulkUpload}
-                    className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-slate-800 transition-colors"
-                  >
-                    <PlusCircle className="w-4 h-4" />
-                    Bulk Upload
-                  </motion.button>
-                )}
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onBulkUpload}
+                  className="flex items-center gap-2 bg-slate-900 text-white px-4 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-slate-800 transition-colors"
+                >
+                  <PlusCircle className="w-4 h-4" />
+                  Bulk Upload
+                </motion.button>
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Heart, MessageSquare, Clock, Users, ChevronRight, Upload } from 'lucide-react';
+import { Heart, MessageSquare, Clock, Users, ChevronRight, Upload, Check } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { Paper } from '../types';
 
@@ -9,20 +9,37 @@ interface PaperCardProps {
   onClick: (id: string) => void;
   onLike: (id: string, e: React.MouseEvent) => void;
   isLiked: boolean;
+  isSelectable?: boolean;
+  isSelected?: boolean;
+  onSelect?: (id: string, e: React.MouseEvent) => void;
 }
 
-export default function PaperCard({ paper, onClick, onLike, isLiked }: PaperCardProps) {
+export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectable, isSelected, onSelect }: PaperCardProps) {
   const displayAuthors = paper.paperAuthors || paper.authorName;
 
   return (
     <motion.div
-      whileHover={{ y: -4 }}
+      whileHover={{ y: isSelectable ? 0 : -4 }}
       transition={{ duration: 0.2 }}
-      className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-all cursor-pointer overflow-hidden group"
-      onClick={() => onClick(paper.id)}
+      className={`bg-white rounded-2xl border shadow-sm hover:shadow-md transition-all cursor-pointer overflow-hidden group relative ${
+        isSelected ? 'border-rose-400 ring-2 ring-rose-300 shadow-rose-100' : 'border-slate-200'
+      }`}
+      onClick={() => isSelectable ? onSelect?.(paper.id, {} as React.MouseEvent) : onClick(paper.id)}
     >
+      {isSelectable && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onSelect?.(paper.id, e); }}
+          className={`absolute top-3 right-3 z-10 w-6 h-6 rounded-md border-2 flex items-center justify-center transition-all ${
+            isSelected
+              ? 'bg-rose-500 border-rose-500 text-white'
+              : 'bg-white border-slate-300 hover:border-rose-400'
+          }`}
+        >
+          {isSelected && <Check className="w-3.5 h-3.5" />}
+        </button>
+      )}
+
       <div className="p-6">
-        {/* Paper authors — prominent */}
         <div className="flex items-start gap-2 mb-4">
           <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100 shrink-0 mt-0.5">
             <Users className="w-4 h-4 text-indigo-600" />
@@ -42,7 +59,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked }: PaperCard
           </div>
         </div>
 
-        <h3 className="text-xl font-bold text-slate-900 mb-2 group-hover:text-indigo-600 transition-colors line-clamp-2">
+        <h3 className={`text-xl font-bold text-slate-900 mb-2 transition-colors line-clamp-2 ${isSelectable ? '' : 'group-hover:text-indigo-600'}`}>
           {paper.title}
         </h3>
 
@@ -76,7 +93,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked }: PaperCard
         <div className="flex items-center justify-between pt-4 border-t border-slate-100">
           <div className="flex items-center gap-4">
             <button
-              onClick={(e) => onLike(paper.id, e)}
+              onClick={(e) => { e.stopPropagation(); onLike(paper.id, e); }}
               className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${isLiked ? 'text-rose-500' : 'text-slate-500 hover:text-rose-500'}`}
             >
               <Heart className={`w-4 h-4 ${isLiked ? 'fill-current' : ''}`} />
@@ -88,9 +105,11 @@ export default function PaperCard({ paper, onClick, onLike, isLiked }: PaperCard
             </div>
           </div>
 
-          <div className="text-indigo-600 font-bold text-sm flex items-center gap-1 group-hover:translate-x-1 transition-transform">
-            Read Paper <ChevronRight className="w-4 h-4" />
-          </div>
+          {!isSelectable && (
+            <div className="text-indigo-600 font-bold text-sm flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+              Read Paper <ChevronRight className="w-4 h-4" />
+            </div>
+          )}
         </div>
       </div>
     </motion.div>

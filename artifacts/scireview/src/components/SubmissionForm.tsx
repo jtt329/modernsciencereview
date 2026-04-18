@@ -1,69 +1,102 @@
 import React, { useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
-import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle, Cpu } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle, Cpu, Trash2 } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { ReviewSource, ReviewModel } from '../services/reviewService';
 
 interface SubmissionFormProps {
-  onSubmit: (source: ReviewSource) => Promise<void>;
+  onSubmit: (source: ReviewSource, skipSelect?: boolean) => Promise<void>;
   onClose: () => void;
+}
+
+interface QueuedFile {
+  id: string;
+  file: File;
+  status: 'pending' | 'processing' | 'done' | 'error';
+  error?: string;
 }
 
 export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProps) {
   const [submissionType, setSubmissionType] = useState<'pdf' | 'text'>('pdf');
   const [model, setModel] = useState<ReviewModel>('gpt');
   const [text, setText] = useState('');
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
-  const [pdfBase64, setPdfBase64] = useState<string | null>(null);
+  const [files, setFiles] = useState<QueuedFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [doneCount, setDoneCount] = useState(0);
+
+  const isBatch = files.length > 1;
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setError(null);
-    const file = acceptedFiles[0];
-    if (file && file.type === 'application/pdf') {
-      setPdfFile(file);
-      const reader = new FileReader();
-      reader.onload = () => {
-        const base64 = (reader.result as string).split(',')[1];
-        setPdfBase64(base64);
-      };
-      reader.readAsDataURL(file);
-    }
+    const pdfs = acceptedFiles.filter(f => f.type === 'application/pdf');
+    if (pdfs.length === 0) return;
+    setFiles(prev => [
+      ...prev,
+      ...pdfs.map(f => ({ id: `${f.name}-${Date.now()}-${Math.random()}`, file: f, status: 'pending' as const })),
+    ]);
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { 'application/pdf': ['.pdf'] },
-    multiple: false,
+    multiple: true,
     disabled: isSubmitting,
   });
+
+  const removeFile = (id: string) => setFiles(prev => prev.filter(f => f.id !== id));
+
+  const readFileAsBase64 = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve((reader.result as string).split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setIsSubmitting(true);
+    setDoneCount(0);
 
-    let source: ReviewSource | null = null;
-    if (submissionType === 'pdf' && pdfBase64) {
-      source = { type: 'pdf', data: pdfBase64, model };
-    } else if (submissionType === 'text' && text.trim()) {
-      source = { type: 'text', data: text.trim(), model };
-    }
-
-    if (source) {
-      setIsSubmitting(true);
-      try {
-        await onSubmit(source);
+    try {
+      if (submissionType === 'text') {
+        if (!text.trim()) return;
+        await onSubmit({ type: 'text', data: text.trim(), model });
         onClose();
-      } catch (err: any) {
-        setError(err.message || 'Submission failed. Please try again.');
-      } finally {
-        setIsSubmitting(false);
+        return;
       }
+
+      if (files.length === 0) return;
+
+      if (files.length === 1) {
+        const base64 = await readFileAsBase64(files[0].file);
+        await onSubmit({ type: 'pdf', data: base64, model });
+        onClose();
+        return;
+      }
+
+      let done = 0;
+      for (const qf of files) {
+        setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'processing' } : f));
+        try {
+          const base64 = await readFileAsBase64(qf.file);
+          await onSubmit({ type: 'pdf', data: base64, model }, true);
+          done++;
+          setDoneCount(done);
+          setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'done' } : f));
+        } catch (err: any) {
+          setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'error', error: err.message } : f));
+        }
+      }
+      onClose();
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const isFormValid = (submissionType === 'pdf' && pdfBase64) || (submissionType === 'text' && text.trim());
+  const isFormValid = submissionType === 'text' ? !!text.trim() : files.length > 0;
 
   return (
     <motion.div
@@ -87,10 +120,11 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
               <h2 className="text-xl font-black tracking-tight">Submit Scientific Paper</h2>
               <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">
                 Blind AI Review · {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}
+                {isBatch && ` · ${files.length} papers queued`}
               </p>
             </div>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+          <button onClick={onClose} disabled={isSubmitting} className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-40">
             <X className="w-6 h-6" />
           </button>
         </div>
@@ -101,13 +135,13 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Submission Method</label>
               <div className="flex gap-2">
                 {[
-                  { id: 'pdf', label: 'PDF File', icon: FileText },
+                  { id: 'pdf', label: 'PDF File(s)', icon: FileText },
                   { id: 'text', label: 'Raw Text', icon: Upload },
                 ].map((type) => (
                   <button
                     key={type.id}
                     type="button"
-                    onClick={() => setSubmissionType(type.id as 'pdf' | 'text')}
+                    onClick={() => { setSubmissionType(type.id as 'pdf' | 'text'); setFiles([]); }}
                     disabled={isSubmitting}
                     className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition-all border ${
                       submissionType === type.id
@@ -151,28 +185,70 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
 
           {submissionType === 'pdf' ? (
             <div className="space-y-4">
-              <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Upload PDF</label>
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Upload PDF(s)</label>
               <div
                 {...getRootProps()}
                 className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
-                  isDragActive ? 'border-indigo-500 bg-indigo-50' : pdfFile ? 'border-emerald-400 bg-emerald-50' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50'
+                  isDragActive ? 'border-indigo-500 bg-indigo-50' : files.length > 0 ? 'border-indigo-300 bg-indigo-50/40' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50'
                 }`}
               >
                 <input {...getInputProps()} />
-                {pdfFile ? (
-                  <div className="space-y-2">
-                    <CheckCircle2 className="w-10 h-10 text-emerald-500 mx-auto" />
-                    <p className="font-bold text-emerald-700">{pdfFile.name}</p>
-                    <p className="text-sm text-emerald-600">{(pdfFile.size / 1024 / 1024).toFixed(2)} MB — ready to submit</p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <FileText className="w-10 h-10 text-slate-400 mx-auto" />
-                    <p className="font-bold text-slate-600">Drop your PDF here, or click to browse</p>
-                    <p className="text-sm text-slate-400">Text will be extracted automatically for AI review</p>
-                  </div>
-                )}
+                <FileText className="w-10 h-10 text-slate-400 mx-auto mb-3" />
+                <p className="font-bold text-slate-600">
+                  {isDragActive ? 'Drop PDFs here…' : 'Drop one or more PDFs here, or click to browse'}
+                </p>
+                <p className="text-sm text-slate-400 mt-1">
+                  Drop an entire folder's worth — each will be reviewed sequentially
+                </p>
               </div>
+
+              <AnimatePresence>
+                {files.length > 0 && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="space-y-2"
+                  >
+                    {files.map(qf => (
+                      <div
+                        key={qf.id}
+                        className={`flex items-center gap-3 p-3 rounded-xl border text-sm ${
+                          qf.status === 'done' ? 'bg-emerald-50 border-emerald-200' :
+                          qf.status === 'error' ? 'bg-rose-50 border-rose-200' :
+                          qf.status === 'processing' ? 'bg-indigo-50 border-indigo-200' :
+                          'bg-slate-50 border-slate-200'
+                        }`}
+                      >
+                        {qf.status === 'processing' ? (
+                          <Loader2 className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />
+                        ) : qf.status === 'done' ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        ) : qf.status === 'error' ? (
+                          <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                        ) : (
+                          <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
+                          {qf.status === 'processing' && (
+                            <p className="text-xs text-indigo-500">Reviewing with {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}…</p>
+                          )}
+                          {qf.status === 'error' && <p className="text-xs text-rose-600 truncate">{qf.error}</p>}
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-bold shrink-0">
+                          {(qf.file.size / 1024 / 1024).toFixed(1)} MB
+                        </span>
+                        {!isSubmitting && qf.status === 'pending' && (
+                          <button onClick={() => removeFile(qf.id)} className="p-1 hover:bg-slate-200 rounded-lg transition-colors shrink-0">
+                            <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           ) : (
             <div className="space-y-4">
@@ -198,8 +274,16 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             <div className="flex items-start gap-3 bg-indigo-50 border border-indigo-100 rounded-2xl p-5">
               <Loader2 className="w-5 h-5 text-indigo-500 animate-spin shrink-0 mt-0.5" />
               <div>
-                <p className="text-indigo-800 text-sm font-bold">Generating blind peer review…</p>
-                <p className="text-indigo-500 text-xs mt-1">This runs two AI passes — metadata extraction then a full structured review. It typically takes 60–120 seconds. Please keep this window open.</p>
+                <p className="text-indigo-800 text-sm font-bold">
+                  {isBatch
+                    ? `Reviewing paper ${doneCount + 1} of ${files.length}…`
+                    : 'Generating blind peer review…'}
+                </p>
+                <p className="text-indigo-500 text-xs mt-1">
+                  {isBatch
+                    ? `Each paper takes 60–120 seconds. Please keep this window open.`
+                    : 'This runs two AI passes — metadata extraction then a full structured review. It typically takes 60–120 seconds. Please keep this window open.'}
+                </p>
               </div>
             </div>
           )}
@@ -219,12 +303,12 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                Reviewing with {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}…
+                {isBatch ? `${doneCount}/${files.length} done…` : `Reviewing with ${model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}…`}
               </>
             ) : (
               <>
                 <Send className="w-5 h-5" />
-                Submit for AI Review
+                {isBatch ? `Submit ${files.length} Papers` : 'Submit for AI Review'}
               </>
             )}
           </motion.button>
