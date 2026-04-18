@@ -76,12 +76,9 @@ export async function authMiddleware(
   }
 
   const refreshed = await refreshIfExpired(sid, session);
-  if (!refreshed) {
-    await clearSession(res, sid);
-    next();
-    return;
-  }
-
-  req.user = refreshed.user;
+  // If the OIDC token refresh failed, still honour the stored session user
+  // data — the session itself has a 7-day TTL and we don't need a live
+  // access token just to authenticate API requests.
+  req.user = (refreshed ?? session).user;
   next();
 }
