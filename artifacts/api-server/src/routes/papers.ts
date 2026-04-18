@@ -40,12 +40,34 @@ Internal technical traction means:
 Strongly weight:
 - technical correctness and internal coherence
 - originality
-- explanatory economy and simplicity, but only when it compresses genuine structure rather than merely renaming known results
+- explanatory economy and simplicity, but only when it compresses genuine structure
 - unifying power
 - scope and depth within the stated domain
 - conceptual clarity
 - internal technical traction
 - likely lasting value if the main claims are correct
+
+Additional principle for breadth and importance:
+
+The primary scientific value of a framework lies in how economically it explains, unifies, or predicts distinct phenomena. In judging breadth and importance, distinguish between:
+
+(a) phenomenon-space breadth: how many genuinely distinct phenomena, observables, regimes, or physically realizable predictions are explained by one mechanism;
+
+(b) theory-space breadth: how widely the same formal template extends across alternative theories, parameter families, dimensions, or mathematical settings.
+
+Treat these as different kinds of breadth, not interchangeable ones.
+
+As a default scientific standard, give at least as much weight to phenomenon-space breadth as to theory-space breadth. A framework that explains more distinct and central phenomena with fewer primitive commitments can be more scientifically valuable than one that extends the same descriptive template across many alternative theories or formalisms.
+
+Weight breadth by:
+- empirical relevance or realistic physical realizability of the phenomena,
+- centrality of the phenomena within the domain,
+- how strongly the phenomena constrain or connect to other phenomena,
+- and the simplicity of the mechanism that explains them.
+
+Reward theory-space breadth when it produces genuinely new observable consequences, sharper constraints, robustness across important settings, or deeper structural unification. But do not assume that covering more theories is intrinsically more important than explaining more distinct phenomena.
+
+In judging unifying power and breadth of impact, prefer frameworks that account for a wider range of meaningful phenomena with fewer assumptions, rather than frameworks that mainly multiply descriptions of the same narrow set of phenomena.
 
 Rules:
 - Ignore author identity, affiliation, institution, venue, citation counts, publication status, popularity, historical fame, career stage, and stylistic conformity entirely.
@@ -96,10 +118,10 @@ Field instructions:
 - interpretiveClaims: include plausible readings that are not logically forced by the results
 - speculativeClaims: include extensions, conjectures, or claims needing more proof or evidence
 - correctness: say what seems solid, what seems incomplete, and what remains uncertain from the manuscript alone
-- novelty: assess novelty on technical grounds only; if relying partly on remembered literature rather than explicit comparison in the manuscript, say so
+- novelty: assess novelty on technical grounds only; only consider ideas or results that are presented for the first time in the paper under review
 - noveltyConfidence: number from 0 to 1
 - internalTechnicalTraction: explain whether the manuscript gives real technical grip or mainly suggestive framing
-- economy: reward compression only when it reveals genuine structure rather than relabeling
+- economy: reward compression only when it reveals genuine structure with conceptual, explanatory, or predictive payoff
 - scopeDepth: judge depth within the stated domain, not just breadth
 - unifyingPower: distinguish real unification from merely putting known formulas into one notation
 - strongestCaseForImportance: steelman the paper
@@ -109,14 +131,14 @@ Field instructions:
 - finalJudgment: give a concise plain-language bottom line
 
 Scoring:
-- intrinsicScientificMeritScore: 0-10, based entirely on technical correctness, originality, depth, clarity, and support within the manuscript
-- breadthOfImpactScore: 0-10, conditional on the main claims being correct
-- overallIntrinsicScore: 1-100, integrated judgment based entirely on the manuscript's idea-content and support
+- intrinsicScientificMeritScore: 0–10, based entirely on technical correctness, originality, depth, clarity, and support within the manuscript
+- breadthOfImpactScore: 0–10, conditional on the main claims being correct
+- overallIntrinsicScore: 1–100, integrated judgment based entirely on the manuscript's idea-content and support
 
 Calibration:
-- 0-2: deeply flawed or nearly empty
-- 3-4: suggestive but weak or substantially unconvincing
-- 5-6: competent incremental work or useful but limited clarification
+- 0–2: deeply flawed or nearly empty
+- 3–4: suggestive but weak or substantially unconvincing
+- 5–6: competent incremental work or useful but limited clarification
 - 7: strong specialized contribution
 - 8: major specialty advance
 - 9: rare, exceptional work with both depth and strong support
