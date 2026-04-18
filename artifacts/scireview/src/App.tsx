@@ -161,7 +161,7 @@ export default function App() {
     const data = await apiFetch('/api/papers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source }),
+      body: JSON.stringify({ source, model: source.model || 'gpt' }),
     });
     await fetchPapers();
     if (!skipSelect) setSelectedPaperId(data.paper.id);

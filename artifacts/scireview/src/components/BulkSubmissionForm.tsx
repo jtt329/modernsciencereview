@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, X, BookOpen, Loader2, FileText, CheckCircle2, AlertCircle, RotateCcw } from 'lucide-react';
+import { Send, X, BookOpen, Loader2, FileText, CheckCircle2, AlertCircle, RotateCcw, Cpu } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { ReviewSource } from '../services/reviewService';
+import { ReviewSource, ReviewModel } from '../services/reviewService';
 
 interface BulkFile {
   id: string;
@@ -19,6 +19,7 @@ interface BulkSubmissionFormProps {
 export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmissionFormProps) {
   const [files, setFiles] = useState<BulkFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [model, setModel] = useState<ReviewModel>('gpt');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newFiles: BulkFile[] = acceptedFiles
@@ -52,7 +53,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
           reader.onerror = reject;
           reader.readAsDataURL(bulkFile.file);
         });
-        await onSubmit({ type: 'pdf', data: base64 }, true);
+        await onSubmit({ type: 'pdf', data: base64, model }, true);
         setFiles(prev => prev.map(f => f.id === bulkFile.id ? { ...f, status: 'done' } : f));
       } catch (err: any) {
         setFiles(prev => prev.map(f => f.id === bulkFile.id ? { ...f, status: 'error', error: err.message } : f));
@@ -94,6 +95,30 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
         </div>
 
         <div className="flex-1 overflow-y-auto p-8 space-y-6">
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+              <Cpu className="w-3 h-3" /> Review Model
+            </label>
+            {([
+              { id: 'gpt', label: 'GPT-5.4 Pro' },
+              { id: 'gemini', label: 'Gemini 3.1 Pro' },
+            ] as const).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setModel(m.id)}
+                disabled={isSubmitting}
+                className={`px-4 py-2 rounded-xl font-bold text-sm transition-all border ${
+                  model === m.id
+                    ? 'bg-violet-600 text-white border-violet-600 shadow-md shadow-violet-100'
+                    : 'bg-white/10 text-slate-300 border-white/20 hover:bg-white/20'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
           <div
             {...getRootProps()}
             className={`border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all ${
@@ -103,7 +128,9 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
             <input {...getInputProps()} />
             <FileText className="w-10 h-10 text-slate-400 mx-auto mb-3" />
             <p className="font-bold text-slate-600">Drop multiple PDFs here, or click to select</p>
-            <p className="text-sm text-slate-400 mt-1">Each PDF will be reviewed sequentially by GPT-5.4 Pro</p>
+            <p className="text-sm text-slate-400 mt-1">
+              Each PDF will be reviewed sequentially by {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}
+            </p>
           </div>
 
           {files.length > 0 && (
@@ -139,7 +166,9 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
                         <p className="text-xs text-rose-600 mt-0.5 truncate">{f.error}</p>
                       )}
                       {f.status === 'processing' && (
-                        <p className="text-xs text-indigo-600 mt-0.5">Reviewing with GPT-5.4 Pro...</p>
+                        <p className="text-xs text-indigo-600 mt-0.5">
+                          Reviewing with {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}...
+                        </p>
                       )}
                     </div>
                     <span className="text-[10px] text-slate-400 font-bold uppercase shrink-0">

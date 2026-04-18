@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db, papersTable, reviewsTable, commentsTable, likesTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
 import OpenAI from "openai";
+import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
 
 if (!process.env.OPENAI_API_KEY) {
@@ -10,7 +11,8 @@ if (!process.env.OPENAI_API_KEY) {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const MODEL = "gpt-5.4-pro";
+const GPT_MODEL = "gpt-5.4-pro";
+const GEMINI_MODEL = "gemini-3.1-pro-preview";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
@@ -156,41 +158,54 @@ Output valid JSON only.
 
 The manuscript text begins after this line.`;
 
-// Quick metadata extraction — separate call so the review stays anonymous
-async function extractMetadata(paperContent: string): Promise<{ title: string; authors: string }> {
-  try {
-    const response = await openai.responses.create({
-      model: MODEL,
-      instructions: `Extract the title and authors from the scientific paper text provided.
+const METADATA_PROMPT = `Extract the title and authors from the scientific paper text provided.
 Return a JSON object with exactly two fields:
 - title: string (the paper title, or "Unknown Title" if not found)
 - authors: string (comma-separated list of author names as written, or "Unknown Authors" if not found)
-Output valid JSON only.`,
-      input: paperContent.substring(0, 4000), // first ~4000 chars is enough for title/authors
+Output valid JSON only.`;
+
+// Quick metadata extraction — GPT always used here (fast, cheap, no need for Gemini)
+async function extractMetadata(paperContent: string): Promise<{ title: string; authors: string }> {
+  try {
+    const response = await openai.responses.create({
+      model: GPT_MODEL,
+      instructions: METADATA_PROMPT,
+      input: paperContent.substring(0, 4000),
       max_output_tokens: 256,
     });
     const raw = response.output_text?.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim() ?? "{}";
     const parsed = JSON.parse(raw);
-    return {
-      title: parsed.title || "Unknown Title",
-      authors: parsed.authors || "Unknown Authors",
-    };
+    return { title: parsed.title || "Unknown Title", authors: parsed.authors || "Unknown Authors" };
   } catch {
     return { title: "Unknown Title", authors: "Unknown Authors" };
   }
 }
 
-async function generateReview(paperContent: string) {
+async function generateReviewGPT(paperContent: string) {
   const response = await openai.responses.create({
-    model: MODEL,
+    model: GPT_MODEL,
     instructions: REVIEW_SYSTEM_INSTRUCTION,
     input: paperContent,
     max_output_tokens: 8192,
   });
-
   const content = response.output_text;
-  if (!content) throw new Error("No response from AI model");
+  if (!content) throw new Error("No response from GPT model");
+  const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  return JSON.parse(cleaned);
+}
 
+async function generateReviewGemini(paperContent: string) {
+  const response = await geminiAI.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: [{ role: "user", parts: [{ text: paperContent }] }],
+    config: {
+      systemInstruction: REVIEW_SYSTEM_INSTRUCTION,
+      responseMimeType: "application/json",
+      maxOutputTokens: 8192,
+    },
+  });
+  const content = response.text;
+  if (!content) throw new Error("No response from Gemini model");
   const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
   return JSON.parse(cleaned);
 }
@@ -245,11 +260,16 @@ router.post("/papers", async (req, res) => {
       paperContent = source.data;
     }
 
+    const useGemini = req.body.model === "gemini";
+    const modelName = useGemini ? GEMINI_MODEL : GPT_MODEL;
+
     // Step 1: extract real title and authors (before anonymous review)
     const metadata = await extractMetadata(paperContent);
 
     // Step 2: blind review
-    const r = await generateReview(paperContent);
+    const r = useGemini
+      ? await generateReviewGemini(paperContent)
+      : await generateReviewGPT(paperContent);
 
     const submitterName = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email || "Anonymous";
 
@@ -262,7 +282,7 @@ router.post("/papers", async (req, res) => {
       field: r.field,
       subfields: r.subfields,
       score: Math.round(r.overallIntrinsicScore ?? 0),
-      modelName: MODEL,
+      modelName,
     }).returning();
 
     const noveltyConf = r.noveltyConfidence != null ? String(r.noveltyConfidence) : null;

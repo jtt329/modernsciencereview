@@ -1,8 +1,8 @@
 import React, { useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle, Cpu } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { ReviewSource } from '../services/reviewService';
+import { ReviewSource, ReviewModel } from '../services/reviewService';
 
 interface SubmissionFormProps {
   onSubmit: (source: ReviewSource) => Promise<void>;
@@ -11,6 +11,7 @@ interface SubmissionFormProps {
 
 export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProps) {
   const [submissionType, setSubmissionType] = useState<'pdf' | 'text'>('pdf');
+  const [model, setModel] = useState<ReviewModel>('gpt');
   const [text, setText] = useState('');
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfBase64, setPdfBase64] = useState<string | null>(null);
@@ -44,9 +45,9 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
 
     let source: ReviewSource | null = null;
     if (submissionType === 'pdf' && pdfBase64) {
-      source = { type: 'pdf', data: pdfBase64 };
+      source = { type: 'pdf', data: pdfBase64, model };
     } else if (submissionType === 'text' && text.trim()) {
-      source = { type: 'text', data: text.trim() };
+      source = { type: 'text', data: text.trim(), model };
     }
 
     if (source) {
@@ -84,7 +85,9 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             </div>
             <div>
               <h2 className="text-xl font-black tracking-tight">Submit Scientific Paper</h2>
-              <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">AI Review via GPT-5.4 Pro</p>
+              <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">
+                Blind AI Review · {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -93,28 +96,56 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
         </div>
 
         <div className="flex-1 overflow-y-auto p-8 space-y-8">
-          <div className="space-y-4">
-            <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Submission Method</label>
-            <div className="flex gap-2">
-              {[
-                { id: 'pdf', label: 'PDF File', icon: FileText },
-                { id: 'text', label: 'Raw Text', icon: Upload },
-              ].map((type) => (
-                <button
-                  key={type.id}
-                  type="button"
-                  onClick={() => setSubmissionType(type.id as 'pdf' | 'text')}
-                  disabled={isSubmitting}
-                  className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition-all border ${
-                    submissionType === type.id
-                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-100'
-                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                  }`}
-                >
-                  <type.icon className="w-4 h-4" />
-                  {type.label}
-                </button>
-              ))}
+          <div className="flex flex-col sm:flex-row gap-6">
+            <div className="space-y-4 flex-1">
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Submission Method</label>
+              <div className="flex gap-2">
+                {[
+                  { id: 'pdf', label: 'PDF File', icon: FileText },
+                  { id: 'text', label: 'Raw Text', icon: Upload },
+                ].map((type) => (
+                  <button
+                    key={type.id}
+                    type="button"
+                    onClick={() => setSubmissionType(type.id as 'pdf' | 'text')}
+                    disabled={isSubmitting}
+                    className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition-all border ${
+                      submissionType === type.id
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-100'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <type.icon className="w-4 h-4" />
+                    {type.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                <Cpu className="w-3 h-3" /> Review Model
+              </label>
+              <div className="flex gap-2">
+                {([
+                  { id: 'gpt', label: 'GPT-5.4 Pro' },
+                  { id: 'gemini', label: 'Gemini 3.1 Pro' },
+                ] as const).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setModel(m.id)}
+                    disabled={isSubmitting}
+                    className={`px-4 py-3 rounded-xl font-bold text-sm transition-all border ${
+                      model === m.id
+                        ? 'bg-violet-600 text-white border-violet-600 shadow-lg shadow-violet-100'
+                        : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -188,7 +219,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                Reviewing with GPT-5.4 Pro…
+                Reviewing with {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}…
               </>
             ) : (
               <>
