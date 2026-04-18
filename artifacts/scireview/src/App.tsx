@@ -11,7 +11,6 @@ import PaperCard from './components/PaperCard';
 import ReviewCard from './components/ReviewCard';
 import CommentSection from './components/CommentSection';
 import SubmissionForm from './components/SubmissionForm';
-import BulkSubmissionForm from './components/BulkSubmissionForm';
 import { ReviewSource } from './services/reviewService';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || '';
@@ -84,7 +83,6 @@ export default function App() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [userLikes, setUserLikes] = useState<Set<string>>(new Set());
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedPapers, setSelectedPapers] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
@@ -306,7 +304,6 @@ export default function App() {
         onLogin={login}
         onLogout={logout}
         onNewPaper={() => { if (!user) { login(); return; } setIsSubmitting(true); }}
-        onBulkUpload={() => setIsBulkSubmitting(true)}
         adminEmail={ADMIN_EMAIL}
       />
 
@@ -559,12 +556,6 @@ export default function App() {
           <SubmissionForm
             onSubmit={handleSubmitPaper}
             onClose={() => setIsSubmitting(false)}
-          />
-        )}
-        {isBulkSubmitting && (
-          <BulkSubmissionForm
-            onSubmit={handleSubmitPaper}
-            onClose={() => setIsBulkSubmitting(false)}
           />
         )}
       </AnimatePresence>
