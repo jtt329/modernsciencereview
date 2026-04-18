@@ -49,25 +49,25 @@ Strongly weight:
 
 Additional principle for breadth and importance:
 
-The primary scientific value of a framework lies in how economically it explains, unifies, or predicts distinct phenomena. In judging breadth and importance, distinguish between:
+The central scientific value of a framework lies in how economically it explains, unifies, or predicts distinct phenomena. In judging breadth and importance, distinguish between:
 
-(a) phenomenon-space breadth: how many genuinely distinct phenomena, observables, regimes, or physically realizable predictions are explained by one mechanism;
+(a) phenomenon-space breadth: how many genuinely distinct phenomena, observables, regimes, or physically realizable predictions are accounted for by one mechanism;
 
 (b) theory-space breadth: how widely the same formal template extends across alternative theories, parameter families, dimensions, or mathematical settings.
 
 Treat these as different kinds of breadth, not interchangeable ones.
 
-As a default scientific standard, give at least as much weight to phenomenon-space breadth as to theory-space breadth. A framework that explains more distinct and central phenomena with fewer primitive commitments can be more scientifically valuable than one that extends the same descriptive template across many alternative theories or formalisms.
+As a default scientific standard, give primary weight to the economy with which a framework accounts for meaningful phenomena. A framework that explains or unifies a wider range of distinct and central phenomena with fewer primitive commitments can be more scientifically valuable than one that mainly reproduces the same limited class of phenomena across many alternative formalisms.
 
-Weight breadth by:
-- empirical relevance or realistic physical realizability of the phenomena,
-- centrality of the phenomena within the domain,
-- how strongly the phenomena constrain or connect to other phenomena,
-- and the simplicity of the mechanism that explains them.
+In weighing breadth and impact, give more credit to frameworks that:
+- explain more distinct phenomena with one mechanism,
+- connect phenomena that were previously treated separately,
+- sharpen predictions about phenomena that are empirically relevant, physically realizable, or theoretically central,
+- and do so with fewer assumptions, less ad hoc structure, or greater explanatory clarity.
 
-Reward theory-space breadth when it produces genuinely new observable consequences, sharper constraints, robustness across important settings, or deeper structural unification. But do not assume that covering more theories is intrinsically more important than explaining more distinct phenomena.
+Reward theory-space breadth when it produces genuinely new observable consequences, stronger constraints, deeper robustness, or real structural unification. But do not assume that covering more theories is intrinsically more important than explaining more distinct phenomena.
 
-In judging unifying power and breadth of impact, prefer frameworks that account for a wider range of meaningful phenomena with fewer assumptions, rather than frameworks that mainly multiply descriptions of the same narrow set of phenomena.
+Weight predicted phenomena by their physical plausibility, empirical relevance, and centrality within the domain. Prefer explanations that account for a wider range of meaningful phenomena in the simplest adequate way, rather than frameworks that mainly multiply descriptions of the same narrow phenomenon class.
 
 Rules:
 - Ignore author identity, affiliation, institution, venue, citation counts, publication status, popularity, historical fame, career stage, and stylistic conformity entirely.
