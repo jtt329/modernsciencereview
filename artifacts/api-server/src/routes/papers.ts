@@ -312,7 +312,7 @@ router.post("/papers", async (req, res) => {
       overallIntrinsicScore: r.overallIntrinsicScore != null ? Math.round(r.overallIntrinsicScore) : null,
       bestClassification: r.bestClassification ?? null,
       finalJudgment: r.finalJudgment ?? null,
-      modelName: MODEL,
+      modelName: modelName,
       systemPrompt: REVIEW_SYSTEM_INSTRUCTION,
     }).returning();
 
