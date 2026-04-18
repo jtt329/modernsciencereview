@@ -293,16 +293,8 @@ export default function App() {
             >
               {/* Hero */}
               <div className="text-center space-y-4 max-w-3xl mx-auto mb-16">
-                <motion.div
-                  initial={{ scale: 0.8, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  className="inline-flex items-center gap-2 bg-indigo-100 text-indigo-700 px-4 py-1.5 rounded-full text-xs font-black uppercase tracking-widest"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  AI-Powered Scientific Journal
-                </motion.div>
                 <h1 className="text-5xl md:text-7xl font-black text-slate-900 tracking-tight leading-none">
-                  The Future of <span className="text-indigo-600">Scientific Review</span>
+                  <span className="text-indigo-600">Blind AI Review</span>
                 </h1>
                 <p className="text-xl text-slate-600 font-medium max-w-2xl mx-auto">
                   Submit your research, get an instant AI assessment from GPT-5.4 Pro, and timestamp your work on the public record.
