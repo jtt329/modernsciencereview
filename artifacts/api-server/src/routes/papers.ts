@@ -299,7 +299,8 @@ router.post("/papers", async (req, res) => {
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
 
     let paperContent: string;
-    let submittedPdfUrl: string | null = null;
+    let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
+    const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
 
     if (source.type === "pdf") {
       const buffer = Buffer.from(source.data, "base64");
@@ -359,6 +360,7 @@ router.post("/papers", async (req, res) => {
       score: Math.round(r.overallIntrinsicScore ?? 0),
       modelName,
       pdfUrl: submittedPdfUrl,
+      displayPdf: submittedDisplayPdf ? 1 : 0,
     }).returning();
 
     const noveltyConf = r.noveltyConfidence != null ? String(r.noveltyConfidence) : null;

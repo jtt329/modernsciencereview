@@ -31,6 +31,7 @@ interface Paper {
   score: number | null;
   modelName: string | null;
   pdfUrl: string | null;
+  displayPdf: number;
   likesCount: number;
   viewCount: number;
   commentCount: number;
@@ -512,6 +513,7 @@ export default function App() {
                             <ExternalLink className="w-4 h-4" /> View PDF
                           </a>
                         )}
+
                         <button className="p-3 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors shadow-sm">
                           <Share2 className="w-5 h-5 text-slate-600" />
                         </button>
@@ -536,6 +538,23 @@ export default function App() {
                       {selectedPaper.content}
                     </ReactMarkdown>
                   </div>
+
+                  {selectedPaper.displayPdf && selectedPaper.pdfUrl && (
+                    <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
+                      <div className="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+                        <span className="text-xs font-black text-slate-500 uppercase tracking-widest">Source PDF</span>
+                        <a href={selectedPaper.pdfUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors">
+                          <ExternalLink className="w-3.5 h-3.5" /> Open in new tab
+                        </a>
+                      </div>
+                      <iframe
+                        src={selectedPaper.pdfUrl}
+                        className="w-full"
+                        style={{ height: '800px' }}
+                        title="Source PDF"
+                      />
+                    </div>
+                  )}
 
                   {selectedReview && (
                     <div className="pt-12">

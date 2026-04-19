@@ -14,6 +14,7 @@ export const papersTable = pgTable("papers", {
   score: integer("score"),
   modelName: varchar("model_name"),
   pdfUrl: text("pdf_url"),
+  displayPdf: integer("display_pdf").notNull().default(0),
   likesCount: integer("likes_count").notNull().default(0),
   viewCount: integer("view_count").notNull().default(0),
   commentCount: integer("comment_count").notNull().default(0),
