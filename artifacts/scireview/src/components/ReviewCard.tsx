@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, CheckCircle2, Zap, Award, Heart, MessageSquare, Info, X, Target, BookOpen, FlaskConical, Layers, Shield, AlertTriangle, Microscope, TrendingUp } from 'lucide-react';
+import { Sparkles, CheckCircle2, Zap, Award, Heart, MessageSquare, Info, X, Target, BookOpen, FlaskConical, Layers, Shield, AlertTriangle, Microscope, TrendingUp, GitBranch, Globe } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -87,12 +87,24 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
           </div>
 
           {/* Sub-scores (new format only) */}
-          {isNewFormat && (review.intrinsicScientificMeritScore != null || review.breadthOfImpactScore != null) && (
-            <div className="grid grid-cols-2 gap-4">
+          {isNewFormat && (review.intrinsicScientificMeritScore != null || review.explanatoryTargetBreadthScore != null || review.theorySpaceBreadthScore != null || review.breadthOfImpactScore != null) && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {review.intrinsicScientificMeritScore != null && (
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
                   <div className="text-3xl font-black text-indigo-300">{review.intrinsicScientificMeritScore}<span className="text-base font-bold text-indigo-400/60">/10</span></div>
                   <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mt-1">Intrinsic Merit</div>
+                </div>
+              )}
+              {review.explanatoryTargetBreadthScore != null && (
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
+                  <div className="text-3xl font-black text-sky-300">{review.explanatoryTargetBreadthScore}<span className="text-base font-bold text-sky-400/60">/10</span></div>
+                  <div className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mt-1">Target Breadth</div>
+                </div>
+              )}
+              {review.theorySpaceBreadthScore != null && (
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
+                  <div className="text-3xl font-black text-violet-300">{review.theorySpaceBreadthScore}<span className="text-base font-bold text-violet-400/60">/10</span></div>
+                  <div className="text-[10px] font-bold text-violet-400 uppercase tracking-widest mt-1">Theory Breadth</div>
                 </div>
               )}
               {review.breadthOfImpactScore != null && (
@@ -186,6 +198,22 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               {review.unifyingPower && (
                 <Section icon={<Layers className="w-4 h-4" />} label="Unifying Power" color="text-fuchsia-400">
                   <Markdown>{review.unifyingPower}</Markdown>
+                </Section>
+              )}
+            </div>
+          )}
+
+          {/* Explanatory-Target Breadth & Theory-Space Breadth */}
+          {(review.explanatoryTargetBreadth || review.theorySpaceBreadth) && (
+            <div className="grid md:grid-cols-2 gap-4">
+              {review.explanatoryTargetBreadth && (
+                <Section icon={<Globe className="w-4 h-4" />} label="Explanatory-Target Breadth" color="text-sky-400">
+                  <Markdown>{review.explanatoryTargetBreadth}</Markdown>
+                </Section>
+              )}
+              {review.theorySpaceBreadth && (
+                <Section icon={<GitBranch className="w-4 h-4" />} label="Theory-Space Breadth" color="text-violet-400">
+                  <Markdown>{review.theorySpaceBreadth}</Markdown>
                 </Section>
               )}
             </div>

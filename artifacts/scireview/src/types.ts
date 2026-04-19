@@ -33,6 +33,8 @@ export interface AIReview {
   interpretiveClaims?: string;
   speculativeClaims?: string;
   economy?: string;
+  explanatoryTargetBreadth?: string;
+  theorySpaceBreadth?: string;
   scopeDepth?: string;
   unifyingPower?: string;
   strongestCaseForImportance?: string;
@@ -41,6 +43,8 @@ export interface AIReview {
   internalTechnicalTraction?: string;
   noveltyConfidence?: number;
   intrinsicScientificMeritScore?: number;
+  explanatoryTargetBreadthScore?: number;
+  theorySpaceBreadthScore?: number;
   breadthOfImpactScore?: number;
   overallIntrinsicScore?: number;
   bestClassification?: string;

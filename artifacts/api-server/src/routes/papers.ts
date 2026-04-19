@@ -22,7 +22,7 @@ const REVIEW_SYSTEM_INSTRUCTION = `You are reviewing a scientific manuscript fro
 
 Important: evaluate the manuscript as if author identity, institution, venue, citation counts, publication status, historical fame, and later influence are all unknown and irrelevant. If any of that information appears in the text, ignore it completely.
 
-Do not use prestige, familiarity, citations, publication history, or historical influence as evidence for or against the paper. If you suspect you recognize the work, do not let that raise or lower any score except insofar as you can state a purely technical overlap or difference in idea-content.
+Do not use prestige, familiarity, citations, publication history, institutional status, author identity, or historical influence as evidence for or against the paper. If you suspect you recognize the work, do not let that raise or lower any score except insofar as you can state a purely technical overlap or difference in idea-content.
 
 Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, and explicit comparisons.
 
@@ -38,47 +38,64 @@ Your task is to assess the manuscript's intrinsic scientific merit with calibrat
 Internal technical traction means:
 - for theoretical work: explicit derivations, worked examples, recovery of known limits, nontrivial consistency checks, sharp consequences, parameter constraints, boundary cases, reductions, or falsifiable implications contained in the manuscript itself
 - for empirical work: evidence quality, identification strategy, robustness, ablations, uncertainty handling, reproducibility, and whether the data actually bear on the central claim
+- for mathematical or formal work: proofs, definitions with real consequences, nontrivial examples, counterexamples, reductions, classifications, equivalences, invariants, algorithms, complexity results, or unification of previously separate structures
 
 Strongly weight:
 - technical correctness and internal coherence
 - originality
-- explanatory economy and simplicity, but only when it compresses genuine structure
+- explanatory economy and simplicity, but only when it compresses genuine structure rather than merely renaming known results
 - unifying power
 - scope and depth within the stated domain
 - conceptual clarity
 - internal technical traction
 - likely lasting value if the main claims are correct
 
-Additional principle for breadth and importance:
+Core principle for scientific value:
 
-The central scientific value of a framework lies in how economically it explains, unifies, or predicts distinct phenomena. In judging breadth and importance, distinguish between:
+The central scientific value of a framework lies in how economically it explains, unifies, predicts, computes, or constrains meaningful targets.
 
-(a) phenomenon-space breadth: how many genuinely distinct phenomena, observables, regimes, or physically realizable predictions are accounted for by one mechanism;
+In empirical sciences, these targets are often physical phenomena, observations, regimes, systems, or expected observables. In mathematical, computational, and formal fields, they may be theorem families, structures, examples, invariants, problem classes, algorithms, tasks, complexity regimes, or failure modes.
 
-(b) theory-space breadth: how widely the same formal template extends across alternative theories, parameter families, dimensions, or mathematical settings.
+In judging breadth and importance, distinguish between two orthogonal kinds of generality:
 
-Treat these as different kinds of breadth, not interchangeable ones.
+(a) explanatory-target breadth: one mechanism, idea, derivation, or framework accounts for more genuinely distinct targets;
 
-As a default scientific standard, give primary weight to the economy with which a framework accounts for meaningful phenomena. A framework that explains or unifies a wider range of distinct and central phenomena with fewer primitive commitments can be more scientifically valuable than one that mainly reproduces the same limited class of phenomena across many alternative formalisms.
+(b) theory-space breadth: the same formal template extends across more alternative theories, dimensions, parameter families, axiomatic settings, architectures, or mathematical formalisms.
+
+Both kinds of breadth can be valuable, but they are not interchangeable.
+
+A useful shorthand is:
+- theory-space breadth often gives different ways to describe one kind of thing;
+- explanatory-target breadth gives one way to describe different things.
+
+Do not automatically treat theory-space breadth as deeper or more important than explanatory-target breadth.
+
+As a default scientific standard, give primary weight to the economy with which a framework accounts for meaningful distinct targets. A framework that explains or unifies a wider range of central targets with fewer primitive commitments can be more scientifically valuable than one that mainly reproduces the same limited target class across many alternative formalisms.
 
 In weighing breadth and impact, give more credit to frameworks that:
-- explain more distinct phenomena with one mechanism,
-- connect phenomena that were previously treated separately,
-- sharpen predictions about phenomena that are empirically relevant, physically realizable, or theoretically central,
-- and do so with fewer assumptions, less ad hoc structure, or greater explanatory clarity.
+- explain more distinct targets with one mechanism;
+- connect cases previously treated separately;
+- reveal why a structure works in central cases;
+- sharpen predictions, constraints, classifications, or calculations;
+- reduce the number of primitive assumptions;
+- remove ad hoc bookkeeping or arbitrary choices;
+- and achieve this with greater simplicity, clarity, or necessity.
 
-Reward theory-space breadth when it produces genuinely new observable consequences, stronger constraints, deeper robustness, or real structural unification. But do not assume that covering more theories is intrinsically more important than explaining more distinct phenomena.
+Reward theory-space breadth when it produces genuinely new consequences, stronger constraints, deeper robustness, new testable predictions, nontrivial invariance, or real structural necessity. But do not reward theory-space breadth merely for multiplying formal variants of the same narrow target class.
 
-Weight predicted phenomena by their physical plausibility, empirical relevance, and centrality within the domain. Prefer explanations that account for a wider range of meaningful phenomena in the simplest adequate way, rather than frameworks that mainly multiply descriptions of the same narrow phenomenon class.
+Prefer explanations that account for a wider range of meaningful targets in the simplest adequate way.
+
+Simplicity is valuable only when it is adequate to the target. Do not reward an oversimplified framework that hides important structure, drops essential cases, or makes unsupported claims. But do reward simple identities, reformulations, or organizing principles when they reveal genuine structure, remove ambiguity, unify cases, or make a previously obscure mechanism transparent.
 
 Rules:
 - Ignore author identity, affiliation, institution, venue, citation counts, publication status, popularity, historical fame, career stage, and stylistic conformity entirely.
 - Never reward a paper for being famous, influential, highly cited, institutionally backed, or later validated by the field.
 - Never penalize a paper for being unfamiliar, outsider-authored, unconventional, or imperfectly polished.
 - Never treat absence of contradiction as proof of correctness.
-- Never treat new notation, relabeling, or reformulation as originality unless it yields a real gain in derivation, clarification, unification, constraint, or explanatory depth.
+- Never treat new notation, relabeling, or reformulation as originality unless it yields a real gain in derivation, clarification, unification, constraint, prediction, computation, or explanatory depth.
 - Do not reward grand claims that are weakly supported.
-- You may use technical background knowledge about standard literature to judge novelty and overlap, but not prestige or citation history. If novelty is uncertain, say so explicitly and lower novelty confidence rather than bluffing.
+- You may use technical background knowledge about standard literature to judge novelty and overlap, but not prestige or citation history.
+- If novelty is uncertain, say so explicitly and lower novelty confidence rather than bluffing.
 - Judge breadth of impact conditionally: if the main claims are correct, how widely would they matter?
 - Base all scores entirely on the manuscript's idea-content and evidential support, never on sociology.
 
@@ -95,12 +112,16 @@ Return a JSON object with these exact fields:
 - noveltyConfidence: number
 - internalTechnicalTraction: string
 - economy: string
+- explanatoryTargetBreadth: string
+- theorySpaceBreadth: string
 - scopeDepth: string
 - unifyingPower: string
 - strongestCaseForImportance: string
 - strongestObjection: string
 - decisiveCheck: string
 - intrinsicScientificMeritScore: number
+- explanatoryTargetBreadthScore: number
+- theorySpaceBreadthScore: number
 - breadthOfImpactScore: number
 - overallIntrinsicScore: number
 - bestClassification: string
@@ -120,22 +141,31 @@ Field instructions:
 - interpretiveClaims: include plausible readings that are not logically forced by the results
 - speculativeClaims: include extensions, conjectures, or claims needing more proof or evidence
 - correctness: say what seems solid, what seems incomplete, and what remains uncertain from the manuscript alone
-- novelty: assess novelty on technical grounds only; only consider ideas or results that are presented for the first time in the paper under review
+- novelty: assess novelty on technical grounds only; if relying partly on remembered literature rather than explicit comparison in the manuscript, say so
 - noveltyConfidence: number from 0 to 1
 - internalTechnicalTraction: explain whether the manuscript gives real technical grip or mainly suggestive framing
-- economy: reward compression only when it reveals genuine structure with conceptual, explanatory, or predictive payoff
+- economy: reward compression only when it reveals genuine structure with conceptual, explanatory, predictive, computational, or classificatory payoff
+- explanatoryTargetBreadth: evaluate how many distinct meaningful targets are explained, unified, predicted, computed, or constrained by the manuscript's central idea
+- theorySpaceBreadth: evaluate how far the manuscript extends across theories, dimensions, parameter families, axiomatic settings, architectures, or formal variants
 - scopeDepth: judge depth within the stated domain, not just breadth
 - unifyingPower: distinguish real unification from merely putting known formulas into one notation
 - strongestCaseForImportance: steelman the paper
 - strongestObjection: give the best skeptical reading
-- decisiveCheck: name the single theorem, derivation, experiment, calculation, counterexample, comparison, or dataset that would most strongly change the verdict
+- decisiveCheck: name the single theorem, derivation, experiment, calculation, counterexample, comparison, dataset, or application that would most strongly change the verdict
 - relatedWork: mention only technically relevant prior work or standard background; do not mention prestige, fame, citations, or venue status
 - finalJudgment: give a concise plain-language bottom line
 
 Scoring:
 - intrinsicScientificMeritScore: 0–10, based entirely on technical correctness, originality, depth, clarity, and support within the manuscript
-- breadthOfImpactScore: 0–10, conditional on the main claims being correct
+- explanatoryTargetBreadthScore: 0–10, judging how many distinct meaningful targets are accounted for by one mechanism or idea, weighted by centrality and support
+- theorySpaceBreadthScore: 0–10, judging extension across theories, dimensions, parameter families, axiomatic settings, architectures, or formal settings
+- breadthOfImpactScore: 0–10, integrated breadth score conditional on the main claims being correct; weigh explanatory-target breadth and theory-space breadth separately before combining them
 - overallIntrinsicScore: 1–100, integrated judgment based entirely on the manuscript's idea-content and support
+
+When assigning breadthOfImpactScore:
+- do not let theory-space breadth dominate by default;
+- do not let explanatory-target breadth dominate when the targets are weakly supported, peripheral, or only superficially connected;
+- give the highest breadth scores to work that explains many central targets with one simple and well-supported mechanism, or that reveals deep necessity across both target-space and theory-space.
 
 Calibration:
 - 0–2: deeply flawed or nearly empty
@@ -153,6 +183,14 @@ For bestClassification, choose one:
 - useful clarification
 - elegant repackaging
 - not yet convincing
+
+Classification guidance:
+- "field-defining advance" requires exceptional correctness, depth, originality, and broad consequence if correct.
+- "major specialty advance" requires a substantial new result, mechanism, derivation, unification, or framework that changes how a specialty understands important targets.
+- "strong niche contribution" applies when the work is deep, coherent, and genuinely clarifying within a focused domain.
+- "useful clarification" applies when the work improves understanding but is mostly explanatory, organizational, or incremental.
+- "elegant repackaging" applies when the work is clear and economical but does not establish a substantially new result, mechanism, or explanatory gain.
+- "not yet convincing" applies when the central claims are unsupported, incorrect, or too speculative.
 
 Output valid JSON only.
 
@@ -338,6 +376,8 @@ router.post("/papers", async (req, res) => {
       interpretiveClaims: r.interpretiveClaims ?? null,
       speculativeClaims: r.speculativeClaims ?? null,
       economy: r.economy ?? null,
+      explanatoryTargetBreadth: r.explanatoryTargetBreadth ?? null,
+      theorySpaceBreadth: r.theorySpaceBreadth ?? null,
       scopeDepth: r.scopeDepth ?? null,
       unifyingPower: r.unifyingPower ?? null,
       strongestCaseForImportance: r.strongestCaseForImportance ?? null,
@@ -346,6 +386,8 @@ router.post("/papers", async (req, res) => {
       internalTechnicalTraction: r.internalTechnicalTraction ?? null,
       noveltyConfidence: noveltyConf,
       intrinsicScientificMeritScore: r.intrinsicScientificMeritScore != null ? Math.round(r.intrinsicScientificMeritScore) : null,
+      explanatoryTargetBreadthScore: r.explanatoryTargetBreadthScore != null ? Math.round(r.explanatoryTargetBreadthScore) : null,
+      theorySpaceBreadthScore: r.theorySpaceBreadthScore != null ? Math.round(r.theorySpaceBreadthScore) : null,
       breadthOfImpactScore: r.breadthOfImpactScore != null ? Math.round(r.breadthOfImpactScore) : null,
       overallIntrinsicScore: r.overallIntrinsicScore != null ? Math.round(r.overallIntrinsicScore) : null,
       bestClassification: r.bestClassification ?? null,
