@@ -261,6 +261,8 @@ router.post("/papers", async (req, res) => {
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
 
     let paperContent: string;
+    let submittedPdfUrl: string | null = null;
+
     if (source.type === "pdf") {
       const buffer = Buffer.from(source.data, "base64");
       const pdfParse = (await import("pdf-parse")).default;
@@ -270,6 +272,25 @@ router.post("/papers", async (req, res) => {
         res.status(400).json({ error: "Could not extract readable text from PDF. Try submitting as raw text instead." });
         return;
       }
+    } else if (source.type === "url") {
+      const url = source.data?.trim();
+      if (!url) { res.status(400).json({ error: "A valid URL is required." }); return; }
+      try { new URL(url); } catch { res.status(400).json({ error: "Invalid URL." }); return; }
+      const fetchResp = await fetch(url);
+      if (!fetchResp.ok) {
+        res.status(400).json({ error: `Could not fetch PDF from URL (${fetchResp.status}). Make sure it is a direct link to a publicly accessible PDF.` });
+        return;
+      }
+      const arrayBuf = await fetchResp.arrayBuffer();
+      const buffer = Buffer.from(arrayBuf);
+      const pdfParse = (await import("pdf-parse")).default;
+      const parsed = await pdfParse(buffer);
+      paperContent = parsed.text;
+      if (!paperContent || paperContent.trim().length < 50) {
+        res.status(400).json({ error: "Could not extract readable text from the linked PDF." });
+        return;
+      }
+      submittedPdfUrl = url;
     } else {
       paperContent = source.data;
     }
@@ -291,7 +312,7 @@ router.post("/papers", async (req, res) => {
 
     const [paper] = await db.insert(papersTable).values({
       title: metadata.title,
-      content: source.type === "pdf" ? `[PDF Upload] ${metadata.title}` : paperContent,
+      content: (source.type === "pdf" || source.type === "url") ? `[PDF] ${metadata.title}` : paperContent,
       authorId: req.user.id,
       authorName: submitterName,
       paperAuthors: metadata.authors,
@@ -299,6 +320,7 @@ router.post("/papers", async (req, res) => {
       subfields: r.subfields,
       score: Math.round(r.overallIntrinsicScore ?? 0),
       modelName,
+      pdfUrl: submittedPdfUrl,
     }).returning();
 
     const noveltyConf = r.noveltyConfidence != null ? String(r.noveltyConfidence) : null;

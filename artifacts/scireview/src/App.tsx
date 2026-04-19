@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare } from 'lucide-react';
+import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -30,6 +30,7 @@ interface Paper {
   subfields: string[] | null;
   score: number | null;
   modelName: string | null;
+  pdfUrl: string | null;
   likesCount: number;
   viewCount: number;
   commentCount: number;
@@ -501,6 +502,16 @@ export default function App() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
+                        {selectedPaper.pdfUrl && (
+                          <a
+                            href={selectedPaper.pdfUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors shadow-sm text-sm font-bold text-slate-600"
+                          >
+                            <ExternalLink className="w-4 h-4" /> View PDF
+                          </a>
+                        )}
                         <button className="p-3 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors shadow-sm">
                           <Share2 className="w-5 h-5 text-slate-600" />
                         </button>

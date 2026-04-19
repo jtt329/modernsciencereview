@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle, Cpu, Trash2 } from 'lucide-react';
+import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle, Cpu, Trash2, Link } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { ReviewSource, ReviewModel } from '../services/reviewService';
 
@@ -16,11 +16,19 @@ interface QueuedFile {
   error?: string;
 }
 
+type PdfMode = 'upload' | 'link';
+
+function isValidUrl(value: string) {
+  try { new URL(value); return true; } catch { return false; }
+}
+
 export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProps) {
   const [submissionType, setSubmissionType] = useState<'pdf' | 'text'>('pdf');
   const [model, setModel] = useState<ReviewModel>('gpt');
   const [text, setText] = useState('');
   const [files, setFiles] = useState<QueuedFile[]>([]);
+  const [pdfMode, setPdfMode] = useState<PdfMode | null>(null);
+  const [pdfUrl, setPdfUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [doneCount, setDoneCount] = useState(0);
@@ -68,6 +76,13 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
         return;
       }
 
+      // PDF mode
+      if (pdfMode === 'link') {
+        await onSubmit({ type: 'url', data: pdfUrl.trim(), model });
+        onClose();
+        return;
+      }
+
       if (files.length === 0) return;
 
       if (files.length === 1) {
@@ -96,7 +111,18 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
     }
   };
 
-  const isFormValid = submissionType === 'text' ? !!text.trim() : files.length > 0;
+  const pdfUrlValid = isValidUrl(pdfUrl.trim());
+  const isFormValid = submissionType === 'text'
+    ? !!text.trim()
+    : pdfMode === 'link'
+      ? pdfUrlValid
+      : pdfMode === 'upload' && files.length > 0;
+
+  const toggleMode = (mode: PdfMode) => {
+    setPdfMode(prev => prev === mode ? null : mode);
+    if (mode === 'upload') { setPdfUrl(''); }
+    if (mode === 'link') { setFiles([]); }
+  };
 
   return (
     <motion.div
@@ -111,6 +137,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
         exit={{ scale: 0.95, opacity: 0 }}
         className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
+        {/* Header */}
         <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-indigo-600 text-white">
           <div className="flex items-center gap-3">
             <div className="bg-white/20 p-2 rounded-xl">
@@ -130,18 +157,20 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
         </div>
 
         <div className="flex-1 overflow-y-auto p-8 space-y-8">
+
+          {/* Method + Model row */}
           <div className="flex flex-col sm:flex-row gap-6">
             <div className="space-y-4 flex-1">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Submission Method</label>
               <div className="flex gap-2">
                 {[
-                  { id: 'pdf', label: 'PDF File(s)', icon: FileText },
+                  { id: 'pdf', label: 'PDF / Link', icon: FileText },
                   { id: 'text', label: 'Raw Text', icon: Upload },
                 ].map((type) => (
                   <button
                     key={type.id}
                     type="button"
-                    onClick={() => { setSubmissionType(type.id as 'pdf' | 'text'); setFiles([]); }}
+                    onClick={() => { setSubmissionType(type.id as 'pdf' | 'text'); setFiles([]); setPdfMode(null); setPdfUrl(''); }}
                     disabled={isSubmitting}
                     className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition-all border ${
                       submissionType === type.id
@@ -183,74 +212,159 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             </div>
           </div>
 
-          {submissionType === 'pdf' ? (
-            <div className="space-y-4">
-              <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Upload PDF(s)</label>
-              <div
-                {...getRootProps()}
-                className={`border-2 border-dashed rounded-2xl p-10 text-center cursor-pointer transition-all ${
-                  isDragActive ? 'border-indigo-500 bg-indigo-50' : files.length > 0 ? 'border-indigo-300 bg-indigo-50/40' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50'
-                }`}
-              >
-                <input {...getInputProps()} />
-                <FileText className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-                <p className="font-bold text-slate-600">
-                  {isDragActive ? 'Drop PDFs here…' : 'Drop one or more PDFs here, or click to browse'}
-                </p>
-                <p className="text-sm text-slate-400 mt-1">
-                  Drop an entire folder's worth — each will be reviewed sequentially
-                </p>
-              </div>
+          {/* PDF section */}
+          {submissionType === 'pdf' && (
+            <div className="space-y-5">
+              <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Select one option</label>
 
-              <AnimatePresence>
-                {files.length > 0 && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="space-y-2"
-                  >
-                    {files.map(qf => (
+              {/* Option 1 — Upload */}
+              <div className={`rounded-2xl border-2 transition-all ${pdfMode === 'upload' ? 'border-indigo-400 bg-indigo-50/40' : 'border-slate-200 bg-white'}`}>
+                <button
+                  type="button"
+                  onClick={() => toggleMode('upload')}
+                  disabled={isSubmitting}
+                  className="w-full flex items-center gap-3 p-4 text-left"
+                >
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${
+                    pdfMode === 'upload' ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'
+                  }`}>
+                    {pdfMode === 'upload' && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                  <div>
+                    <p className="font-bold text-slate-800">Upload PDF file(s)</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Drop one or more PDFs — text is extracted and reviewed by AI</p>
+                  </div>
+                </button>
+
+                <AnimatePresence>
+                  {pdfMode === 'upload' && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="px-4 pb-4 space-y-3"
+                    >
                       <div
-                        key={qf.id}
-                        className={`flex items-center gap-3 p-3 rounded-xl border text-sm ${
-                          qf.status === 'done' ? 'bg-emerald-50 border-emerald-200' :
-                          qf.status === 'error' ? 'bg-rose-50 border-rose-200' :
-                          qf.status === 'processing' ? 'bg-indigo-50 border-indigo-200' :
-                          'bg-slate-50 border-slate-200'
+                        {...getRootProps()}
+                        className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${
+                          isDragActive ? 'border-indigo-500 bg-indigo-100' : 'border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/50'
                         }`}
                       >
-                        {qf.status === 'processing' ? (
-                          <Loader2 className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />
-                        ) : qf.status === 'done' ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                        ) : qf.status === 'error' ? (
-                          <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
-                        ) : (
-                          <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
-                          {qf.status === 'processing' && (
-                            <p className="text-xs text-indigo-500">Reviewing with {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}…</p>
-                          )}
-                          {qf.status === 'error' && <p className="text-xs text-rose-600 truncate">{qf.error}</p>}
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-bold shrink-0">
-                          {(qf.file.size / 1024 / 1024).toFixed(1)} MB
-                        </span>
-                        {!isSubmitting && qf.status === 'pending' && (
-                          <button onClick={() => removeFile(qf.id)} className="p-1 hover:bg-slate-200 rounded-lg transition-colors shrink-0">
-                            <Trash2 className="w-3.5 h-3.5 text-slate-400" />
-                          </button>
-                        )}
+                        <input {...getInputProps()} />
+                        <FileText className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                        <p className="font-bold text-slate-600 text-sm">
+                          {isDragActive ? 'Drop PDFs here…' : 'Drop PDFs here or click to browse'}
+                        </p>
+                        <p className="text-xs text-slate-400 mt-1">Drop an entire folder's worth — each reviewed sequentially</p>
                       </div>
-                    ))}
-                  </motion.div>
-                )}
-              </AnimatePresence>
+
+                      {files.length > 0 && (
+                        <div className="space-y-2">
+                          {files.map(qf => (
+                            <div
+                              key={qf.id}
+                              className={`flex items-center gap-3 p-3 rounded-xl border text-sm ${
+                                qf.status === 'done' ? 'bg-emerald-50 border-emerald-200' :
+                                qf.status === 'error' ? 'bg-rose-50 border-rose-200' :
+                                qf.status === 'processing' ? 'bg-indigo-50 border-indigo-200' :
+                                'bg-slate-50 border-slate-200'
+                              }`}
+                            >
+                              {qf.status === 'processing' ? (
+                                <Loader2 className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />
+                              ) : qf.status === 'done' ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                              ) : qf.status === 'error' ? (
+                                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                              ) : (
+                                <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
+                                {qf.status === 'processing' && (
+                                  <p className="text-xs text-indigo-500">Reviewing with {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}…</p>
+                                )}
+                                {qf.status === 'error' && <p className="text-xs text-rose-600 truncate">{qf.error}</p>}
+                              </div>
+                              <span className="text-[10px] text-slate-400 font-bold shrink-0">
+                                {(qf.file.size / 1024 / 1024).toFixed(1)} MB
+                              </span>
+                              {!isSubmitting && qf.status === 'pending' && (
+                                <button onClick={() => removeFile(qf.id)} className="p-1 hover:bg-slate-200 rounded-lg transition-colors shrink-0">
+                                  <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {/* Option 2 — Web link */}
+              <div className={`rounded-2xl border-2 transition-all ${pdfMode === 'link' ? 'border-indigo-400 bg-indigo-50/40' : 'border-slate-200 bg-white'}`}>
+                <button
+                  type="button"
+                  onClick={() => toggleMode('link')}
+                  disabled={isSubmitting}
+                  className="w-full flex items-center gap-3 p-4 text-left"
+                >
+                  <div className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-all ${
+                    pdfMode === 'link' ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300'
+                  }`}>
+                    {pdfMode === 'link' && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+                  </div>
+                  <div>
+                    <p className="font-bold text-slate-800">Provide PDF web link</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Paste a direct link to a PDF — it will be fetched and reviewed by AI</p>
+                  </div>
+                </button>
+
+                <AnimatePresence>
+                  {pdfMode === 'link' && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="px-4 pb-4"
+                    >
+                      <div className="relative">
+                        <Link className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+                        <input
+                          type="url"
+                          value={pdfUrl}
+                          onChange={e => setPdfUrl(e.target.value)}
+                          disabled={isSubmitting}
+                          placeholder="https://arxiv.org/pdf/..."
+                          className={`w-full pl-11 pr-4 py-3 rounded-xl border text-sm font-medium transition-all outline-none focus:ring-2 ${
+                            pdfUrl && !pdfUrlValid
+                              ? 'border-rose-300 bg-rose-50 focus:ring-rose-300'
+                              : pdfUrlValid
+                                ? 'border-emerald-300 bg-emerald-50 focus:ring-emerald-300'
+                                : 'border-slate-200 bg-white focus:ring-indigo-300'
+                          }`}
+                        />
+                      </div>
+                      {pdfUrl && !pdfUrlValid && (
+                        <p className="text-xs text-rose-600 font-medium mt-2">Please enter a valid URL (must start with http:// or https://)</p>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              {!pdfMode && (
+                <p className="text-xs text-amber-600 font-bold flex items-center gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5" /> Select one of the options above to continue
+                </p>
+              )}
             </div>
-          ) : (
+          )}
+
+          {/* Text section */}
+          {submissionType === 'text' && (
             <div className="space-y-4">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Paper Content</label>
               <textarea
@@ -277,11 +391,13 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                 <p className="text-indigo-800 text-sm font-bold">
                   {isBatch
                     ? `Reviewing paper ${doneCount + 1} of ${files.length}…`
-                    : 'Generating blind peer review…'}
+                    : pdfMode === 'link'
+                      ? 'Fetching PDF and generating blind peer review…'
+                      : 'Generating blind peer review…'}
                 </p>
                 <p className="text-indigo-500 text-xs mt-1">
                   {isBatch
-                    ? `Each paper takes 60–120 seconds. Please keep this window open.`
+                    ? 'Each paper takes 60–120 seconds. Please keep this window open.'
                     : 'This runs two AI passes — metadata extraction then a full structured review. It typically takes 60–120 seconds. Please keep this window open.'}
                 </p>
               </div>
@@ -289,6 +405,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
           )}
         </div>
 
+        {/* Footer */}
         <div className="p-6 border-t border-slate-100 flex justify-end gap-4">
           <button onClick={onClose} disabled={isSubmitting} className="px-6 py-3 rounded-2xl font-bold text-slate-500 hover:text-slate-700 disabled:opacity-40 transition-colors">
             Cancel
