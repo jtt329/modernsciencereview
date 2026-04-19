@@ -194,6 +194,21 @@ async function generateReviewGPT(paperContent: string) {
   return JSON.parse(cleaned);
 }
 
+function extractJson(raw: string): unknown {
+  // Strip markdown code fences
+  let s = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  // Try a direct parse first
+  try { return JSON.parse(s); } catch (_) { /* fall through */ }
+  // If truncated, find the last complete top-level value by walking backwards
+  // to the last closing brace and appending enough closing braces/brackets
+  const lastBrace = s.lastIndexOf("}");
+  if (lastBrace !== -1) {
+    const candidate = s.slice(0, lastBrace + 1);
+    try { return JSON.parse(candidate); } catch (_) { /* fall through */ }
+  }
+  throw new Error("Could not parse model response as JSON. The model output may have been truncated — try a shorter paper or different model.");
+}
+
 async function generateReviewGemini(paperContent: string) {
   const response = await geminiAI.models.generateContent({
     model: GEMINI_MODEL,
@@ -201,13 +216,12 @@ async function generateReviewGemini(paperContent: string) {
     config: {
       systemInstruction: REVIEW_SYSTEM_INSTRUCTION,
       responseMimeType: "application/json",
-      maxOutputTokens: 8192,
+      maxOutputTokens: 32768,
     },
   });
   const content = response.text;
   if (!content) throw new Error("No response from Gemini model");
-  const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  return JSON.parse(cleaned);
+  return extractJson(content);
 }
 
 // GET /api/papers — list all papers
@@ -259,6 +273,8 @@ router.post("/papers", async (req, res) => {
     } else {
       paperContent = source.data;
     }
+    // Strip null bytes and non-printable control characters that break JSON serialisation
+    paperContent = paperContent.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
 
     const useGemini = req.body.model === "gemini";
     const modelName = useGemini ? GEMINI_MODEL : GPT_MODEL;
