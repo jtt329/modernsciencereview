@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, CheckCircle2, Zap, Award, Heart, MessageSquare, Info, X, Target, BookOpen, FlaskConical, Layers, Shield, AlertTriangle, Microscope, TrendingUp, GitBranch, Globe } from 'lucide-react';
+import { Sparkles, CheckCircle2, Zap, Award, Heart, MessageSquare, Info, X, Target, BookOpen, FlaskConical, Layers, Shield, AlertTriangle, Microscope, TrendingUp, GitBranch, Globe, ListChecks } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -130,6 +130,59 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               <Markdown>{review.centralClaim}</Markdown>
             </Section>
           )}
+
+          {/* Coverage Ledger (new prompt) */}
+          {review.coverageLedgerJson && (() => {
+            let cl: any = {};
+            try { cl = JSON.parse(review.coverageLedgerJson); } catch { return null; }
+            const hasContent = cl.directTargets?.length || cl.importedInputs?.length || cl.theorySpaceVariants?.length || cl.mechanismSharingAssessment;
+            if (!hasContent) return null;
+            return (
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                <h3 className="text-xs font-black text-teal-400 uppercase tracking-widest flex items-center gap-2">
+                  <ListChecks className="w-4 h-4" /> Coverage Ledger
+                </h3>
+                <div className="grid md:grid-cols-3 gap-4">
+                  {cl.directTargets?.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Direct Targets</p>
+                      <ul className="space-y-1">
+                        {cl.directTargets.map((t: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-500 shrink-0">▸</span>{t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {cl.importedInputs?.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Imported Inputs</p>
+                      <ul className="space-y-1">
+                        {cl.importedInputs.map((t: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-500 shrink-0">▸</span>{t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {cl.theorySpaceVariants?.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-violet-400 uppercase tracking-widest">Theory-Space Variants</p>
+                      <ul className="space-y-1">
+                        {cl.theorySpaceVariants.map((t: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-violet-500 shrink-0">▸</span>{t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                {cl.mechanismSharingAssessment && (
+                  <div className="border-t border-white/10 pt-3">
+                    <p className="text-[10px] font-black text-teal-400 uppercase tracking-widest mb-1">Mechanism-Sharing Assessment</p>
+                    <p className="text-xs text-slate-300 leading-relaxed">{cl.mechanismSharingAssessment}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Established / Interpretive / Speculative */}
           {(review.establishedResults || review.interpretiveClaims || review.speculativeClaims) && (

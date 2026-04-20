@@ -49,6 +49,8 @@ export interface AIReview {
   overallIntrinsicScore?: number;
   bestClassification?: string;
   finalJudgment?: string;
+  // Coverage ledger (new prompt)
+  coverageLedgerJson?: string;
   // Metadata
   createdAt: number;
   likesCount: number;

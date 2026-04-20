@@ -53,6 +53,7 @@ export const reviewsTable = pgTable("reviews", {
   overallIntrinsicScore: integer("overall_intrinsic_score"),
   bestClassification: varchar("best_classification"),
   finalJudgment: text("final_judgment"),
+  coverageLedgerJson: text("coverage_ledger_json"),
   // Metadata
   modelName: varchar("model_name").notNull(),
   systemPrompt: text("system_prompt").notNull().default(""),
