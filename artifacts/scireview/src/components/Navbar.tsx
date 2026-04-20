@@ -1,17 +1,18 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { BookOpen, LogIn, LogOut, PlusCircle, User } from 'lucide-react';
+import { BookOpen, LogIn, LogOut, PlusCircle, User, BarChart2, Trash2 } from 'lucide-react';
 
 interface NavbarProps {
   user: any;
+  isAdmin: boolean;
   onLogin: () => void;
   onLogout: () => void;
   onNewPaper: () => void;
-  adminEmail?: string;
+  onDeleteAll: () => void;
+  onPromptAnalysis: () => void;
 }
 
-export default function Navbar({ user, onLogin, onLogout, onNewPaper }: NavbarProps) {
-
+export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onDeleteAll, onPromptAnalysis }: NavbarProps) {
   return (
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -26,9 +27,33 @@ export default function Navbar({ user, onLogin, onLogout, onNewPaper }: NavbarPr
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {user ? (
               <>
+                {isAdmin && (
+                  <>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={onPromptAnalysis}
+                      title="View Prompt Analysis"
+                      className="flex items-center gap-2 bg-violet-50 border border-violet-200 text-violet-700 px-3 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-violet-100 transition-colors"
+                    >
+                      <BarChart2 className="w-4 h-4" />
+                      <span className="hidden sm:inline">Analysis</span>
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={onDeleteAll}
+                      title="Snapshot & Delete All Papers"
+                      className="flex items-center gap-2 bg-rose-50 border border-rose-200 text-rose-700 px-3 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-rose-100 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      <span className="hidden sm:inline">Delete All</span>
+                    </motion.button>
+                  </>
+                )}
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -38,7 +63,7 @@ export default function Navbar({ user, onLogin, onLogout, onNewPaper }: NavbarPr
                   <PlusCircle className="w-4 h-4" />
                   Submit Paper
                 </motion.button>
-                <div className="flex items-center gap-3 pl-4 border-l border-slate-200">
+                <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
                   <div className="flex flex-col items-end">
                     <span className="text-sm font-medium text-slate-900">{user.displayName}</span>
                     <button onClick={onLogout} className="text-xs text-slate-500 hover:text-indigo-600 flex items-center gap-1">
