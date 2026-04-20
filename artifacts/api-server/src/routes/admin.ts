@@ -122,43 +122,43 @@ router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
         modelName: sp.modelName ?? null,
       }).returning();
 
-      // Re-insert the review from stored JSON
+      // Re-insert the review — always, using stored JSON if available, scores otherwise
+      let rv: any = {};
       if (sp.reviewJson) {
-        let rv: any = {};
-        try { rv = JSON.parse(sp.reviewJson); } catch { /* skip */ }
-        await db.insert(reviewsTable).values({
-          paperId: paper.id,
-          summary: rv.summary ?? "",
-          correctness: rv.correctness ?? "",
-          novelty: rv.novelty ?? "",
-          overallEvaluation: rv.overallEvaluation ?? rv.finalJudgment ?? "",
-          score: sp.overallScore ?? 0,
-          relatedWork: rv.relatedWork ?? "",
-          centralClaim: rv.centralClaim ?? null,
-          establishedResults: rv.establishedResults ?? null,
-          interpretiveClaims: rv.interpretiveClaims ?? null,
-          speculativeClaims: rv.speculativeClaims ?? null,
-          economy: rv.economy ?? null,
-          explanatoryTargetBreadth: rv.explanatoryTargetBreadth ?? null,
-          theorySpaceBreadth: rv.theorySpaceBreadth ?? null,
-          scopeDepth: rv.scopeDepth ?? null,
-          unifyingPower: rv.unifyingPower ?? null,
-          strongestCaseForImportance: rv.strongestCaseForImportance ?? null,
-          strongestObjection: rv.strongestObjection ?? null,
-          decisiveCheck: rv.decisiveCheck ?? null,
-          internalTechnicalTraction: rv.internalTechnicalTraction ?? null,
-          noveltyConfidence: rv.noveltyConfidence != null ? String(rv.noveltyConfidence) : null,
-          intrinsicScientificMeritScore: sp.intrinsicMeritScore ?? null,
-          explanatoryTargetBreadthScore: sp.explanatoryTargetBreadthScore ?? null,
-          theorySpaceBreadthScore: sp.theorySpaceBreadthScore ?? null,
-          breadthOfImpactScore: sp.breadthOfImpactScore ?? null,
-          overallIntrinsicScore: sp.overallScore ?? null,
-          bestClassification: sp.bestClassification ?? null,
-          finalJudgment: rv.finalJudgment ?? null,
-          modelName: sp.modelName ?? "unknown",
-          systemPrompt: session?.promptText ?? "",
-        });
+        try { rv = JSON.parse(sp.reviewJson); } catch { /* use defaults */ }
       }
+      await db.insert(reviewsTable).values({
+        paperId: paper.id,
+        summary: rv.summary ?? "",
+        correctness: rv.correctness ?? "",
+        novelty: rv.novelty ?? "",
+        overallEvaluation: rv.overallEvaluation ?? rv.finalJudgment ?? "",
+        score: sp.overallScore ?? 0,
+        relatedWork: rv.relatedWork ?? "",
+        centralClaim: rv.centralClaim ?? null,
+        establishedResults: rv.establishedResults ?? null,
+        interpretiveClaims: rv.interpretiveClaims ?? null,
+        speculativeClaims: rv.speculativeClaims ?? null,
+        economy: rv.economy ?? null,
+        explanatoryTargetBreadth: rv.explanatoryTargetBreadth ?? null,
+        theorySpaceBreadth: rv.theorySpaceBreadth ?? null,
+        scopeDepth: rv.scopeDepth ?? null,
+        unifyingPower: rv.unifyingPower ?? null,
+        strongestCaseForImportance: rv.strongestCaseForImportance ?? null,
+        strongestObjection: rv.strongestObjection ?? null,
+        decisiveCheck: rv.decisiveCheck ?? null,
+        internalTechnicalTraction: rv.internalTechnicalTraction ?? null,
+        noveltyConfidence: rv.noveltyConfidence != null ? String(rv.noveltyConfidence) : null,
+        intrinsicScientificMeritScore: sp.intrinsicMeritScore ?? null,
+        explanatoryTargetBreadthScore: sp.explanatoryTargetBreadthScore ?? null,
+        theorySpaceBreadthScore: sp.theorySpaceBreadthScore ?? null,
+        breadthOfImpactScore: sp.breadthOfImpactScore ?? null,
+        overallIntrinsicScore: sp.overallScore ?? null,
+        bestClassification: sp.bestClassification ?? null,
+        finalJudgment: rv.finalJudgment ?? null,
+        modelName: sp.modelName ?? "unknown",
+        systemPrompt: session?.promptText ?? "",
+      });
       restored++;
     }
 
