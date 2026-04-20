@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, papersTable, reviewsTable, reviewSessionsTable, sessionPapersTable } from "@workspace/db";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -90,6 +90,82 @@ router.post("/admin/snapshot-and-delete", async (req, res) => {
     res.json({ sessionId: session.id, paperCount: papers.length });
   } catch (err: any) {
     logger.error({ err }, "snapshot-and-delete failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/snapshots/:sessionId/restore
+// Re-inserts all papers from a saved session back into the live papers table.
+router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { sessionId } = req.params;
+    const sessionPapers = await db.select().from(sessionPapersTable).where(eq(sessionPapersTable.sessionId, sessionId));
+    if (sessionPapers.length === 0) {
+      res.status(404).json({ error: "No papers found for this session." });
+      return;
+    }
+
+    const [session] = await db.select().from(reviewSessionsTable).where(eq(reviewSessionsTable.id, sessionId));
+
+    let restored = 0;
+    for (const sp of sessionPapers) {
+      // Re-insert the paper
+      const [paper] = await db.insert(papersTable).values({
+        title: sp.title,
+        content: `[RESTORED] ${sp.title}`,
+        authorId: req.user.id,
+        authorName: sp.paperAuthors || "Restored",
+        paperAuthors: sp.paperAuthors ?? null,
+        field: sp.field ?? "Unknown",
+        score: sp.overallScore ?? null,
+        modelName: sp.modelName ?? null,
+      }).returning();
+
+      // Re-insert the review from stored JSON
+      if (sp.reviewJson) {
+        let rv: any = {};
+        try { rv = JSON.parse(sp.reviewJson); } catch { /* skip */ }
+        await db.insert(reviewsTable).values({
+          paperId: paper.id,
+          summary: rv.summary ?? "",
+          correctness: rv.correctness ?? "",
+          novelty: rv.novelty ?? "",
+          overallEvaluation: rv.overallEvaluation ?? rv.finalJudgment ?? "",
+          score: sp.overallScore ?? 0,
+          relatedWork: rv.relatedWork ?? "",
+          centralClaim: rv.centralClaim ?? null,
+          establishedResults: rv.establishedResults ?? null,
+          interpretiveClaims: rv.interpretiveClaims ?? null,
+          speculativeClaims: rv.speculativeClaims ?? null,
+          economy: rv.economy ?? null,
+          explanatoryTargetBreadth: rv.explanatoryTargetBreadth ?? null,
+          theorySpaceBreadth: rv.theorySpaceBreadth ?? null,
+          scopeDepth: rv.scopeDepth ?? null,
+          unifyingPower: rv.unifyingPower ?? null,
+          strongestCaseForImportance: rv.strongestCaseForImportance ?? null,
+          strongestObjection: rv.strongestObjection ?? null,
+          decisiveCheck: rv.decisiveCheck ?? null,
+          internalTechnicalTraction: rv.internalTechnicalTraction ?? null,
+          noveltyConfidence: rv.noveltyConfidence != null ? String(rv.noveltyConfidence) : null,
+          intrinsicScientificMeritScore: sp.intrinsicMeritScore ?? null,
+          explanatoryTargetBreadthScore: sp.explanatoryTargetBreadthScore ?? null,
+          theorySpaceBreadthScore: sp.theorySpaceBreadthScore ?? null,
+          breadthOfImpactScore: sp.breadthOfImpactScore ?? null,
+          overallIntrinsicScore: sp.overallScore ?? null,
+          bestClassification: sp.bestClassification ?? null,
+          finalJudgment: rv.finalJudgment ?? null,
+          modelName: sp.modelName ?? "unknown",
+          systemPrompt: session?.promptText ?? "",
+        });
+      }
+      restored++;
+    }
+
+    logger.info({ sessionId, restored }, "Admin restore-batch complete");
+    res.json({ restored });
+  } catch (err: any) {
+    logger.error({ err }, "restore-batch failed");
     res.status(500).json({ error: err.message });
   }
 });

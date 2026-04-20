@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ChevronDown, ChevronUp, BarChart2, FileText, Clock, Cpu } from 'lucide-react';
+import { X, ChevronDown, ChevronUp, BarChart2, FileText, Clock, Cpu, RotateCcw, CheckCircle2, AlertCircle } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
@@ -228,6 +228,30 @@ function PaperRow({ paper }: { paper: SessionPaper }) {
 function SessionCard({ session }: { session: Session }) {
   const [open, setOpen] = useState(true);
   const [showPrompt, setShowPrompt] = useState(false);
+  const [restoreConfirm, setRestoreConfirm] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [restoreResult, setRestoreResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  const BASE = import.meta.env.BASE_URL?.replace(/\/$/, '') || '';
+
+  async function handleRestore() {
+    setRestoring(true);
+    setRestoreResult(null);
+    try {
+      const r = await fetch(`${BASE}/api/admin/snapshots/${session.id}/restore`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Restore failed');
+      setRestoreResult({ ok: true, msg: `${data.restored} paper${data.restored !== 1 ? 's' : ''} restored to the homepage.` });
+    } catch (e: any) {
+      setRestoreResult({ ok: false, msg: e.message });
+    } finally {
+      setRestoring(false);
+      setRestoreConfirm(false);
+    }
+  }
 
   const sortedPapers = [...session.papers].sort(
     (a, b) => (b.overallScore ?? 0) - (a.overallScore ?? 0)
@@ -242,11 +266,12 @@ function SessionCard({ session }: { session: Session }) {
 
   return (
     <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center justify-between p-5 bg-white hover:bg-slate-50 transition-colors text-left gap-4"
-      >
-        <div className="flex items-center gap-4 min-w-0">
+      <div className="flex items-center gap-2 p-5 bg-white border-b border-slate-100">
+        {/* Left: expand toggle */}
+        <button
+          onClick={() => setOpen(v => !v)}
+          className="flex-1 flex items-center gap-4 min-w-0 text-left hover:opacity-80 transition-opacity"
+        >
           <div className="bg-indigo-100 p-2.5 rounded-xl shrink-0">
             <BarChart2 className="w-5 h-5 text-indigo-600" />
           </div>
@@ -259,9 +284,43 @@ function SessionCard({ session }: { session: Session }) {
               {new Date(session.createdAt).toLocaleString()}
             </p>
           </div>
-        </div>
-        {open ? <ChevronUp className="w-5 h-5 text-slate-400 shrink-0" /> : <ChevronDown className="w-5 h-5 text-slate-400 shrink-0" />}
-      </button>
+          {open ? <ChevronUp className="w-5 h-5 text-slate-400 shrink-0" /> : <ChevronDown className="w-5 h-5 text-slate-400 shrink-0" />}
+        </button>
+
+        {/* Right: restore button */}
+        {!restoreConfirm && !restoreResult && (
+          <button
+            onClick={() => setRestoreConfirm(true)}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-black text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors shrink-0"
+          >
+            <RotateCcw className="w-3.5 h-3.5" /> Restore Batch
+          </button>
+        )}
+        {restoreConfirm && (
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-xs font-bold text-slate-600">Restore {session.paperCount} papers?</span>
+            <button
+              onClick={handleRestore}
+              disabled={restoring}
+              className="px-3 py-1.5 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+            >
+              {restoring ? 'Restoring…' : 'Yes, restore'}
+            </button>
+            <button
+              onClick={() => setRestoreConfirm(false)}
+              className="px-3 py-1.5 rounded-xl text-xs font-black text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        )}
+        {restoreResult && (
+          <div className={`flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl shrink-0 ${restoreResult.ok ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}`}>
+            {restoreResult.ok ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+            {restoreResult.msg}
+          </div>
+        )}
+      </div>
 
       <AnimatePresence>
         {open && (
