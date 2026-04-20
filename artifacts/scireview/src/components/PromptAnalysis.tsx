@@ -2,8 +2,35 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, ChevronDown, ChevronUp, BarChart2, FileText, Clock, Cpu } from 'lucide-react';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
 } from 'recharts';
+
+interface StoredReview {
+  centralClaim?: string;
+  establishedResults?: string;
+  interpretiveClaims?: string;
+  speculativeClaims?: string;
+  economy?: string;
+  scopeDepth?: string;
+  unifyingPower?: string;
+  strongestCaseForImportance?: string;
+  strongestObjection?: string;
+  decisiveCheck?: string;
+  internalTechnicalTraction?: string;
+  noveltyConfidence?: number | string;
+  explanatoryTargetBreadth?: string;
+  theorySpaceBreadth?: string;
+  finalJudgment?: string;
+  bestClassification?: string;
+  overallIntrinsicScore?: number;
+  intrinsicScientificMeritScore?: number;
+  explanatoryTargetBreadthScore?: number;
+  theorySpaceBreadthScore?: number;
+  breadthOfImpactScore?: number;
+  modelName?: string;
+  summary?: string;
+  overallEvaluation?: string;
+}
 
 interface SessionPaper {
   id: string;
@@ -17,6 +44,7 @@ interface SessionPaper {
   explanatoryTargetBreadthScore?: number;
   theorySpaceBreadthScore?: number;
   breadthOfImpactScore?: number;
+  reviewJson?: string | null;
 }
 
 interface Session {
@@ -35,14 +63,166 @@ interface Props {
 const SCORE_COLOR = (score: number) =>
   score >= 80 ? '#10b981' : score >= 60 ? '#f59e0b' : '#ef4444';
 
-const SUBSCORE_COLORS = ['#6366f1', '#0ea5e9', '#8b5cf6', '#a855f7'];
+function cleanTitle(title: string) {
+  return title.replace(/^(\[PDF\]|\[PDF Upload\])\s*/i, '');
+}
 
-function truncate(text: string, max = 300) {
+function truncate(text: string, max = 30) {
   return text.length > max ? text.slice(0, max) + '…' : text;
 }
 
-function cleanTitle(title: string) {
-  return title.replace(/^(\[PDF\]|\[PDF Upload\])\s*/i, '');
+const REVIEW_SECTIONS: { key: keyof StoredReview; label: string }[] = [
+  { key: 'centralClaim', label: 'Central Claim' },
+  { key: 'establishedResults', label: 'Established Results' },
+  { key: 'interpretiveClaims', label: 'Interpretive Claims' },
+  { key: 'speculativeClaims', label: 'Speculative Claims' },
+  { key: 'economy', label: 'Economy' },
+  { key: 'scopeDepth', label: 'Scope & Depth' },
+  { key: 'unifyingPower', label: 'Unifying Power' },
+  { key: 'explanatoryTargetBreadth', label: 'Explanatory Target Breadth' },
+  { key: 'theorySpaceBreadth', label: 'Theory Space Breadth' },
+  { key: 'strongestCaseForImportance', label: 'Strongest Case for Importance' },
+  { key: 'strongestObjection', label: 'Strongest Objection' },
+  { key: 'decisiveCheck', label: 'Decisive Check' },
+  { key: 'internalTechnicalTraction', label: 'Internal Technical Traction' },
+  { key: 'finalJudgment', label: 'Final Judgment' },
+];
+
+function ReviewPanel({ reviewJson }: { reviewJson: string }) {
+  let rv: StoredReview = {};
+  try { rv = JSON.parse(reviewJson); } catch { return <p className="text-xs text-slate-400 italic">Could not parse review.</p>; }
+
+  const scores = [
+    { label: 'Overall', value: rv.overallIntrinsicScore, max: 100 },
+    { label: 'Merit', value: rv.intrinsicScientificMeritScore, max: 10 },
+    { label: 'Target', value: rv.explanatoryTargetBreadthScore, max: 10 },
+    { label: 'Theory', value: rv.theorySpaceBreadthScore, max: 10 },
+    { label: 'Impact', value: rv.breadthOfImpactScore, max: 10 },
+  ].filter(s => s.value != null);
+
+  return (
+    <div className="space-y-4">
+      {/* Model + classification */}
+      <div className="flex flex-wrap items-center gap-2">
+        {rv.modelName && (
+          <span className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-lg">
+            <Cpu className="w-3 h-3" /> {rv.modelName}
+          </span>
+        )}
+        {rv.bestClassification && (
+          <span className="text-[11px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-1 rounded-lg uppercase tracking-wide">
+            {rv.bestClassification}
+          </span>
+        )}
+      </div>
+
+      {/* Score pills */}
+      {scores.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {scores.map(s => (
+            <div key={s.label} className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-3 py-1.5 shadow-sm">
+              <span className="text-[11px] font-bold text-slate-500">{s.label}</span>
+              <span className="text-sm font-black" style={{ color: SCORE_COLOR(s.max === 100 ? (s.value ?? 0) : (s.value ?? 0) * 10) }}>
+                {s.value}/{s.max}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Novelty confidence */}
+      {rv.noveltyConfidence != null && (
+        <p className="text-xs text-slate-500">
+          <span className="font-bold">Novelty confidence:</span> {rv.noveltyConfidence}
+        </p>
+      )}
+
+      {/* Text sections */}
+      <div className="space-y-3">
+        {REVIEW_SECTIONS.map(({ key, label }) => {
+          const val = rv[key];
+          if (!val || typeof val !== 'string') return null;
+          return (
+            <div key={key} className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">{label}</p>
+              <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{val}</p>
+            </div>
+          );
+        })}
+
+        {/* Legacy fields fallback */}
+        {rv.summary && !rv.centralClaim && (
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Summary</p>
+            <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{rv.summary}</p>
+          </div>
+        )}
+        {rv.overallEvaluation && !rv.finalJudgment && (
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-3">
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Overall Evaluation</p>
+            <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-wrap">{rv.overallEvaluation}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PaperRow({ paper }: { paper: SessionPaper }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasReview = !!paper.reviewJson;
+
+  return (
+    <>
+      <tr
+        className={`border-b border-slate-100 transition-colors ${hasReview ? 'cursor-pointer hover:bg-indigo-50/50' : ''}`}
+        onClick={() => hasReview && setExpanded(v => !v)}
+      >
+        <td className="py-2 pr-4 max-w-[200px]">
+          <div className="flex items-center gap-1.5">
+            {hasReview && (
+              expanded
+                ? <ChevronUp className="w-3 h-3 text-indigo-400 shrink-0" />
+                : <ChevronDown className="w-3 h-3 text-indigo-400 shrink-0" />
+            )}
+            <div className="min-w-0">
+              <p className="font-bold text-slate-800 truncate">{cleanTitle(paper.title)}</p>
+              {paper.bestClassification && (
+                <p className="text-[10px] text-slate-400">{paper.bestClassification}</p>
+              )}
+            </div>
+          </div>
+        </td>
+        <td className="py-2 pr-3 text-slate-500 whitespace-nowrap text-xs">{paper.field || '—'}</td>
+        <td className="py-2 pr-3 text-slate-500 whitespace-nowrap text-xs">{paper.modelName || '—'}</td>
+        <td className="py-2 pr-3 text-right font-black text-xs" style={{ color: SCORE_COLOR(paper.overallScore ?? 0) }}>
+          {paper.overallScore ?? '—'}
+        </td>
+        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.intrinsicMeritScore ?? '—'}</td>
+        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.explanatoryTargetBreadthScore ?? '—'}</td>
+        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.theorySpaceBreadthScore ?? '—'}</td>
+        <td className="py-2 text-right text-slate-600 text-xs">{paper.breadthOfImpactScore ?? '—'}</td>
+      </tr>
+      <AnimatePresence>
+        {expanded && paper.reviewJson && (
+          <tr>
+            <td colSpan={8} className="p-0">
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+              >
+                <div className="px-4 py-4 bg-indigo-50/30 border-b border-slate-100">
+                  <ReviewPanel reviewJson={paper.reviewJson} />
+                </div>
+              </motion.div>
+            </td>
+          </tr>
+        )}
+      </AnimatePresence>
+    </>
+  );
 }
 
 function SessionCard({ session }: { session: Session }) {
@@ -54,19 +234,11 @@ function SessionCard({ session }: { session: Session }) {
   );
 
   const chartData = sortedPapers.map(p => ({
-    name: truncate(cleanTitle(p.title), 30),
+    name: truncate(cleanTitle(p.title)),
     fullTitle: cleanTitle(p.title),
     modelName: p.modelName || 'unknown model',
     Overall: p.overallScore ?? 0,
-    'Intrinsic Merit': p.intrinsicMeritScore ?? 0,
-    'Target Breadth': p.explanatoryTargetBreadthScore ?? 0,
-    'Theory Breadth': p.theorySpaceBreadthScore ?? 0,
-    'Breadth of Impact': p.breadthOfImpactScore ?? 0,
   }));
-
-  const hasSubScores = chartData.some(
-    d => d['Intrinsic Merit'] || d['Target Breadth'] || d['Theory Breadth'] || d['Breadth of Impact']
-  );
 
   return (
     <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
@@ -127,44 +299,7 @@ function SessionCard({ session }: { session: Session }) {
 
               {chartData.length > 0 && (
                 <>
-                  {/* 1. Sub-scores grouped bar chart */}
-                  {hasSubScores && (
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Sub-Scores (/10) — sorted by overall</p>
-                      <ResponsiveContainer width="100%" height={Math.max(140, chartData.length * 60)}>
-                        <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 40, top: 0, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                          <XAxis type="number" domain={[0, 10]} tick={{ fontSize: 11 }} />
-                          <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
-                          <Tooltip
-                            content={({ active, payload }) => {
-                              if (!active || !payload?.length) return null;
-                              const d = payload[0].payload;
-                              return (
-                                <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-lg max-w-xs">
-                                  <p className="text-xs font-bold text-slate-800 mb-1 leading-snug">{d.fullTitle}</p>
-                                  <p className="text-[11px] text-slate-500 mb-2 flex items-center gap-1">
-                                    <Cpu className="w-3 h-3" /> {d.modelName}
-                                  </p>
-                                  {payload.map((entry: any) => (
-                                    <p key={entry.dataKey} className="text-xs" style={{ color: entry.fill }}>
-                                      {entry.dataKey}: <span className="font-black">{entry.value}/10</span>
-                                    </p>
-                                  ))}
-                                </div>
-                              );
-                            }}
-                          />
-                          <Legend wrapperStyle={{ fontSize: 11 }} />
-                          {['Intrinsic Merit', 'Target Breadth', 'Theory Breadth', 'Breadth of Impact'].map((key, i) => (
-                            <Bar key={key} dataKey={key} fill={SUBSCORE_COLORS[i]} radius={[0, 4, 4, 0]} barSize={8} />
-                          ))}
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-
-                  {/* 2. Overall score bar chart (middle) */}
+                  {/* Overall score chart */}
                   <div>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Overall Intrinsic Score (/100) — highest first</p>
                     <ResponsiveContainer width="100%" height={Math.max(120, chartData.length * 44)}>
@@ -196,43 +331,30 @@ function SessionCard({ session }: { session: Session }) {
                     </ResponsiveContainer>
                   </div>
 
-                  {/* 3. Table — sorted by overall score */}
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="border-b border-slate-200">
-                          <th className="text-left font-black text-slate-500 pb-2 pr-4">Title</th>
-                          <th className="text-left font-black text-slate-500 pb-2 pr-3">Field</th>
-                          <th className="text-left font-black text-slate-500 pb-2 pr-3">Model</th>
-                          <th className="text-right font-black text-slate-500 pb-2 pr-3">Overall</th>
-                          <th className="text-right font-black text-slate-500 pb-2 pr-3">Merit</th>
-                          <th className="text-right font-black text-slate-500 pb-2 pr-3">Target</th>
-                          <th className="text-right font-black text-slate-500 pb-2 pr-3">Theory</th>
-                          <th className="text-right font-black text-slate-500 pb-2">Impact</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedPapers.map(p => (
-                          <tr key={p.id} className="border-b border-slate-100 hover:bg-white transition-colors">
-                            <td className="py-2 pr-4 max-w-[200px]">
-                              <p className="font-bold text-slate-800 truncate">{cleanTitle(p.title)}</p>
-                              {p.bestClassification && (
-                                <p className="text-slate-400">{p.bestClassification}</p>
-                              )}
-                            </td>
-                            <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{p.field || '—'}</td>
-                            <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{p.modelName || '—'}</td>
-                            <td className="py-2 pr-3 text-right font-black" style={{ color: SCORE_COLOR(p.overallScore ?? 0) }}>
-                              {p.overallScore ?? '—'}
-                            </td>
-                            <td className="py-2 pr-3 text-right text-slate-600">{p.intrinsicMeritScore ?? '—'}</td>
-                            <td className="py-2 pr-3 text-right text-slate-600">{p.explanatoryTargetBreadthScore ?? '—'}</td>
-                            <td className="py-2 pr-3 text-right text-slate-600">{p.theorySpaceBreadthScore ?? '—'}</td>
-                            <td className="py-2 text-right text-slate-600">{p.breadthOfImpactScore ?? '—'}</td>
+                  {/* Table with expandable review rows */}
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">
+                      Papers — click a row to read the full review
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="border-b border-slate-200">
+                            <th className="text-left font-black text-slate-500 pb-2 pr-4">Title</th>
+                            <th className="text-left font-black text-slate-500 pb-2 pr-3">Field</th>
+                            <th className="text-left font-black text-slate-500 pb-2 pr-3">Model</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Overall</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Merit</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Target</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Theory</th>
+                            <th className="text-right font-black text-slate-500 pb-2">Impact</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {sortedPapers.map(p => <PaperRow key={p.id} paper={p} />)}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </>
               )}

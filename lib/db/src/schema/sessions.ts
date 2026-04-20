@@ -22,6 +22,7 @@ export const sessionPapersTable = pgTable("session_papers", {
   explanatoryTargetBreadthScore: integer("explanatory_target_breadth_score"),
   theorySpaceBreadthScore: integer("theory_space_breadth_score"),
   breadthOfImpactScore: integer("breadth_of_impact_score"),
+  reviewJson: text("review_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -39,6 +39,32 @@ router.post("/admin/snapshot-and-delete", async (req, res) => {
 
     const sessionPaperRows = papers.map(p => {
       const rv = reviewByPaper.get(p.id);
+      const reviewJson = rv ? JSON.stringify({
+        centralClaim: rv.centralClaim,
+        establishedResults: rv.establishedResults,
+        interpretiveClaims: rv.interpretiveClaims,
+        speculativeClaims: rv.speculativeClaims,
+        economy: rv.economy,
+        scopeDepth: rv.scopeDepth,
+        unifyingPower: rv.unifyingPower,
+        strongestCaseForImportance: rv.strongestCaseForImportance,
+        strongestObjection: rv.strongestObjection,
+        decisiveCheck: rv.decisiveCheck,
+        internalTechnicalTraction: rv.internalTechnicalTraction,
+        noveltyConfidence: rv.noveltyConfidence,
+        explanatoryTargetBreadth: rv.explanatoryTargetBreadth,
+        theorySpaceBreadth: rv.theorySpaceBreadth,
+        finalJudgment: rv.finalJudgment,
+        bestClassification: rv.bestClassification,
+        overallIntrinsicScore: rv.overallIntrinsicScore,
+        intrinsicScientificMeritScore: rv.intrinsicScientificMeritScore,
+        explanatoryTargetBreadthScore: rv.explanatoryTargetBreadthScore,
+        theorySpaceBreadthScore: rv.theorySpaceBreadthScore,
+        breadthOfImpactScore: rv.breadthOfImpactScore,
+        modelName: rv.modelName,
+        summary: rv.summary,
+        overallEvaluation: rv.overallEvaluation,
+      }) : null;
       return {
         sessionId: session.id,
         title: p.title,
@@ -51,6 +77,7 @@ router.post("/admin/snapshot-and-delete", async (req, res) => {
         explanatoryTargetBreadthScore: rv?.explanatoryTargetBreadthScore != null ? Number(rv.explanatoryTargetBreadthScore) : null,
         theorySpaceBreadthScore: rv?.theorySpaceBreadthScore != null ? Number(rv.theorySpaceBreadthScore) : null,
         breadthOfImpactScore: rv?.breadthOfImpactScore != null ? Number(rv.breadthOfImpactScore) : null,
+        reviewJson,
       };
     });
 
