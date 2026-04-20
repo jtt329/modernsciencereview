@@ -12,6 +12,7 @@ import ReviewCard from './components/ReviewCard';
 import CommentSection from './components/CommentSection';
 import SubmissionForm from './components/SubmissionForm';
 import PromptAnalysis from './components/PromptAnalysis';
+import NewPromptModal from './components/NewPromptModal';
 import { ReviewSource } from './services/reviewService';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || '';
@@ -90,6 +91,7 @@ export default function App() {
   const [selectedPapers, setSelectedPapers] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showPromptAnalysis, setShowPromptAnalysis] = useState(false);
+  const [showNewPrompt, setShowNewPrompt] = useState(false);
   const [papersLoading, setPapersLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -327,6 +329,7 @@ export default function App() {
         onNewPaper={() => { if (!user) { login(); return; } setIsSubmitting(true); }}
         onDeleteAll={handleDeleteAll}
         onPromptAnalysis={() => setShowPromptAnalysis(true)}
+        onNewPrompt={() => setShowNewPrompt(true)}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -611,6 +614,12 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {showNewPrompt && (
+          <NewPromptModal
+            onClose={() => setShowNewPrompt(false)}
+            onComplete={() => { fetchPapers(); setShowNewPrompt(false); }}
+          />
+        )}
         {showPromptAnalysis && (
           <PromptAnalysis onClose={() => setShowPromptAnalysis(false)} />
         )}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { BookOpen, LogIn, LogOut, PlusCircle, User, BarChart2, Trash2 } from 'lucide-react';
+import { BookOpen, LogIn, LogOut, PlusCircle, User, BarChart2, Trash2, Wand2 } from 'lucide-react';
 
 interface NavbarProps {
   user: any;
@@ -10,9 +10,10 @@ interface NavbarProps {
   onNewPaper: () => void;
   onDeleteAll: () => void;
   onPromptAnalysis: () => void;
+  onNewPrompt: () => void;
 }
 
-export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onDeleteAll, onPromptAnalysis }: NavbarProps) {
+export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onDeleteAll, onPromptAnalysis, onNewPrompt }: NavbarProps) {
   return (
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -35,9 +36,19 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
                     <motion.button
                       whileHover={{ scale: 1.02 }}
                       whileTap={{ scale: 0.98 }}
+                      onClick={onNewPrompt}
+                      title="Re-Review All Papers with a New Prompt"
+                      className="flex items-center gap-2 bg-violet-50 border border-violet-200 text-violet-700 px-3 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-violet-100 transition-colors"
+                    >
+                      <Wand2 className="w-4 h-4" />
+                      <span className="hidden sm:inline">New Prompt</span>
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
                       onClick={onPromptAnalysis}
                       title="View Prompt Analysis"
-                      className="flex items-center gap-2 bg-violet-50 border border-violet-200 text-violet-700 px-3 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-violet-100 transition-colors"
+                      className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 text-indigo-700 px-3 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-indigo-100 transition-colors"
                     >
                       <BarChart2 className="w-4 h-4" />
                       <span className="hidden sm:inline">Analysis</span>

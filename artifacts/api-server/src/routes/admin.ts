@@ -2,15 +2,68 @@ import { Router } from "express";
 import { db, papersTable, reviewsTable, reviewSessionsTable, sessionPapersTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
+import OpenAI from "openai";
+import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
+import { randomUUID } from "crypto";
 
 const router = Router();
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
+const GPT_MODEL = "gpt-5.4-pro";
+const GEMINI_MODEL = "gemini-3.1-pro-preview";
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 function requireAdmin(req: any, res: any): boolean {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return false; }
   if (!ADMIN_EMAIL || req.user.email !== ADMIN_EMAIL) { res.status(403).json({ error: "Forbidden" }); return false; }
   return true;
+}
+
+// In-memory job tracking for re-review runs
+interface ReReviewJob {
+  total: number;
+  done: number;
+  skipped: number;
+  status: "running" | "done" | "error";
+  error?: string;
+}
+const reReviewJobs = new Map<string, ReReviewJob>();
+
+function extractJson(raw: string): unknown {
+  let s = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  try { return JSON.parse(s); } catch { /* fall through */ }
+  const lastBrace = s.lastIndexOf("}");
+  if (lastBrace !== -1) {
+    try { return JSON.parse(s.slice(0, lastBrace + 1)); } catch { /* fall through */ }
+  }
+  throw new Error("Could not parse model response as JSON");
+}
+
+async function runReviewWithPrompt(content: string, prompt: string, model: "gpt" | "gemini"): Promise<any> {
+  if (model === "gemini") {
+    const response = await geminiAI.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: [{ role: "user", parts: [{ text: content }] }],
+      config: {
+        systemInstruction: prompt,
+        responseMimeType: "application/json",
+        maxOutputTokens: 32768,
+      },
+    });
+    if (!response.text) throw new Error("No response from Gemini");
+    return extractJson(response.text);
+  } else {
+    const response = await openai.responses.create({
+      model: GPT_MODEL,
+      instructions: prompt,
+      input: content,
+      max_output_tokens: 8192,
+    });
+    if (!response.output_text) throw new Error("No response from GPT");
+    const cleaned = response.output_text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    return JSON.parse(cleaned);
+  }
 }
 
 // POST /api/admin/snapshot-and-delete
@@ -94,6 +147,207 @@ router.post("/admin/snapshot-and-delete", async (req, res) => {
   }
 });
 
+// POST /api/admin/re-review
+// Snapshots current reviews → analysis, deletes reviews, then re-runs all with a new prompt.
+// Returns a jobId that can be polled for progress.
+router.post("/admin/re-review", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { promptText, model } = req.body;
+    if (!promptText?.trim()) { res.status(400).json({ error: "promptText is required" }); return; }
+    const useModel: "gpt" | "gemini" = model === "gemini" ? "gemini" : "gpt";
+    const modelName = useModel === "gemini" ? GEMINI_MODEL : GPT_MODEL;
+
+    const papers = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt));
+    if (papers.length === 0) { res.status(400).json({ error: "No papers on the homepage to re-review." }); return; }
+
+    const reviews = await db.select().from(reviewsTable);
+    const reviewByPaper = new Map(reviews.map(r => [r.paperId, r]));
+
+    // Snapshot current state into analysis
+    const oldModelNames = [...new Set(papers.map(p => p.modelName).filter(Boolean))].join(", ");
+    const promptTexts = [...new Set(reviews.map(r => r.systemPrompt).filter(Boolean))];
+    const oldPrompt = promptTexts[0] ?? "";
+
+    const [session] = await db.insert(reviewSessionsTable).values({
+      promptText: oldPrompt,
+      modelNames: oldModelNames,
+      paperCount: papers.length,
+    }).returning();
+
+    const sessionPaperRows = papers.map(p => {
+      const rv = reviewByPaper.get(p.id);
+      const reviewJson = rv ? JSON.stringify({
+        centralClaim: rv.centralClaim,
+        establishedResults: rv.establishedResults,
+        interpretiveClaims: rv.interpretiveClaims,
+        speculativeClaims: rv.speculativeClaims,
+        economy: rv.economy,
+        scopeDepth: rv.scopeDepth,
+        unifyingPower: rv.unifyingPower,
+        strongestCaseForImportance: rv.strongestCaseForImportance,
+        strongestObjection: rv.strongestObjection,
+        decisiveCheck: rv.decisiveCheck,
+        internalTechnicalTraction: rv.internalTechnicalTraction,
+        noveltyConfidence: rv.noveltyConfidence,
+        explanatoryTargetBreadth: rv.explanatoryTargetBreadth,
+        theorySpaceBreadth: rv.theorySpaceBreadth,
+        finalJudgment: rv.finalJudgment,
+        bestClassification: rv.bestClassification,
+        overallIntrinsicScore: rv.overallIntrinsicScore,
+        intrinsicScientificMeritScore: rv.intrinsicScientificMeritScore,
+        explanatoryTargetBreadthScore: rv.explanatoryTargetBreadthScore,
+        theorySpaceBreadthScore: rv.theorySpaceBreadthScore,
+        breadthOfImpactScore: rv.breadthOfImpactScore,
+        modelName: rv.modelName,
+        summary: rv.summary,
+        overallEvaluation: rv.overallEvaluation,
+      }) : null;
+      return {
+        sessionId: session.id,
+        title: p.title,
+        paperAuthors: p.paperAuthors ?? null,
+        field: p.field ?? null,
+        modelName: p.modelName ?? null,
+        bestClassification: rv?.bestClassification ?? null,
+        overallScore: rv?.overallIntrinsicScore != null ? Number(rv.overallIntrinsicScore) : (p.score ?? null),
+        intrinsicMeritScore: rv?.intrinsicScientificMeritScore != null ? Number(rv.intrinsicScientificMeritScore) : null,
+        explanatoryTargetBreadthScore: rv?.explanatoryTargetBreadthScore != null ? Number(rv.explanatoryTargetBreadthScore) : null,
+        theorySpaceBreadthScore: rv?.theorySpaceBreadthScore != null ? Number(rv.theorySpaceBreadthScore) : null,
+        breadthOfImpactScore: rv?.breadthOfImpactScore != null ? Number(rv.breadthOfImpactScore) : null,
+        reviewJson,
+      };
+    });
+    await db.insert(sessionPapersTable).values(sessionPaperRows);
+
+    // Delete all existing reviews (papers stay)
+    await db.delete(reviewsTable);
+
+    // Create job
+    const jobId = randomUUID();
+    const job: ReReviewJob = { total: papers.length, done: 0, skipped: 0, status: "running" };
+    reReviewJobs.set(jobId, job);
+
+    // Process in background
+    (async () => {
+      for (const paper of papers) {
+        try {
+          // Get content: prefer stored text, fallback to fetching PDF by URL
+          let content = paper.content ?? "";
+          const isPlaceholder = content.startsWith("[PDF]") || content.startsWith("[RESTORED]");
+
+          if (isPlaceholder) {
+            if (paper.pdfUrl) {
+              try {
+                const fetchResp = await fetch(paper.pdfUrl);
+                if (!fetchResp.ok) throw new Error("fetch failed");
+                const buf = Buffer.from(await fetchResp.arrayBuffer());
+                const pdfParse = (await import("pdf-parse")).default;
+                const parsed = await pdfParse(buf);
+                content = parsed.text ?? "";
+                content = content.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
+                if (content.trim().length < 50) throw new Error("too short");
+              } catch {
+                job.skipped++;
+                job.done++;
+                continue;
+              }
+            } else {
+              job.skipped++;
+              job.done++;
+              continue;
+            }
+          }
+
+          const r = await runReviewWithPrompt(content, promptText.trim(), useModel);
+
+          const coverageLedgerJson = (r.coverageLedger || r.directTargets || r.importedInputs || r.theorySpaceVariants || r.mechanismSharingAssessment)
+            ? JSON.stringify({
+                coverageLedger: r.coverageLedger ?? null,
+                directTargets: r.directTargets ?? [],
+                importedInputs: r.importedInputs ?? [],
+                theorySpaceVariants: r.theorySpaceVariants ?? [],
+                mechanismSharingAssessment: r.mechanismSharingAssessment ?? null,
+              })
+            : null;
+
+          const noveltyConf = r.noveltyConfidence != null ? String(r.noveltyConfidence) : null;
+
+          await db.insert(reviewsTable).values({
+            paperId: paper.id,
+            summary: r.summary ?? "",
+            correctness: r.correctness ?? "",
+            novelty: r.novelty ?? "",
+            overallEvaluation: r.finalJudgment ?? "",
+            score: Math.round(r.overallIntrinsicScore ?? 0),
+            relatedWork: r.relatedWork ?? "",
+            centralClaim: r.centralClaim ?? null,
+            establishedResults: r.establishedResults ?? null,
+            interpretiveClaims: r.interpretiveClaims ?? null,
+            speculativeClaims: r.speculativeClaims ?? null,
+            economy: r.economy ?? null,
+            explanatoryTargetBreadth: r.explanatoryTargetBreadth ?? null,
+            theorySpaceBreadth: r.theorySpaceBreadth ?? null,
+            scopeDepth: r.scopeDepth ?? null,
+            unifyingPower: r.unifyingPower ?? null,
+            strongestCaseForImportance: r.strongestCaseForImportance ?? null,
+            strongestObjection: r.strongestObjection ?? null,
+            decisiveCheck: r.decisiveCheck ?? null,
+            internalTechnicalTraction: r.internalTechnicalTraction ?? null,
+            noveltyConfidence: noveltyConf,
+            intrinsicScientificMeritScore: r.intrinsicScientificMeritScore != null ? Math.round(r.intrinsicScientificMeritScore) : null,
+            explanatoryTargetBreadthScore: r.explanatoryTargetBreadthScore != null ? Math.round(r.explanatoryTargetBreadthScore) : null,
+            theorySpaceBreadthScore: r.theorySpaceBreadthScore != null ? Math.round(r.theorySpaceBreadthScore) : null,
+            breadthOfImpactScore: r.breadthOfImpactScore != null ? Math.round(r.breadthOfImpactScore) : null,
+            overallIntrinsicScore: r.overallIntrinsicScore != null ? Math.round(r.overallIntrinsicScore) : null,
+            bestClassification: r.bestClassification ?? null,
+            finalJudgment: r.finalJudgment ?? null,
+            coverageLedgerJson,
+            modelName: modelName,
+            systemPrompt: promptText.trim(),
+          });
+
+          // Update paper score + model
+          await db
+            .update(papersTable)
+            .set({
+              score: r.overallIntrinsicScore != null ? Math.round(r.overallIntrinsicScore) : paper.score,
+              modelName: modelName,
+              field: r.field ?? paper.field,
+              subfields: r.subfields ?? paper.subfields,
+            })
+            .where(eq(papersTable.id, paper.id));
+
+        } catch (err: any) {
+          logger.error({ err, paperId: paper.id }, "Re-review failed for paper");
+          job.skipped++;
+        }
+        job.done++;
+      }
+      job.status = "done";
+      logger.info({ jobId, done: job.done, skipped: job.skipped }, "Re-review job complete");
+      // Clean up job after 10 minutes
+      setTimeout(() => reReviewJobs.delete(jobId), 10 * 60 * 1000);
+    })().catch(err => {
+      job.status = "error";
+      job.error = err.message;
+    });
+
+    res.json({ jobId, total: papers.length });
+  } catch (err: any) {
+    logger.error({ err }, "re-review start failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/re-review/:jobId — poll re-review job progress
+router.get("/admin/re-review/:jobId", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const job = reReviewJobs.get(req.params.jobId);
+  if (!job) { res.status(404).json({ error: "Job not found or expired" }); return; }
+  res.json(job);
+});
+
 // POST /api/admin/snapshots/:sessionId/restore
 // Re-inserts all papers from a saved session back into the live papers table.
 router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
@@ -110,7 +364,6 @@ router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
 
     let restored = 0;
     for (const sp of sessionPapers) {
-      // Re-insert the paper
       const [paper] = await db.insert(papersTable).values({
         title: sp.title,
         content: `[RESTORED] ${sp.title}`,
@@ -122,7 +375,6 @@ router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
         modelName: sp.modelName ?? null,
       }).returning();
 
-      // Re-insert the review — always, using stored JSON if available, scores otherwise
       let rv: any = {};
       if (sp.reviewJson) {
         try { rv = JSON.parse(sp.reviewJson); } catch { /* use defaults */ }
