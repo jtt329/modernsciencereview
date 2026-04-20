@@ -49,3 +49,9 @@ externalPort = 3003
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+VITE_ADMIN_EMAIL = "jttyler101@gmail.com"
+ADMIN_EMAIL = "jttyler101@gmail.com"
