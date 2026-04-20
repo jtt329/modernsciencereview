@@ -41,19 +41,32 @@ function truncate(text: string, max = 300) {
   return text.length > max ? text.slice(0, max) + '…' : text;
 }
 
+function cleanTitle(title: string) {
+  return title.replace(/^(\[PDF\]|\[PDF Upload\])\s*/i, '');
+}
+
 function SessionCard({ session }: { session: Session }) {
   const [open, setOpen] = useState(true);
   const [showPrompt, setShowPrompt] = useState(false);
 
-  const chartData = session.papers.map(p => ({
-    name: truncate(p.title.replace(/^(\[PDF\]|\[PDF Upload\])\s*/i, ''), 30),
-    fullTitle: p.title,
+  const sortedPapers = [...session.papers].sort(
+    (a, b) => (b.overallScore ?? 0) - (a.overallScore ?? 0)
+  );
+
+  const chartData = sortedPapers.map(p => ({
+    name: truncate(cleanTitle(p.title), 30),
+    fullTitle: cleanTitle(p.title),
+    modelName: p.modelName || 'unknown model',
     Overall: p.overallScore ?? 0,
     'Intrinsic Merit': p.intrinsicMeritScore ?? 0,
     'Target Breadth': p.explanatoryTargetBreadthScore ?? 0,
     'Theory Breadth': p.theorySpaceBreadthScore ?? 0,
     'Breadth of Impact': p.breadthOfImpactScore ?? 0,
   }));
+
+  const hasSubScores = chartData.some(
+    d => d['Intrinsic Merit'] || d['Target Breadth'] || d['Theory Breadth'] || d['Breadth of Impact']
+  );
 
   return (
     <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
@@ -114,9 +127,46 @@ function SessionCard({ session }: { session: Session }) {
 
               {chartData.length > 0 && (
                 <>
-                  {/* Overall score bar chart */}
+                  {/* 1. Sub-scores grouped bar chart */}
+                  {hasSubScores && (
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Sub-Scores (/10) — sorted by overall</p>
+                      <ResponsiveContainer width="100%" height={Math.max(140, chartData.length * 60)}>
+                        <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 40, top: 0, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                          <XAxis type="number" domain={[0, 10]} tick={{ fontSize: 11 }} />
+                          <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
+                          <Tooltip
+                            content={({ active, payload }) => {
+                              if (!active || !payload?.length) return null;
+                              const d = payload[0].payload;
+                              return (
+                                <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-lg max-w-xs">
+                                  <p className="text-xs font-bold text-slate-800 mb-1 leading-snug">{d.fullTitle}</p>
+                                  <p className="text-[11px] text-slate-500 mb-2 flex items-center gap-1">
+                                    <Cpu className="w-3 h-3" /> {d.modelName}
+                                  </p>
+                                  {payload.map((entry: any) => (
+                                    <p key={entry.dataKey} className="text-xs" style={{ color: entry.fill }}>
+                                      {entry.dataKey}: <span className="font-black">{entry.value}/10</span>
+                                    </p>
+                                  ))}
+                                </div>
+                              );
+                            }}
+                          />
+                          <Legend wrapperStyle={{ fontSize: 11 }} />
+                          {['Intrinsic Merit', 'Target Breadth', 'Theory Breadth', 'Breadth of Impact'].map((key, i) => (
+                            <Bar key={key} dataKey={key} fill={SUBSCORE_COLORS[i]} radius={[0, 4, 4, 0]} barSize={8} />
+                          ))}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  )}
+
+                  {/* 2. Overall score bar chart (middle) */}
                   <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Overall Intrinsic Score (/100)</p>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Overall Intrinsic Score (/100) — highest first</p>
                     <ResponsiveContainer width="100%" height={Math.max(120, chartData.length * 44)}>
                       <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 40, top: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" horizontal={false} />
@@ -129,6 +179,9 @@ function SessionCard({ session }: { session: Session }) {
                             return (
                               <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-lg max-w-xs">
                                 <p className="text-xs font-bold text-slate-800 mb-1 leading-snug">{d.fullTitle}</p>
+                                <p className="text-[11px] text-slate-500 mb-2 flex items-center gap-1">
+                                  <Cpu className="w-3 h-3" /> {d.modelName}
+                                </p>
                                 <p className="text-sm font-black text-indigo-600">{d.Overall}/100 overall</p>
                               </div>
                             );
@@ -143,32 +196,14 @@ function SessionCard({ session }: { session: Session }) {
                     </ResponsiveContainer>
                   </div>
 
-                  {/* Sub-scores grouped bar chart */}
-                  {chartData.some(d => d['Intrinsic Merit'] || d['Target Breadth'] || d['Theory Breadth'] || d['Breadth of Impact']) && (
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Sub-Scores (/10)</p>
-                      <ResponsiveContainer width="100%" height={Math.max(140, chartData.length * 60)}>
-                        <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 40, top: 0, bottom: 0 }}>
-                          <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                          <XAxis type="number" domain={[0, 10]} tick={{ fontSize: 11 }} />
-                          <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
-                          <Tooltip formatter={(v: any) => `${v}/10`} />
-                          <Legend wrapperStyle={{ fontSize: 11 }} />
-                          {['Intrinsic Merit', 'Target Breadth', 'Theory Breadth', 'Breadth of Impact'].map((key, i) => (
-                            <Bar key={key} dataKey={key} fill={SUBSCORE_COLORS[i]} radius={[0, 4, 4, 0]} barSize={8} />
-                          ))}
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-
-                  {/* Table */}
+                  {/* 3. Table — sorted by overall score */}
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="border-b border-slate-200">
                           <th className="text-left font-black text-slate-500 pb-2 pr-4">Title</th>
                           <th className="text-left font-black text-slate-500 pb-2 pr-3">Field</th>
+                          <th className="text-left font-black text-slate-500 pb-2 pr-3">Model</th>
                           <th className="text-right font-black text-slate-500 pb-2 pr-3">Overall</th>
                           <th className="text-right font-black text-slate-500 pb-2 pr-3">Merit</th>
                           <th className="text-right font-black text-slate-500 pb-2 pr-3">Target</th>
@@ -177,15 +212,16 @@ function SessionCard({ session }: { session: Session }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {session.papers.map(p => (
+                        {sortedPapers.map(p => (
                           <tr key={p.id} className="border-b border-slate-100 hover:bg-white transition-colors">
                             <td className="py-2 pr-4 max-w-[200px]">
-                              <p className="font-bold text-slate-800 truncate">{p.title.replace(/^(\[PDF\]|\[PDF Upload\])\s*/i, '')}</p>
+                              <p className="font-bold text-slate-800 truncate">{cleanTitle(p.title)}</p>
                               {p.bestClassification && (
                                 <p className="text-slate-400">{p.bestClassification}</p>
                               )}
                             </td>
                             <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{p.field || '—'}</td>
+                            <td className="py-2 pr-3 text-slate-500 whitespace-nowrap">{p.modelName || '—'}</td>
                             <td className="py-2 pr-3 text-right font-black" style={{ color: SCORE_COLOR(p.overallScore ?? 0) }}>
                               {p.overallScore ?? '—'}
                             </td>
