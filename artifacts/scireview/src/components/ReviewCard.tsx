@@ -29,14 +29,6 @@ const Section = ({ icon, label, color, children }: { icon: React.ReactNode; labe
   </div>
 );
 
-const CLASSIFICATION_COLORS: Record<string, string> = {
-  "field-defining advance": "bg-emerald-500/20 text-emerald-300 border-emerald-500/40",
-  "major specialty advance": "bg-indigo-500/20 text-indigo-300 border-indigo-500/40",
-  "strong niche contribution": "bg-blue-500/20 text-blue-300 border-blue-500/40",
-  "useful clarification": "bg-amber-500/20 text-amber-300 border-amber-500/40",
-  "elegant repackaging": "bg-purple-500/20 text-purple-300 border-purple-500/40",
-  "not yet convincing": "bg-rose-500/20 text-rose-300 border-rose-500/40",
-};
 
 export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps) {
   const [showPrompt, setShowPrompt] = useState(false);
@@ -47,10 +39,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const scoreColor = displayScore >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' :
     displayScore >= 60 ? 'text-amber-600 bg-amber-50 border-amber-200' :
     'text-rose-600 bg-rose-50 border-rose-200';
-
-  const classificationStyle = review.bestClassification
-    ? (CLASSIFICATION_COLORS[review.bestClassification] ?? "bg-slate-500/20 text-slate-300 border-slate-500/40")
-    : "";
 
   return (
     <>
@@ -74,15 +62,8 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              {review.bestClassification && (
-                <span className={`px-3 py-1.5 rounded-xl text-xs font-bold border uppercase tracking-wide ${classificationStyle}`}>
-                  {review.bestClassification}
-                </span>
-              )}
-              <div className={`px-5 py-3 rounded-2xl font-black text-2xl border ${scoreColor}`}>
-                {displayScore}<span className="text-sm font-bold ml-1">/100</span>
-              </div>
+            <div className={`px-5 py-3 rounded-2xl font-black text-2xl border ${scoreColor}`}>
+              {displayScore}<span className="text-sm font-bold ml-1">/100</span>
             </div>
           </div>
 

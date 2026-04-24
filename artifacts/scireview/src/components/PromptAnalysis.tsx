@@ -102,19 +102,14 @@ function ReviewPanel({ reviewJson }: { reviewJson: string }) {
 
   return (
     <div className="space-y-4">
-      {/* Model + classification */}
-      <div className="flex flex-wrap items-center gap-2">
-        {rv.modelName && (
+      {/* Model */}
+      {rv.modelName && (
+        <div className="flex flex-wrap items-center gap-2">
           <span className="flex items-center gap-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-lg">
             <Cpu className="w-3 h-3" /> {rv.modelName}
           </span>
-        )}
-        {rv.bestClassification && (
-          <span className="text-[11px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-1 rounded-lg uppercase tracking-wide">
-            {rv.bestClassification}
-          </span>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Score pills */}
       {scores.length > 0 && (
@@ -187,9 +182,6 @@ function PaperRow({ paper }: { paper: SessionPaper }) {
             )}
             <div className="min-w-0">
               <p className="font-bold text-slate-800 truncate">{cleanTitle(paper.title)}</p>
-              {paper.bestClassification && (
-                <p className="text-[10px] text-slate-400">{paper.bestClassification}</p>
-              )}
             </div>
           </div>
         </td>
