@@ -221,7 +221,7 @@ Scoring:
 - explanatoryTargetBreadthScore: 0–10, judging how many distinct meaningful targets are accounted for by one mechanism or idea, weighted by centrality and support
 - theorySpaceBreadthScore: 0–10, judging extension across theories, dimensions, parameter families, axiomatic settings, architectures, or formal settings
 - breadthOfImpactScore: 0–10, integrated breadth score conditional on the main claims being correct; weigh explanatory-target breadth and theory-space breadth separately before combining them
-- overallIntrinsicScore: 1–100, integrated judgment based entirely on the manuscript's idea-content and support
+- overallIntrinsicScore: 1–100, a field-relative percentile. Rank this paper against all published papers in its field: 99 means top 1% of papers ever published in this field; 50 means median; 1 means bottom 1%. Base this solely on the manuscript's idea-content and support, never on prestige, venue, or publication status.
 
 When assigning explanatoryTargetBreadthScore:
 - count only direct targets from the coverage ledger;
@@ -240,7 +240,7 @@ When assigning breadthOfImpactScore:
 - do not let explanatory-target breadth dominate when the targets are weakly supported, peripheral, or only superficially connected;
 - give the highest breadth scores to work that explains many central targets with one simple and well-supported mechanism, or that reveals deep necessity across both target-space and theory-space.
 
-Calibration:
+Calibration for 0–10 sub-scores:
 - 0–2: deeply flawed or nearly empty
 - 3–4: suggestive but weak or substantially unconvincing
 - 5–6: competent incremental work or useful but limited clarification
@@ -248,6 +248,17 @@ Calibration:
 - 8: major specialty advance
 - 9: rare, exceptional work with both depth and strong support
 - 10: truly outstanding, potentially field-shaping if correct
+
+Calibration for overallIntrinsicScore (field-relative percentile):
+- 95–99: all-time top papers in the field; a working researcher in this area would immediately recognize this as exceptional
+- 85–94: top 5–15%; strong, original, and consequential within the field
+- 70–84: top 15–30%; solid contribution above the median, likely publishable in a strong venue
+- 50–69: median range; competent and useful but limited in originality or scope
+- 30–49: below median; some value but substantially incomplete, weak, or incremental
+- 10–29: weak; unlikely to advance the field in its current form
+- 1–9: deeply flawed or nearly empty
+
+Use the full range. Do not cluster scores. Most papers should fall between 30 and 85. Scores above 90 should be rare.
 
 For bestClassification, choose one:
 - field-defining advance
