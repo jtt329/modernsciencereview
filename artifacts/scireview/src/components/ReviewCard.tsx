@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, CheckCircle2, Zap, Award, Heart, MessageSquare, Info, X, Target, BookOpen, FlaskConical, Layers, Shield, AlertTriangle, Microscope, TrendingUp, GitBranch, Globe, ListChecks } from 'lucide-react';
+import { Sparkles, CheckCircle2, Zap, Award, Heart, MessageSquare, Info, X, Target, BookOpen, FlaskConical, Layers, Shield, AlertTriangle, Microscope, TrendingUp, GitBranch, Globe, ListChecks, BrainCircuit } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -32,6 +32,7 @@ const Section = ({ icon, label, color, children }: { icon: React.ReactNode; labe
 
 export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps) {
   const [showPrompt, setShowPrompt] = useState(false);
+  const [showThinking, setShowThinking] = useState(false);
 
   const isNewFormat = review.overallIntrinsicScore != null;
   const displayScore = review.overallIntrinsicScore ?? review.score;
@@ -306,6 +307,15 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               {review.likesCount}
             </button>
             <div className="flex items-center gap-3">
+              {review.thinkingText && (
+                <button
+                  onClick={() => setShowThinking(true)}
+                  className="flex items-center gap-2 text-violet-400 hover:text-violet-300 text-xs font-bold uppercase tracking-wider transition-colors"
+                >
+                  <BrainCircuit className="w-4 h-4" />
+                  View Thinking
+                </button>
+              )}
               <button
                 onClick={() => setShowPrompt(true)}
                 className="flex items-center gap-2 text-indigo-400 hover:text-indigo-300 text-xs font-bold uppercase tracking-wider transition-colors"
@@ -321,6 +331,46 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
           </div>
         </div>
       </motion.div>
+
+      <AnimatePresence>
+        {showThinking && review.thinkingText && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-md"
+            onClick={() => setShowThinking(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-violet-600 text-white">
+                <div className="flex items-center gap-3">
+                  <BrainCircuit className="w-6 h-6" />
+                  <div>
+                    <h3 className="text-xl font-black tracking-tight">Model Thinking</h3>
+                    {review.modelName && <p className="text-[10px] font-bold text-violet-200 uppercase tracking-widest">Internal reasoning from {review.modelName}</p>}
+                  </div>
+                </div>
+                <button onClick={() => setShowThinking(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+              <div className="p-8 overflow-y-auto bg-slate-50">
+                <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                  <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">
+                    {review.thinkingText}
+                  </pre>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showPrompt && (

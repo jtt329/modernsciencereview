@@ -51,6 +51,8 @@ export interface AIReview {
   finalJudgment?: string;
   // Coverage ledger (new prompt)
   coverageLedgerJson?: string;
+  // Model reasoning/thinking (Gemini only)
+  thinkingText?: string | null;
   // Metadata
   createdAt: number;
   likesCount: number;

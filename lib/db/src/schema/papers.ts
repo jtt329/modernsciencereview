@@ -54,6 +54,7 @@ export const reviewsTable = pgTable("reviews", {
   bestClassification: varchar("best_classification"),
   finalJudgment: text("final_judgment"),
   coverageLedgerJson: text("coverage_ledger_json"),
+  thinkingText: text("thinking_text"),
   // Metadata
   modelName: varchar("model_name").notNull(),
   systemPrompt: text("system_prompt").notNull().default(""),

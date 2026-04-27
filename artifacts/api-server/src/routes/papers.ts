@@ -310,17 +310,17 @@ async function extractMetadata(paperContent: string): Promise<{ title: string; a
   }
 }
 
-async function generateReviewGPT(paperContent: string) {
+async function generateReviewGPT(paperContent: string, prompt: string = REVIEW_SYSTEM_INSTRUCTION): Promise<{ review: any; thinkingText: string | null }> {
   const response = await openai.responses.create({
     model: GPT_MODEL,
-    instructions: REVIEW_SYSTEM_INSTRUCTION,
+    instructions: prompt,
     input: paperContent,
     max_output_tokens: 8192,
   });
   const content = response.output_text;
   if (!content) throw new Error("No response from GPT model");
   const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  return JSON.parse(cleaned);
+  return { review: JSON.parse(cleaned), thinkingText: null };
 }
 
 function extractJson(raw: string): unknown {
@@ -338,19 +338,28 @@ function extractJson(raw: string): unknown {
   throw new Error("Could not parse model response as JSON. The model output may have been truncated — try a shorter paper or different model.");
 }
 
-async function generateReviewGemini(paperContent: string) {
+async function generateReviewGemini(paperContent: string, prompt: string = REVIEW_SYSTEM_INSTRUCTION): Promise<{ review: any; thinkingText: string | null }> {
   const response = await geminiAI.models.generateContent({
     model: GEMINI_MODEL,
     contents: [{ role: "user", parts: [{ text: paperContent }] }],
     config: {
-      systemInstruction: REVIEW_SYSTEM_INSTRUCTION,
+      systemInstruction: prompt,
       responseMimeType: "application/json",
       maxOutputTokens: 32768,
-    },
+      thinkingConfig: { includeThoughts: true },
+    } as any,
   });
+
+  // Extract thinking from thought parts (separate from the JSON response)
+  const parts: any[] = (response as any).candidates?.[0]?.content?.parts ?? [];
+  const thinkingParts = parts.filter((p: any) => p.thought === true);
+  const thinkingText = thinkingParts.length > 0
+    ? thinkingParts.map((p: any) => p.text ?? "").join("\n\n").trim()
+    : null;
+
   const content = response.text;
   if (!content) throw new Error("No response from Gemini model");
-  return extractJson(content);
+  return { review: extractJson(content), thinkingText };
 }
 
 // GET /api/papers — list all papers
@@ -434,7 +443,7 @@ router.post("/papers", async (req, res) => {
     const metadata = await extractMetadata(paperContent);
 
     // Step 2: blind review
-    const r = useGemini
+    const { review: r, thinkingText } = useGemini
       ? await generateReviewGemini(paperContent)
       : await generateReviewGPT(paperContent);
 
@@ -497,6 +506,7 @@ router.post("/papers", async (req, res) => {
       bestClassification: r.bestClassification ?? null,
       finalJudgment: r.finalJudgment ?? null,
       coverageLedgerJson,
+      thinkingText: thinkingText ?? null,
       modelName: modelName,
       systemPrompt: REVIEW_SYSTEM_INSTRUCTION,
     }).returning();

@@ -40,7 +40,7 @@ function extractJson(raw: string): unknown {
   throw new Error("Could not parse model response as JSON");
 }
 
-async function runReviewWithPrompt(content: string, prompt: string, model: "gpt" | "gemini"): Promise<any> {
+async function runReviewWithPrompt(content: string, prompt: string, model: "gpt" | "gemini"): Promise<{ review: any; thinkingText: string | null }> {
   if (model === "gemini") {
     const response = await geminiAI.models.generateContent({
       model: GEMINI_MODEL,
@@ -49,10 +49,18 @@ async function runReviewWithPrompt(content: string, prompt: string, model: "gpt"
         systemInstruction: prompt,
         responseMimeType: "application/json",
         maxOutputTokens: 32768,
-      },
+        thinkingConfig: { includeThoughts: true },
+      } as any,
     });
     if (!response.text) throw new Error("No response from Gemini");
-    return extractJson(response.text);
+
+    const parts: any[] = (response as any).candidates?.[0]?.content?.parts ?? [];
+    const thinkingParts = parts.filter((p: any) => p.thought === true);
+    const thinkingText = thinkingParts.length > 0
+      ? thinkingParts.map((p: any) => p.text ?? "").join("\n\n").trim()
+      : null;
+
+    return { review: extractJson(response.text), thinkingText };
   } else {
     const response = await openai.responses.create({
       model: GPT_MODEL,
@@ -62,7 +70,7 @@ async function runReviewWithPrompt(content: string, prompt: string, model: "gpt"
     });
     if (!response.output_text) throw new Error("No response from GPT");
     const cleaned = response.output_text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-    return JSON.parse(cleaned);
+    return { review: JSON.parse(cleaned), thinkingText: null };
   }
 }
 
@@ -259,7 +267,7 @@ router.post("/admin/re-review", async (req, res) => {
             }
           }
 
-          const r = await runReviewWithPrompt(content, promptText.trim(), useModel);
+          const { review: r, thinkingText } = await runReviewWithPrompt(content, promptText.trim(), useModel);
 
           const coverageLedgerJson = (r.coverageLedger || r.directTargets || r.importedInputs || r.theorySpaceVariants || r.mechanismSharingAssessment)
             ? JSON.stringify({
@@ -303,6 +311,7 @@ router.post("/admin/re-review", async (req, res) => {
             bestClassification: r.bestClassification ?? null,
             finalJudgment: r.finalJudgment ?? null,
             coverageLedgerJson,
+            thinkingText: thinkingText ?? null,
             modelName: modelName,
             systemPrompt: promptText.trim(),
           });
