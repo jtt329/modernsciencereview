@@ -343,7 +343,8 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+              className="bg-white w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+              style={{ height: '85vh' }}
               onClick={(e) => e.stopPropagation()}
             >
               <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-violet-600 text-white">
@@ -383,10 +384,11 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]"
+              className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col"
+              style={{ height: '80vh' }}
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-indigo-600 text-white">
+              <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-indigo-600 text-white flex-shrink-0">
                 <div className="flex items-center gap-3">
                   <Info className="w-6 h-6" />
                   <div>
@@ -398,7 +400,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                   <X className="w-6 h-6" />
                 </button>
               </div>
-              <div className="p-8 overflow-y-auto bg-slate-50">
+              <div className="p-8 overflow-y-auto bg-slate-50 flex-1 min-h-0">
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                   <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">
                     {review.systemPrompt}
