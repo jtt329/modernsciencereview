@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { AIReview } from '../types';
+import ReviewChat from './ReviewChat';
 
 interface ReviewCardProps {
   review: AIReview;
@@ -323,10 +324,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                 <Info className="w-4 h-4" />
                 View System Prompt
               </button>
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-500">
-                <MessageSquare className="w-5 h-5" />
-                Comments
-              </div>
+              <ReviewChat review={review} />
             </div>
           </div>
         </div>

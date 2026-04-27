@@ -580,6 +580,108 @@ router.post("/papers/:id/comments", async (req, res) => {
   }
 });
 
+// Helper: format a review into readable text for chat context
+function buildReviewContext(review: any, paper: any): string {
+  const parts: string[] = [];
+  if (paper?.title) parts.push(`PAPER TITLE: ${paper.title}`);
+  if (review.centralClaim) parts.push(`CENTRAL CLAIM:\n${review.centralClaim}`);
+  if (review.establishedResults) parts.push(`ESTABLISHED RESULTS:\n${review.establishedResults}`);
+  if (review.interpretiveClaims) parts.push(`INTERPRETIVE CLAIMS:\n${review.interpretiveClaims}`);
+  if (review.speculativeClaims) parts.push(`SPECULATIVE CLAIMS:\n${review.speculativeClaims}`);
+  if (review.economy) parts.push(`EXPLANATORY ECONOMY:\n${review.economy}`);
+  if (review.explanatoryTargetBreadth) parts.push(`EXPLANATORY TARGET BREADTH:\n${review.explanatoryTargetBreadth}`);
+  if (review.theorySpaceBreadth) parts.push(`THEORY SPACE BREADTH:\n${review.theorySpaceBreadth}`);
+  if (review.scopeDepth) parts.push(`SCOPE AND DEPTH:\n${review.scopeDepth}`);
+  if (review.unifyingPower) parts.push(`UNIFYING POWER:\n${review.unifyingPower}`);
+  if (review.strongestCaseForImportance) parts.push(`STRONGEST CASE FOR IMPORTANCE:\n${review.strongestCaseForImportance}`);
+  if (review.strongestObjection) parts.push(`STRONGEST OBJECTION:\n${review.strongestObjection}`);
+  if (review.decisiveCheck) parts.push(`DECISIVE CHECK:\n${review.decisiveCheck}`);
+  if (review.internalTechnicalTraction) parts.push(`INTERNAL TECHNICAL TRACTION:\n${review.internalTechnicalTraction}`);
+  if (review.finalJudgment) parts.push(`FINAL JUDGMENT:\n${review.finalJudgment}`);
+  const scores: string[] = [];
+  if (review.intrinsicScientificMeritScore != null) scores.push(`  Intrinsic Scientific Merit: ${review.intrinsicScientificMeritScore}/100`);
+  if (review.explanatoryTargetBreadthScore != null) scores.push(`  Explanatory Target Breadth: ${review.explanatoryTargetBreadthScore}/100`);
+  if (review.theorySpaceBreadthScore != null) scores.push(`  Theory Space Breadth: ${review.theorySpaceBreadthScore}/100`);
+  if (review.breadthOfImpactScore != null) scores.push(`  Breadth of Impact: ${review.breadthOfImpactScore}/100`);
+  if (review.overallIntrinsicScore != null) scores.push(`  OVERALL INTRINSIC SCORE: ${review.overallIntrinsicScore}/100`);
+  if (scores.length > 0) parts.push(`SCORES:\n${scores.join('\n')}`);
+  // Legacy fields
+  if (!review.centralClaim) {
+    if (review.summary) parts.push(`SUMMARY:\n${review.summary}`);
+    if (review.correctness) parts.push(`CORRECTNESS:\n${review.correctness}`);
+    if (review.novelty) parts.push(`NOVELTY:\n${review.novelty}`);
+    if (review.overallEvaluation) parts.push(`OVERALL EVALUATION:\n${review.overallEvaluation}`);
+  }
+  return parts.join('\n\n');
+}
+
+// POST /api/reviews/:reviewId/chat
+router.post("/reviews/:reviewId/chat", async (req, res) => {
+  try {
+    const { reviewId } = req.params;
+    const { messages } = req.body;
+    if (!Array.isArray(messages) || messages.length === 0) {
+      res.status(400).json({ error: "messages array required" }); return;
+    }
+
+    const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.id, reviewId));
+    if (!review) { res.status(404).json({ error: "Review not found" }); return; }
+
+    const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, review.paperId));
+
+    const reviewContext = buildReviewContext(review, paper);
+
+    const systemMessage = `You are a scientific manuscript reviewer who produced a detailed review and is now discussing it with a reader.
+
+You evaluated this manuscript using the following framework:
+---
+${review.systemPrompt}
+---
+
+Here is the complete review you produced:
+---
+${reviewContext}
+---${review.thinkingText ? `\n\nHere was your internal reasoning during this review:\n---\n${review.thinkingText}\n---` : ''}
+
+You are now in a conversational mode. Help the user understand your review by:
+- Explaining any part of your analysis in more depth
+- Clarifying why you scored specific dimensions the way you did
+- Discussing the paper's strengths and weaknesses in more detail
+- Being honest about uncertainty and the limits of your assessment
+- Speculating about implications or related work when asked
+
+Maintain the same anonymous evaluation perspective: you assessed this manuscript without knowing author identity, institution, publication history, or historical significance.
+
+Be concise, intellectually honest, and use markdown where helpful.`;
+
+    const isGemini = (review.modelName ?? "").includes("gemini");
+
+    if (isGemini) {
+      const response = await (geminiAI.models.generateContent as any)({
+        model: review.modelName || GEMINI_MODEL,
+        config: { systemInstruction: systemMessage },
+        contents: messages.map((m: any) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        })),
+      });
+      res.json({ reply: response.text ?? "" });
+    } else {
+      const completion = await openai.chat.completions.create({
+        model: review.modelName || GPT_MODEL,
+        messages: [
+          { role: 'system', content: systemMessage },
+          ...messages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        ],
+      });
+      res.json({ reply: completion.choices[0]?.message?.content ?? "" });
+    }
+  } catch (err: any) {
+    logger.error({ err }, "Chat error");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/likes
 router.get("/likes", async (req, res) => {
   if (!req.isAuthenticated()) { res.json({ likes: [] }); return; }
