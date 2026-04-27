@@ -360,7 +360,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                   <X className="w-6 h-6" />
                 </button>
               </div>
-              <div className="p-8 overflow-y-auto bg-slate-50">
+              <div className="p-8 overflow-y-auto bg-slate-50 flex-1 min-h-0">
                 <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
                   <pre className="text-sm text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">
                     {review.thinkingText}
