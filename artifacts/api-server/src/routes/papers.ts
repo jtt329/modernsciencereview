@@ -346,7 +346,7 @@ async function generateReviewGemini(paperContent: string, prompt: string = REVIE
       systemInstruction: prompt,
       responseMimeType: "application/json",
       maxOutputTokens: 32768,
-      thinkingConfig: { includeThoughts: true },
+      thinkingConfig: { includeThoughts: true, thinkingBudget: 8000 },
     } as any,
   });
 

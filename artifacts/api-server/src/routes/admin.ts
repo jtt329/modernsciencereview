@@ -49,7 +49,7 @@ async function runReviewWithPrompt(content: string, prompt: string, model: "gpt"
         systemInstruction: prompt,
         responseMimeType: "application/json",
         maxOutputTokens: 32768,
-        thinkingConfig: { includeThoughts: true },
+        thinkingConfig: { includeThoughts: true, thinkingBudget: 8000 },
       } as any,
     });
     if (!response.text) throw new Error("No response from Gemini");
