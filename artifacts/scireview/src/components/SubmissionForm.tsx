@@ -96,10 +96,12 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
           setDoneCount(done);
           setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'done' } : f));
         } catch (err: any) {
-          setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'error', error: err.message } : f));
+          setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'error', error: err?.message ?? String(err) } : f));
         }
       }
       onClose();
+    } catch (err: any) {
+      setError(err?.message ?? String(err) ?? 'Something went wrong. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
