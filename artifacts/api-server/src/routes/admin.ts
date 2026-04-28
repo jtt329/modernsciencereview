@@ -66,11 +66,10 @@ async function runReviewWithPrompt(content: string, prompt: string, model: "gpt"
       model: GPT_MODEL,
       instructions: prompt,
       input: content,
-      max_output_tokens: 8192,
+      max_output_tokens: 32768,
     });
     if (!response.output_text) throw new Error("No response from GPT");
-    const cleaned = response.output_text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-    return { review: JSON.parse(cleaned), thinkingText: null };
+    return { review: extractJson(response.output_text), thinkingText: null };
   }
 }
 

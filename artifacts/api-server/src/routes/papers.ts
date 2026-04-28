@@ -315,12 +315,11 @@ async function generateReviewGPT(paperContent: string, prompt: string = REVIEW_S
     model: GPT_MODEL,
     instructions: prompt,
     input: paperContent,
-    max_output_tokens: 8192,
+    max_output_tokens: 32768,
   });
   const content = response.output_text;
   if (!content) throw new Error("No response from GPT model");
-  const cleaned = content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  return { review: JSON.parse(cleaned), thinkingText: null };
+  return { review: extractJson(content), thinkingText: null };
 }
 
 function extractJson(raw: string): unknown {
