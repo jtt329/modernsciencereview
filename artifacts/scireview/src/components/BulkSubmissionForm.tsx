@@ -19,7 +19,7 @@ interface BulkSubmissionFormProps {
 export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmissionFormProps) {
   const [files, setFiles] = useState<BulkFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [model, setModel] = useState<ReviewModel>('gpt');
+  const [model, setModel] = useState<ReviewModel>('gemini');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newFiles: BulkFile[] = acceptedFiles
@@ -100,8 +100,8 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
               <Cpu className="w-3 h-3" /> Review Model
             </label>
             {([
+              { id: 'gemini', label: 'Gemini 3.1 Pro Thinking' },
               { id: 'gpt', label: 'GPT-5.4 Pro' },
-              { id: 'gemini', label: 'Gemini 3.1 Pro' },
             ] as const).map((m) => (
               <button
                 key={m.id}
@@ -129,7 +129,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
             <FileText className="w-10 h-10 text-slate-400 mx-auto mb-3" />
             <p className="font-bold text-slate-600">Drop multiple PDFs here, or click to select</p>
             <p className="text-sm text-slate-400 mt-1">
-              Each PDF will be reviewed sequentially by {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}
+              Each PDF will be reviewed sequentially by {model === 'gemini' ? 'Gemini 3.1 Pro Thinking' : 'GPT-5.4 Pro'}
             </p>
           </div>
 
@@ -167,7 +167,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
                       )}
                       {f.status === 'processing' && (
                         <p className="text-xs text-indigo-600 mt-0.5">
-                          Reviewing with {model === 'gemini' ? 'Gemini 3.1 Pro' : 'GPT-5.4 Pro'}...
+                          Reviewing with {model === 'gemini' ? 'Gemini 3.1 Pro Thinking' : 'GPT-5.4 Pro'}...
                         </p>
                       )}
                     </div>

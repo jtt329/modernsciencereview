@@ -24,7 +24,7 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
             </div>
             <div className="flex flex-col">
               <span className="text-xl font-black tracking-tight text-slate-900 leading-none">SciReview AI</span>
-              <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mt-1">Powered by GPT-5.4 Pro</span>
+              <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mt-1">Powered by Gemini 3.1 Pro Thinking</span>
             </div>
           </div>
 

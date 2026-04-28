@@ -348,7 +348,7 @@ export default function App() {
                   <span className="text-indigo-600">Blind AI Review</span>
                 </h1>
                 <p className="text-xl text-slate-600 font-medium max-w-2xl mx-auto">
-                  Submit your research, get an instant AI assessment from GPT-5.4 Pro, and timestamp your work on the public record.
+                  Submit your research, get an instant AI assessment from Gemini 3.1 Pro with extended thinking, and timestamp your work on the public record.
                 </p>
                 {!user && (
                   <button onClick={login} className="mt-4 bg-indigo-600 text-white px-8 py-3 rounded-full font-bold hover:bg-indigo-700 transition-colors inline-flex items-center gap-2">
@@ -632,7 +632,7 @@ export default function App() {
             <span className="text-lg font-bold text-slate-900">SciReview AI</span>
           </div>
           <p className="text-slate-500 text-sm font-medium">Empowering researchers with AI-driven insights and public timestamping.</p>
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-8">2026 SciReview AI — Powered by GPT-5.4 Pro</div>
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-8">2026 SciReview AI — Powered by Gemini 3.1 Pro Thinking</div>
         </div>
       </footer>
     </div>

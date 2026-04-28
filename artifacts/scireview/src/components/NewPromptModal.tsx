@@ -19,7 +19,7 @@ interface Props {
 
 export default function NewPromptModal({ onClose, onComplete }: Props) {
   const [promptText, setPromptText] = useState('');
-  const [model, setModel] = useState<'gpt' | 'gemini'>('gpt');
+  const [model, setModel] = useState<'gpt' | 'gemini'>('gemini');
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -125,8 +125,8 @@ export default function NewPromptModal({ onClose, onComplete }: Props) {
                       onChange={e => setModel(e.target.value as 'gpt' | 'gemini')}
                       className="w-full appearance-none bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent pr-9"
                     >
+                      <option value="gemini">Gemini 3.1 Pro Thinking</option>
                       <option value="gpt">GPT-5.4 Pro</option>
-                      <option value="gemini">Gemini 3.1 Pro Preview</option>
                     </select>
                     <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                   </div>
