@@ -364,11 +364,19 @@ async function generateReviewGemini(paperContent: string, prompt: string = REVIE
 // GET /api/papers — list all papers
 router.get("/papers", async (req, res) => {
   try {
-    const papers = await db
-      .select()
-      .from(papersTable)
-      .orderBy(desc(papersTable.createdAt));
-    res.json({ papers });
+    const papers = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt));
+    const reviews = await db.select({
+      paperId: reviewsTable.paperId,
+      summary: reviewsTable.summary,
+      finalJudgment: reviewsTable.finalJudgment,
+    }).from(reviewsTable);
+    const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
+    const papersWithSummary = papers.map(p => ({
+      ...p,
+      reviewSummary: reviewMap.get(p.id)?.summary || null,
+      reviewFinalJudgment: reviewMap.get(p.id)?.finalJudgment || null,
+    }));
+    res.json({ papers: papersWithSummary });
   } catch (err: any) {
     logger.error({ err }, "Error listing papers");
     res.status(500).json({ error: err.message });

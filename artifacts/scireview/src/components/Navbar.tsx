@@ -22,10 +22,7 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
             <div className="bg-indigo-600 p-2 rounded-lg shadow-lg shadow-indigo-100">
               <BookOpen className="w-6 h-6 text-white" />
             </div>
-            <div className="flex flex-col">
-              <span className="text-xl font-black tracking-tight text-slate-900 leading-none">SciReview AI</span>
-              <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest mt-1">Powered by Gemini 3.1 Pro Thinking</span>
-            </div>
+            <span className="text-xl font-black tracking-tight text-slate-900 leading-none">SciReview AI</span>
           </div>
 
           <div className="flex items-center gap-3">

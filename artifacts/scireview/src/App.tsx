@@ -265,10 +265,9 @@ export default function App() {
   };
 
   const getSubfields = () => {
-    if (selectedField === 'All Fields') return [];
     const sf = new Set<string>();
-    papers.filter(p => p.field === selectedField).forEach(p => p.subfields?.forEach(s => sf.add(s)));
-    return Array.from(sf);
+    papers.forEach(p => p.subfields?.forEach(s => sf.add(s)));
+    return Array.from(sf).sort();
   };
 
   useEffect(() => { setSelectedSubfield('All Subfields'); }, [selectedField]);
@@ -279,7 +278,10 @@ export default function App() {
     .filter(p => {
       const q = searchQuery.toLowerCase();
       const matchesSearch = p.title.toLowerCase().includes(q) || p.authorName.toLowerCase().includes(q);
-      const matchesField = selectedField === 'All Fields' || p.field === selectedField;
+      const fieldLower = selectedField.toLowerCase();
+      const matchesField = selectedField === 'All Fields' ||
+        p.field.toLowerCase().includes(fieldLower) ||
+        p.subfields?.some(s => s.toLowerCase().includes(fieldLower));
       const matchesSubfield = selectedSubfield === 'All Subfields' || p.subfields?.includes(selectedSubfield);
       const now = Date.now();
       const ts = new Date(p.createdAt).getTime();
@@ -345,10 +347,10 @@ export default function App() {
               {/* Hero */}
               <div className="text-center space-y-4 max-w-3xl mx-auto mb-16">
                 <h1 className="text-5xl md:text-7xl font-black text-slate-900 tracking-tight leading-none">
-                  <span className="text-indigo-600">Blind AI Review</span>
+                  <span className="text-indigo-600">Modern Science Review</span>
                 </h1>
                 <p className="text-xl text-slate-600 font-medium max-w-2xl mx-auto">
-                  Submit your research, get an instant AI assessment from Gemini 3.1 Pro with extended thinking, and timestamp your work on the public record.
+                  Submit your research, get an instant AI assessment, and timestamp your work on the public record.
                 </p>
                 {!user && (
                   <button onClick={login} className="mt-4 bg-indigo-600 text-white px-8 py-3 rounded-full font-bold hover:bg-indigo-700 transition-colors inline-flex items-center gap-2">
@@ -381,7 +383,7 @@ export default function App() {
                     ))}
                   </div>
                   <AnimatePresence>
-                    {selectedField !== 'All Fields' && subfields.length > 0 && (
+                    {subfields.length > 0 && (
                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
                         <button onClick={() => setSelectedSubfield('All Subfields')} className={`px-4 py-1.5 rounded-full font-bold text-xs transition-all border ${selectedSubfield === 'All Subfields' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-100'}`}>All Subfields</button>
                         {subfields.map(s => (
@@ -431,7 +433,7 @@ export default function App() {
               )}
 
               {/* Paper Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="grid grid-cols-1 gap-6">
                 {papersLoading ? (
                   Array.from({ length: 4 }).map((_, i) => (
                     <div key={i} className="bg-white rounded-2xl h-64 animate-pulse border border-slate-100" />

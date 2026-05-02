@@ -15,6 +15,8 @@ export interface Paper {
   subfields?: string[];
   score?: number;
   modelName?: string;
+  reviewSummary?: string | null;
+  reviewFinalJudgment?: string | null;
 }
 
 export interface AIReview {
