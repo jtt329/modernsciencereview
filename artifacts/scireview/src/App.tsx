@@ -286,7 +286,6 @@ export default function App() {
       const q = searchQuery.trim().toLowerCase();
       const matchesSearch = !q || [
         p.title,
-        p.authorName,
         p.paperAuthors,
         p.reviewCentralClaim,
         p.reviewSummary,
