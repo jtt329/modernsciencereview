@@ -265,8 +265,11 @@ export default function App() {
   };
 
   const getSubfields = () => {
+    if (selectedField === 'All Fields') return [];
     const sf = new Set<string>();
-    papers.forEach(p => p.subfields?.forEach(s => sf.add(s)));
+    papers
+      .filter(p => p.field.toLowerCase() === selectedField.toLowerCase())
+      .forEach(p => p.subfields?.forEach(s => sf.add(s)));
     return Array.from(sf).sort();
   };
 
@@ -383,7 +386,7 @@ export default function App() {
                     ))}
                   </div>
                   <AnimatePresence>
-                    {subfields.length > 0 && (
+                    {selectedField !== 'All Fields' && subfields.length > 0 && (
                       <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
                         <button onClick={() => setSelectedSubfield('All Subfields')} className={`px-4 py-1.5 rounded-full font-bold text-xs transition-all border ${selectedSubfield === 'All Subfields' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-indigo-50 text-indigo-600 border-indigo-100 hover:bg-indigo-100'}`}>All Subfields</button>
                         {subfields.map(s => (

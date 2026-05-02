@@ -16,7 +16,7 @@ interface PaperCardProps {
 
 export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectable, isSelected, onSelect }: PaperCardProps) {
   const displayAuthors = paper.paperAuthors || paper.authorName;
-  const preview = paper.reviewFinalJudgment || paper.reviewSummary || paper.content.substring(0, 500);
+  const preview = paper.reviewCentralClaim || paper.reviewSummary || paper.content.substring(0, 500);
 
   return (
     <motion.div

@@ -368,13 +368,13 @@ router.get("/papers", async (req, res) => {
     const reviews = await db.select({
       paperId: reviewsTable.paperId,
       summary: reviewsTable.summary,
-      finalJudgment: reviewsTable.finalJudgment,
+      centralClaim: reviewsTable.centralClaim,
     }).from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
     const papersWithSummary = papers.map(p => ({
       ...p,
       reviewSummary: reviewMap.get(p.id)?.summary || null,
-      reviewFinalJudgment: reviewMap.get(p.id)?.finalJudgment || null,
+      reviewCentralClaim: reviewMap.get(p.id)?.centralClaim || null,
     }));
     res.json({ papers: papersWithSummary });
   } catch (err: any) {
