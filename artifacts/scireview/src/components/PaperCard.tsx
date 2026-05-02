@@ -22,7 +22,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
     <motion.div
       whileHover={{ y: isSelectable ? 0 : -2 }}
       transition={{ duration: 0.2 }}
-      className={`bg-white rounded-2xl border shadow-sm hover:shadow-md transition-all cursor-pointer overflow-hidden group relative ${
+      className={`bg-white rounded-2xl border shadow-sm hover:shadow-md transition-all cursor-pointer overflow-hidden group/card relative ${
         isSelected ? 'border-rose-400 ring-2 ring-rose-300 shadow-rose-100' : 'border-slate-200'
       }`}
       onClick={() => isSelectable ? onSelect?.(paper.id, {} as React.MouseEvent) : onClick(paper.id)}
@@ -55,7 +55,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
         </div>
 
         {/* Title */}
-        <h3 className={`text-lg font-bold text-slate-900 mb-3 leading-snug transition-colors ${isSelectable ? '' : 'group-hover:text-indigo-600'}`}>
+        <h3 className={`text-lg font-bold text-slate-900 mb-3 leading-snug transition-colors ${isSelectable ? '' : 'group-hover/card:text-indigo-600'}`}>
           {paper.title}
         </h3>
 
@@ -71,7 +71,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
           ))}
           {paper.score != null && (
             <div className="ml-auto flex flex-col items-end gap-0.5">
-              <div className="relative group">
+              <div className="relative group/score">
                 <div className={`flex flex-col items-center px-3 py-1.5 rounded-xl border cursor-default ${
                   paper.score >= 80 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
                   paper.score >= 60 ? 'bg-amber-50 border-amber-200 text-amber-700' :
@@ -80,7 +80,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
                   <span className="text-[9px] font-black uppercase tracking-widest opacity-60">Score</span>
                   <span className="text-xl font-black leading-tight">{paper.score}</span>
                 </div>
-                <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
+                <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover/score:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
                   An intrinsic value score (1–100) assigned by the AI review, based entirely on scientific merit, novelty, and breadth of impact — never on author identity, institution, or prestige. Scores roughly correspond to percentile rank within the field.
                 </div>
               </div>
@@ -115,7 +115,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
           </div>
 
           {!isSelectable && (
-            <div className="text-indigo-600 font-bold text-sm flex items-center gap-1 group-hover:translate-x-1 transition-transform">
+            <div className="text-indigo-600 font-bold text-sm flex items-center gap-1 group-hover/card:translate-x-1 transition-transform">
               Read Review <ChevronRight className="w-4 h-4" />
             </div>
           )}
