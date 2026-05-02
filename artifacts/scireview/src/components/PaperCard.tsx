@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { Heart, MessageSquare, Users, ChevronRight, Check } from 'lucide-react';
 import { format } from 'date-fns';
 import { Paper } from '../types';
+import LatexText from './LatexText';
 
 interface PaperCardProps {
   paper: Paper;
@@ -107,17 +108,23 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
             <>
               <div>
                 <span className="text-[9px] font-black uppercase tracking-widest text-indigo-400">Central Claim</span>
-                <p className="text-slate-700 text-sm line-clamp-2 leading-relaxed mt-0.5">{centralClaim}</p>
+                <p className="text-slate-700 text-sm line-clamp-2 leading-relaxed mt-0.5">
+                  <LatexText>{centralClaim}</LatexText>
+                </p>
               </div>
               {finalJudgment && (
                 <div>
                   <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Final Judgment</span>
-                  <p className="text-slate-500 text-sm line-clamp-2 leading-relaxed mt-0.5">{finalJudgment}</p>
+                  <p className="text-slate-500 text-sm line-clamp-2 leading-relaxed mt-0.5">
+                    <LatexText>{finalJudgment}</LatexText>
+                  </p>
                 </div>
               )}
             </>
           ) : (
-            <p className="text-slate-600 text-sm line-clamp-4 leading-relaxed">{fallbackPreview}</p>
+            <p className="text-slate-600 text-sm line-clamp-4 leading-relaxed">
+              <LatexText>{fallbackPreview}</LatexText>
+            </p>
           )}
         </div>
 

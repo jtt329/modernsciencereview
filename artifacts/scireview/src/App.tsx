@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
+import LatexText from './components/LatexText';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth, AuthUser } from '@workspace/replit-auth-web';
 import Navbar from './components/Navbar';
@@ -522,7 +520,7 @@ export default function App() {
                         {formatDistanceToNow(new Date(selectedPaper.createdAt))} ago
                       </div>
                     </div>
-                    <h1 className="text-4xl md:text-6xl font-black text-slate-900 leading-tight">{selectedPaper.title}</h1>
+                    <h1 className="text-4xl md:text-6xl font-black text-slate-900 leading-tight"><LatexText>{selectedPaper.title}</LatexText></h1>
                     <div className="flex items-center justify-between py-6 border-y border-slate-100">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100">
