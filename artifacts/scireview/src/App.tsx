@@ -39,6 +39,8 @@ interface Paper {
   viewCount: number;
   commentCount: number;
   createdAt: string;
+  reviewSummary?: string | null;
+  reviewCentralClaim?: string | null;
 }
 
 interface AIReview {
@@ -282,7 +284,12 @@ export default function App() {
   const filteredPapers = papers
     .filter(p => {
       const q = searchQuery.toLowerCase();
-      const matchesSearch = p.title.toLowerCase().includes(q) || p.authorName.toLowerCase().includes(q);
+      const matchesSearch = !q ||
+        p.title.toLowerCase().includes(q) ||
+        p.authorName.toLowerCase().includes(q) ||
+        (p.paperAuthors || '').toLowerCase().includes(q) ||
+        (p.reviewCentralClaim || '').toLowerCase().includes(q) ||
+        (p.reviewSummary || '').toLowerCase().includes(q);
       const fieldLower = selectedField.toLowerCase();
       const matchesField = selectedField === 'All Fields' ||
         p.field.toLowerCase().includes(fieldLower) ||
@@ -358,11 +365,6 @@ export default function App() {
                 <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest pt-1">
                   Powered by Gemini 3.1 Pro Thinking
                 </p>
-                {!user && (
-                  <button onClick={login} className="mt-2 bg-indigo-600 text-white px-8 py-3 rounded-full font-bold hover:bg-indigo-700 transition-colors inline-flex items-center gap-2">
-                    <Sparkles className="w-4 h-4" /> Get Started — Sign In
-                  </button>
-                )}
               </div>
 
               {/* Search + Filters */}
