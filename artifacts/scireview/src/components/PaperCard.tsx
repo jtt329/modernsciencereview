@@ -60,7 +60,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
         </h3>
 
         {/* Tags */}
-        <div className="flex flex-wrap gap-1.5 mb-4">
+        <div className="flex flex-wrap items-start gap-1.5 mb-4">
           <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-wider rounded-md border border-indigo-100">
             {paper.field}
           </span>
@@ -70,9 +70,16 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
             </span>
           ))}
           {paper.score != null && (
-            <span className="ml-auto px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-wider rounded-md border border-emerald-100">
-              Score: {paper.score}
-            </span>
+            <div className="ml-auto flex flex-col items-end gap-0.5">
+              <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-wider rounded-md border border-emerald-100">
+                Score: {paper.score}
+              </span>
+              {paper.modelName && (
+                <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
+                  {paper.modelName.startsWith('gemini') ? 'Gemini 3.1 Pro' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}
+                </span>
+              )}
+            </div>
           )}
         </div>
 

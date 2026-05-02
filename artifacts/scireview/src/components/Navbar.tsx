@@ -18,10 +18,7 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
-          <div className="flex items-center gap-2 cursor-pointer" onClick={() => window.location.href = '/'}>
-            <div className="bg-indigo-600 p-2 rounded-lg shadow-lg shadow-indigo-100">
-              <BookOpen className="w-6 h-6 text-white" />
-            </div>
+          <div className="cursor-pointer" onClick={() => window.location.href = '/'}>
             <span className="text-xl font-black tracking-tight text-slate-900 leading-none">SciReview AI</span>
           </div>
 

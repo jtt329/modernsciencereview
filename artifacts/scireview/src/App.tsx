@@ -348,11 +348,14 @@ export default function App() {
               className="space-y-12"
             >
               {/* Hero */}
-              <div className="text-center space-y-4 max-w-3xl mx-auto mb-16">
-                <h1 className="text-5xl md:text-7xl font-black text-slate-900 tracking-tight leading-none">
+              <div className="text-center space-y-3 max-w-4xl mx-auto mb-16">
+                <h1 className="text-5xl md:text-6xl font-black text-slate-900 tracking-tight leading-none whitespace-nowrap">
                   <span className="text-indigo-600">Modern Science Review</span>
                 </h1>
-                <p className="text-xl text-slate-600 font-medium max-w-2xl mx-auto">
+                <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest">
+                  Powered by Gemini 3.1 Pro Thinking
+                </p>
+                <p className="text-xl text-slate-600 font-medium max-w-2xl mx-auto pt-1">
                   Submit your research, get an instant AI assessment, and timestamp your work on the public record.
                 </p>
                 {!user && (
