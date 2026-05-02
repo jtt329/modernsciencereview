@@ -457,7 +457,10 @@ router.get("/admin/snapshots", async (req, res) => {
 
 // TEMPORARY: one-time data seed endpoint — remove after migration
 router.post("/admin/seed", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
+  const SEED_SECRET = process.env.SEED_SECRET;
+  if (!SEED_SECRET || req.headers["x-seed-secret"] !== SEED_SECRET) {
+    res.status(403).json({ error: "Forbidden" }); return;
+  }
   try {
     const { users, papers, reviews } = req.body as { users: any[]; papers: any[]; reviews: any[] };
 
