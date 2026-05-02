@@ -57,4 +57,3 @@ VITE_ADMIN_EMAIL = "jttyler101@gmail.com"
 ADMIN_EMAIL = "jttyler101@gmail.com"
 
 [userenv.production]
-SEED_SECRET = "scireview_seed_32qj9ns0hflo67mlwahpac"

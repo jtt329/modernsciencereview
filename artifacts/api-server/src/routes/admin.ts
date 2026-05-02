@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, pool, papersTable, reviewsTable, reviewSessionsTable, sessionPapersTable } from "@workspace/db";
+import { db, papersTable, reviewsTable, reviewSessionsTable, sessionPapersTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import OpenAI from "openai";
@@ -455,46 +455,5 @@ router.get("/admin/snapshots", async (req, res) => {
   }
 });
 
-// TEMPORARY: one-time data seed endpoint — remove after migration
-router.post("/admin/seed", async (req, res) => {
-  const SEED_SECRET = process.env.SEED_SECRET;
-  if (!SEED_SECRET || req.headers["x-seed-secret"] !== SEED_SECRET) {
-    res.status(403).json({ error: "Forbidden" }); return;
-  }
-  try {
-    const { users, papers, reviews } = req.body as { users: any[]; papers: any[]; reviews: any[] };
-
-    for (const u of users ?? []) {
-      await pool.query(
-        `INSERT INTO users (id, email, first_name, last_name, profile_image_url, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING`,
-        [u.id, u.email, u.first_name, u.last_name, u.profile_image_url, u.created_at, u.updated_at]
-      );
-    }
-
-    for (const p of papers ?? []) {
-      await pool.query(
-        `INSERT INTO papers (id, title, content, author_id, author_name, paper_authors, field, subfields, score, model_name, pdf_url, display_pdf, likes_count, view_count, comment_count, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT (id) DO NOTHING`,
-        [p.id, p.title, p.content, p.author_id, p.author_name, p.paper_authors, p.field,
-         typeof p.subfields === 'string' ? p.subfields : JSON.stringify(p.subfields),
-         p.score, p.model_name, p.pdf_url, p.display_pdf, p.likes_count, p.view_count, p.comment_count, p.created_at]
-      );
-    }
-
-    for (const r of reviews ?? []) {
-      await pool.query(
-        `INSERT INTO reviews (id, paper_id, summary, correctness, novelty, overall_evaluation, score, related_work, central_claim, established_results, interpretive_claims, speculative_claims, economy, scope_depth, unifying_power, strongest_case_for_importance, strongest_objection, decisive_check, internal_technical_traction, novelty_confidence, explanatory_target_breadth, theory_space_breadth, intrinsic_scientific_merit_score, explanatory_target_breadth_score, theory_space_breadth_score, breadth_of_impact_score, overall_intrinsic_score, best_classification, final_judgment, coverage_ledger_json, thinking_text, model_name, system_prompt, likes_count, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35) ON CONFLICT (id) DO NOTHING`,
-        [r.id, r.paper_id, r.summary, r.correctness, r.novelty, r.overall_evaluation, r.score, r.related_work, r.central_claim, r.established_results, r.interpretive_claims, r.speculative_claims, r.economy, r.scope_depth, r.unifying_power, r.strongest_case_for_importance, r.strongest_objection, r.decisive_check, r.internal_technical_traction, r.novelty_confidence, r.explanatory_target_breadth, r.theory_space_breadth, r.intrinsic_scientific_merit_score, r.explanatory_target_breadth_score, r.theory_space_breadth_score, r.breadth_of_impact_score, r.overall_intrinsic_score, r.best_classification, r.final_judgment, r.coverage_ledger_json, r.thinking_text, r.model_name, r.system_prompt, r.likes_count, r.created_at]
-      );
-    }
-
-    res.json({ ok: true, users: (users ?? []).length, papers: (papers ?? []).length, reviews: (reviews ?? []).length });
-  } catch (err: any) {
-    logger.error({ err }, "Seed error");
-    res.status(500).json({ error: err.message });
-  }
-});
 
 export default router;
