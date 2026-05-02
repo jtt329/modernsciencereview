@@ -361,6 +361,11 @@ async function generateReviewGemini(paperContent: string, prompt: string = REVIE
   return { review: extractJson(content), thinkingText };
 }
 
+// GET /api/papers/system-prompt — return the review system prompt
+router.get("/papers/system-prompt", (_req, res) => {
+  res.json({ prompt: REVIEW_SYSTEM_INSTRUCTION });
+});
+
 // GET /api/papers — list all papers
 router.get("/papers", async (req, res) => {
   try {

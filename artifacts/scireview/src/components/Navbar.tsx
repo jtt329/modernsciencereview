@@ -8,12 +8,13 @@ interface NavbarProps {
   onLogin: () => void;
   onLogout: () => void;
   onNewPaper: () => void;
+  onHowItWorks: () => void;
   onDeleteAll: () => void;
   onPromptAnalysis: () => void;
   onNewPrompt: () => void;
 }
 
-export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onDeleteAll, onPromptAnalysis, onNewPrompt }: NavbarProps) {
+export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onHowItWorks, onDeleteAll, onPromptAnalysis, onNewPrompt }: NavbarProps) {
   return (
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -62,6 +63,14 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
                 <motion.button
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
+                  onClick={onHowItWorks}
+                  className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-slate-50 transition-colors"
+                >
+                  How It Works
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
                   onClick={onNewPaper}
                   className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-indigo-700 transition-colors"
                 >
@@ -85,15 +94,25 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
                 </div>
               </>
             ) : (
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={onLogin}
-                className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-slate-50 transition-colors"
-              >
-                <LogIn className="w-4 h-4" />
-                Sign In with Google
-              </motion.button>
+              <>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onHowItWorks}
+                  className="flex items-center gap-2 bg-white border border-slate-200 text-slate-700 px-4 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-slate-50 transition-colors"
+                >
+                  How It Works
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onLogin}
+                  className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-indigo-700 transition-colors"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Sign In
+                </motion.button>
+              </>
             )}
           </div>
         </div>

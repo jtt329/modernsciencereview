@@ -13,6 +13,7 @@ import CommentSection from './components/CommentSection';
 import SubmissionForm from './components/SubmissionForm';
 import PromptAnalysis from './components/PromptAnalysis';
 import NewPromptModal from './components/NewPromptModal';
+import HowItWorksModal from './components/HowItWorksModal';
 import { ReviewSource } from './services/reviewService';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || '';
@@ -92,6 +93,7 @@ export default function App() {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showPromptAnalysis, setShowPromptAnalysis] = useState(false);
   const [showNewPrompt, setShowNewPrompt] = useState(false);
+  const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [papersLoading, setPapersLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -332,6 +334,7 @@ export default function App() {
         onLogin={login}
         onLogout={logout}
         onNewPaper={() => { if (!user) { login(); return; } setIsSubmitting(true); }}
+        onHowItWorks={() => setShowHowItWorks(true)}
         onDeleteAll={handleDeleteAll}
         onPromptAnalysis={() => setShowPromptAnalysis(true)}
         onNewPrompt={() => setShowNewPrompt(true)}
@@ -622,6 +625,9 @@ export default function App() {
       </AnimatePresence>
 
       <AnimatePresence>
+        {showHowItWorks && (
+          <HowItWorksModal onClose={() => setShowHowItWorks(false)} />
+        )}
         {showNewPrompt && (
           <NewPromptModal
             onClose={() => setShowNewPrompt(false)}
