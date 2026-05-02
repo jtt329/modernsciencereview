@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, papersTable, reviewsTable, reviewSessionsTable, sessionPapersTable } from "@workspace/db";
+import { db, pool, papersTable, reviewsTable, reviewSessionsTable, sessionPapersTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import OpenAI from "openai";
@@ -464,11 +464,6 @@ router.post("/admin/seed", async (req, res) => {
   try {
     const { users, papers, reviews } = req.body as { users: any[]; papers: any[]; reviews: any[] };
 
-    const { sql } = await import("drizzle-orm");
-    const { Pool } = await import("pg") as any;
-    const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-    // Insert users
     for (const u of users ?? []) {
       await pool.query(
         `INSERT INTO users (id, email, first_name, last_name, profile_image_url, created_at, updated_at)
@@ -477,16 +472,16 @@ router.post("/admin/seed", async (req, res) => {
       );
     }
 
-    // Insert papers
     for (const p of papers ?? []) {
       await pool.query(
         `INSERT INTO papers (id, title, content, author_id, author_name, paper_authors, field, subfields, score, model_name, pdf_url, display_pdf, likes_count, view_count, comment_count, created_at)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) ON CONFLICT (id) DO NOTHING`,
-        [p.id, p.title, p.content, p.author_id, p.author_name, p.paper_authors, p.field, p.subfields, p.score, p.model_name, p.pdf_url, p.display_pdf, p.likes_count, p.view_count, p.comment_count, p.created_at]
+        [p.id, p.title, p.content, p.author_id, p.author_name, p.paper_authors, p.field,
+         typeof p.subfields === 'string' ? p.subfields : JSON.stringify(p.subfields),
+         p.score, p.model_name, p.pdf_url, p.display_pdf, p.likes_count, p.view_count, p.comment_count, p.created_at]
       );
     }
 
-    // Insert reviews
     for (const r of reviews ?? []) {
       await pool.query(
         `INSERT INTO reviews (id, paper_id, summary, correctness, novelty, overall_evaluation, score, related_work, central_claim, established_results, interpretive_claims, speculative_claims, economy, scope_depth, unifying_power, strongest_case_for_importance, strongest_objection, decisive_check, internal_technical_traction, novelty_confidence, explanatory_target_breadth, theory_space_breadth, intrinsic_scientific_merit_score, explanatory_target_breadth_score, theory_space_breadth_score, breadth_of_impact_score, overall_intrinsic_score, best_classification, final_judgment, coverage_ledger_json, thinking_text, model_name, system_prompt, likes_count, created_at)
@@ -495,7 +490,6 @@ router.post("/admin/seed", async (req, res) => {
       );
     }
 
-    await pool.end();
     res.json({ ok: true, users: (users ?? []).length, papers: (papers ?? []).length, reviews: (reviews ?? []).length });
   } catch (err: any) {
     logger.error({ err }, "Seed error");
