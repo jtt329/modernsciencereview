@@ -20,6 +20,12 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
   const finalJudgment = paper.reviewFinalJudgment;
   const fallbackPreview = paper.reviewSummary || paper.content.substring(0, 500);
 
+  const scoreColorClass = paper.score != null
+    ? paper.score >= 80 ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+    : paper.score >= 60 ? 'bg-amber-50 border-amber-200 text-amber-700'
+    : 'bg-rose-50 border-rose-200 text-rose-700'
+    : '';
+
   return (
     <motion.div
       whileHover={{ y: isSelectable ? 0 : -2 }}
@@ -43,17 +49,39 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
       )}
 
       <div className="p-6">
-        {/* Author + date row */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2 min-w-0">
+        {/* Author + date + score row */}
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-2 min-w-0 pt-0.5">
             <div className="w-7 h-7 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100 shrink-0">
               <Users className="w-3.5 h-3.5 text-indigo-600" />
             </div>
             <span className="text-sm font-bold text-slate-700 truncate">{displayAuthors}</span>
           </div>
-          <span className="text-xs text-slate-400 font-medium shrink-0 ml-3">
-            {format(paper.createdAt, 'MMM d, yyyy')}
-          </span>
+
+          {/* Date + score stacked on right */}
+          <div className="flex flex-col items-end gap-1 shrink-0 ml-3">
+            <span className="text-xs text-slate-400 font-medium">
+              {format(paper.createdAt, 'MMM d, yyyy')}
+            </span>
+            {paper.score != null && (
+              <div className="flex flex-col items-end gap-0.5">
+                <div className="relative group/score">
+                  <div className={`flex items-baseline gap-1 px-2.5 py-1 rounded-lg border cursor-default ${scoreColorClass}`}>
+                    <span className="text-[9px] font-black uppercase tracking-widest opacity-60">Score</span>
+                    <span className="text-lg font-black leading-none">{paper.score}</span>
+                  </div>
+                  <div className="absolute top-full right-0 mt-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover/score:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
+                    An intrinsic value score (1–100) assigned by the AI review, based entirely on scientific merit, novelty, and breadth of impact — never on author identity, institution, or prestige. Scores roughly correspond to percentile rank within the field.
+                  </div>
+                </div>
+                {paper.modelName && (
+                  <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
+                    {paper.modelName.startsWith('gemini') ? 'Gemini 3.1 Pro' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Title */}
@@ -62,7 +90,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
         </h3>
 
         {/* Tags */}
-        <div className="flex flex-wrap items-start gap-1.5 mb-4">
+        <div className="flex flex-wrap items-start gap-1.5 mb-3">
           <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-wider rounded-md border border-indigo-100">
             {paper.field}
           </span>
@@ -71,28 +99,6 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
               {s}
             </span>
           ))}
-          {paper.score != null && (
-            <div className="ml-auto flex flex-col items-end gap-0.5">
-              <div className="relative group/score">
-                <div className={`flex flex-col items-center px-3 py-1.5 rounded-xl border cursor-default ${
-                  paper.score >= 80 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
-                  paper.score >= 60 ? 'bg-amber-50 border-amber-200 text-amber-700' :
-                  'bg-rose-50 border-rose-200 text-rose-700'
-                }`}>
-                  <span className="text-[9px] font-black uppercase tracking-widest opacity-60">Score</span>
-                  <span className="text-xl font-black leading-tight">{paper.score}</span>
-                </div>
-                <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover/score:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
-                  An intrinsic value score (1–100) assigned by the AI review, based entirely on scientific merit, novelty, and breadth of impact — never on author identity, institution, or prestige. Scores roughly correspond to percentile rank within the field.
-                </div>
-              </div>
-              {paper.modelName && (
-                <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
-                  {paper.modelName.startsWith('gemini') ? 'Gemini 3.1 Pro' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}
-                </span>
-              )}
-            </div>
-          )}
         </div>
 
         {/* AI preview */}
