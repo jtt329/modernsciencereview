@@ -283,13 +283,14 @@ export default function App() {
 
   const filteredPapers = papers
     .filter(p => {
-      const q = searchQuery.toLowerCase();
-      const matchesSearch = !q ||
-        p.title.toLowerCase().includes(q) ||
-        p.authorName.toLowerCase().includes(q) ||
-        (p.paperAuthors || '').toLowerCase().includes(q) ||
-        (p.reviewCentralClaim || '').toLowerCase().includes(q) ||
-        (p.reviewSummary || '').toLowerCase().includes(q);
+      const q = searchQuery.trim().toLowerCase();
+      const matchesSearch = !q || [
+        p.title,
+        p.authorName,
+        p.paperAuthors,
+        p.reviewCentralClaim,
+        p.reviewSummary,
+      ].some(f => typeof f === 'string' && f.toLowerCase().includes(q));
       const fieldLower = selectedField.toLowerCase();
       const matchesField = selectedField === 'All Fields' ||
         p.field.toLowerCase().includes(fieldLower) ||
