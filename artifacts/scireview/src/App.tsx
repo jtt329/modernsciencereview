@@ -351,18 +351,15 @@ export default function App() {
               className="space-y-12"
             >
               {/* Hero */}
-              <div className="text-center space-y-3 max-w-4xl mx-auto mb-16">
-                <h1 className="text-5xl md:text-6xl font-black text-slate-900 tracking-tight leading-none whitespace-nowrap">
-                  <span className="text-indigo-600">Modern Science Review</span>
-                </h1>
-                <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest">
-                  Powered by Gemini 3.1 Pro Thinking
-                </p>
-                <p className="text-xl text-slate-600 font-medium max-w-2xl mx-auto pt-1">
+              <div className="text-center space-y-3 max-w-2xl mx-auto mb-8">
+                <p className="text-2xl text-slate-700 font-semibold leading-snug">
                   Submit your research, get an instant AI assessment, and timestamp your work on the public record.
                 </p>
+                <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest pt-1">
+                  Powered by Gemini 3.1 Pro Thinking
+                </p>
                 {!user && (
-                  <button onClick={login} className="mt-4 bg-indigo-600 text-white px-8 py-3 rounded-full font-bold hover:bg-indigo-700 transition-colors inline-flex items-center gap-2">
+                  <button onClick={login} className="mt-2 bg-indigo-600 text-white px-8 py-3 rounded-full font-bold hover:bg-indigo-700 transition-colors inline-flex items-center gap-2">
                     <Sparkles className="w-4 h-4" /> Get Started — Sign In
                   </button>
                 )}
