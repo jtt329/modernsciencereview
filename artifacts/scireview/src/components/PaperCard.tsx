@@ -71,9 +71,19 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
           ))}
           {paper.score != null && (
             <div className="ml-auto flex flex-col items-end gap-0.5">
-              <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] font-black uppercase tracking-wider rounded-md border border-emerald-100">
-                Score: {paper.score}
-              </span>
+              <div className="relative group">
+                <div className={`flex flex-col items-center px-3 py-1.5 rounded-xl border cursor-default ${
+                  paper.score >= 80 ? 'bg-emerald-50 border-emerald-200 text-emerald-700' :
+                  paper.score >= 60 ? 'bg-amber-50 border-amber-200 text-amber-700' :
+                  'bg-rose-50 border-rose-200 text-rose-700'
+                }`}>
+                  <span className="text-[9px] font-black uppercase tracking-widest opacity-60">Score</span>
+                  <span className="text-xl font-black leading-tight">{paper.score}</span>
+                </div>
+                <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
+                  An intrinsic value score (1–100) assigned by the AI review, based entirely on scientific merit, novelty, and breadth of impact — never on author identity, institution, or prestige. Scores roughly correspond to percentile rank within the field.
+                </div>
+              </div>
               {paper.modelName && (
                 <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
                   {paper.modelName.startsWith('gemini') ? 'Gemini 3.1 Pro' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}

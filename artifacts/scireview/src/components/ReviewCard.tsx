@@ -64,8 +64,13 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                 )}
               </div>
             </div>
-            <div className={`px-5 py-3 rounded-2xl font-black text-2xl border ${scoreColor}`}>
-              {displayScore}<span className="text-sm font-bold ml-1">/100</span>
+            <div className="relative group">
+              <div className={`px-5 py-3 rounded-2xl font-black text-2xl border cursor-default ${scoreColor}`}>
+                {displayScore}<span className="text-sm font-bold ml-1">/100</span>
+              </div>
+              <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
+                An intrinsic value score (1–100) assigned by the AI review, based entirely on scientific merit, novelty, and breadth of impact — never on author identity, institution, or prestige. Scores roughly correspond to percentile rank within the field.
+              </div>
             </div>
           </div>
 

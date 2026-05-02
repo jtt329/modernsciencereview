@@ -90,13 +90,6 @@ export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
             </div>
           ))}
 
-          {/* Blind review callout */}
-          <div className="bg-indigo-50 border border-indigo-100 rounded-2xl px-5 py-4">
-            <p className="text-sm text-indigo-800 font-medium leading-relaxed">
-              <span className="font-black">Why blind?</span> Traditional peer review is riddled with prestige bias. Here, the AI never sees the author's name, institution, or citation count — only the science.
-            </p>
-          </div>
-
           {/* System prompt toggle */}
           <div className="border border-slate-200 rounded-2xl overflow-hidden">
             <button
