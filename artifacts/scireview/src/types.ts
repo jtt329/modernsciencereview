@@ -17,6 +17,7 @@ export interface Paper {
   modelName?: string;
   reviewSummary?: string | null;
   reviewCentralClaim?: string | null;
+  reviewFinalJudgment?: string | null;
 }
 
 export interface AIReview {

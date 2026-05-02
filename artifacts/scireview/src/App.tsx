@@ -41,6 +41,7 @@ interface Paper {
   createdAt: string;
   reviewSummary?: string | null;
   reviewCentralClaim?: string | null;
+  reviewFinalJudgment?: string | null;
 }
 
 interface AIReview {
@@ -288,6 +289,7 @@ export default function App() {
         p.title,
         p.paperAuthors,
         p.reviewCentralClaim,
+        p.reviewFinalJudgment,
         p.reviewSummary,
       ].some(f => typeof f === 'string' && f.toLowerCase().includes(q));
       const fieldLower = selectedField.toLowerCase();
@@ -564,12 +566,6 @@ export default function App() {
                         </button>
                       </div>
                     </div>
-                  </div>
-
-                  <div className="prose prose-slate max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                      {selectedPaper.content}
-                    </ReactMarkdown>
                   </div>
 
                   {selectedPaper.displayPdf && selectedPaper.pdfUrl && (

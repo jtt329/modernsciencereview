@@ -16,7 +16,9 @@ interface PaperCardProps {
 
 export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectable, isSelected, onSelect }: PaperCardProps) {
   const displayAuthors = paper.paperAuthors || paper.authorName;
-  const preview = paper.reviewCentralClaim || paper.reviewSummary || paper.content.substring(0, 500);
+  const centralClaim = paper.reviewCentralClaim;
+  const finalJudgment = paper.reviewFinalJudgment;
+  const fallbackPreview = paper.reviewSummary || paper.content.substring(0, 500);
 
   return (
     <motion.div
@@ -93,10 +95,25 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
           )}
         </div>
 
-        {/* AI summary preview */}
-        <p className="text-slate-600 text-sm line-clamp-4 mb-5 leading-relaxed">
-          {preview}
-        </p>
+        {/* AI preview */}
+        <div className="mb-5 space-y-2.5">
+          {centralClaim ? (
+            <>
+              <div>
+                <span className="text-[9px] font-black uppercase tracking-widest text-indigo-400">Central Claim</span>
+                <p className="text-slate-700 text-sm line-clamp-2 leading-relaxed mt-0.5">{centralClaim}</p>
+              </div>
+              {finalJudgment && (
+                <div>
+                  <span className="text-[9px] font-black uppercase tracking-widest text-slate-400">Final Judgment</span>
+                  <p className="text-slate-500 text-sm line-clamp-2 leading-relaxed mt-0.5">{finalJudgment}</p>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-slate-600 text-sm line-clamp-4 leading-relaxed">{fallbackPreview}</p>
+          )}
+        </div>
 
         {/* Footer */}
         <div className="flex items-center justify-between pt-4 border-t border-slate-100">
