@@ -283,6 +283,8 @@ Before finalizing, check for these common scoring errors:
 - Do not reward simple relabeling when it does not reveal structure or produce new understanding.
 - Do not let the final classification contradict the stated strengths and weaknesses.
 
+Formatting: whenever you use mathematical notation of any kind in any string field, you must write it in LaTeX — inline math as $...$ and display math as $$...$$.
+
 Output valid JSON only.
 
 The manuscript text begins after this line.`;
