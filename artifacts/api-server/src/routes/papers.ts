@@ -368,6 +368,65 @@ router.get("/papers/system-prompt", (_req, res) => {
   res.json({ prompt: REVIEW_SYSTEM_INSTRUCTION });
 });
 
+// GET /api/papers/export — download all reviews as structured JSON (model output only)
+router.get("/papers/export", async (_req, res) => {
+  try {
+    const papers = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt));
+    const reviews = await db.select().from(reviewsTable);
+    const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
+
+    const exported = papers.map(p => {
+      const r = reviewMap.get(p.id);
+      return {
+        paper: {
+          id: p.id,
+          title: p.title,
+          paperAuthors: p.paperAuthors,
+          field: p.field,
+          subfields: p.subfields,
+          createdAt: p.createdAt,
+          pdfUrl: p.pdfUrl,
+        },
+        review: r ? {
+          modelName: r.modelName,
+          overallIntrinsicScore: r.overallIntrinsicScore,
+          intrinsicScientificMeritScore: r.intrinsicScientificMeritScore,
+          explanatoryTargetBreadthScore: r.explanatoryTargetBreadthScore,
+          theorySpaceBreadthScore: r.theorySpaceBreadthScore,
+          breadthOfImpactScore: r.breadthOfImpactScore,
+          bestClassification: r.bestClassification,
+          centralClaim: r.centralClaim,
+          summary: r.summary,
+          correctness: r.correctness,
+          novelty: r.novelty,
+          noveltyConfidence: r.noveltyConfidence,
+          internalTechnicalTraction: r.internalTechnicalTraction,
+          economy: r.economy,
+          scopeDepth: r.scopeDepth,
+          unifyingPower: r.unifyingPower,
+          explanatoryTargetBreadth: r.explanatoryTargetBreadth,
+          theorySpaceBreadth: r.theorySpaceBreadth,
+          establishedResults: r.establishedResults,
+          interpretiveClaims: r.interpretiveClaims,
+          speculativeClaims: r.speculativeClaims,
+          strongestCaseForImportance: r.strongestCaseForImportance,
+          strongestObjection: r.strongestObjection,
+          decisiveCheck: r.decisiveCheck,
+          finalJudgment: r.finalJudgment,
+          relatedWork: r.relatedWork,
+          coverageLedger: r.coverageLedgerJson ? JSON.parse(r.coverageLedgerJson) : null,
+          createdAt: r.createdAt,
+        } : null,
+      };
+    });
+
+    res.json({ exportedAt: new Date().toISOString(), systemPrompt: REVIEW_SYSTEM_INSTRUCTION, count: exported.length, papers: exported });
+  } catch (err: any) {
+    logger.error({ err }, "Error exporting papers");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/papers — list all papers
 router.get("/papers", async (req, res) => {
   try {

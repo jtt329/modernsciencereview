@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink } from 'lucide-react';
+import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink, Check } from 'lucide-react';
 import LatexText from './components/LatexText';
 import { formatDistanceToNow } from 'date-fns';
 import { useAuth, AuthUser } from '@workspace/replit-auth-web';
@@ -100,6 +100,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = !!(user && ADMIN_EMAIL && user.email === ADMIN_EMAIL);
+  const [shareCopied, setShareCopied] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedField, setSelectedField] = useState('All Fields');
   const [selectedSubfield, setSelectedSubfield] = useState('All Subfields');
@@ -124,6 +125,24 @@ export default function App() {
       setUserLikes(new Set(data.likes || []));
     } catch {}
   }, [user]);
+
+  // Read ?paper=<id> from URL on first load
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paperId = params.get('paper');
+    if (paperId) setSelectedPaperId(paperId);
+  }, []);
+
+  // Sync URL when selected paper changes
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (selectedPaperId) {
+      url.searchParams.set('paper', selectedPaperId);
+    } else {
+      url.searchParams.delete('paper');
+    }
+    window.history.replaceState({}, '', url.toString());
+  }, [selectedPaperId]);
 
   useEffect(() => { fetchPapers(); }, [fetchPapers]);
 
@@ -253,6 +272,31 @@ export default function App() {
     }
   };
 
+  const handleShare = () => {
+    if (!selectedPaperId) return;
+    const url = `${window.location.origin}${window.location.pathname}?paper=${selectedPaperId}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    });
+  };
+
+  const handleDownloadAll = async () => {
+    try {
+      const res = await fetch('/api/papers/export', { credentials: 'include' });
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `scireview-export-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      window.alert(`Export failed: ${err.message}`);
+    }
+  };
+
   const handleDeleteAll = async () => {
     if (!isAdmin) return;
     const count = papers.length;
@@ -345,6 +389,7 @@ export default function App() {
         onDeleteAll={handleDeleteAll}
         onPromptAnalysis={() => setShowPromptAnalysis(true)}
         onNewPrompt={() => setShowNewPrompt(true)}
+        onDownloadAll={handleDownloadAll}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -547,8 +592,13 @@ export default function App() {
                           </a>
                         )}
 
-                        <button className="p-3 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors shadow-sm">
-                          <Share2 className="w-5 h-5 text-slate-600" />
+                        <button
+                          onClick={handleShare}
+                          title="Copy link to this review"
+                          className={`flex items-center gap-2 px-4 py-3 rounded-2xl font-bold transition-colors shadow-sm border text-sm ${shareCopied ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                        >
+                          {shareCopied ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+                          {shareCopied ? 'Copied!' : 'Share'}
                         </button>
                         {user && (user.id === selectedPaper.authorId || user.email === ADMIN_EMAIL) && (
                           <button onClick={() => handleDeletePaper(selectedPaper.id)} className="p-3 bg-rose-50 border border-rose-100 rounded-2xl hover:bg-rose-100 transition-colors shadow-sm">

@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Heart, MessageSquare, Users, ChevronRight, Check } from 'lucide-react';
+import { Heart, MessageSquare, Users, ChevronRight, Check, Share2 } from 'lucide-react';
 import { format } from 'date-fns';
 import { Paper } from '../types';
 import LatexText from './LatexText';
@@ -16,6 +16,16 @@ interface PaperCardProps {
 }
 
 export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectable, isSelected, onSelect }: PaperCardProps) {
+  const [copied, setCopied] = useState(false);
+
+  const handleShare = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const url = `${window.location.origin}${window.location.pathname}?paper=${paper.id}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
   const displayAuthors = paper.paperAuthors || paper.authorName;
   const centralClaim = paper.reviewCentralClaim;
   const finalJudgment = paper.reviewFinalJudgment;
@@ -145,8 +155,18 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
           </div>
 
           {!isSelectable && (
-            <div className="text-indigo-600 font-bold text-sm flex items-center gap-1 group-hover/card:translate-x-1 transition-transform">
-              Read Review <ChevronRight className="w-4 h-4" />
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleShare}
+                className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${copied ? 'text-emerald-500' : 'text-slate-400 hover:text-indigo-500'}`}
+                title="Copy link to this review"
+              >
+                {copied ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+                {copied ? 'Copied!' : 'Share'}
+              </button>
+              <div className="text-indigo-600 font-bold text-sm flex items-center gap-1 group-hover/card:translate-x-1 transition-transform">
+                Read Review <ChevronRight className="w-4 h-4" />
+              </div>
             </div>
           )}
         </div>

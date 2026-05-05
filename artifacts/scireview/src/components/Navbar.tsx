@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { LogIn, LogOut, PlusCircle, User, BarChart2, Trash2, Wand2 } from 'lucide-react';
+import { LogIn, LogOut, PlusCircle, User, BarChart2, Trash2, Wand2, Download } from 'lucide-react';
 
 interface NavbarProps {
   user: any;
@@ -12,9 +12,10 @@ interface NavbarProps {
   onDeleteAll: () => void;
   onPromptAnalysis: () => void;
   onNewPrompt: () => void;
+  onDownloadAll: () => void;
 }
 
-export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onHowItWorks, onDeleteAll, onPromptAnalysis, onNewPrompt }: NavbarProps) {
+export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onHowItWorks, onDeleteAll, onPromptAnalysis, onNewPrompt, onDownloadAll }: NavbarProps) {
   return (
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -47,6 +48,16 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
                     >
                       <BarChart2 className="w-4 h-4" />
                       <span className="hidden sm:inline">Analysis</span>
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={onDownloadAll}
+                      title="Download All Reviews as JSON"
+                      className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 text-emerald-700 px-3 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-emerald-100 transition-colors"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span className="hidden sm:inline">Export</span>
                     </motion.button>
                     <motion.button
                       whileHover={{ scale: 1.02 }}
