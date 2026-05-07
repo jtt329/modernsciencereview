@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, Upload, Brain, Globe, ChevronDown, ChevronUp, Loader2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { motion } from 'framer-motion';
+import { ArrowLeft, Upload, Brain, Globe, Loader2 } from 'lucide-react';
 
 interface HowItWorksModalProps {
   onClose: () => void;
@@ -28,20 +28,18 @@ const STEPS = [
 ];
 
 export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
-  const [showPrompt, setShowPrompt] = useState(false);
   const [prompt, setPrompt] = useState<string | null>(null);
   const [promptLoading, setPromptLoading] = useState(false);
 
   useEffect(() => {
-    if (showPrompt && prompt === null) {
-      setPromptLoading(true);
-      fetch('/api/papers/system-prompt', { credentials: 'include' })
-        .then(r => r.json())
-        .then(d => setPrompt(d.prompt))
-        .catch(() => setPrompt('Failed to load system prompt.'))
-        .finally(() => setPromptLoading(false));
-    }
-  }, [showPrompt]);
+    if (prompt !== null) return;
+    setPromptLoading(true);
+    fetch('/api/papers/system-prompt', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setPrompt(d.prompt))
+      .catch(() => setPrompt('Failed to load system prompt.'))
+      .finally(() => setPromptLoading(false));
+  }, [prompt]);
 
   return (
     <motion.div
@@ -89,51 +87,23 @@ export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
               ))}
             </div>
 
-            <div className="border border-slate-200 rounded-2xl overflow-hidden">
-              <button
-                onClick={() => setShowPrompt(v => !v)}
-                className="w-full flex items-center justify-between px-5 py-4 hover:bg-slate-50 transition-colors"
-              >
-                <div className="text-left">
-                  <span className="font-bold text-slate-800 text-sm">View the System Prompt</span>
-                  <p className="text-xs text-slate-400 mt-0.5">The exact instructions the review system receives for every pass</p>
-                </div>
-                {showPrompt ? (
-                  <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" />
+            <div className="border border-slate-200 rounded-3xl overflow-hidden bg-white">
+              <div className="px-6 py-5 border-b border-slate-100">
+                <span className="font-black text-slate-900 text-xl">System Prompt</span>
+                <p className="text-sm text-slate-500 mt-1">The exact instructions the review system receives for every review pass</p>
+              </div>
+
+              <div className="bg-slate-950 px-6 py-6">
+                {promptLoading ? (
+                  <div className="flex items-center gap-2 text-slate-400 text-sm py-2">
+                    <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+                  </div>
                 ) : (
-                  <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+                  <pre className="text-slate-200 text-[15px] leading-8 whitespace-pre-wrap font-mono">
+                    {prompt}
+                  </pre>
                 )}
-              </button>
-
-              <AnimatePresence>
-                {showPrompt && (
-                  <motion.div
-                    initial={{ height: 0 }}
-                    animate={{ height: 'auto' }}
-                    exit={{ height: 0 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="border-t border-slate-100 bg-slate-950 px-5 py-4 max-h-72 overflow-y-auto">
-                      {promptLoading ? (
-                        <div className="flex items-center gap-2 text-slate-400 text-sm py-2">
-                          <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-                        </div>
-                      ) : (
-                        <pre className="text-slate-300 text-sm leading-relaxed whitespace-pre-wrap font-mono min-h-[32rem]">
-                          {prompt}
-                        </pre>
-                      )}
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-
-            <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-5">
-              <p className="text-xs font-black text-indigo-500 uppercase tracking-widest">Note</p>
-              <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-                This page shows the prompt currently being served by the site backend. If the backend has not been updated yet, this text can still reflect the older live review prompt even if the homepage version badge changed.
-              </p>
+              </div>
             </div>
           </div>
         </div>
