@@ -2,17 +2,12 @@ import { Router } from "express";
 import { db, papersTable, reviewsTable, reviewSessionsTable, sessionPapersTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
-import OpenAI from "openai";
-import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { randomUUID } from "crypto";
+import { generateCompatReview, type ReviewModel } from "../lib/reviewEngineCompat";
 
 const router = Router();
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
-const GPT_MODEL = "gpt-5.4-pro";
-const GEMINI_MODEL = "gemini-3.1-pro-preview";
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 function requireAdmin(req: any, res: any): boolean {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return false; }
@@ -29,49 +24,6 @@ interface ReReviewJob {
   error?: string;
 }
 const reReviewJobs = new Map<string, ReReviewJob>();
-
-function extractJson(raw: string): unknown {
-  let s = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
-  try { return JSON.parse(s); } catch { /* fall through */ }
-  const lastBrace = s.lastIndexOf("}");
-  if (lastBrace !== -1) {
-    try { return JSON.parse(s.slice(0, lastBrace + 1)); } catch { /* fall through */ }
-  }
-  throw new Error("Could not parse model response as JSON");
-}
-
-async function runReviewWithPrompt(content: string, prompt: string, model: "gpt" | "gemini"): Promise<{ review: any; thinkingText: string | null }> {
-  if (model === "gemini") {
-    const response = await geminiAI.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: [{ role: "user", parts: [{ text: content }] }],
-      config: {
-        systemInstruction: prompt,
-        responseMimeType: "application/json",
-        maxOutputTokens: 32768,
-        thinkingConfig: { includeThoughts: true, thinkingLevel: 'HIGH' },
-      } as any,
-    });
-    if (!response.text) throw new Error("No response from Gemini");
-
-    const parts: any[] = (response as any).candidates?.[0]?.content?.parts ?? [];
-    const thinkingParts = parts.filter((p: any) => p.thought === true);
-    const thinkingText = thinkingParts.length > 0
-      ? thinkingParts.map((p: any) => p.text ?? "").join("\n\n").trim()
-      : null;
-
-    return { review: extractJson(response.text), thinkingText };
-  } else {
-    const response = await openai.responses.create({
-      model: GPT_MODEL,
-      instructions: prompt,
-      input: content,
-      max_output_tokens: 32768,
-    });
-    if (!response.output_text) throw new Error("No response from GPT");
-    return { review: extractJson(response.output_text), thinkingText: null };
-  }
-}
 
 // POST /api/admin/snapshot-and-delete
 // Captures all current papers + their review scores into a session, then deletes all papers.
@@ -162,8 +114,7 @@ router.post("/admin/re-review", async (req, res) => {
   try {
     const { promptText, model } = req.body;
     if (!promptText?.trim()) { res.status(400).json({ error: "promptText is required" }); return; }
-    const useModel: "gpt" | "gemini" = model === "gemini" ? "gemini" : "gpt";
-    const modelName = useModel === "gemini" ? GEMINI_MODEL : GPT_MODEL;
+    const useModel: ReviewModel = model === "gemini" ? "gemini" : "gpt";
 
     const papers = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt));
     if (papers.length === 0) { res.status(400).json({ error: "No papers on the homepage to re-review." }); return; }
@@ -266,63 +217,21 @@ router.post("/admin/re-review", async (req, res) => {
             }
           }
 
-          const { review: r, thinkingText } = await runReviewWithPrompt(content, promptText.trim(), useModel);
-
-          const coverageLedgerJson = (r.coverageLedger || r.directTargets || r.importedInputs || r.theorySpaceVariants || r.mechanismSharingAssessment)
-            ? JSON.stringify({
-                coverageLedger: r.coverageLedger ?? null,
-                directTargets: r.directTargets ?? [],
-                importedInputs: r.importedInputs ?? [],
-                theorySpaceVariants: r.theorySpaceVariants ?? [],
-                mechanismSharingAssessment: r.mechanismSharingAssessment ?? null,
-              })
-            : null;
-
-          const noveltyConf = r.noveltyConfidence != null ? String(r.noveltyConfidence) : null;
+          const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(content, useModel, promptText.trim());
 
           await db.insert(reviewsTable).values({
             paperId: paper.id,
-            summary: r.summary ?? "",
-            correctness: r.correctness ?? "",
-            novelty: r.novelty ?? "",
-            overallEvaluation: r.finalJudgment ?? "",
-            score: Math.round(r.overallIntrinsicScore ?? 0),
-            relatedWork: r.relatedWork ?? "",
-            centralClaim: r.centralClaim ?? null,
-            establishedResults: r.establishedResults ?? null,
-            interpretiveClaims: r.interpretiveClaims ?? null,
-            speculativeClaims: r.speculativeClaims ?? null,
-            economy: r.economy ?? null,
-            explanatoryTargetBreadth: r.explanatoryTargetBreadth ?? null,
-            theorySpaceBreadth: r.theorySpaceBreadth ?? null,
-            scopeDepth: r.scopeDepth ?? null,
-            unifyingPower: r.unifyingPower ?? null,
-            strongestCaseForImportance: r.strongestCaseForImportance ?? null,
-            strongestObjection: r.strongestObjection ?? null,
-            decisiveCheck: r.decisiveCheck ?? null,
-            internalTechnicalTraction: r.internalTechnicalTraction ?? null,
-            noveltyConfidence: noveltyConf,
-            intrinsicScientificMeritScore: r.intrinsicScientificMeritScore != null ? Math.round(r.intrinsicScientificMeritScore) : null,
-            explanatoryTargetBreadthScore: r.explanatoryTargetBreadthScore != null ? Math.round(r.explanatoryTargetBreadthScore) : null,
-            theorySpaceBreadthScore: r.theorySpaceBreadthScore != null ? Math.round(r.theorySpaceBreadthScore) : null,
-            breadthOfImpactScore: r.breadthOfImpactScore != null ? Math.round(r.breadthOfImpactScore) : null,
-            overallIntrinsicScore: r.overallIntrinsicScore != null ? Math.round(r.overallIntrinsicScore) : null,
-            bestClassification: r.bestClassification ?? null,
-            finalJudgment: r.finalJudgment ?? null,
-            coverageLedgerJson,
-            thinkingText: thinkingText ?? null,
-            modelName: modelName,
-            systemPrompt: promptText.trim(),
+            ...reviewValues,
           });
 
           // Update paper score + model
           await db
             .update(papersTable)
             .set({
-              score: r.overallIntrinsicScore != null ? Math.round(r.overallIntrinsicScore) : paper.score,
-              modelName: modelName,
-              field: r.field ?? paper.field,
-              subfields: r.subfields ?? paper.subfields,
+              score: reviewValues.score ?? paper.score,
+              modelName: reviewMetadata.modelName,
+              field: reviewMetadata.field || paper.field,
+              subfields: reviewMetadata.subfields ?? paper.subfields,
             })
             .where(eq(papersTable.id, paper.id));
 
