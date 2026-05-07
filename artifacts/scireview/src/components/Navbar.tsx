@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { LogIn, LogOut, PlusCircle, User, BarChart2, Trash2, Wand2, Download } from 'lucide-react';
+import { SITE_VERSION } from '../lib/version';
 
 interface NavbarProps {
   user: any;
@@ -20,8 +21,11 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
-          <div className="cursor-pointer" onClick={() => window.location.href = '/'}>
+          <div className="cursor-pointer flex items-center gap-3" onClick={() => window.location.href = '/'}>
             <span className="text-2xl font-black tracking-tight leading-none">ModernScience<span className="text-indigo-500">.</span>Review</span>
+            <span className="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
+              {SITE_VERSION}
+            </span>
           </div>
 
           <div className="flex items-center gap-3">
