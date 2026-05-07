@@ -1,4 +1,5 @@
 import {
+  buildStoredReviewValues,
   GEMINI_MODEL,
   GPT_MODEL,
   REVIEW_PASS_COUNT,
@@ -23,56 +24,9 @@ export async function generateCompatReview(
   promptOverride?: string,
 ) {
   const result = await generateMultiPassReview(paperContent, model, promptOverride);
-  const representative = result.representativeReview;
   const aggregate = result.aggregate;
-  const reviewValues = {
-    summary: aggregate.finalSummary || representative.summary || representative.oneParagraphVerdict || "",
-    correctness: representative.correctness || "",
-    novelty: representative.novelty || "",
-    overallEvaluation: aggregate.publicOneParagraphVerdict || representative.finalJudgment || "",
-    score: aggregate.finalScoreBand.median,
-    relatedWork: "",
-    centralClaim: representative.centralClaim || null,
-    establishedResults: representative.establishedResults.length > 0 ? representative.establishedResults.join("\n- ").replace(/^/, "- ") : null,
-    interpretiveClaims: representative.interpretiveClaims.length > 0 ? representative.interpretiveClaims.join("\n- ").replace(/^/, "- ") : null,
-    speculativeClaims: representative.speculativeClaims.length > 0 ? representative.speculativeClaims.join("\n- ").replace(/^/, "- ") : null,
-    economy: representative.economy || null,
-    explanatoryTargetBreadth: representative.explanatoryTargetBreadth || null,
-    theorySpaceBreadth: representative.theorySpaceBreadth || null,
-    scopeDepth: representative.scopeDepth || null,
-    unifyingPower: representative.unifyingPower || null,
-    strongestCaseForImportance: representative.strongestCaseForImportance || null,
-    strongestObjection: representative.strongestObjection || null,
-    decisiveCheck: representative.decisiveCheck || null,
-    internalTechnicalTraction: representative.internalTechnicalTraction || null,
-    noveltyConfidence: String(representative.noveltyConfidence),
-    intrinsicScientificMeritScore: representative.intrinsicTechnicalScore,
-    explanatoryTargetBreadthScore: representative.explanatoryTargetBreadthScore,
-    theorySpaceBreadthScore: representative.theorySpaceBreadthScore,
-    breadthOfImpactScore: representative.breadthOfImpactScore,
-    overallIntrinsicScore: aggregate.finalScoreBand.median,
-    bestClassification: aggregate.finalClassification || representative.bestClassification || null,
-    finalJudgment: aggregate.publicOneParagraphVerdict || representative.finalJudgment || null,
-    coverageLedgerJson: JSON.stringify({
-      coverageLedger: representative.coverageLedger,
-      directTargets: representative.coverageLedger.directTargets,
-      importedInputs: representative.coverageLedger.importedInputs,
-      theorySpaceVariants: representative.coverageLedger.theorySpaceVariants,
-      mechanismSharingAssessment: representative.coverageLedger.mechanismSharingAssessment,
-      scoreBand: aggregate.finalScoreBand,
-      scoreStability: aggregate.scoreStability,
-      publicVerdict: aggregate.publicOneParagraphVerdict,
-      finalComparisonCohort: aggregate.finalComparisonCohort,
-      finalBroadField: aggregate.finalBroadField,
-      finalSpecialtyField: aggregate.finalSpecialtyField,
-      passCount: REVIEW_PASS_COUNT,
-      individualReviews: result.individualReviews,
-      aggregate,
-    }),
-    thinkingText: result.thinkingText,
-    modelName: result.modelName,
-    systemPrompt: result.systemPrompt,
-  };
+  const representative = result.representativeReview;
+  const reviewValues = buildStoredReviewValues(result);
 
   return {
     metadata: {
