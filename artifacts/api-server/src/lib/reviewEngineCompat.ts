@@ -55,6 +55,10 @@ export async function generateCompatReview(
     finalJudgment: aggregate.publicOneParagraphVerdict || representative.finalJudgment || null,
     coverageLedgerJson: JSON.stringify({
       coverageLedger: representative.coverageLedger,
+      directTargets: representative.coverageLedger.directTargets,
+      importedInputs: representative.coverageLedger.importedInputs,
+      theorySpaceVariants: representative.coverageLedger.theorySpaceVariants,
+      mechanismSharingAssessment: representative.coverageLedger.mechanismSharingAssessment,
       scoreBand: aggregate.finalScoreBand,
       scoreStability: aggregate.scoreStability,
       publicVerdict: aggregate.publicOneParagraphVerdict,
