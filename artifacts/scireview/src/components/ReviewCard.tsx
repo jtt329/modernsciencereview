@@ -14,7 +14,7 @@ interface ReviewCardProps {
 }
 
 const Markdown = ({ children }: { children: string }) => (
-  <div className="prose prose-invert prose-sm max-w-none text-slate-300 leading-relaxed">
+  <div className="prose prose-invert prose-sm prose-p:my-0 prose-li:my-0 max-w-none text-slate-300 leading-relaxed">
     <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
       {children}
     </ReactMarkdown>
@@ -50,13 +50,34 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
       parsedCoverage = null;
     }
   }
+  let storedIndividualReviewsFromField: any[] = [];
+  if (review.individualReviewsJson) {
+    try {
+      const parsed = JSON.parse(review.individualReviewsJson);
+      storedIndividualReviewsFromField = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      storedIndividualReviewsFromField = [];
+    }
+  }
+  let storedAggregateFromField: any = null;
+  if (review.aggregateMetaJson) {
+    try {
+      storedAggregateFromField = JSON.parse(review.aggregateMetaJson);
+    } catch {
+      storedAggregateFromField = null;
+    }
+  }
   const coverageLedger = parsedCoverage?.coverageLedger ?? parsedCoverage ?? null;
   const directTargets = parsedCoverage?.directTargets ?? coverageLedger?.directTargets ?? [];
   const importedInputs = parsedCoverage?.importedInputs ?? coverageLedger?.importedInputs ?? [];
   const theorySpaceVariants = parsedCoverage?.theorySpaceVariants ?? coverageLedger?.theorySpaceVariants ?? [];
   const mechanismSharingAssessment = parsedCoverage?.mechanismSharingAssessment ?? coverageLedger?.mechanismSharingAssessment ?? '';
-  const storedAggregate = parsedCoverage?.aggregate ?? null;
-  const storedIndividualReviews = Array.isArray(parsedCoverage?.individualReviews) ? parsedCoverage.individualReviews : [];
+  const storedAggregate = storedAggregateFromField ?? parsedCoverage?.aggregate ?? null;
+  const storedIndividualReviews = storedIndividualReviewsFromField.length > 0
+    ? storedIndividualReviewsFromField
+    : Array.isArray(parsedCoverage?.individualReviews)
+      ? parsedCoverage.individualReviews
+      : [];
   const displayedPassCount = storedIndividualReviews.length || passCount;
   const aggregateScoreBand = storedAggregate?.finalScoreBand ?? null;
   const publicVerdict = review.publicVerdict || storedAggregate?.publicOneParagraphVerdict || parsedCoverage?.publicVerdict || review.finalJudgment || review.overallEvaluation;
@@ -191,7 +212,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                       <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Direct Targets</p>
                       <ul className="space-y-1">
                         {directTargets.map((t: string, i: number) => (
-                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-500 shrink-0">▸</span>{t}</li>
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-500 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{t}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
@@ -201,7 +222,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                       <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Imported Inputs</p>
                       <ul className="space-y-1">
                         {importedInputs.map((t: string, i: number) => (
-                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-500 shrink-0">▸</span>{t}</li>
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-500 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{t}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
@@ -211,7 +232,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                       <p className="text-[10px] font-black text-violet-400 uppercase tracking-widest">Theory-Space Variants</p>
                       <ul className="space-y-1">
                         {theorySpaceVariants.map((t: string, i: number) => (
-                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-violet-500 shrink-0">▸</span>{t}</li>
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-violet-500 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{t}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
