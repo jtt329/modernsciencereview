@@ -34,13 +34,40 @@ const Section = ({ icon, label, color, children }: { icon: React.ReactNode; labe
 export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps) {
   const [showPrompt, setShowPrompt] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
+  const [activeTab, setActiveTab] = useState<'combined' | number>('combined');
+
+  const toMarkdownList = (items?: string[]) => items && items.length > 0 ? items.map((item) => `- ${item}`).join('\n') : '';
+  const normalizeDisplayedBand = (
+    low: number | null | undefined,
+    median: number | null | undefined,
+    high: number | null | undefined,
+    classification?: string | null,
+  ) => {
+    const safeLow = Number(low ?? median ?? high ?? 0);
+    const safeMedian = Number(median ?? low ?? high ?? 0);
+    const safeHigh = Number(high ?? median ?? low ?? 0);
+    const maxValue = Math.max(safeLow, safeMedian, safeHigh);
+    const likelyTenScale =
+      maxValue > 0 &&
+      maxValue <= 10 &&
+      classification !== 'not yet convincing';
+
+    if (likelyTenScale) {
+      return {
+        low: Math.round(safeLow * 10),
+        median: Math.round(safeMedian * 10),
+        high: Math.round(safeHigh * 10),
+      };
+    }
+
+    return {
+      low: Math.round(safeLow),
+      median: Math.round(safeMedian),
+      high: Math.round(safeHigh),
+    };
+  };
 
   const isNewFormat = review.overallIntrinsicScore != null;
-  const displayScore = review.overallIntrinsicScore ?? review.score;
-  const scoreLow = review.scoreBandLow ?? displayScore;
-  const scoreMedian = review.scoreBandMedian ?? displayScore;
-  const scoreHigh = review.scoreBandHigh ?? displayScore;
-  const scoreRangeLabel = scoreLow === scoreHigh ? `${scoreMedian}/100` : `${scoreLow}-${scoreHigh}`;
   const passCount = review.passCount ?? 1;
   let parsedCoverage: any = null;
   if (review.coverageLedgerJson) {
@@ -85,6 +112,48 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const displayedStability = review.scoreStability || storedAggregate?.scoreStability || parsedCoverage?.scoreStability || 'Not specified';
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
+  const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
+  const combinedBand = normalizeDisplayedBand(
+    aggregateScoreBand?.low ?? review.scoreBandLow ?? review.overallIntrinsicScore ?? review.score,
+    aggregateScoreBand?.median ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score,
+    aggregateScoreBand?.high ?? review.scoreBandHigh ?? review.overallIntrinsicScore ?? review.score,
+    aggregateClassification ?? review.bestClassification,
+  );
+  const activeBand = selectedPass
+    ? normalizeDisplayedBand(
+        selectedPass.scoreBand?.low,
+        selectedPass.scoreBand?.median,
+        selectedPass.scoreBand?.high,
+        selectedPass.bestClassification,
+      )
+    : combinedBand;
+  const displayScore = activeBand.median;
+  const scoreRangeLabel = activeBand.low === activeBand.high ? `${activeBand.median}/100` : `${activeBand.low}-${activeBand.high}`;
+  const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
+  const currentComparisonCohort = selectedPass?.comparisonCohort || selectedPass?.broadField || comparisonCohort;
+  const currentVerdict = selectedPass?.oneParagraphVerdict || selectedPass?.finalJudgment || aggregateVerdict;
+  const currentFinalJudgment = selectedPass?.finalJudgment || currentVerdict || review.finalJudgment || review.overallEvaluation;
+  const currentSummary = selectedPass?.summary || review.summary;
+  const currentCentralClaim = selectedPass?.centralClaim || review.centralClaim;
+  const currentDirectTargets = selectedPass?.coverageLedger?.directTargets ?? directTargets;
+  const currentImportedInputs = selectedPass?.coverageLedger?.importedInputs ?? importedInputs;
+  const currentTheorySpaceVariants = selectedPass?.coverageLedger?.theorySpaceVariants ?? theorySpaceVariants;
+  const currentMechanismSharingAssessment = selectedPass?.coverageLedger?.mechanismSharingAssessment ?? mechanismSharingAssessment;
+  const currentEstablishedResults = selectedPass ? toMarkdownList(selectedPass.establishedResults) : review.establishedResults;
+  const currentInterpretiveClaims = selectedPass ? toMarkdownList(selectedPass.interpretiveClaims) : review.interpretiveClaims;
+  const currentSpeculativeClaims = selectedPass ? toMarkdownList(selectedPass.speculativeClaims) : review.speculativeClaims;
+  const currentCorrectness = selectedPass?.correctness || review.correctness;
+  const currentNovelty = selectedPass?.novelty || review.novelty;
+  const currentNoveltyConfidence = selectedPass?.noveltyConfidence ?? review.noveltyConfidence;
+  const currentInternalTechnicalTraction = selectedPass?.internalTechnicalTraction || review.internalTechnicalTraction;
+  const currentEconomy = selectedPass?.economy || review.economy;
+  const currentScopeDepth = selectedPass?.scopeDepth || review.scopeDepth;
+  const currentUnifyingPower = selectedPass?.unifyingPower || review.unifyingPower;
+  const currentExplanatoryTargetBreadth = selectedPass?.explanatoryTargetBreadth || review.explanatoryTargetBreadth;
+  const currentTheorySpaceBreadth = selectedPass?.theorySpaceBreadth || review.theorySpaceBreadth;
+  const currentStrongestCase = selectedPass?.strongestCaseForImportance || review.strongestCaseForImportance;
+  const currentStrongestObjection = selectedPass?.strongestObjection || review.strongestObjection;
+  const currentDecisiveCheck = selectedPass?.decisiveCheck || review.decisiveCheck;
 
   const scoreColor = displayScore >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' :
     displayScore >= 60 ? 'text-amber-600 bg-amber-50 border-amber-200' :
@@ -125,30 +194,58 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
           <div className="grid md:grid-cols-4 gap-3">
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
-              <p className="text-sm font-bold text-white mt-1 capitalize">{review.bestClassification || 'Unclassified'}</p>
+              <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Score Range</p>
-              <p className="text-sm font-bold text-white mt-1">{scoreLow}-{scoreHigh}</p>
-              <p className="text-[11px] text-slate-400 mt-1">Median {scoreMedian}</p>
+              <p className="text-sm font-bold text-white mt-1">{activeBand.low}-{activeBand.high}</p>
+              <p className="text-[11px] text-slate-400 mt-1">Median {activeBand.median}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
-              <p className="text-sm font-bold text-white mt-1">{comparisonCohort || 'Not specified'}</p>
+              <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Stability</p>
-              <p className="text-sm font-bold text-white mt-1">{displayedStability}</p>
-              <p className="text-[11px] text-slate-400 mt-1">{displayedPassCount} independent passes</p>
+              <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">{selectedPass ? 'View' : 'Stability'}</p>
+              <p className="text-sm font-bold text-white mt-1">{selectedPass ? `Pass ${activeTab + 1}` : displayedStability}</p>
+              <p className="text-[11px] text-slate-400 mt-1">{selectedPass ? `${displayedPassCount} total passes` : `${displayedPassCount} independent passes`}</p>
             </div>
           </div>
 
-          {publicVerdict && (
+          {storedIndividualReviews.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setActiveTab('combined')}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
+                  activeTab === 'combined'
+                    ? 'bg-indigo-500 text-white'
+                    : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                }`}
+              >
+                Combined Review
+              </button>
+              {storedIndividualReviews.map((_: any, index: number) => (
+                <button
+                  key={index}
+                  onClick={() => setActiveTab(index)}
+                  className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
+                    activeTab === index
+                      ? 'bg-fuchsia-500 text-white'
+                      : 'bg-white/10 text-slate-200 hover:bg-white/20'
+                  }`}
+                >
+                  Pass {index + 1}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {currentVerdict && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
               <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest flex items-center gap-2">
-                <Award className="w-4 h-4" /> Public Verdict
+                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Verdict' : 'Public Verdict'}
               </h3>
-              <Markdown>{publicVerdict}</Markdown>
+              <Markdown>{currentVerdict}</Markdown>
             </div>
           )}
 
@@ -187,19 +284,19 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
               <BookOpen className="w-4 h-4" /> Review Summary
             </h3>
-            <Markdown>{review.summary}</Markdown>
+            <Markdown>{currentSummary}</Markdown>
           </div>
 
           {/* Central Claim */}
-          {review.centralClaim && (
+          {currentCentralClaim && (
             <Section icon={<Target className="w-4 h-4" />} label="Central Claim" color="text-sky-400">
-              <Markdown>{review.centralClaim}</Markdown>
+              <Markdown>{currentCentralClaim}</Markdown>
             </Section>
           )}
 
           {/* Coverage Ledger (new prompt) */}
-          {review.coverageLedgerJson && (() => {
-            const hasContent = directTargets?.length || importedInputs?.length || theorySpaceVariants?.length || mechanismSharingAssessment;
+          {(review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {
+            const hasContent = currentDirectTargets?.length || currentImportedInputs?.length || currentTheorySpaceVariants?.length || currentMechanismSharingAssessment;
             if (!hasContent) return null;
             return (
               <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
@@ -207,128 +304,65 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                   <ListChecks className="w-4 h-4" /> Coverage Ledger
                 </h3>
                 <div className="grid md:grid-cols-3 gap-4">
-                  {directTargets?.length > 0 && (
+                  {currentDirectTargets?.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Direct Targets</p>
                       <ul className="space-y-1">
-                        {directTargets.map((t: string, i: number) => (
+                        {currentDirectTargets.map((t: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-500 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{t}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
                   )}
-                  {importedInputs?.length > 0 && (
+                  {currentImportedInputs?.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Imported Inputs</p>
                       <ul className="space-y-1">
-                        {importedInputs.map((t: string, i: number) => (
+                        {currentImportedInputs.map((t: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-500 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{t}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
                   )}
-                  {theorySpaceVariants?.length > 0 && (
+                  {currentTheorySpaceVariants?.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-violet-400 uppercase tracking-widest">Theory-Space Variants</p>
                       <ul className="space-y-1">
-                        {theorySpaceVariants.map((t: string, i: number) => (
+                        {currentTheorySpaceVariants.map((t: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-violet-500 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{t}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
                   )}
                 </div>
-                {mechanismSharingAssessment && (
+                {currentMechanismSharingAssessment && (
                   <div className="border-t border-white/10 pt-3">
                     <p className="text-[10px] font-black text-teal-400 uppercase tracking-widest mb-1">Mechanism-Sharing Assessment</p>
-                    <p className="text-xs text-slate-300 leading-relaxed">{mechanismSharingAssessment}</p>
+                    <Markdown>{currentMechanismSharingAssessment}</Markdown>
                   </div>
                 )}
               </div>
             );
           })()}
 
-          {storedIndividualReviews.length > 0 && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-black text-fuchsia-400 uppercase tracking-widest flex items-center gap-2">
-                <BrainCircuit className="w-4 h-4" /> Independent Review Passes
-              </h3>
-              {aggregateScoreBand && (
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-2">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div>
-                      <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Combined Result</p>
-                      <p className="text-sm font-bold text-white mt-1 capitalize">{aggregateClassification || 'Combined judgment'}</p>
-                    </div>
-                    <div className="px-3 py-2 rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-200 font-black text-sm">
-                      {aggregateScoreBand.low}-{aggregateScoreBand.high} · median {aggregateScoreBand.median}
-                    </div>
-                  </div>
-                  {aggregateVerdict && (
-                    <Markdown>{aggregateVerdict}</Markdown>
-                  )}
-                </div>
-              )}
-              <div className="grid gap-4">
-                {storedIndividualReviews.map((pass: any, index: number) => (
-                  <div key={index} className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
-                    <div className="flex items-center justify-between gap-3 flex-wrap">
-                      <div>
-                        <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Pass {index + 1}</p>
-                        <p className="text-sm font-bold text-white mt-1 capitalize">{pass.bestClassification || 'Independent review'}</p>
-                      </div>
-                      {pass.scoreBand && (
-                        <div className="px-3 py-2 rounded-xl border border-sky-400/30 bg-sky-500/10 text-sky-200 font-black text-sm">
-                          {pass.scoreBand.low}-{pass.scoreBand.high} · median {pass.scoreBand.median}
-                        </div>
-                      )}
-                    </div>
-                    {pass.oneParagraphVerdict && (
-                      <Markdown>{pass.oneParagraphVerdict}</Markdown>
-                    )}
-                    {(pass.comparisonCohort || pass.broadField) && (
-                      <p className="text-xs text-slate-400">
-                        Cohort: <span className="text-slate-200">{pass.comparisonCohort || pass.broadField}</span>
-                      </p>
-                    )}
-                    <div className="grid md:grid-cols-2 gap-4">
-                      {pass.strongestCaseForImportance && (
-                        <div className="bg-black/10 border border-white/5 rounded-xl p-4 space-y-1">
-                          <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Strongest Case</p>
-                          <p className="text-sm text-slate-200 leading-relaxed">{pass.strongestCaseForImportance}</p>
-                        </div>
-                      )}
-                      {pass.strongestObjection && (
-                        <div className="bg-black/10 border border-white/5 rounded-xl p-4 space-y-1">
-                          <p className="text-[10px] font-black text-rose-300 uppercase tracking-widest">Strongest Objection</p>
-                          <p className="text-sm text-slate-200 leading-relaxed">{pass.strongestObjection}</p>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Established / Interpretive / Speculative */}
-          {(review.establishedResults || review.interpretiveClaims || review.speculativeClaims) && (
+          {(currentEstablishedResults || currentInterpretiveClaims || currentSpeculativeClaims) && (
             <div className="space-y-3">
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Evidence Breakdown</h3>
               <div className="grid md:grid-cols-3 gap-4">
-                {review.establishedResults && (
+                {currentEstablishedResults && (
                   <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Established" color="text-emerald-400">
-                    <Markdown>{review.establishedResults}</Markdown>
+                    <Markdown>{currentEstablishedResults}</Markdown>
                   </Section>
                 )}
-                {review.interpretiveClaims && (
+                {currentInterpretiveClaims && (
                   <Section icon={<Layers className="w-4 h-4" />} label="Interpretive" color="text-amber-400">
-                    <Markdown>{review.interpretiveClaims}</Markdown>
+                    <Markdown>{currentInterpretiveClaims}</Markdown>
                   </Section>
                 )}
-                {review.speculativeClaims && (
+                {currentSpeculativeClaims && (
                   <Section icon={<FlaskConical className="w-4 h-4" />} label="Speculative" color="text-orange-400">
-                    <Markdown>{review.speculativeClaims}</Markdown>
+                    <Markdown>{currentSpeculativeClaims}</Markdown>
                   </Section>
                 )}
               </div>
@@ -338,97 +372,97 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
           {/* Correctness & Novelty */}
           <div className="grid md:grid-cols-2 gap-4">
             <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Correctness" color="text-emerald-400">
-              <Markdown>{review.correctness}</Markdown>
+              <Markdown>{currentCorrectness}</Markdown>
             </Section>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-2">
                   <Zap className="w-4 h-4" /> Novelty
                 </h3>
-                {review.noveltyConfidence != null && (
+                {currentNoveltyConfidence != null && (
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    Confidence {Math.round(Number(review.noveltyConfidence) * 100)}%
+                    Confidence {Math.round(Number(currentNoveltyConfidence) * 100)}%
                   </span>
                 )}
               </div>
-              <Markdown>{review.novelty}</Markdown>
+              <Markdown>{currentNovelty}</Markdown>
             </div>
           </div>
 
           {/* Internal Technical Traction */}
-          {review.internalTechnicalTraction && (
+          {currentInternalTechnicalTraction && (
             <Section icon={<Microscope className="w-4 h-4" />} label="Internal Technical Traction" color="text-teal-400">
-              <Markdown>{review.internalTechnicalTraction}</Markdown>
+              <Markdown>{currentInternalTechnicalTraction}</Markdown>
             </Section>
           )}
 
           {/* Economy, Scope, Unifying Power */}
-          {(review.economy || review.scopeDepth || review.unifyingPower) && (
+          {(currentEconomy || currentScopeDepth || currentUnifyingPower) && (
             <div className="grid md:grid-cols-3 gap-4">
-              {review.economy && (
+              {currentEconomy && (
                 <Section icon={<TrendingUp className="w-4 h-4" />} label="Explanatory Economy" color="text-cyan-400">
-                  <Markdown>{review.economy}</Markdown>
+                  <Markdown>{currentEconomy}</Markdown>
                 </Section>
               )}
-              {review.scopeDepth && (
+              {currentScopeDepth && (
                 <Section icon={<Microscope className="w-4 h-4" />} label="Scope & Depth" color="text-violet-400">
-                  <Markdown>{review.scopeDepth}</Markdown>
+                  <Markdown>{currentScopeDepth}</Markdown>
                 </Section>
               )}
-              {review.unifyingPower && (
+              {currentUnifyingPower && (
                 <Section icon={<Layers className="w-4 h-4" />} label="Unifying Power" color="text-fuchsia-400">
-                  <Markdown>{review.unifyingPower}</Markdown>
+                  <Markdown>{currentUnifyingPower}</Markdown>
                 </Section>
               )}
             </div>
           )}
 
           {/* Explanatory-Target Breadth & Theory-Space Breadth */}
-          {(review.explanatoryTargetBreadth || review.theorySpaceBreadth) && (
+          {(currentExplanatoryTargetBreadth || currentTheorySpaceBreadth) && (
             <div className="grid md:grid-cols-2 gap-4">
-              {review.explanatoryTargetBreadth && (
+              {currentExplanatoryTargetBreadth && (
                 <Section icon={<Globe className="w-4 h-4" />} label="Explanatory-Target Breadth" color="text-sky-400">
-                  <Markdown>{review.explanatoryTargetBreadth}</Markdown>
+                  <Markdown>{currentExplanatoryTargetBreadth}</Markdown>
                 </Section>
               )}
-              {review.theorySpaceBreadth && (
+              {currentTheorySpaceBreadth && (
                 <Section icon={<GitBranch className="w-4 h-4" />} label="Theory-Space Breadth" color="text-violet-400">
-                  <Markdown>{review.theorySpaceBreadth}</Markdown>
+                  <Markdown>{currentTheorySpaceBreadth}</Markdown>
                 </Section>
               )}
             </div>
           )}
 
           {/* Strongest Case & Strongest Objection */}
-          {(review.strongestCaseForImportance || review.strongestObjection) && (
+          {(currentStrongestCase || currentStrongestObjection) && (
             <div className="grid md:grid-cols-2 gap-4">
-              {review.strongestCaseForImportance && (
+              {currentStrongestCase && (
                 <Section icon={<Shield className="w-4 h-4" />} label="Strongest Case For" color="text-green-400">
-                  <Markdown>{review.strongestCaseForImportance}</Markdown>
+                  <Markdown>{currentStrongestCase}</Markdown>
                 </Section>
               )}
-              {review.strongestObjection && (
+              {currentStrongestObjection && (
                 <Section icon={<AlertTriangle className="w-4 h-4" />} label="Strongest Objection" color="text-rose-400">
-                  <Markdown>{review.strongestObjection}</Markdown>
+                  <Markdown>{currentStrongestObjection}</Markdown>
                 </Section>
               )}
             </div>
           )}
 
           {/* Decisive Check */}
-          {review.decisiveCheck && (
+          {currentDecisiveCheck && (
             <Section icon={<Microscope className="w-4 h-4" />} label="Decisive Check" color="text-yellow-400">
-              <Markdown>{review.decisiveCheck}</Markdown>
+              <Markdown>{currentDecisiveCheck}</Markdown>
             </Section>
           )}
 
           {/* Overall Evaluation / Final Judgment */}
-          {(review.finalJudgment || review.overallEvaluation) && (
+          {currentFinalJudgment && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
               <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
                 <Award className="w-4 h-4" /> Final Judgment
               </h3>
-              <Markdown>{review.finalJudgment || review.overallEvaluation}</Markdown>
+              <Markdown>{currentFinalJudgment}</Markdown>
             </div>
           )}
 
