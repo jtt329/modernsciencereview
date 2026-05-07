@@ -37,6 +37,33 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
 
   const isNewFormat = review.overallIntrinsicScore != null;
   const displayScore = review.overallIntrinsicScore ?? review.score;
+  const scoreLow = review.scoreBandLow ?? displayScore;
+  const scoreMedian = review.scoreBandMedian ?? displayScore;
+  const scoreHigh = review.scoreBandHigh ?? displayScore;
+  const scoreRangeLabel = scoreLow === scoreHigh ? `${scoreMedian}/100` : `${scoreLow}-${scoreHigh}`;
+  const passCount = review.passCount ?? 1;
+  let parsedCoverage: any = null;
+  if (review.coverageLedgerJson) {
+    try {
+      parsedCoverage = JSON.parse(review.coverageLedgerJson);
+    } catch {
+      parsedCoverage = null;
+    }
+  }
+  const coverageLedger = parsedCoverage?.coverageLedger ?? parsedCoverage ?? null;
+  const directTargets = parsedCoverage?.directTargets ?? coverageLedger?.directTargets ?? [];
+  const importedInputs = parsedCoverage?.importedInputs ?? coverageLedger?.importedInputs ?? [];
+  const theorySpaceVariants = parsedCoverage?.theorySpaceVariants ?? coverageLedger?.theorySpaceVariants ?? [];
+  const mechanismSharingAssessment = parsedCoverage?.mechanismSharingAssessment ?? coverageLedger?.mechanismSharingAssessment ?? '';
+  const storedAggregate = parsedCoverage?.aggregate ?? null;
+  const storedIndividualReviews = Array.isArray(parsedCoverage?.individualReviews) ? parsedCoverage.individualReviews : [];
+  const displayedPassCount = storedIndividualReviews.length || passCount;
+  const aggregateScoreBand = storedAggregate?.finalScoreBand ?? null;
+  const publicVerdict = review.publicVerdict || storedAggregate?.publicOneParagraphVerdict || parsedCoverage?.publicVerdict || review.finalJudgment || review.overallEvaluation;
+  const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
+  const displayedStability = review.scoreStability || storedAggregate?.scoreStability || parsedCoverage?.scoreStability || 'Not specified';
+  const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
+  const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
 
   const scoreColor = displayScore >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' :
     displayScore >= 60 ? 'text-amber-600 bg-amber-50 border-amber-200' :
@@ -66,13 +93,43 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
             <div className="relative group">
               <div className={`px-5 py-3 rounded-2xl font-black text-2xl border cursor-default ${scoreColor}`}>
-                {displayScore}<span className="text-sm font-bold ml-1">/100</span>
+                {scoreRangeLabel}
               </div>
               <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
-                An intrinsic value score (1–100) assigned by the AI review, based entirely on scientific merit, novelty, and breadth of impact — never on author identity, institution, or prestige. Scores roughly correspond to percentile rank within the field.
+                This is the score range from multiple independent model reviews, followed by a combined judgment. It is meant to show both the result and how stable that result was.
               </div>
             </div>
           </div>
+
+          <div className="grid md:grid-cols-4 gap-3">
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+              <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
+              <p className="text-sm font-bold text-white mt-1 capitalize">{review.bestClassification || 'Unclassified'}</p>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+              <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Score Range</p>
+              <p className="text-sm font-bold text-white mt-1">{scoreLow}-{scoreHigh}</p>
+              <p className="text-[11px] text-slate-400 mt-1">Median {scoreMedian}</p>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+              <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
+              <p className="text-sm font-bold text-white mt-1">{comparisonCohort || 'Not specified'}</p>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+              <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Stability</p>
+              <p className="text-sm font-bold text-white mt-1">{displayedStability}</p>
+              <p className="text-[11px] text-slate-400 mt-1">{displayedPassCount} independent passes</p>
+            </div>
+          </div>
+
+          {publicVerdict && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
+              <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest flex items-center gap-2">
+                <Award className="w-4 h-4" /> Public Verdict
+              </h3>
+              <Markdown>{publicVerdict}</Markdown>
+            </div>
+          )}
 
           {/* Sub-scores (new format only) */}
           {isNewFormat && (review.intrinsicScientificMeritScore != null || review.explanatoryTargetBreadthScore != null || review.theorySpaceBreadthScore != null || review.breadthOfImpactScore != null) && (
@@ -107,7 +164,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
           {/* Summary */}
           <div className="space-y-2">
             <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-              <BookOpen className="w-4 h-4" /> Summary
+              <BookOpen className="w-4 h-4" /> Review Summary
             </h3>
             <Markdown>{review.summary}</Markdown>
           </div>
@@ -121,9 +178,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
 
           {/* Coverage Ledger (new prompt) */}
           {review.coverageLedgerJson && (() => {
-            let cl: any = {};
-            try { cl = JSON.parse(review.coverageLedgerJson); } catch { return null; }
-            const hasContent = cl.directTargets?.length || cl.importedInputs?.length || cl.theorySpaceVariants?.length || cl.mechanismSharingAssessment;
+            const hasContent = directTargets?.length || importedInputs?.length || theorySpaceVariants?.length || mechanismSharingAssessment;
             if (!hasContent) return null;
             return (
               <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
@@ -131,46 +186,109 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                   <ListChecks className="w-4 h-4" /> Coverage Ledger
                 </h3>
                 <div className="grid md:grid-cols-3 gap-4">
-                  {cl.directTargets?.length > 0 && (
+                  {directTargets?.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Direct Targets</p>
                       <ul className="space-y-1">
-                        {cl.directTargets.map((t: string, i: number) => (
+                        {directTargets.map((t: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-500 shrink-0">▸</span>{t}</li>
                         ))}
                       </ul>
                     </div>
                   )}
-                  {cl.importedInputs?.length > 0 && (
+                  {importedInputs?.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-amber-400 uppercase tracking-widest">Imported Inputs</p>
                       <ul className="space-y-1">
-                        {cl.importedInputs.map((t: string, i: number) => (
+                        {importedInputs.map((t: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-500 shrink-0">▸</span>{t}</li>
                         ))}
                       </ul>
                     </div>
                   )}
-                  {cl.theorySpaceVariants?.length > 0 && (
+                  {theorySpaceVariants?.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-violet-400 uppercase tracking-widest">Theory-Space Variants</p>
                       <ul className="space-y-1">
-                        {cl.theorySpaceVariants.map((t: string, i: number) => (
+                        {theorySpaceVariants.map((t: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-violet-500 shrink-0">▸</span>{t}</li>
                         ))}
                       </ul>
                     </div>
                   )}
                 </div>
-                {cl.mechanismSharingAssessment && (
+                {mechanismSharingAssessment && (
                   <div className="border-t border-white/10 pt-3">
                     <p className="text-[10px] font-black text-teal-400 uppercase tracking-widest mb-1">Mechanism-Sharing Assessment</p>
-                    <p className="text-xs text-slate-300 leading-relaxed">{cl.mechanismSharingAssessment}</p>
+                    <p className="text-xs text-slate-300 leading-relaxed">{mechanismSharingAssessment}</p>
                   </div>
                 )}
               </div>
             );
           })()}
+
+          {storedIndividualReviews.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-xs font-black text-fuchsia-400 uppercase tracking-widest flex items-center gap-2">
+                <BrainCircuit className="w-4 h-4" /> Independent Review Passes
+              </h3>
+              {aggregateScoreBand && (
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-2">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Combined Result</p>
+                      <p className="text-sm font-bold text-white mt-1 capitalize">{aggregateClassification || 'Combined judgment'}</p>
+                    </div>
+                    <div className="px-3 py-2 rounded-xl border border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-200 font-black text-sm">
+                      {aggregateScoreBand.low}-{aggregateScoreBand.high} · median {aggregateScoreBand.median}
+                    </div>
+                  </div>
+                  {aggregateVerdict && (
+                    <Markdown>{aggregateVerdict}</Markdown>
+                  )}
+                </div>
+              )}
+              <div className="grid gap-4">
+                {storedIndividualReviews.map((pass: any, index: number) => (
+                  <div key={index} className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div>
+                        <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Pass {index + 1}</p>
+                        <p className="text-sm font-bold text-white mt-1 capitalize">{pass.bestClassification || 'Independent review'}</p>
+                      </div>
+                      {pass.scoreBand && (
+                        <div className="px-3 py-2 rounded-xl border border-sky-400/30 bg-sky-500/10 text-sky-200 font-black text-sm">
+                          {pass.scoreBand.low}-{pass.scoreBand.high} · median {pass.scoreBand.median}
+                        </div>
+                      )}
+                    </div>
+                    {pass.oneParagraphVerdict && (
+                      <Markdown>{pass.oneParagraphVerdict}</Markdown>
+                    )}
+                    {(pass.comparisonCohort || pass.broadField) && (
+                      <p className="text-xs text-slate-400">
+                        Cohort: <span className="text-slate-200">{pass.comparisonCohort || pass.broadField}</span>
+                      </p>
+                    )}
+                    <div className="grid md:grid-cols-2 gap-4">
+                      {pass.strongestCaseForImportance && (
+                        <div className="bg-black/10 border border-white/5 rounded-xl p-4 space-y-1">
+                          <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Strongest Case</p>
+                          <p className="text-sm text-slate-200 leading-relaxed">{pass.strongestCaseForImportance}</p>
+                        </div>
+                      )}
+                      {pass.strongestObjection && (
+                        <div className="bg-black/10 border border-white/5 rounded-xl p-4 space-y-1">
+                          <p className="text-[10px] font-black text-rose-300 uppercase tracking-widest">Strongest Objection</p>
+                          <p className="text-sm text-slate-200 leading-relaxed">{pass.strongestObjection}</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Established / Interpretive / Speculative */}
           {(review.establishedResults || review.interpretiveClaims || review.speculativeClaims) && (
