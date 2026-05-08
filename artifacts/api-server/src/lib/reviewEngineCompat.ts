@@ -764,6 +764,14 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
   const firstBroadField = result.individualReviews.find((review) => review.broadField)?.broadField || null;
   const firstSpecialtyField = result.individualReviews.find((review) => review.specialtyField)?.specialtyField || null;
   const aggregateClassification = aggregate.finalClassification || representativeReview.bestClassification || classificationFallbackFromScore(aggregate.finalScoreBand.median);
+  const comparisonCohort =
+    aggregate.finalComparisonCohort ||
+    representativeReview.comparisonCohort ||
+    representativeReview.specialtyField ||
+    representativeReview.broadField ||
+    firstComparisonCohort ||
+    firstSpecialtyField ||
+    firstBroadField;
   return {
     summary: aggregate.finalSummary || representativeReview.summary || representativeReview.oneParagraphVerdict,
     correctness: representativeReview.correctness,
@@ -797,11 +805,11 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       aggregate,
       individualReviews: result.individualReviews,
       passCount: REVIEW_PASS_COUNT,
-      finalComparisonCohort: aggregate.finalComparisonCohort || firstComparisonCohort,
+      finalComparisonCohort: comparisonCohort,
       scoreStability: aggregate.scoreStability,
     }),
     thinkingText: result.thinkingText,
-    comparisonCohort: aggregate.finalComparisonCohort || representativeReview.comparisonCohort || firstComparisonCohort,
+    comparisonCohort,
     broadField: aggregate.finalBroadField || representativeReview.broadField || firstBroadField,
     specialtyField: aggregate.finalSpecialtyField || representativeReview.specialtyField || firstSpecialtyField,
     frameworkConditionalityLevel: representativeReview.frameworkConditionality.level,
