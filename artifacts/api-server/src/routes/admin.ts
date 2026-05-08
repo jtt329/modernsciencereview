@@ -3,7 +3,7 @@ import { db, papersTable, reviewsTable, reviewSessionsTable, sessionPapersTable 
 import { desc, eq } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { randomUUID } from "crypto";
-import { generateCompatReview, type ReviewModel } from "../lib/reviewEngineCompat";
+import { extractMetadata, generateCompatReview, type ReviewModel } from "../lib/reviewEngineCompat";
 
 const router = Router();
 
@@ -51,32 +51,7 @@ router.post("/admin/snapshot-and-delete", async (req, res) => {
 
     const sessionPaperRows = papers.map(p => {
       const rv = reviewByPaper.get(p.id);
-      const reviewJson = rv ? JSON.stringify({
-        centralClaim: rv.centralClaim,
-        establishedResults: rv.establishedResults,
-        interpretiveClaims: rv.interpretiveClaims,
-        speculativeClaims: rv.speculativeClaims,
-        economy: rv.economy,
-        scopeDepth: rv.scopeDepth,
-        unifyingPower: rv.unifyingPower,
-        strongestCaseForImportance: rv.strongestCaseForImportance,
-        strongestObjection: rv.strongestObjection,
-        decisiveCheck: rv.decisiveCheck,
-        internalTechnicalTraction: rv.internalTechnicalTraction,
-        noveltyConfidence: rv.noveltyConfidence,
-        explanatoryTargetBreadth: rv.explanatoryTargetBreadth,
-        theorySpaceBreadth: rv.theorySpaceBreadth,
-        finalJudgment: rv.finalJudgment,
-        bestClassification: rv.bestClassification,
-        overallIntrinsicScore: rv.overallIntrinsicScore,
-        intrinsicScientificMeritScore: rv.intrinsicScientificMeritScore,
-        explanatoryTargetBreadthScore: rv.explanatoryTargetBreadthScore,
-        theorySpaceBreadthScore: rv.theorySpaceBreadthScore,
-        breadthOfImpactScore: rv.breadthOfImpactScore,
-        modelName: rv.modelName,
-        summary: rv.summary,
-        overallEvaluation: rv.overallEvaluation,
-      }) : null;
+      const reviewJson = rv ? JSON.stringify(rv) : null;
       return {
         sessionId: session.id,
         title: p.title,
@@ -135,32 +110,7 @@ router.post("/admin/re-review", async (req, res) => {
 
     const sessionPaperRows = papers.map(p => {
       const rv = reviewByPaper.get(p.id);
-      const reviewJson = rv ? JSON.stringify({
-        centralClaim: rv.centralClaim,
-        establishedResults: rv.establishedResults,
-        interpretiveClaims: rv.interpretiveClaims,
-        speculativeClaims: rv.speculativeClaims,
-        economy: rv.economy,
-        scopeDepth: rv.scopeDepth,
-        unifyingPower: rv.unifyingPower,
-        strongestCaseForImportance: rv.strongestCaseForImportance,
-        strongestObjection: rv.strongestObjection,
-        decisiveCheck: rv.decisiveCheck,
-        internalTechnicalTraction: rv.internalTechnicalTraction,
-        noveltyConfidence: rv.noveltyConfidence,
-        explanatoryTargetBreadth: rv.explanatoryTargetBreadth,
-        theorySpaceBreadth: rv.theorySpaceBreadth,
-        finalJudgment: rv.finalJudgment,
-        bestClassification: rv.bestClassification,
-        overallIntrinsicScore: rv.overallIntrinsicScore,
-        intrinsicScientificMeritScore: rv.intrinsicScientificMeritScore,
-        explanatoryTargetBreadthScore: rv.explanatoryTargetBreadthScore,
-        theorySpaceBreadthScore: rv.theorySpaceBreadthScore,
-        breadthOfImpactScore: rv.breadthOfImpactScore,
-        modelName: rv.modelName,
-        summary: rv.summary,
-        overallEvaluation: rv.overallEvaluation,
-      }) : null;
+      const reviewJson = rv ? JSON.stringify(rv) : null;
       return {
         sessionId: session.id,
         title: p.title,
@@ -217,6 +167,7 @@ router.post("/admin/re-review", async (req, res) => {
             }
           }
 
+          const metadata = await extractMetadata(content);
           const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(content, useModel, promptText.trim());
 
           await db.insert(reviewsTable).values({
@@ -232,6 +183,8 @@ router.post("/admin/re-review", async (req, res) => {
               modelName: reviewMetadata.modelName,
               field: reviewMetadata.field || paper.field,
               subfields: reviewMetadata.subfields ?? paper.subfields,
+              title: metadata.title || paper.title,
+              paperAuthors: metadata.authors || paper.paperAuthors,
             })
             .where(eq(papersTable.id, paper.id));
 
@@ -302,7 +255,7 @@ router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
         correctness: rv.correctness ?? "",
         novelty: rv.novelty ?? "",
         overallEvaluation: rv.overallEvaluation ?? rv.finalJudgment ?? "",
-        score: sp.overallScore ?? 0,
+        score: rv.score ?? sp.overallScore ?? 0,
         relatedWork: rv.relatedWork ?? "",
         centralClaim: rv.centralClaim ?? null,
         establishedResults: rv.establishedResults ?? null,
@@ -318,15 +271,34 @@ router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
         decisiveCheck: rv.decisiveCheck ?? null,
         internalTechnicalTraction: rv.internalTechnicalTraction ?? null,
         noveltyConfidence: rv.noveltyConfidence != null ? String(rv.noveltyConfidence) : null,
-        intrinsicScientificMeritScore: sp.intrinsicMeritScore ?? null,
-        explanatoryTargetBreadthScore: sp.explanatoryTargetBreadthScore ?? null,
-        theorySpaceBreadthScore: sp.theorySpaceBreadthScore ?? null,
-        breadthOfImpactScore: sp.breadthOfImpactScore ?? null,
-        overallIntrinsicScore: sp.overallScore ?? null,
-        bestClassification: sp.bestClassification ?? null,
+        intrinsicScientificMeritScore: rv.intrinsicScientificMeritScore ?? sp.intrinsicMeritScore ?? null,
+        explanatoryTargetBreadthScore: rv.explanatoryTargetBreadthScore ?? sp.explanatoryTargetBreadthScore ?? null,
+        theorySpaceBreadthScore: rv.theorySpaceBreadthScore ?? sp.theorySpaceBreadthScore ?? null,
+        breadthOfImpactScore: rv.breadthOfImpactScore ?? sp.breadthOfImpactScore ?? null,
+        overallIntrinsicScore: rv.overallIntrinsicScore ?? sp.overallScore ?? null,
+        bestClassification: rv.bestClassification ?? sp.bestClassification ?? null,
         finalJudgment: rv.finalJudgment ?? null,
-        modelName: sp.modelName ?? "unknown",
-        systemPrompt: session?.promptText ?? "",
+        coverageLedgerJson: rv.coverageLedgerJson ?? null,
+        thinkingText: rv.thinkingText ?? null,
+        comparisonCohort: rv.comparisonCohort ?? null,
+        broadField: rv.broadField ?? null,
+        specialtyField: rv.specialtyField ?? null,
+        frameworkConditionalityLevel: rv.frameworkConditionalityLevel ?? null,
+        frameworkConditionalityExplanation: rv.frameworkConditionalityExplanation ?? null,
+        specialtyRelativeScore: rv.specialtyRelativeScore ?? null,
+        broadFieldRelativeScore: rv.broadFieldRelativeScore ?? null,
+        crossFieldConsequenceScore: rv.crossFieldConsequenceScore ?? null,
+        scoreBandLow: rv.scoreBandLow ?? null,
+        scoreBandMedian: rv.scoreBandMedian ?? null,
+        scoreBandHigh: rv.scoreBandHigh ?? null,
+        scoreConfidence: rv.scoreConfidence != null ? String(rv.scoreConfidence) : null,
+        scoreStability: rv.scoreStability ?? null,
+        publicVerdict: rv.publicVerdict ?? null,
+        individualReviewsJson: rv.individualReviewsJson ?? null,
+        aggregateMetaJson: rv.aggregateMetaJson ?? null,
+        passCount: rv.passCount ?? 1,
+        modelName: rv.modelName ?? sp.modelName ?? "unknown",
+        systemPrompt: rv.systemPrompt ?? session?.promptText ?? "",
       });
       restored++;
     }
