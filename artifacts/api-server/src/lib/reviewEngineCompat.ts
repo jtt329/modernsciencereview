@@ -349,6 +349,21 @@ function classificationFallbackFromScore(score: number) {
   return "not yet convincing";
 }
 
+function classificationRank(label: string) {
+  return CLASSIFICATIONS.indexOf(label);
+}
+
+function alignClassificationToScore(classification: string, score: number) {
+  const fallback = classificationFallbackFromScore(score);
+  const currentRank = classificationRank(classification);
+  const fallbackRank = classificationRank(fallback);
+
+  if (currentRank === -1) return fallback;
+  if (fallbackRank === -1) return classification;
+
+  return currentRank > fallbackRank ? fallback : classification;
+}
+
 function normalizeClassification(value: unknown) {
   const candidate = asString(value).toLowerCase().replace(/\s+/g, " ").trim();
   const normalized = CLASSIFICATIONS.find((label) => label.toLowerCase() === candidate);
@@ -409,6 +424,9 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
 
   const normalizedScoreBand = normalizeScoreBand(source.scoreBand);
   const normalizedSpecialtyScore = Math.round(asNumber(source.specialtyRelativeScore, normalizedScoreBand.median, 0, 100));
+  const normalizedClassification =
+    normalizeClassification(source.bestClassification) || classificationFallbackFromScore(normalizedScoreBand.median);
+  const alignedClassification = alignClassificationToScore(normalizedClassification, normalizedScoreBand.median);
 
   return {
     title: "anonymized manuscript",
@@ -456,7 +474,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, 0, 0, 100)),
     scoreBand: normalizedScoreBand,
     scoreConfidence: asNumber(source.scoreConfidence, 0.9, 0, 1),
-    bestClassification: normalizeClassification(source.bestClassification) || classificationFallbackFromScore(normalizedScoreBand.median),
+    bestClassification: alignedClassification,
     oneParagraphVerdict: asString(source.oneParagraphVerdict),
     finalJudgment: asString(source.finalJudgment),
   };
@@ -476,6 +494,10 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[]): Agg
   const range = finalBand.high - finalBand.low;
 
   const fallbackClassification = classificationFallbackFromScore(finalBand.median);
+  const alignedAggregateClassification = alignClassificationToScore(
+    normalizeClassification(source.finalClassification) || fallbackClassification,
+    finalBand.median,
+  );
 
   return {
     finalComparisonCohort: asString(source.finalComparisonCohort),
@@ -494,7 +516,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[]): Agg
     mainDisagreements: asStringArray(source.mainDisagreements),
     fatalObjectionPresent: asBoolean(source.fatalObjectionPresent),
     fatalObjectionAssessment: asString(source.fatalObjectionAssessment),
-    finalClassification: normalizeClassification(source.finalClassification) || fallbackClassification,
+    finalClassification: alignedAggregateClassification,
     finalScoreBand: finalBand,
     finalScoreConfidence: asNumber(source.finalScoreConfidence, 0.9, 0, 1),
     publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict),
@@ -547,6 +569,16 @@ function heuristicMetadata(paperContent: string) {
   const looksLikeAffiliation = (line: string) =>
     /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(line);
 
+  const looksLikeTitleContinuation = (previousLine: string, nextLine: string) => {
+    if (!previousLine || !nextLine) return false;
+    const prev = previousLine.trim();
+    const next = nextLine.trim();
+    return (
+      /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(prev) ||
+      /^[a-z(]/.test(next)
+    );
+  };
+
   const looksLikeAuthorLine = (line: string) => {
     if (looksLikeAffiliation(line) || /^abstract\b/i.test(line)) return false;
     if (line.length < 3 || line.length > 180) return false;
@@ -577,7 +609,8 @@ function heuristicMetadata(paperContent: string) {
   const titleLines: string[] = [];
   if (titleStartIndex !== -1) {
     for (const line of headerLines.slice(titleStartIndex)) {
-      if (looksLikeAuthorLine(line) || looksLikeAffiliation(line) || /^abstract\b/i.test(line)) break;
+      const previousLine = titleLines[titleLines.length - 1] || "";
+      if ((looksLikeAuthorLine(line) && !looksLikeTitleContinuation(previousLine, line)) || looksLikeAffiliation(line) || /^abstract\b/i.test(line)) break;
       if (line.length < 3 || line.length > 220) break;
       titleLines.push(line);
       if (titleLines.join(" ").length >= 220) break;
@@ -682,11 +715,14 @@ function pickRepresentativeReview(reviews: IndividualReview[], medianScore: numb
 
 export async function extractMetadata(paperContent: string): Promise<{ title: string; authors: string }> {
   const fallback = heuristicMetadata(paperContent);
+  const looksTruncatedTitle = (value: string) =>
+    /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
   const isSuspiciousTitle = (value: string) =>
     !value ||
     value === "Unknown Title" ||
     /^(arxiv:|submitted by\b)/i.test(value) ||
-    value.length < 8;
+    value.length < 8 ||
+    looksTruncatedTitle(value);
   const isSuspiciousAuthors = (value: string) =>
     !value ||
     value === "Unknown Authors" ||
@@ -706,9 +742,15 @@ export async function extractMetadata(paperContent: string): Promise<{ title: st
     const parsed = extractJson(content) as Record<string, unknown>;
     const title = asString(parsed.title, fallback.title);
     const authors = asString(parsed.authors, fallback.authors);
+    const bestTitle =
+      isSuspiciousTitle(title) ||
+      (fallback.title !== "Unknown Title" && fallback.title.length > title.length + 12)
+        ? fallback.title
+        : title;
+    const bestAuthors = isSuspiciousAuthors(authors) ? fallback.authors : authors;
     return {
-      title: isSuspiciousTitle(title) ? fallback.title : title,
-      authors: isSuspiciousAuthors(authors) ? fallback.authors : authors,
+      title: bestTitle,
+      authors: bestAuthors,
     };
   } catch {
     return fallback;
