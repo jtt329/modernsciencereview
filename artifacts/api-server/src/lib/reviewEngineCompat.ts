@@ -166,6 +166,11 @@ Scale instructions:
 - Do not use a 0-10 scale for scoreBand.
 - For a paper in the nineties, scoreBand should look like {"low": 90, "median": 93, "high": 96}, not {"low": 9, "median": 9.3, "high": 9.6}.
 
+Formatting instructions:
+- Wrap inline mathematical expressions in $...$.
+- Wrap display equations in $$...$$.
+- Do not leave equations as plain text if you can express them in LaTeX.
+
 Use the full range.
 
 Classification options:
@@ -516,6 +521,38 @@ function blindManuscriptText(paperContent: string) {
     .trim();
 }
 
+function heuristicMetadata(paperContent: string) {
+  const cleaned = stripControlChars(paperContent).replace(/\r\n/g, "\n");
+  const lines = cleaned.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 30);
+  const abstractIndex = lines.findIndex((line) => /^abstract\b/i.test(line));
+  const headerLines = abstractIndex > 0 ? lines.slice(0, abstractIndex) : lines;
+
+  const titleCandidate =
+    headerLines.find((line) =>
+      line.length >= 20 &&
+      line.length <= 220 &&
+      !/^abstract\b/i.test(line) &&
+      !/@/.test(line) &&
+      !/\b(university|institute|department|laboratory|college|school)\b/i.test(line) &&
+      !/^(submitted|arxiv|doi|keywords?)\b/i.test(line),
+    ) || "Unknown Title";
+
+  const titleIndex = headerLines.findIndex((line) => line === titleCandidate);
+  const authorCandidate = headerLines
+    .slice(Math.max(titleIndex + 1, 0), Math.max(titleIndex + 5, 0))
+    .find((line) =>
+      line.length >= 3 &&
+      line.length <= 180 &&
+      !/@/.test(line) &&
+      !/\b(university|institute|department|laboratory|college|school|abstract)\b/i.test(line),
+    ) || "Unknown Authors";
+
+  return {
+    title: titleCandidate,
+    authors: authorCandidate,
+  };
+}
+
 async function callGpt(prompt: string, input: string) {
   const response = await openai.chat.completions.create({
     model: GPT_MODEL,
@@ -591,6 +628,7 @@ function pickRepresentativeReview(reviews: IndividualReview[], medianScore: numb
 }
 
 export async function extractMetadata(paperContent: string): Promise<{ title: string; authors: string }> {
+  const fallback = heuristicMetadata(paperContent);
   try {
     const response = await openai.chat.completions.create({
       model: GPT_MODEL,
@@ -604,12 +642,14 @@ export async function extractMetadata(paperContent: string): Promise<{ title: st
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error("No metadata response");
     const parsed = extractJson(content) as Record<string, unknown>;
+    const title = asString(parsed.title, fallback.title);
+    const authors = asString(parsed.authors, fallback.authors);
     return {
-      title: asString(parsed.title, "Unknown Title"),
-      authors: asString(parsed.authors, "Unknown Authors"),
+      title: title === "Unknown Title" ? fallback.title : title,
+      authors: authors === "Unknown Authors" ? fallback.authors : authors,
     };
   } catch {
-    return { title: "Unknown Title", authors: "Unknown Authors" };
+    return fallback;
   }
 }
 
