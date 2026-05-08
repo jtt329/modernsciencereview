@@ -128,7 +128,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
       )
     : combinedBand;
   const displayScore = activeBand.median;
-  const scoreRangeLabel = activeBand.low === activeBand.high ? `${activeBand.median}/100` : `${activeBand.low}-${activeBand.high}`;
+  const scorePillLabel = `${displayScore}/100`;
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
   const currentComparisonCohort = selectedPass?.comparisonCohort || selectedPass?.broadField || comparisonCohort;
   const currentVerdict = selectedPass?.oneParagraphVerdict || selectedPass?.finalJudgment || aggregateVerdict;
@@ -154,6 +154,10 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const currentStrongestCase = selectedPass?.strongestCaseForImportance || review.strongestCaseForImportance;
   const currentStrongestObjection = selectedPass?.strongestObjection || review.strongestObjection;
   const currentDecisiveCheck = selectedPass?.decisiveCheck || review.decisiveCheck;
+  const currentIntrinsicScore = selectedPass?.intrinsicTechnicalScore ?? review.intrinsicScientificMeritScore;
+  const currentTargetBreadthScore = selectedPass?.explanatoryTargetBreadthScore ?? review.explanatoryTargetBreadthScore;
+  const currentTheoryBreadthScore = selectedPass?.theorySpaceBreadthScore ?? review.theorySpaceBreadthScore;
+  const currentImpactScore = selectedPass?.breadthOfImpactScore ?? review.breadthOfImpactScore;
 
   const scoreColor = displayScore >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' :
     displayScore >= 60 ? 'text-amber-600 bg-amber-50 border-amber-200' :
@@ -183,10 +187,12 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
             <div className="relative group">
               <div className={`px-5 py-3 rounded-2xl font-black text-2xl border cursor-default ${scoreColor}`}>
-                {scoreRangeLabel}
+                {scorePillLabel}
               </div>
               <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
-                This is the score range from multiple independent model reviews, followed by a combined judgment. It is meant to show both the result and how stable that result was.
+                {selectedPass
+                  ? 'This is the single score for this individual review pass.'
+                  : 'This is the combined review score after comparing the independent review passes.'}
               </div>
             </div>
           </div>
@@ -197,9 +203,9 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Score Range</p>
-              <p className="text-sm font-bold text-white mt-1">{activeBand.low}-{activeBand.high}</p>
-              <p className="text-[11px] text-slate-400 mt-1">Median {activeBand.median}</p>
+              <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">{selectedPass ? 'Pass Score' : 'Score Range'}</p>
+              <p className="text-sm font-bold text-white mt-1">{selectedPass ? `${activeBand.median}/100` : `${activeBand.low}-${activeBand.high}`}</p>
+              <p className="text-[11px] text-slate-400 mt-1">{selectedPass ? 'Single reviewer score' : `Median ${activeBand.median}`}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
@@ -250,29 +256,29 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
           )}
 
           {/* Sub-scores (new format only) */}
-          {isNewFormat && (review.intrinsicScientificMeritScore != null || review.explanatoryTargetBreadthScore != null || review.theorySpaceBreadthScore != null || review.breadthOfImpactScore != null) && (
+          {isNewFormat && (currentIntrinsicScore != null || currentTargetBreadthScore != null || currentTheoryBreadthScore != null || currentImpactScore != null) && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {review.intrinsicScientificMeritScore != null && (
+              {currentIntrinsicScore != null && (
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className="text-3xl font-black text-indigo-300">{review.intrinsicScientificMeritScore}<span className="text-base font-bold text-indigo-400/60">/10</span></div>
+                  <div className="text-3xl font-black text-indigo-300">{currentIntrinsicScore}<span className="text-base font-bold text-indigo-400/60">/10</span></div>
                   <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mt-1">Intrinsic Merit</div>
                 </div>
               )}
-              {review.explanatoryTargetBreadthScore != null && (
+              {currentTargetBreadthScore != null && (
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className="text-3xl font-black text-sky-300">{review.explanatoryTargetBreadthScore}<span className="text-base font-bold text-sky-400/60">/10</span></div>
+                  <div className="text-3xl font-black text-sky-300">{currentTargetBreadthScore}<span className="text-base font-bold text-sky-400/60">/10</span></div>
                   <div className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mt-1">Target Breadth</div>
                 </div>
               )}
-              {review.theorySpaceBreadthScore != null && (
+              {currentTheoryBreadthScore != null && (
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className="text-3xl font-black text-violet-300">{review.theorySpaceBreadthScore}<span className="text-base font-bold text-violet-400/60">/10</span></div>
+                  <div className="text-3xl font-black text-violet-300">{currentTheoryBreadthScore}<span className="text-base font-bold text-violet-400/60">/10</span></div>
                   <div className="text-[10px] font-bold text-violet-400 uppercase tracking-widest mt-1">Theory Breadth</div>
                 </div>
               )}
-              {review.breadthOfImpactScore != null && (
+              {currentImpactScore != null && (
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className="text-3xl font-black text-purple-300">{review.breadthOfImpactScore}<span className="text-base font-bold text-purple-400/60">/10</span></div>
+                  <div className="text-3xl font-black text-purple-300">{currentImpactScore}<span className="text-base font-bold text-purple-400/60">/10</span></div>
                   <div className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mt-1">Breadth of Impact</div>
                 </div>
               )}
@@ -345,7 +351,21 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             );
           })()}
 
-          {/* Established / Interpretive / Speculative */}
+          {(currentExplanatoryTargetBreadth || currentTheorySpaceBreadth) && (
+            <div className="grid md:grid-cols-2 gap-4">
+              {currentExplanatoryTargetBreadth && (
+                <Section icon={<Globe className="w-4 h-4" />} label="Explanatory-Target Breadth" color="text-sky-400">
+                  <Markdown>{currentExplanatoryTargetBreadth}</Markdown>
+                </Section>
+              )}
+              {currentTheorySpaceBreadth && (
+                <Section icon={<GitBranch className="w-4 h-4" />} label="Theory-Space Breadth" color="text-violet-400">
+                  <Markdown>{currentTheorySpaceBreadth}</Markdown>
+                </Section>
+              )}
+            </div>
+          )}
+
           {(currentEstablishedResults || currentInterpretiveClaims || currentSpeculativeClaims) && (
             <div className="space-y-3">
               <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Evidence Breakdown</h3>
@@ -369,7 +389,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           )}
 
-          {/* Correctness & Novelty */}
           <div className="grid md:grid-cols-2 gap-4">
             <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Correctness" color="text-emerald-400">
               <Markdown>{currentCorrectness}</Markdown>
@@ -389,14 +408,12 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           </div>
 
-          {/* Internal Technical Traction */}
           {currentInternalTechnicalTraction && (
             <Section icon={<Microscope className="w-4 h-4" />} label="Internal Technical Traction" color="text-teal-400">
               <Markdown>{currentInternalTechnicalTraction}</Markdown>
             </Section>
           )}
 
-          {/* Economy, Scope, Unifying Power */}
           {(currentEconomy || currentScopeDepth || currentUnifyingPower) && (
             <div className="grid md:grid-cols-3 gap-4">
               {currentEconomy && (
@@ -417,23 +434,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           )}
 
-          {/* Explanatory-Target Breadth & Theory-Space Breadth */}
-          {(currentExplanatoryTargetBreadth || currentTheorySpaceBreadth) && (
-            <div className="grid md:grid-cols-2 gap-4">
-              {currentExplanatoryTargetBreadth && (
-                <Section icon={<Globe className="w-4 h-4" />} label="Explanatory-Target Breadth" color="text-sky-400">
-                  <Markdown>{currentExplanatoryTargetBreadth}</Markdown>
-                </Section>
-              )}
-              {currentTheorySpaceBreadth && (
-                <Section icon={<GitBranch className="w-4 h-4" />} label="Theory-Space Breadth" color="text-violet-400">
-                  <Markdown>{currentTheorySpaceBreadth}</Markdown>
-                </Section>
-              )}
-            </div>
-          )}
-
-          {/* Strongest Case & Strongest Objection */}
           {(currentStrongestCase || currentStrongestObjection) && (
             <div className="grid md:grid-cols-2 gap-4">
               {currentStrongestCase && (
@@ -449,14 +449,12 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           )}
 
-          {/* Decisive Check */}
           {currentDecisiveCheck && (
             <Section icon={<Microscope className="w-4 h-4" />} label="Decisive Check" color="text-yellow-400">
               <Markdown>{currentDecisiveCheck}</Markdown>
             </Section>
           )}
 
-          {/* Overall Evaluation / Final Judgment */}
           {currentFinalJudgment && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
               <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
@@ -466,7 +464,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           )}
 
-          {/* Related Work */}
           {review.relatedWork && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
               <h3 className="text-xs font-black text-purple-400 uppercase tracking-widest">Related Work</h3>
@@ -474,7 +471,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           )}
 
-          {/* Footer actions */}
           <div className="flex items-center justify-between pt-4 border-t border-white/10">
             <button
               onClick={(e) => onLike(review.id, e)}
