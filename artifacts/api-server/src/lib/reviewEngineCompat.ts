@@ -340,11 +340,19 @@ function asStringArray(value: unknown) {
   return value.map((item) => asString(item)).filter(Boolean);
 }
 
+function classificationFallbackFromScore(score: number) {
+  if (score >= 95) return "field-defining advance";
+  if (score >= 85) return "major specialty advance";
+  if (score >= 70) return "strong niche contribution";
+  if (score >= 55) return "useful clarification";
+  if (score >= 40) return "elegant repackaging";
+  return "not yet convincing";
+}
+
 function normalizeClassification(value: unknown) {
-  const candidate = asString(value);
-  return CLASSIFICATIONS.includes(candidate as (typeof CLASSIFICATIONS)[number])
-    ? candidate
-    : "strong niche contribution";
+  const candidate = asString(value).toLowerCase().replace(/\s+/g, " ").trim();
+  const normalized = CLASSIFICATIONS.find((label) => label.toLowerCase() === candidate);
+  return normalized ?? "";
 }
 
 function normalizeFrameworkLevel(value: unknown): FrameworkLevel {
@@ -399,6 +407,9 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     ? (source.frameworkConditionality as Record<string, unknown>)
     : {};
 
+  const normalizedScoreBand = normalizeScoreBand(source.scoreBand);
+  const normalizedSpecialtyScore = Math.round(asNumber(source.specialtyRelativeScore, normalizedScoreBand.median, 0, 100));
+
   return {
     title: "anonymized manuscript",
     authorName: "anonymized",
@@ -440,12 +451,12 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     explanatoryTargetBreadthScore: Math.round(asNumber(source.explanatoryTargetBreadthScore, 0, 0, 10)),
     theorySpaceBreadthScore: Math.round(asNumber(source.theorySpaceBreadthScore, 0, 0, 10)),
     breadthOfImpactScore: Math.round(asNumber(source.breadthOfImpactScore, 0, 0, 10)),
-    specialtyRelativeScore: Math.round(asNumber(source.specialtyRelativeScore, 0, 0, 100)),
+    specialtyRelativeScore: normalizedSpecialtyScore,
     broadFieldRelativeScore: Math.round(asNumber(source.broadFieldRelativeScore, 0, 0, 100)),
     crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, 0, 0, 100)),
-    scoreBand: normalizeScoreBand(source.scoreBand),
+    scoreBand: normalizedScoreBand,
     scoreConfidence: asNumber(source.scoreConfidence, 0.9, 0, 1),
-    bestClassification: normalizeClassification(source.bestClassification),
+    bestClassification: normalizeClassification(source.bestClassification) || classificationFallbackFromScore(normalizedScoreBand.median),
     oneParagraphVerdict: asString(source.oneParagraphVerdict),
     finalJudgment: asString(source.finalJudgment),
   };
@@ -464,6 +475,8 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[]): Agg
   const finalBand = band.low === 0 && band.median === 0 && band.high === 0 ? defaultBand : band;
   const range = finalBand.high - finalBand.low;
 
+  const fallbackClassification = classificationFallbackFromScore(finalBand.median);
+
   return {
     finalComparisonCohort: asString(source.finalComparisonCohort),
     finalBroadField: asString(source.finalBroadField),
@@ -481,7 +494,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[]): Agg
     mainDisagreements: asStringArray(source.mainDisagreements),
     fatalObjectionPresent: asBoolean(source.fatalObjectionPresent),
     fatalObjectionAssessment: asString(source.fatalObjectionAssessment),
-    finalClassification: normalizeClassification(source.finalClassification),
+    finalClassification: normalizeClassification(source.finalClassification) || fallbackClassification,
     finalScoreBand: finalBand,
     finalScoreConfidence: asNumber(source.finalScoreConfidence, 0.9, 0, 1),
     publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict),
@@ -523,29 +536,69 @@ function blindManuscriptText(paperContent: string) {
 
 function heuristicMetadata(paperContent: string) {
   const cleaned = stripControlChars(paperContent).replace(/\r\n/g, "\n");
-  const lines = cleaned.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 30);
+  const lines = cleaned.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 40);
   const abstractIndex = lines.findIndex((line) => /^abstract\b/i.test(line));
-  const headerLines = abstractIndex > 0 ? lines.slice(0, abstractIndex) : lines;
+  const headerLines = (abstractIndex > 0 ? lines.slice(0, abstractIndex) : lines).filter((line) =>
+    !/^(arxiv:|doi:|submitted by\b|submitted to\b|keywords?\b|pacs\b|msc\b)/i.test(line) &&
+    !/\b\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{4}\b/.test(line) &&
+    !/^[A-Za-z-]+\/[A-Za-z.-]+\d+v\d+/i.test(line),
+  );
 
-  const titleCandidate =
-    headerLines.find((line) =>
-      line.length >= 20 &&
-      line.length <= 220 &&
-      !/^abstract\b/i.test(line) &&
-      !/@/.test(line) &&
-      !/\b(university|institute|department|laboratory|college|school)\b/i.test(line) &&
-      !/^(submitted|arxiv|doi|keywords?)\b/i.test(line),
-    ) || "Unknown Title";
+  const looksLikeAffiliation = (line: string) =>
+    /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(line);
 
-  const titleIndex = headerLines.findIndex((line) => line === titleCandidate);
-  const authorCandidate = headerLines
-    .slice(Math.max(titleIndex + 1, 0), Math.max(titleIndex + 5, 0))
-    .find((line) =>
-      line.length >= 3 &&
-      line.length <= 180 &&
-      !/@/.test(line) &&
-      !/\b(university|institute|department|laboratory|college|school|abstract)\b/i.test(line),
-    ) || "Unknown Authors";
+  const looksLikeAuthorLine = (line: string) => {
+    if (looksLikeAffiliation(line) || /^abstract\b/i.test(line)) return false;
+    if (line.length < 3 || line.length > 180) return false;
+    if (!/[A-Za-z]/.test(line)) return false;
+    const normalized = line.replace(/\band\b/gi, ",").replace(/\s+/g, " ").trim();
+    const parts = normalized.split(",").map((part) => part.trim()).filter(Boolean);
+    if (parts.length === 0 || parts.length > 10) return false;
+    const hasInitial = /\b[A-Z]\./.test(line);
+
+    return parts.every((part) => {
+      const tokens = part.split(/\s+/).filter(Boolean);
+      if (tokens.length < 1 || tokens.length > 6) return false;
+      const allNameStyle = tokens.every((token) => /^[A-Z][A-Za-z.'-]*$|^[A-Z]\.?$/.test(token));
+      const nameLike = tokens.filter((token) => /^[A-Z][A-Za-z.'-]*$|^[A-Z]\.?$/.test(token)).length;
+      if (hasInitial) return nameLike >= Math.max(1, Math.ceil(tokens.length * 0.6));
+      return allNameStyle && nameLike === tokens.length;
+    });
+  };
+
+  const titleStartIndex = headerLines.findIndex((line) =>
+    line.length >= 8 &&
+    line.length <= 220 &&
+    !looksLikeAffiliation(line) &&
+    !looksLikeAuthorLine(line) &&
+    !/^abstract\b/i.test(line),
+  );
+
+  const titleLines: string[] = [];
+  if (titleStartIndex !== -1) {
+    for (const line of headerLines.slice(titleStartIndex)) {
+      if (looksLikeAuthorLine(line) || looksLikeAffiliation(line) || /^abstract\b/i.test(line)) break;
+      if (line.length < 3 || line.length > 220) break;
+      titleLines.push(line);
+      if (titleLines.join(" ").length >= 220) break;
+    }
+  }
+
+  const titleCandidate = titleLines.length > 0 ? titleLines.join(" ").replace(/\s+/g, " ").trim() : "Unknown Title";
+
+  const authorStartIndex = titleStartIndex === -1 ? -1 : titleStartIndex + titleLines.length;
+  const authorLines: string[] = [];
+  if (authorStartIndex !== -1) {
+    for (const line of headerLines.slice(authorStartIndex, authorStartIndex + 4)) {
+      if (looksLikeAffiliation(line) || /^abstract\b/i.test(line)) break;
+      if (!looksLikeAuthorLine(line)) break;
+      authorLines.push(line);
+    }
+  }
+
+  const authorCandidate = authorLines.length > 0
+    ? authorLines.join(", ").replace(/\s*,\s*/g, ", ").replace(/\s+/g, " ").trim()
+    : "Unknown Authors";
 
   return {
     title: titleCandidate,
@@ -629,6 +682,15 @@ function pickRepresentativeReview(reviews: IndividualReview[], medianScore: numb
 
 export async function extractMetadata(paperContent: string): Promise<{ title: string; authors: string }> {
   const fallback = heuristicMetadata(paperContent);
+  const isSuspiciousTitle = (value: string) =>
+    !value ||
+    value === "Unknown Title" ||
+    /^(arxiv:|submitted by\b)/i.test(value) ||
+    value.length < 8;
+  const isSuspiciousAuthors = (value: string) =>
+    !value ||
+    value === "Unknown Authors" ||
+    /^(submitted by\b|abstract\b)/i.test(value);
   try {
     const response = await openai.chat.completions.create({
       model: GPT_MODEL,
@@ -645,8 +707,8 @@ export async function extractMetadata(paperContent: string): Promise<{ title: st
     const title = asString(parsed.title, fallback.title);
     const authors = asString(parsed.authors, fallback.authors);
     return {
-      title: title === "Unknown Title" ? fallback.title : title,
-      authors: authors === "Unknown Authors" ? fallback.authors : authors,
+      title: isSuspiciousTitle(title) ? fallback.title : title,
+      authors: isSuspiciousAuthors(authors) ? fallback.authors : authors,
     };
   } catch {
     return fallback;
@@ -698,6 +760,10 @@ async function generateMultiPassReview(
 
 function buildStoredReviewValues(result: MultiPassReviewResult) {
   const { representativeReview, aggregate } = result;
+  const firstComparisonCohort = result.individualReviews.find((review) => review.comparisonCohort)?.comparisonCohort || null;
+  const firstBroadField = result.individualReviews.find((review) => review.broadField)?.broadField || null;
+  const firstSpecialtyField = result.individualReviews.find((review) => review.specialtyField)?.specialtyField || null;
+  const aggregateClassification = aggregate.finalClassification || representativeReview.bestClassification || classificationFallbackFromScore(aggregate.finalScoreBand.median);
   return {
     summary: aggregate.finalSummary || representativeReview.summary || representativeReview.oneParagraphVerdict,
     correctness: representativeReview.correctness,
@@ -724,13 +790,20 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     theorySpaceBreadthScore: representativeReview.theorySpaceBreadthScore,
     breadthOfImpactScore: representativeReview.breadthOfImpactScore,
     overallIntrinsicScore: aggregate.finalScoreBand.median,
-    bestClassification: aggregate.finalClassification || representativeReview.bestClassification,
+    bestClassification: aggregateClassification,
     finalJudgment: aggregate.publicOneParagraphVerdict || representativeReview.finalJudgment,
-    coverageLedgerJson: JSON.stringify(representativeReview.coverageLedger),
+    coverageLedgerJson: JSON.stringify({
+      coverageLedger: representativeReview.coverageLedger,
+      aggregate,
+      individualReviews: result.individualReviews,
+      passCount: REVIEW_PASS_COUNT,
+      finalComparisonCohort: aggregate.finalComparisonCohort || firstComparisonCohort,
+      scoreStability: aggregate.scoreStability,
+    }),
     thinkingText: result.thinkingText,
-    comparisonCohort: aggregate.finalComparisonCohort || representativeReview.comparisonCohort || null,
-    broadField: aggregate.finalBroadField || representativeReview.broadField || null,
-    specialtyField: aggregate.finalSpecialtyField || representativeReview.specialtyField || null,
+    comparisonCohort: aggregate.finalComparisonCohort || representativeReview.comparisonCohort || firstComparisonCohort,
+    broadField: aggregate.finalBroadField || representativeReview.broadField || firstBroadField,
+    specialtyField: aggregate.finalSpecialtyField || representativeReview.specialtyField || firstSpecialtyField,
     frameworkConditionalityLevel: representativeReview.frameworkConditionality.level,
     frameworkConditionalityExplanation: representativeReview.frameworkConditionality.explanation || null,
     specialtyRelativeScore: representativeReview.specialtyRelativeScore,
