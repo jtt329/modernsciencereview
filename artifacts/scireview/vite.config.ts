@@ -13,6 +13,16 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 const basePath = process.env.BASE_PATH ?? "/";
+const apiProxyTarget = process.env.API_PROXY_TARGET;
+const apiProxy = apiProxyTarget
+  ? {
+      "/api": {
+        target: apiProxyTarget,
+        changeOrigin: false,
+        secure: true,
+      },
+    }
+  : undefined;
 
 export default defineConfig({
   base: basePath,
@@ -51,6 +61,7 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    ...(apiProxy ? { proxy: apiProxy } : {}),
     fs: {
       strict: true,
       deny: ["**/.*"],
@@ -65,5 +76,6 @@ export default defineConfig({
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    ...(apiProxy ? { proxy: apiProxy } : {}),
   },
 });
