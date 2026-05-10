@@ -16,10 +16,12 @@ import {
   SESSION_COOKIE,
   SESSION_TTL,
   ISSUER_URL,
+  CLIENT_ID,
   type SessionData,
 } from "../lib/auth";
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
+const OIDC_SCOPES = process.env.OIDC_SCOPES ?? "openid email profile offline_access";
 
 const router: IRouter = Router();
 
@@ -58,11 +60,22 @@ function getSafeReturnTo(value: unknown): string {
 }
 
 async function upsertUser(claims: Record<string, unknown>) {
+  const fullName = typeof claims.name === "string" ? claims.name.trim() : "";
+  const [firstNameFromName, ...lastNameParts] = fullName.split(/\s+/).filter(Boolean);
+
   const userData = {
     id: claims.sub as string,
     email: (claims.email as string) || null,
-    firstName: (claims.first_name as string) || null,
-    lastName: (claims.last_name as string) || null,
+    firstName:
+      (claims.first_name as string) ||
+      (claims.given_name as string) ||
+      firstNameFromName ||
+      null,
+    lastName:
+      (claims.last_name as string) ||
+      (claims.family_name as string) ||
+      lastNameParts.join(" ") ||
+      null,
     profileImageUrl: (claims.profile_image_url || claims.picture) as
       | string
       | null,
@@ -103,7 +116,7 @@ router.get("/login", async (req: Request, res: Response) => {
 
   const redirectTo = oidc.buildAuthorizationUrl(config, {
     redirect_uri: callbackUrl,
-    scope: "openid email profile offline_access",
+    scope: OIDC_SCOPES,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
     prompt: "login consent",
@@ -194,12 +207,21 @@ router.get("/logout", async (req: Request, res: Response) => {
   const sid = getSessionId(req);
   await clearSession(res, sid);
 
-  const endSessionUrl = oidc.buildEndSessionUrl(config, {
-    client_id: process.env.REPL_ID!,
-    post_logout_redirect_uri: origin,
-  });
+  if (!CLIENT_ID) {
+    res.redirect(origin);
+    return;
+  }
 
-  res.redirect(endSessionUrl.href);
+  try {
+    const endSessionUrl = oidc.buildEndSessionUrl(config, {
+      client_id: CLIENT_ID,
+      post_logout_redirect_uri: origin,
+    });
+
+    res.redirect(endSessionUrl.href);
+  } catch {
+    res.redirect(origin);
+  }
 });
 
 router.post(
