@@ -6,6 +6,8 @@ import { eq } from "drizzle-orm";
 import type { AuthUser } from "@workspace/api-zod";
 
 export const ISSUER_URL = process.env.ISSUER_URL ?? "https://replit.com/oidc";
+export const CLIENT_ID = process.env.OIDC_CLIENT_ID ?? process.env.REPL_ID;
+const CLIENT_SECRET = process.env.OIDC_CLIENT_SECRET;
 export const SESSION_COOKIE = "sid";
 export const SESSION_TTL = 7 * 24 * 60 * 60 * 1000;
 
@@ -19,10 +21,16 @@ export interface SessionData {
 let oidcConfig: client.Configuration | null = null;
 
 export async function getOidcConfig(): Promise<client.Configuration> {
+  if (!CLIENT_ID) {
+    throw new Error("Missing OIDC_CLIENT_ID or REPL_ID for OIDC authentication");
+  }
+
   if (!oidcConfig) {
     oidcConfig = await client.discovery(
       new URL(ISSUER_URL),
-      process.env.REPL_ID!,
+      CLIENT_ID,
+      undefined,
+      CLIENT_SECRET ? client.ClientSecretPost(CLIENT_SECRET) : undefined,
     );
   }
   return oidcConfig;
