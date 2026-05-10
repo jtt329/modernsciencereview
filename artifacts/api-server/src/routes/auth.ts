@@ -22,13 +22,24 @@ import {
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
 const OIDC_SCOPES = process.env.OIDC_SCOPES ?? "openid email profile offline_access";
+const PUBLIC_WEB_ORIGIN = process.env.PUBLIC_WEB_ORIGIN?.replace(/\/$/, "");
 
 const router: IRouter = Router();
 
+function getHeaderValue(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 function getOrigin(req: Request): string {
-  const proto = req.headers["x-forwarded-proto"] || "https";
+  if (PUBLIC_WEB_ORIGIN) {
+    return PUBLIC_WEB_ORIGIN;
+  }
+
+  const proto = getHeaderValue(req.headers["x-forwarded-proto"]) || "https";
   const host =
-    req.headers["x-forwarded-host"] || req.headers["host"] || "localhost";
+    getHeaderValue(req.headers["x-forwarded-host"]) ||
+    getHeaderValue(req.headers["host"]) ||
+    "localhost";
   return `${proto}://${host}`;
 }
 
