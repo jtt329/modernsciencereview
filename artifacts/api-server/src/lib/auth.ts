@@ -5,9 +5,9 @@ import { db, sessionsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import type { AuthUser } from "@workspace/api-zod";
 
-export const ISSUER_URL = process.env.ISSUER_URL ?? "https://replit.com/oidc";
-export const CLIENT_ID = process.env.OIDC_CLIENT_ID ?? process.env.REPL_ID;
-const CLIENT_SECRET = process.env.OIDC_CLIENT_SECRET;
+export const ISSUER_URL = process.env.ISSUER_URL ?? "https://accounts.google.com";
+export const CLIENT_ID = process.env.OIDC_CLIENT_ID ?? process.env.GOOGLE_CLIENT_ID;
+const CLIENT_SECRET = process.env.OIDC_CLIENT_SECRET ?? process.env.GOOGLE_CLIENT_SECRET;
 export const SESSION_COOKIE = "sid";
 export const SESSION_TTL = 7 * 24 * 60 * 60 * 1000;
 
@@ -22,7 +22,7 @@ let oidcConfig: client.Configuration | null = null;
 
 export async function getOidcConfig(): Promise<client.Configuration> {
   if (!CLIENT_ID) {
-    throw new Error("Missing OIDC_CLIENT_ID or REPL_ID for OIDC authentication");
+    throw new Error("Missing OIDC_CLIENT_ID or GOOGLE_CLIENT_ID for OIDC authentication");
   }
 
   if (!oidcConfig) {

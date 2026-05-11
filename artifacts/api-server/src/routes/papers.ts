@@ -11,11 +11,14 @@ import {
   type ReviewModel,
 } from "../lib/reviewEngineCompat";
 
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error("OPENAI_API_KEY environment variable is not set.");
+let openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is required for OpenAI-powered chat replies.");
+  }
+  openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return openai;
 }
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const GPT_MODEL = "gpt-5.4-pro";
 const GEMINI_MODEL = "gemini-3.1-pro-preview";
@@ -357,7 +360,7 @@ Be concise, intellectually honest, and use markdown where helpful.`;
       });
       res.json({ reply: response.text ?? "" });
     } else {
-      const completion = await openai.chat.completions.create({
+      const completion = await getOpenAI().chat.completions.create({
         model: review.modelName || GPT_MODEL,
         messages: [
           { role: 'system', content: systemMessage },

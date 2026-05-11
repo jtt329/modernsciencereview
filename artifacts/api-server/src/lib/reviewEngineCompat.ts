@@ -5,11 +5,14 @@ export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_MODEL = "gemini-3.1-pro-preview";
 export const REVIEW_PASS_COUNT = 3;
 
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error("OPENAI_API_KEY environment variable is not set.");
+let openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is required when the OpenAI review model is selected.");
+  }
+  openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return openai;
 }
-
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export type ReviewModel = "gpt" | "gemini";
 
@@ -643,7 +646,7 @@ function heuristicMetadata(paperContent: string) {
 }
 
 async function callGpt(prompt: string, input: string) {
-  const response = await openai.chat.completions.create({
+  const response = await getOpenAI().chat.completions.create({
     model: GPT_MODEL,
     max_completion_tokens: 8192,
     response_format: { type: "json_object" },
@@ -716,7 +719,7 @@ export async function extractMetadata(paperContent: string): Promise<{ title: st
     value === "Unknown Authors" ||
     /^(submitted by\b|abstract\b)/i.test(value);
   try {
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
       model: GPT_MODEL,
       max_completion_tokens: 512,
       response_format: { type: "json_object" },

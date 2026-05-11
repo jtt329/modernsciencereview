@@ -21,7 +21,8 @@ import {
 } from "../lib/auth";
 
 const OIDC_COOKIE_TTL = 10 * 60 * 1000;
-const OIDC_SCOPES = process.env.OIDC_SCOPES ?? "openid email profile offline_access";
+const OIDC_SCOPES = process.env.OIDC_SCOPES ?? "openid email profile";
+const OIDC_PROMPT = process.env.OIDC_PROMPT ?? "select_account";
 const PUBLIC_WEB_ORIGIN = process.env.PUBLIC_WEB_ORIGIN?.replace(/\/$/, "");
 
 const router: IRouter = Router();
@@ -130,7 +131,7 @@ router.get("/login", async (req: Request, res: Response) => {
     scope: OIDC_SCOPES,
     code_challenge: codeChallenge,
     code_challenge_method: "S256",
-    prompt: "login consent",
+    prompt: OIDC_PROMPT,
     state,
     nonce,
   });

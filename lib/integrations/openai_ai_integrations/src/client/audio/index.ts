@@ -1,5 +1,5 @@
 /**
- * Voice chat client utilities for Replit AI Integrations.
+ * Voice chat client utilities.
  * 
  * Usage:
  * 1. Copy audio-playback-worklet.js to your public/ folder
@@ -42,4 +42,3 @@ export { decodePCM16ToFloat32, createAudioPlaybackContext } from "./audio-utils"
 export { useVoiceRecorder, type RecordingState } from "./useVoiceRecorder";
 export { useAudioPlayback, type PlaybackState } from "./useAudioPlayback";
 export { useVoiceStream } from "./useVoiceStream";
-

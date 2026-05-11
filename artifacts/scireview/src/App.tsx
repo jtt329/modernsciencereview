@@ -3,14 +3,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink, Check } from 'lucide-react';
 import LatexText from './components/LatexText';
 import { formatDistanceToNow } from 'date-fns';
-import { useAuth, AuthUser } from '@workspace/replit-auth-web';
+import { useAuth, AuthUser } from '@workspace/auth-web';
 import Navbar from './components/Navbar';
 import PaperCard from './components/PaperCard';
 import ReviewCard from './components/ReviewCard';
 import CommentSection from './components/CommentSection';
 import SubmissionForm from './components/SubmissionForm';
 import PromptAnalysis from './components/PromptAnalysis';
-import NewPromptModal from './components/NewPromptModal';
 import HowItWorksModal from './components/HowItWorksModal';
 import { ReviewSource } from './services/reviewService';
 
@@ -93,7 +92,6 @@ export default function App() {
   const [selectedPapers, setSelectedPapers] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showPromptAnalysis, setShowPromptAnalysis] = useState(false);
-  const [showNewPrompt, setShowNewPrompt] = useState(false);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
   const [papersLoading, setPapersLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -192,7 +190,7 @@ export default function App() {
     const data = await apiFetch('/api/papers', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ source, model: source.model || 'gpt' }),
+      body: JSON.stringify({ source, model: source.model || 'gemini' }),
     });
     await fetchPapers();
     if (!skipSelect) setSelectedPaperId(data.paper.id);
@@ -388,7 +386,6 @@ export default function App() {
         onHowItWorks={() => setShowHowItWorks(true)}
         onDeleteAll={handleDeleteAll}
         onPromptAnalysis={() => setShowPromptAnalysis(true)}
-        onNewPrompt={() => setShowNewPrompt(true)}
         onDownloadAll={handleDownloadAll}
       />
 
@@ -670,12 +667,6 @@ export default function App() {
       <AnimatePresence>
         {showHowItWorks && (
           <HowItWorksModal onClose={() => setShowHowItWorks(false)} />
-        )}
-        {showNewPrompt && (
-          <NewPromptModal
-            onClose={() => setShowNewPrompt(false)}
-            onComplete={() => { fetchPapers(); setShowNewPrompt(false); }}
-          />
         )}
         {showPromptAnalysis && (
           <PromptAnalysis onClose={() => setShowPromptAnalysis(false)} />

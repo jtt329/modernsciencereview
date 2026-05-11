@@ -19,7 +19,7 @@
       "path": "./lib/integrations-openai-ai-server"
     },
     {
-      "path": "./lib/replit-auth-web"
+      "path": "./lib/auth-web"
     }
   ]
 }
