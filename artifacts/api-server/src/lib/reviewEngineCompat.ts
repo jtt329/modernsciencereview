@@ -258,18 +258,21 @@ All numeric fields must be numbers, not strings.
 Use LaTeX for mathematical notation inside strings.
 Output valid JSON only.`;
 
-const AGGREGATOR_SYSTEM_INSTRUCTION = `You are aggregating three independent anonymous manuscript reviews produced under the same rubric.
+const AGGREGATOR_SYSTEM_INSTRUCTION = `You are the fourth anonymous manuscript reviewer and final meta-reviewer.
 
-Do not simply average the scores. Compare the reasoning.
+You will receive the blinded manuscript text and three full independent anonymous reviews produced under the same rubric.
+
+Read the manuscript yourself first. Then audit the three reviews. Do not simply average the scores. Compare the reasoning against the manuscript.
 
 Your task:
-1. Identify agreements.
-2. Identify disagreements.
-3. Determine whether the reviewers used the same comparison cohort.
-4. Determine whether any reviewer found a fatal correctness issue.
-5. Decide whether score variation reflects real ambiguity or model noise.
-6. Produce the final public classification, score band, and one-paragraph verdict.
-7. Produce a short public summary of what the manuscript actually does.
+1. Identify what is supported by the manuscript.
+2. Identify agreements.
+3. Identify disagreements.
+4. Determine whether the reviewers used the same comparison cohort.
+5. Determine whether any reviewer found a fatal correctness issue.
+6. Decide whether score variation reflects real ambiguity or model noise.
+7. Produce the final public classification, score band, and one-paragraph verdict.
+8. Produce a short public summary of what the manuscript actually does.
 
 Important score rule:
 - Each individual review pass has one actual score band and one median score.
@@ -278,7 +281,7 @@ Important score rule:
 
 Do not defer to human expert consensus. This is a model-based judgment under the review protocol.
 
-If one review identifies a fatal technical error and the others ignore it, do not average it away. Evaluate whether the objection is decisive.
+If one review identifies a fatal technical error and the others ignore it, do not average it away. Evaluate whether the objection is supported by the manuscript and whether it is decisive.
 
 If score range is:
 - 0-5: stability = high
@@ -350,7 +353,7 @@ function classificationFallbackFromScore(score: number) {
 }
 
 function classificationRank(label: string) {
-  return CLASSIFICATIONS.indexOf(label);
+  return CLASSIFICATIONS.indexOf(label as (typeof CLASSIFICATIONS)[number]);
 }
 
 function alignClassificationToScore(classification: string, score: number) {
@@ -680,27 +683,12 @@ async function runModel(prompt: string, input: string, model: ReviewModel) {
   return model === "gemini" ? callGemini(prompt, input) : callGpt(prompt, input);
 }
 
-function buildPassPrompt(basePrompt: string, passNumber: number) {
-  return `${basePrompt}\n\nThis is independent review pass ${passNumber} of ${REVIEW_PASS_COUNT}. Review from scratch. Do not assume access to any previous review.`;
-}
-
-function buildAggregateInput(reviews: IndividualReview[]) {
+function buildAggregateInput(blindedContent: string, reviews: IndividualReview[]) {
   return JSON.stringify({
+    blindedManuscript: blindedContent,
     reviewPasses: reviews.map((review, index) => ({
       passNumber: index + 1,
-      comparisonCohort: review.comparisonCohort,
-      broadField: review.broadField,
-      specialtyField: review.specialtyField,
-      summary: review.summary,
-      centralClaim: review.centralClaim,
-      strongestCaseForImportance: review.strongestCaseForImportance,
-      strongestObjection: review.strongestObjection,
-      decisiveCheck: review.decisiveCheck,
-      scoreBand: review.scoreBand,
-      specialtyRelativeScore: review.specialtyRelativeScore,
-      bestClassification: review.bestClassification,
-      oneParagraphVerdict: review.oneParagraphVerdict,
-      finalJudgment: review.finalJudgment,
+      review,
     })),
   }, null, 2);
 }
@@ -768,7 +756,7 @@ async function generateMultiPassReview(
   const thinkingChunks: string[] = [];
 
   for (let index = 0; index < REVIEW_PASS_COUNT; index += 1) {
-    const { parsed, thinkingText } = await runModel(buildPassPrompt(systemPrompt, index + 1), blindedContent, model);
+    const { parsed, thinkingText } = await runModel(systemPrompt, blindedContent, model);
     individualReviews.push(normalizeIndividualReview(parsed));
     if (thinkingText) {
       thinkingChunks.push(`Pass ${index + 1}\n${thinkingText}`);
@@ -777,7 +765,7 @@ async function generateMultiPassReview(
 
   const { parsed: aggregateParsed, thinkingText: aggregateThinking } = await runModel(
     AGGREGATOR_SYSTEM_INSTRUCTION,
-    buildAggregateInput(individualReviews),
+    buildAggregateInput(blindedContent, individualReviews),
     model,
   );
 
