@@ -11,6 +11,30 @@ const indexPath = join(publicDir, "index.html");
 const apiProxyTarget = process.env.API_PROXY_TARGET;
 const port = Number(process.env.PORT ?? 4173);
 
+const serviceWorkerCleanup = `
+self.addEventListener("install", (event) => {
+  self.skipWaiting();
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil((async () => {
+    if (self.caches) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+    await self.clients.claim();
+    await self.registration.unregister();
+    const clients = await self.clients.matchAll({
+      type: "window",
+      includeUncontrolled: true,
+    });
+    for (const client of clients) {
+      client.navigate(client.url);
+    }
+  })());
+});
+`.trimStart();
+
 const mimeTypes = new Map([
   [".html", "text/html; charset=utf-8"],
   [".js", "text/javascript; charset=utf-8"],
@@ -41,7 +65,31 @@ function getStaticPath(url) {
   return candidate;
 }
 
+function shouldServeAppShell(req) {
+  if (req.method !== "GET" && req.method !== "HEAD") return false;
+  const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+  if (extname(pathname)) return false;
+  const accept = req.headers.accept ?? "";
+  return accept.includes("text/html") || accept.includes("*/*");
+}
+
+function serveServiceWorkerCleanup(req, res) {
+  res.writeHead(200, {
+    "content-type": "text/javascript; charset=utf-8",
+    "cache-control": "no-store, no-cache, must-revalidate, max-age=0",
+    "service-worker-allowed": "/",
+    "content-length": Buffer.byteLength(serviceWorkerCleanup),
+  });
+  res.end(req.method === "HEAD" ? undefined : serviceWorkerCleanup);
+}
+
 async function serveStatic(req, res) {
+  const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+  if (pathname === "/sw.js" || pathname === "/service-worker.js") {
+    serveServiceWorkerCleanup(req, res);
+    return;
+  }
+
   const requestedPath = getStaticPath(req.url ?? "/");
   if (!requestedPath) {
     send(res, 403, "Forbidden");
@@ -53,6 +101,12 @@ async function serveStatic(req, res) {
     const fileStat = await stat(filePath);
     if (fileStat.isDirectory()) filePath = join(filePath, "index.html");
   } catch {
+    if (!shouldServeAppShell(req)) {
+      send(res, 404, "Not Found", {
+        "content-type": "text/plain; charset=utf-8",
+      });
+      return;
+    }
     filePath = indexPath;
   }
 
