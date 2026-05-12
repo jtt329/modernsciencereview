@@ -20,7 +20,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
 
   const handleShare = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const url = `${window.location.origin}${window.location.pathname}?paper=${paper.id}`;
+    const url = `${window.location.origin}/papers/${encodeURIComponent(paper.id)}`;
     navigator.clipboard.writeText(url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);

@@ -78,6 +78,22 @@ function displayName(user: AuthUser) {
   return [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email || 'User';
 }
 
+function paperPath(paperId: string) {
+  return `/papers/${encodeURIComponent(paperId)}`;
+}
+
+function readRoute() {
+  const path = window.location.pathname;
+  const paperMatch = path.match(/^\/papers\/([^/]+)\/?$/);
+  const queryPaper = new URLSearchParams(window.location.search).get('paper');
+
+  return {
+    paperId: paperMatch ? decodeURIComponent(paperMatch[1]) : queryPaper,
+    showHowItWorks: path === '/how-it-works',
+    usedLegacyPaperQuery: !paperMatch && !!queryPaper,
+  };
+}
+
 export default function App() {
   const { user, isLoading: authLoading, login, logout } = useAuth();
 
@@ -124,23 +140,21 @@ export default function App() {
     } catch {}
   }, [user]);
 
-  // Read ?paper=<id> from URL on first load
+  // Keep app state in sync with shareable browser routes.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const paperId = params.get('paper');
-    if (paperId) setSelectedPaperId(paperId);
-  }, []);
+    const syncRoute = () => {
+      const route = readRoute();
+      setSelectedPaperId(route.paperId);
+      setShowHowItWorks(route.showHowItWorks);
+      if (route.paperId && route.usedLegacyPaperQuery) {
+        window.history.replaceState({}, '', paperPath(route.paperId));
+      }
+    };
 
-  // Sync URL when selected paper changes
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (selectedPaperId) {
-      url.searchParams.set('paper', selectedPaperId);
-    } else {
-      url.searchParams.delete('paper');
-    }
-    window.history.replaceState({}, '', url.toString());
-  }, [selectedPaperId]);
+    syncRoute();
+    window.addEventListener('popstate', syncRoute);
+    return () => window.removeEventListener('popstate', syncRoute);
+  }, []);
 
   useEffect(() => { fetchPapers(); }, [fetchPapers]);
 
@@ -177,12 +191,16 @@ export default function App() {
   }, [selectedPaperId, user]);
 
   const handleSelectPaper = (id: string) => {
+    window.history.pushState({}, '', paperPath(id));
     setSelectedPaperId(id);
+    setShowHowItWorks(false);
     window.scrollTo(0, 0);
   };
 
   const handleBack = () => {
+    window.history.pushState({}, '', '/');
     setSelectedPaperId(null);
+    setShowHowItWorks(false);
     fetchPapers();
   };
 
@@ -193,7 +211,10 @@ export default function App() {
       body: JSON.stringify({ source, model: source.model || 'gemini' }),
     });
     await fetchPapers();
-    if (!skipSelect) setSelectedPaperId(data.paper.id);
+    if (!skipSelect) {
+      window.history.pushState({}, '', paperPath(data.paper.id));
+      setSelectedPaperId(data.paper.id);
+    }
   };
 
   const handleLikePaper = async (paperId: string, e: React.MouseEvent) => {
@@ -240,6 +261,7 @@ export default function App() {
     if (!user) return;
     if (!window.confirm('Delete this paper and its review? This cannot be undone.')) return;
     await apiFetch(`/api/papers/${paperId}`, { method: 'DELETE' });
+    window.history.pushState({}, '', '/');
     setSelectedPaperId(null);
     fetchPapers();
   };
@@ -272,11 +294,21 @@ export default function App() {
 
   const handleShare = () => {
     if (!selectedPaperId) return;
-    const url = `${window.location.origin}${window.location.pathname}?paper=${selectedPaperId}`;
+    const url = `${window.location.origin}${paperPath(selectedPaperId)}`;
     navigator.clipboard.writeText(url).then(() => {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     });
+  };
+
+  const handleShowHowItWorks = () => {
+    window.history.pushState({}, '', '/how-it-works');
+    setShowHowItWorks(true);
+  };
+
+  const handleCloseHowItWorks = () => {
+    window.history.pushState({}, '', selectedPaperId ? paperPath(selectedPaperId) : '/');
+    setShowHowItWorks(false);
   };
 
   const handleDownloadAll = async () => {
@@ -383,7 +415,7 @@ export default function App() {
         onLogin={login}
         onLogout={logout}
         onNewPaper={() => { if (!user) { login(); return; } setIsSubmitting(true); }}
-        onHowItWorks={() => setShowHowItWorks(true)}
+        onHowItWorks={handleShowHowItWorks}
         onDeleteAll={handleDeleteAll}
         onPromptAnalysis={() => setShowPromptAnalysis(true)}
         onDownloadAll={handleDownloadAll}
@@ -666,7 +698,7 @@ export default function App() {
 
       <AnimatePresence>
         {showHowItWorks && (
-          <HowItWorksModal onClose={() => setShowHowItWorks(false)} />
+          <HowItWorksModal onClose={handleCloseHowItWorks} />
         )}
         {showPromptAnalysis && (
           <PromptAnalysis onClose={() => setShowPromptAnalysis(false)} />
