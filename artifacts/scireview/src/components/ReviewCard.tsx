@@ -113,6 +113,18 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
   const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
+  const passScoreBands = storedIndividualReviews.map((pass: any) =>
+    normalizeDisplayedBand(
+      pass.scoreBand?.low,
+      pass.scoreBand?.median,
+      pass.scoreBand?.high,
+      pass.bestClassification,
+    )
+  );
+  const passMedianScores = passScoreBands.map((band) => band.median).filter((score) => Number.isFinite(score));
+  const passScoresLabel = passMedianScores.length > 0
+    ? passMedianScores.map((score, index) => `P${index + 1} ${score}`).join(' / ')
+    : 'Not available';
   const combinedBand = normalizeDisplayedBand(
     aggregateScoreBand?.low ?? review.scoreBandLow ?? review.overallIntrinsicScore ?? review.score,
     aggregateScoreBand?.median ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score,
@@ -191,8 +203,8 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               </div>
               <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
                 {selectedPass
-                  ? 'This is the single score for this individual review pass.'
-                  : 'This is the combined review score after comparing the independent review passes.'}
+                  ? 'This is the score assigned by this individual independent review pass.'
+                  : 'This is the final combined score assigned by the meta-reviewer after reading the paper and auditing the independent passes. It is a calibrated, percentile-like field-relative judgment, not a live percentile computed from papers stored on this site.'}
               </div>
             </div>
           </div>
@@ -203,9 +215,9 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">{selectedPass ? 'Pass Score' : 'Score Range'}</p>
-              <p className="text-sm font-bold text-white mt-1">{selectedPass ? `${activeBand.median}/100` : `${activeBand.low}-${activeBand.high}`}</p>
-              <p className="text-[11px] text-slate-400 mt-1">{selectedPass ? 'Single reviewer score' : `Median ${activeBand.median}`}</p>
+              <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">{selectedPass ? 'Pass Score' : 'Independent Pass Scores'}</p>
+              <p className="text-sm font-bold text-white mt-1">{selectedPass ? `${activeBand.median}/100` : passScoresLabel}</p>
+              <p className="text-[11px] text-slate-400 mt-1">{selectedPass ? 'Single reviewer score' : `Final combined score ${combinedBand.median}/100`}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
