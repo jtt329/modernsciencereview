@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 
 export const GPT_MODEL = "gpt-5.4-pro";
-export const GEMINI_MODEL = "gemini-3.1-pro-preview";
+export const GEMINI_MODEL = process.env.SCIREVIEW_GEMINI_MODEL?.trim() || "gemini-3.1-pro-preview";
 export const REVIEW_PASS_COUNT = 3;
 
 let openai: OpenAI | null = null;

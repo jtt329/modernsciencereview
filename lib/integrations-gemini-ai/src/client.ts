@@ -12,10 +12,17 @@ if (!process.env.AI_INTEGRATIONS_GEMINI_API_KEY) {
   );
 }
 
+function getGeminiHttpOptions() {
+  const rawBaseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL!.replace(/\/+$/, "");
+  const versionMatch = rawBaseUrl.match(/\/(v1beta|v1)$/);
+
+  return {
+    apiVersion: versionMatch?.[1] ?? "v1beta",
+    baseUrl: versionMatch ? rawBaseUrl.replace(/\/(v1beta|v1)$/, "") : rawBaseUrl,
+  };
+}
+
 export const ai = new GoogleGenAI({
   apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
-  httpOptions: {
-    apiVersion: "",
-    baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
-  },
+  httpOptions: getGeminiHttpOptions(),
 });

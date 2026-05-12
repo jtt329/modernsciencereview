@@ -21,7 +21,7 @@ function getOpenAI() {
 }
 
 const GPT_MODEL = "gpt-5.4-pro";
-const GEMINI_MODEL = "gemini-3.1-pro-preview";
+const GEMINI_MODEL = process.env.SCIREVIEW_GEMINI_MODEL?.trim() || "gemini-3.1-pro-preview";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
