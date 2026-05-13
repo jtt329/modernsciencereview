@@ -105,7 +105,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
               </div>
               {paper.modelName && (
                 <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
-                  {paper.modelName.startsWith('gemini') ? 'Gemini 3.1 Pro' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}
+                  {paper.modelName.startsWith('gemini') ? 'Gemini Flash + Pro' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}
                 </span>
               )}
             </div>

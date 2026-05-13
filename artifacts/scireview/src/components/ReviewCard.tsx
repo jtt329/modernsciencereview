@@ -68,7 +68,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   };
 
   const isNewFormat = review.overallIntrinsicScore != null;
-  const passCount = review.passCount ?? 1;
   let parsedCoverage: any = null;
   if (review.coverageLedgerJson) {
     try {
@@ -105,11 +104,9 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
     : Array.isArray(parsedCoverage?.individualReviews)
       ? parsedCoverage.individualReviews
       : [];
-  const displayedPassCount = storedIndividualReviews.length || passCount;
   const aggregateScoreBand = storedAggregate?.finalScoreBand ?? null;
   const publicVerdict = review.publicVerdict || storedAggregate?.publicOneParagraphVerdict || parsedCoverage?.publicVerdict || review.finalJudgment || review.overallEvaluation;
   const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
-  const displayedStability = review.scoreStability || storedAggregate?.scoreStability || parsedCoverage?.scoreStability || 'Not specified';
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
   const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
@@ -121,10 +118,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
       pass.bestClassification,
     )
   );
-  const passMedianScores = passScoreBands.map((band) => band.median).filter((score) => Number.isFinite(score));
-  const passScoresLabel = passMedianScores.length > 0
-    ? passMedianScores.map((score, index) => `P${index + 1} ${score}`).join(' / ')
-    : 'Not available';
+  const passMedianScores = passScoreBands.map((band) => band.median);
   const combinedBand = normalizeDisplayedBand(
     aggregateScoreBand?.low ?? review.scoreBandLow ?? review.overallIntrinsicScore ?? review.score,
     aggregateScoreBand?.median ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score,
@@ -209,24 +203,14 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           </div>
 
-          <div className="grid md:grid-cols-4 gap-3">
+          <div className="grid md:grid-cols-2 gap-3">
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
               <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">{selectedPass ? 'Pass Score' : 'Independent Pass Scores'}</p>
-              <p className="text-sm font-bold text-white mt-1">{selectedPass ? `${activeBand.median}/100` : passScoresLabel}</p>
-              <p className="text-[11px] text-slate-400 mt-1">{selectedPass ? 'Single reviewer merit score' : `Final merit score ${combinedBand.median}/100`}</p>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
               <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">{selectedPass ? 'View' : 'Stability'}</p>
-              <p className="text-sm font-bold text-white mt-1">{selectedPass ? `Pass ${activeTab + 1}` : displayedStability}</p>
-              <p className="text-[11px] text-slate-400 mt-1">{selectedPass ? `${displayedPassCount} total passes` : `${displayedPassCount} independent passes`}</p>
             </div>
           </div>
 
@@ -240,7 +224,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                     : 'bg-white/10 text-slate-200 hover:bg-white/20'
                 }`}
               >
-                Combined Review
+                Combined · {combinedBand.median}
               </button>
               {storedIndividualReviews.map((_: any, index: number) => (
                 <button
@@ -252,7 +236,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                       : 'bg-white/10 text-slate-200 hover:bg-white/20'
                   }`}
                 >
-                  Pass {index + 1}
+                  Pass {index + 1} · {Number.isFinite(passMedianScores[index]) ? passMedianScores[index] : '—'}
                 </button>
               ))}
             </div>

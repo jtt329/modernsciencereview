@@ -15,11 +15,17 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+const requestTimeoutMs = Number(process.env.REQUEST_TIMEOUT_MS ?? 15 * 60 * 1000);
+const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
   }
 
-  logger.info({ port }, "Server listening");
+  logger.info({ port, requestTimeoutMs }, "Server listening");
 });
+
+if (!Number.isNaN(requestTimeoutMs) && requestTimeoutMs > 0) {
+  server.requestTimeout = requestTimeoutMs;
+  server.headersTimeout = Math.max(60_000, requestTimeoutMs + 5_000);
+}

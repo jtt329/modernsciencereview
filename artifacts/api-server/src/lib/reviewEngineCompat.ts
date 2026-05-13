@@ -2,7 +2,16 @@ import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 
 export const GPT_MODEL = "gpt-5.4-pro";
-export const GEMINI_MODEL = process.env.SCIREVIEW_GEMINI_MODEL?.trim() || "gemini-3.1-pro-preview";
+export const GEMINI_PASS_MODEL =
+  process.env.SCIREVIEW_GEMINI_PASS_MODEL?.trim() ||
+  process.env.SCIREVIEW_GEMINI_FLASH_MODEL?.trim() ||
+  "gemini-3-flash-preview";
+export const GEMINI_META_MODEL =
+  process.env.SCIREVIEW_GEMINI_META_MODEL?.trim() ||
+  process.env.SCIREVIEW_GEMINI_PRO_MODEL?.trim() ||
+  process.env.SCIREVIEW_GEMINI_MODEL?.trim() ||
+  "gemini-3-pro-preview";
+export const GEMINI_MODEL = GEMINI_META_MODEL;
 export const REVIEW_PASS_COUNT = 3;
 
 let openai: OpenAI | null = null;
@@ -686,9 +695,9 @@ async function callGpt(prompt: string, input: string) {
   return { parsed: extractJson(content), thinkingText: null as string | null };
 }
 
-async function callGemini(prompt: string, input: string) {
+async function callGemini(prompt: string, input: string, geminiModel = GEMINI_META_MODEL) {
   const response = await geminiAI.models.generateContent({
-    model: GEMINI_MODEL,
+    model: geminiModel,
     contents: [{ role: "user", parts: [{ text: input }] }],
     config: {
       systemInstruction: prompt,
@@ -708,8 +717,8 @@ async function callGemini(prompt: string, input: string) {
   return { parsed: extractJson(content), thinkingText };
 }
 
-async function runModel(prompt: string, input: string, model: ReviewModel) {
-  return model === "gemini" ? callGemini(prompt, input) : callGpt(prompt, input);
+async function runModel(prompt: string, input: string, model: ReviewModel, geminiModel = GEMINI_META_MODEL) {
+  return model === "gemini" ? callGemini(prompt, input, geminiModel) : callGpt(prompt, input);
 }
 
 function buildAggregateInput(blindedContent: string, reviews: IndividualReview[]) {
@@ -784,7 +793,7 @@ async function generateMultiPassReview(
   const thinkingChunks: string[] = [];
 
   const passResults = await Promise.all(Array.from({ length: REVIEW_PASS_COUNT }, async (_unused, index) => {
-    const { parsed, thinkingText } = await runModel(systemPrompt, blindedContent, model);
+    const { parsed, thinkingText } = await runModel(systemPrompt, blindedContent, model, GEMINI_PASS_MODEL);
     return {
       review: normalizeIndividualReview(parsed),
       thinkingText,
@@ -803,6 +812,7 @@ async function generateMultiPassReview(
     AGGREGATOR_SYSTEM_INSTRUCTION,
     buildAggregateInput(blindedContent, individualReviews),
     model,
+    GEMINI_META_MODEL,
   );
 
   if (aggregateThinking) {
@@ -814,7 +824,7 @@ async function generateMultiPassReview(
   const representativeReview = pickRepresentativeReview(individualReviews, aggregate.finalScoreBand.median);
 
   return {
-    modelName: model === "gemini" ? GEMINI_MODEL : GPT_MODEL,
+    modelName: model === "gemini" ? `${GEMINI_PASS_MODEL} + ${GEMINI_META_MODEL}` : GPT_MODEL,
     systemPrompt,
     blindedContent,
     individualReviews,

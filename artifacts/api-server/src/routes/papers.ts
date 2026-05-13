@@ -5,6 +5,7 @@ import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
 import {
+  GEMINI_META_MODEL,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
@@ -21,7 +22,6 @@ function getOpenAI() {
 }
 
 const GPT_MODEL = "gpt-5.4-pro";
-const GEMINI_MODEL = process.env.SCIREVIEW_GEMINI_MODEL?.trim() || "gemini-3.1-pro-preview";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
@@ -351,7 +351,7 @@ Be concise, intellectually honest, and use markdown where helpful.`;
 
     if (isGemini) {
       const response = await (geminiAI.models.generateContent as any)({
-        model: review.modelName || GEMINI_MODEL,
+        model: GEMINI_META_MODEL,
         config: { systemInstruction: systemMessage },
         contents: messages.map((m: any) => ({
           role: m.role === 'assistant' ? 'model' : 'user',

@@ -437,7 +437,7 @@ export default function App() {
                   Submit your research, get an instant AI assessment, and timestamp your work on the public record.
                 </p>
                 <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest pt-1">
-                  Powered by Gemini 3.1 Pro Thinking
+                  Powered by Gemini Flash + Pro
                 </p>
               </div>
 
@@ -712,7 +712,7 @@ export default function App() {
             <span className="text-lg font-bold text-slate-900">SciReview AI</span>
           </div>
           <p className="text-slate-500 text-sm font-medium">Empowering researchers with AI-driven insights and public timestamping.</p>
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-8">2026 SciReview AI — Powered by Gemini 3.1 Pro Thinking</div>
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-8">2026 SciReview AI — Powered by Gemini Flash + Pro</div>
         </div>
       </footer>
     </div>
