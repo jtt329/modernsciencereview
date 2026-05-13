@@ -100,7 +100,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
                   <span className="text-xl leading-none">{paper.score}</span>
                 </div>
                 <div className="absolute top-full right-0 mt-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover/score:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
-                  An anchored 1-100 scientific merit score assigned by the AI review. It is calibrated against the chosen comparison cohort: 50 is an average serious published paper, 95 is potentially field-shaping, and 99 is foundational or paradigm-shifting.
+                  Anchored scientific merit score: 0 means wrong or no real contribution, 50 means an average serious published paper in the comparison cohort, and 99 means foundational or paradigm-shifting.
                 </div>
               </div>
               {paper.modelName && (

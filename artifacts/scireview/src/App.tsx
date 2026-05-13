@@ -709,10 +709,10 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 text-center space-y-4">
           <div className="flex items-center justify-center gap-2 mb-4">
             <div className="bg-slate-900 p-1.5 rounded-lg"><BookOpen className="w-5 h-5 text-white" /></div>
-            <span className="text-lg font-bold text-slate-900">SciReview AI</span>
+            <span className="text-lg font-bold text-slate-900">Modern Science Review</span>
           </div>
           <p className="text-slate-500 text-sm font-medium">Empowering researchers with AI-driven insights and public timestamping.</p>
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-8">2026 SciReview AI — Powered by Gemini Flash + Pro</div>
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-8">2026 Modern Science Review — Powered by Gemini Flash + Pro</div>
         </div>
       </footer>
     </div>
