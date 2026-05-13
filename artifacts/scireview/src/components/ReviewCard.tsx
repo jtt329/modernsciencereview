@@ -4,6 +4,7 @@ import { Sparkles, CheckCircle2, Zap, Award, Heart, MessageSquare, Info, X, Targ
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import { format } from 'date-fns';
 import { AIReview } from '../types';
 import ReviewChat from './ReviewChat';
 
@@ -160,6 +161,9 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const currentStrongestCase = selectedPass?.strongestCaseForImportance || review.strongestCaseForImportance;
   const currentStrongestObjection = selectedPass?.strongestObjection || review.strongestObjection;
   const currentDecisiveCheck = selectedPass?.decisiveCheck || review.decisiveCheck;
+  const submittedAtLabel = Number.isFinite(review.createdAt)
+    ? format(new Date(review.createdAt), 'MMM d, yyyy h:mm:ss a')
+    : null;
   const currentIntrinsicScore = selectedPass?.intrinsicTechnicalScore ?? review.intrinsicScientificMeritScore;
   const currentTargetBreadthScore = selectedPass?.explanatoryTargetBreadthScore ?? review.explanatoryTargetBreadthScore;
   const currentTheoryBreadthScore = selectedPass?.theorySpaceBreadthScore ?? review.theorySpaceBreadthScore;
@@ -224,7 +228,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                     : 'bg-white/10 text-slate-200 hover:bg-white/20'
                 }`}
               >
-                Combined · {combinedBand.median}
+                Final · {combinedBand.median}
               </button>
               {storedIndividualReviews.map((_: any, index: number) => (
                 <button
@@ -457,6 +461,11 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                 <Award className="w-4 h-4" /> Final Judgment
               </h3>
               <Markdown>{currentFinalJudgment}</Markdown>
+              {submittedAtLabel && (
+                <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                  Submitted {submittedAtLabel}
+                </p>
+              )}
             </div>
           )}
 

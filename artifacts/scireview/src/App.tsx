@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink, Check } from 'lucide-react';
 import LatexText from './components/LatexText';
-import { formatDistanceToNow } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth, AuthUser } from '@workspace/auth-web';
 import Navbar from './components/Navbar';
 import PaperCard from './components/PaperCard';
@@ -591,7 +591,7 @@ export default function App() {
                       <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Scientific Paper</div>
                       <div className="flex items-center gap-1 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
                         <Clock className="w-3 h-3" />
-                        {formatDistanceToNow(new Date(selectedPaper.createdAt))} ago
+                        Submitted {format(new Date(selectedPaper.createdAt), 'MMM d, yyyy h:mm a')} · {formatDistanceToNow(new Date(selectedPaper.createdAt))} ago
                       </div>
                     </div>
                     <h1 className="text-4xl md:text-6xl font-black text-slate-900 leading-tight"><LatexText>{selectedPaper.title}</LatexText></h1>
