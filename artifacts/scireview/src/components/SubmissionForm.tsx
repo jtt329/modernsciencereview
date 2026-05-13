@@ -372,7 +372,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                 <p className="text-indigo-500 text-xs mt-1">
                   {isBatch
                     ? 'Each paper takes 60–120 seconds. Please keep this window open.'
-                    : 'This runs two AI passes — metadata extraction then a full structured review. It typically takes 60–120 seconds. Please keep this window open.'}
+                    : 'This runs metadata extraction, three independent review passes in parallel, then a final meta-review. Please keep this window open.'}
                 </p>
               </div>
             </div>

@@ -568,13 +568,16 @@ export async function generateMultiPassReview(
 ): Promise<MultiPassReviewResult> {
   const systemPrompt = promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION;
   const blindedContent = blindManuscriptText(paperContent);
-  const individualReviews: IndividualReview[] = [];
   const thinkingChunks: string[] = [];
 
-  for (let index = 0; index < REVIEW_PASS_COUNT; index += 1) {
+  const passResults = await Promise.all(Array.from({ length: REVIEW_PASS_COUNT }, async (_unused, index) => {
     const { review, thinkingText } = await generateIndividualReview(blindedContent, systemPrompt, model);
-    individualReviews.push(review);
-    if (thinkingText) thinkingChunks.push(`Pass ${index + 1}\n${thinkingText}`);
+    return { review, thinkingText, index };
+  }));
+
+  const individualReviews = passResults.map((result) => result.review);
+  for (const result of passResults) {
+    if (result.thinkingText) thinkingChunks.push(`Pass ${result.index + 1}\n${result.thinkingText}`);
   }
 
   const { aggregate, thinkingText } = await generateAggregateReview(blindedContent, individualReviews, model);
