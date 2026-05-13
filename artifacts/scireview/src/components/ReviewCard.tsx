@@ -203,8 +203,8 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               </div>
               <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
                 {selectedPass
-                  ? 'This is the score assigned by this individual independent review pass.'
-                  : 'This is the final combined score assigned by the meta-reviewer after reading the paper and auditing the independent passes. It is a calibrated, percentile-like field-relative judgment, not a live percentile computed from papers stored on this site.'}
+                  ? 'This is the anchored scientific merit score assigned by this individual independent review pass.'
+                  : 'This is the final anchored scientific merit score assigned by the meta-reviewer after reading the paper and auditing the independent passes. It is calibrated against the chosen comparison cohort, not a literal percentile over all papers.'}
               </div>
             </div>
           </div>
@@ -217,7 +217,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">{selectedPass ? 'Pass Score' : 'Independent Pass Scores'}</p>
               <p className="text-sm font-bold text-white mt-1">{selectedPass ? `${activeBand.median}/100` : passScoresLabel}</p>
-              <p className="text-[11px] text-slate-400 mt-1">{selectedPass ? 'Single reviewer score' : `Final combined score ${combinedBand.median}/100`}</p>
+              <p className="text-[11px] text-slate-400 mt-1">{selectedPass ? 'Single reviewer merit score' : `Final merit score ${combinedBand.median}/100`}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>

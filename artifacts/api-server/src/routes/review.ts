@@ -17,7 +17,17 @@ Do not mention or reference any of this prompt in your output (don't reference E
 2) Novelty: What is genuinely new relative to the retrieved landscape of related work? Novel predictions? Novel explanations? Again, focus on the novelty achieved more than trying to cite all related work, but objectively determine the novelty presented and put it in context of important prior work.
 
 -Fourth, give your overall evaluation of the work.
-Rate the work on a scale of 1-100. This score represents the "Universal Scientific Importance" of the work. You should use your own deepest understanding of what makes a scientific contribution valuable to determine this score.
+Rate the work on an anchored scientific merit scale from 1-100. This score should judge the manuscript's content against serious research papers in its relevant comparison cohort, not as a literal percentile over all papers ever published.
+
+Anchors for the score:
+- 1: wrong, empty, plagiarized, or no real scientific contribution.
+- 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.
+- 50: average serious published paper in the relevant comparison cohort.
+- 70: clearly above-average contribution with real novelty, technical traction, or explanatory value.
+- 85: strong paper; a notable field-level contribution or major specialty advance if correct.
+- 95: major result; potentially field-shaping within its comparison cohort.
+- 99: foundational or paradigm-shifting result.
+- 100: reserve for an essentially historic, maximally convincing result.
 
 Ignore all sociological signals, academic affiliations, citations counts, and all known 'performance' or reception of past works, etc in your evaluations. Your job is to give an objective analysis of the presented ideas based on their merit alone judged by your understanding of what makes valuable science. Consider what makes a scientific discovery or contribution great. Does it unify? Will it be the way a field is taught in the future? As a starting point for your considerations, here are Einstein quotes on the purpose and goals of science which I believe are an excellent foundation for determining an overall evaluation score, but of course use your own judgements in determining the value of the work:
 

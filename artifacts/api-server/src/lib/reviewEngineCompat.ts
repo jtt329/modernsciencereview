@@ -156,18 +156,31 @@ Every review must include the strongest case for importance and the strongest ob
 
 Scoring:
 
-The main score is field-relative. It answers: how strong is this manuscript compared with serious research papers in its comparison cohort, judging only content and support?
+The main score is an anchored scientific merit score. It answers: how strong is this manuscript compared with serious research papers in its comparison cohort, judging only content and support?
 
 Also provide:
 - broad-field score: strength relative to the broader field;
 - cross-field consequence score: how much the result would matter outside the immediate field if correct;
 - framework conditionality: whether the importance depends on accepting a specific framework.
 
+Anchored 0-100 scientific merit scale:
+- 0: wrong, empty, plagiarized, or no real scientific contribution.
+- 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.
+- 50: average serious published paper in the relevant comparison cohort.
+- 70: clearly above-average contribution with real novelty, technical traction, or explanatory value.
+- 85: strong paper; a notable field-level contribution or major specialty advance if correct.
+- 95: major result; potentially field-shaping within its comparison cohort.
+- 99: foundational or paradigm-shifting result.
+- 100: reserve for an essentially historic, maximally convincing result.
+
+Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
+
 Scale instructions:
 - intrinsicTechnicalScore, explanatoryTargetBreadthScore, theorySpaceBreadthScore, and breadthOfImpactScore are on a 0-10 scale.
 - specialtyRelativeScore, broadFieldRelativeScore, crossFieldConsequenceScore, and every number inside scoreBand are on a 0-100 scale.
 - Do not use a 0-10 scale for scoreBand.
 - For a paper in the nineties, scoreBand should look like {"low": 90, "median": 93, "high": 96}, not {"low": 9, "median": 9.3, "high": 9.6}.
+- scoreBand is this reviewer's uncertainty interval around its own anchored scientific merit score. The median is the reviewer's actual score. If the score is highly certain, low, median, and high may be the same number.
 
 Formatting instructions:
 - Wrap inline mathematical expressions in $...$.
@@ -274,13 +287,26 @@ Your task:
 4. Determine whether the reviewers used the same comparison cohort.
 5. Determine whether any reviewer found a fatal correctness issue.
 6. Decide whether score variation reflects real ambiguity or model noise.
-7. Produce the final public classification, score band, and one-paragraph verdict.
+7. Produce the final public classification, anchored scientific merit score, uncertainty band, and one-paragraph verdict.
 8. Produce a short public summary of what the manuscript actually does.
 
 Important score rule:
-- Each individual review pass has one actual score band and one median score.
-- The aggregate review combines the passes into one final score band.
-- Do not invent sub-ranges for a single pass beyond that pass's own scoreBand.
+- Each individual review pass has one actual scoreBand and one median score. Treat the three median scores as the three independent reviewer scores.
+- The aggregate finalScoreBand is your own uncertainty interval around your final anchored scientific merit score. Its median is your final score.
+- The finalScoreBand should not pretend to be the min/max range of the three passes. If you want to summarize pass variation, use individualScores and scoreRange.
+- If your final score is highly certain, finalScoreBand.low, finalScoreBand.median, and finalScoreBand.high may be the same number.
+
+Anchored 0-100 scientific merit scale:
+- 0: wrong, empty, plagiarized, or no real scientific contribution.
+- 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.
+- 50: average serious published paper in the relevant comparison cohort.
+- 70: clearly above-average contribution with real novelty, technical traction, or explanatory value.
+- 85: strong paper; a notable field-level contribution or major specialty advance if correct.
+- 95: major result; potentially field-shaping within its comparison cohort.
+- 99: foundational or paradigm-shifting result.
+- 100: reserve for an essentially historic, maximally convincing result.
+
+Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
 
 Do not defer to human expert consensus. This is a model-based judgment under the review protocol.
 

@@ -141,10 +141,22 @@ Do not count an imported input as a direct explanatory target. Do not count mult
 Every review must include the strongest case for importance and the strongest objection. The objection should be technically fair, not artificially hostile.
 
 Scoring:
+- The main score is an anchored scientific merit score. It answers: how strong is this manuscript compared with serious research papers in its comparison cohort, judging only content and support?
+- Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
+- Anchors for the 0-100 scientific merit scale:
+  - 0: wrong, empty, plagiarized, or no real scientific contribution.
+  - 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.
+  - 50: average serious published paper in the relevant comparison cohort.
+  - 70: clearly above-average contribution with real novelty, technical traction, or explanatory value.
+  - 85: strong paper; a notable field-level contribution or major specialty advance if correct.
+  - 95: major result; potentially field-shaping within its comparison cohort.
+  - 99: foundational or paradigm-shifting result.
+  - 100: reserve for an essentially historic, maximally convincing result.
 - intrinsicTechnicalScore, explanatoryTargetBreadthScore, theorySpaceBreadthScore, and breadthOfImpactScore are on a 0-10 scale.
 - specialtyRelativeScore, broadFieldRelativeScore, crossFieldConsequenceScore, and every number inside scoreBand are on a 0-100 scale.
 - Do not use a 0-10 scale for scoreBand.
 - A nineties-level paper should have scoreBand numbers like 90, 93, 96 rather than 9, 9.3, 9.6.
+- scoreBand is this reviewer's uncertainty interval around its own anchored scientific merit score. The median is the reviewer's actual score. If the score is highly certain, low, median, and high may be the same number.
 
 Return valid JSON only with exactly these fields:
 {
@@ -210,8 +222,16 @@ Your tasks:
 4. Determine whether the reviewers used the same comparison cohort.
 5. Determine whether any reviewer found a fatal correctness issue.
 6. Decide whether score variation reflects real ambiguity or model noise.
-7. Produce the final public classification, score band, and one-paragraph verdict.
+7. Produce the final public classification, anchored scientific merit score, uncertainty band, and one-paragraph verdict.
 8. Produce a short public summary of what the manuscript actually does.
+
+Important score rule:
+- Each individual review pass has one actual scoreBand and one median score. Treat the three median scores as the three independent reviewer scores.
+- The aggregate finalScoreBand is your own uncertainty interval around your final anchored scientific merit score. Its median is your final score.
+- The finalScoreBand should not pretend to be the min/max range of the three passes. If you want to summarize pass variation, use individualScores and scoreRange.
+- If your final score is highly certain, finalScoreBand.low, finalScoreBand.median, and finalScoreBand.high may be the same number.
+- Use the same 0-100 anchored scientific merit scale from the individual review prompt: 0 means wrong or no real contribution; 50 means an average serious published paper in the comparison cohort; 70 means clearly above average; 85 means a strong notable contribution; 95 means potentially field-shaping; 99 means foundational or paradigm-shifting.
+- Do not describe the score as a literal percentile over all papers ever published.
 
 Do not defer to human expert consensus. If one review identifies a fatal technical error and the others ignore it, do not average it away. Evaluate whether the objection is supported by the manuscript and whether it is decisive.
 
