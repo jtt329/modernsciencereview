@@ -444,17 +444,64 @@ function rangeToStability(range: number): ScoreStability {
 
 function extractJson(raw: string): unknown {
   const trimmed = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  const parseWithRepair = (value: string) => {
+    try {
+      return JSON.parse(value);
+    } catch (err) {
+      try {
+        return JSON.parse(repairInvalidJsonEscapes(value));
+      } catch {
+        throw err;
+      }
+    }
+  };
+
   try {
-    return JSON.parse(trimmed);
+    return parseWithRepair(trimmed);
   } catch {}
 
   const firstBrace = trimmed.indexOf("{");
   const lastBrace = trimmed.lastIndexOf("}");
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+    return parseWithRepair(trimmed.slice(firstBrace, lastBrace + 1));
   }
 
   throw new Error("Could not parse model response as JSON.");
+}
+
+function repairInvalidJsonEscapes(value: string) {
+  let repaired = "";
+  let inString = false;
+  let escaped = false;
+  const validEscapes = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
+
+  for (let i = 0; i < value.length; i += 1) {
+    const char = value[i];
+
+    if (!inString) {
+      repaired += char;
+      if (char === '"') inString = true;
+      continue;
+    }
+
+    if (escaped) {
+      if (!validEscapes.has(char)) repaired += "\\";
+      repaired += char;
+      escaped = false;
+      continue;
+    }
+
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    repaired += char;
+    if (char === '"') inString = false;
+  }
+
+  if (escaped) repaired += "\\\\";
+  return repaired;
 }
 
 function normalizeIndividualReview(input: unknown): IndividualReview {
