@@ -16,6 +16,8 @@ interface QueuedFile {
   error?: string;
 }
 
+const MAX_QUEUED_PDFS = 10;
+
 function isValidUrl(value: string) {
   try { new URL(value); return true; } catch { return false; }
 }
@@ -37,18 +39,28 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setError(null);
     const pdfs = acceptedFiles.filter(f => f.type === 'application/pdf');
-    if (pdfs.length === 0) return;
-    setFiles(prev => [
-      ...prev,
-      ...pdfs.map(f => ({ id: `${f.name}-${Date.now()}-${Math.random()}`, file: f, status: 'pending' as const })),
-    ]);
+    if (pdfs.length === 0) {
+      setError('Please upload PDF files.');
+      return;
+    }
+    setFiles(prev => {
+      const remainingSlots = Math.max(0, MAX_QUEUED_PDFS - prev.length);
+      const accepted = pdfs.slice(0, remainingSlots);
+      if (accepted.length < pdfs.length) {
+        setError(`You can queue up to ${MAX_QUEUED_PDFS} PDFs at a time. Extra files were not added.`);
+      }
+      return [
+        ...prev,
+        ...accepted.map(f => ({ id: `${f.name}-${Date.now()}-${Math.random()}`, file: f, status: 'pending' as const })),
+      ];
+    });
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { 'application/pdf': ['.pdf'] },
     multiple: true,
-    disabled: isSubmitting,
+    disabled: isSubmitting || files.length >= MAX_QUEUED_PDFS,
   });
 
   const removeFile = (id: string) => setFiles(prev => prev.filter(f => f.id !== id));
@@ -215,7 +227,9 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                 <p className="font-bold text-slate-700">
                   {isDragActive ? 'Drop PDFs here…' : 'Drop PDFs here, or click to browse'}
                 </p>
-                <p className="text-sm text-slate-400 mt-1">Drop an entire folder — each file is reviewed sequentially</p>
+                <p className="text-sm text-slate-400 mt-1">
+                  Queue up to {MAX_QUEUED_PDFS} PDFs. Files are reviewed sequentially and saved as each review finishes.
+                </p>
               </div>
 
               {/* File list */}
@@ -371,7 +385,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                 </p>
                 <p className="text-indigo-500 text-xs mt-1">
                   {isBatch
-                    ? 'Each paper takes 60–120 seconds. Please keep this window open.'
+                    ? 'Each completed paper is saved immediately. Please keep this window open while the remaining queue runs.'
                     : 'This runs metadata extraction, three independent review passes in parallel, then a final meta-review. Please keep this window open.'}
                 </p>
               </div>
