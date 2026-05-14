@@ -336,12 +336,102 @@ export default function App() {
     }
   };
 
-  const escapeHtml = (value: unknown) => String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  const pdfText = (value: unknown) => String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  const pdfHexString = (value: string) => {
+    const chars = ['FEFF'];
+    for (let i = 0; i < value.length; i += 1) {
+      chars.push(value.charCodeAt(i).toString(16).padStart(4, '0').toUpperCase());
+    }
+    return `<${chars.join('')}>`;
+  };
+
+  const wrapPdfText = (value: string, maxChars: number) => {
+    const lines: string[] = [];
+    pdfText(value).split('\n').forEach((paragraph) => {
+      const words = paragraph.trim().split(/\s+/).filter(Boolean);
+      if (!words.length) {
+        lines.push('');
+        return;
+      }
+
+      let line = '';
+      words.forEach((word) => {
+        if (word.length > maxChars) {
+          if (line) {
+            lines.push(line);
+            line = '';
+          }
+          for (let i = 0; i < word.length; i += maxChars) lines.push(word.slice(i, i + maxChars));
+          return;
+        }
+
+        const next = line ? `${line} ${word}` : word;
+        if (next.length > maxChars) {
+          lines.push(line);
+          line = word;
+        } else {
+          line = next;
+        }
+      });
+      if (line) lines.push(line);
+      lines.push('');
+    });
+    while (lines[lines.length - 1] === '') lines.pop();
+    return lines;
+  };
+
+  const createReviewPdfBlob = (lines: Array<{ text: string; size: number; gap?: number }>) => {
+    const pageWidth = 612;
+    const pageHeight = 792;
+    const margin = 54;
+    const pages: string[][] = [[]];
+    let y = pageHeight - margin;
+
+    const addPage = () => {
+      pages.push([]);
+      y = pageHeight - margin;
+    };
+
+    lines.forEach(({ text, size, gap }) => {
+      const lineGap = gap ?? Math.ceil(size * 1.45);
+      if (y < margin + lineGap) addPage();
+      if (text) {
+        pages[pages.length - 1].push(`BT /F1 ${size} Tf ${margin} ${y} Td ${pdfHexString(text)} Tj ET`);
+      }
+      y -= lineGap;
+    });
+
+    const objects: string[] = [];
+    const pageObjectIds: number[] = [];
+    objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
+    objects[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+
+    pages.forEach((commands, index) => {
+      const pageObjectId = 4 + index * 2;
+      const contentObjectId = pageObjectId + 1;
+      const stream = commands.join('\n');
+      pageObjectIds.push(pageObjectId);
+      objects[pageObjectId] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentObjectId} 0 R >>`;
+      objects[contentObjectId] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+    });
+
+    objects[2] = `<< /Type /Pages /Kids [${pageObjectIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageObjectIds.length} >>`;
+
+    let pdf = '%PDF-1.4\n';
+    const offsets = [0];
+    for (let i = 1; i < objects.length; i += 1) {
+      offsets[i] = pdf.length;
+      pdf += `${i} 0 obj\n${objects[i]}\nendobj\n`;
+    }
+    const xrefOffset = pdf.length;
+    pdf += `xref\n0 ${objects.length}\n0000000000 65535 f \n`;
+    for (let i = 1; i < objects.length; i += 1) {
+      pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    }
+    pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+    return new Blob([pdf], { type: 'application/pdf' });
+  };
 
   const handleDownloadReviewPdf = () => {
     if (!selectedPaper || !selectedReview) return;
@@ -368,41 +458,37 @@ export default function App() {
 
     const score = review.overallIntrinsicScore ?? review.score ?? selectedPaper.score;
     const submittedAt = format(new Date(selectedPaper.createdAt), 'MMM d, yyyy h:mm a');
-    const html = `<!doctype html>
-      <html>
-        <head>
-          <title>${escapeHtml(selectedPaper.title)} - Modern Science Review</title>
-          <style>
-            body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #0f172a; margin: 48px; line-height: 1.55; }
-            h1 { font-size: 30px; line-height: 1.15; margin: 0 0 12px; }
-            h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .08em; margin: 28px 0 8px; color: #475569; }
-            .meta { color: #64748b; font-size: 13px; margin-bottom: 24px; }
-            .score { display: inline-block; border: 1px solid #a7f3d0; background: #ecfdf5; color: #047857; border-radius: 12px; padding: 8px 14px; font-weight: 800; margin: 8px 0 22px; }
-            p { white-space: pre-wrap; margin: 0; }
-            footer { margin-top: 40px; border-top: 1px solid #e2e8f0; padding-top: 16px; color: #64748b; font-size: 12px; }
-            @media print { body { margin: 32px; } button { display: none; } }
-          </style>
-        </head>
-        <body>
-          <h1>${escapeHtml(selectedPaper.title)}</h1>
-          <div class="meta">
-            ${escapeHtml(selectedPaper.paperAuthors || 'Unknown authors')}<br />
-            Submitted ${escapeHtml(submittedAt)} by ${escapeHtml(selectedPaper.authorName)}
-          </div>
-          ${score != null ? `<div class="score">Final Score ${escapeHtml(score)}</div>` : ''}
-          ${fields.map(([label, value]) => `<section><h2>${escapeHtml(label)}</h2><p>${escapeHtml(value)}</p></section>`).join('')}
-          <footer>Modern Science Review · ${escapeHtml(window.location.origin + paperPath(selectedPaper.id))}</footer>
-          <script>window.addEventListener('load', () => setTimeout(() => window.print(), 150));</script>
-        </body>
-      </html>`;
+    const pdfLines: Array<{ text: string; size: number; gap?: number }> = [
+      ...wrapPdfText(selectedPaper.title, 55).map(text => ({ text, size: 16, gap: 20 })),
+      { text: '', size: 10, gap: 8 },
+      ...wrapPdfText(selectedPaper.paperAuthors || 'Unknown authors', 92).map(text => ({ text, size: 10, gap: 13 })),
+      ...wrapPdfText(`Submitted ${submittedAt} by ${selectedPaper.authorName}`, 92).map(text => ({ text, size: 10, gap: 13 })),
+      ...(score != null ? [{ text: `Final Score ${score}`, size: 13, gap: 24 }] : []),
+    ];
 
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-    if (!printWindow) {
-      window.alert('Allow popups for this site to export the review as a PDF.');
-      return;
-    }
-    printWindow.document.write(html);
-    printWindow.document.close();
+    fields.forEach(([label, value]) => {
+      pdfLines.push({ text: '', size: 10, gap: 10 });
+      pdfLines.push({ text: label.toUpperCase(), size: 12, gap: 18 });
+      wrapPdfText(value, 88).forEach(text => pdfLines.push({ text, size: 10, gap: text ? 14 : 8 }));
+    });
+
+    pdfLines.push({ text: '', size: 10, gap: 12 });
+    pdfLines.push({ text: `Modern Science Review - ${window.location.origin}${paperPath(selectedPaper.id)}`, size: 9, gap: 12 });
+
+    const blob = createReviewPdfBlob(pdfLines);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const filename = selectedPaper.title
+      .replace(/[\\/:*?"<>|]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80) || 'modern-science-review';
+    a.href = url;
+    a.download = `${filename}-review.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
     setShareMenuOpen(false);
   };
 
@@ -779,7 +865,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {selectedPaper.displayPdf && selectedPaper.pdfUrl && (
+                  {!!selectedPaper.displayPdf && selectedPaper.pdfUrl && (
                     <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
                       <div className="bg-slate-50 px-5 py-3 border-b border-slate-200 flex items-center justify-between">
                         <span className="text-xs font-black text-slate-500 uppercase tracking-widest">Source PDF</span>
