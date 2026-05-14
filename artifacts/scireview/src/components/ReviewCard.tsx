@@ -249,7 +249,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
           {currentVerdict && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
               <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest flex items-center gap-2">
-                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Verdict' : 'Public Verdict'}
+                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Verdict' : 'Verdict'}
               </h3>
               <Markdown>{currentVerdict}</Markdown>
             </div>
