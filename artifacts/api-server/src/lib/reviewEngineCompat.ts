@@ -695,15 +695,21 @@ async function callGpt(prompt: string, input: string) {
   return { parsed: extractJson(content), thinkingText: null as string | null };
 }
 
-async function callGemini(prompt: string, input: string, geminiModel = GEMINI_META_MODEL) {
+async function callGemini(
+  prompt: string,
+  input: string,
+  geminiModel = GEMINI_META_MODEL,
+  options?: { maxOutputTokens?: number; includeThoughts?: boolean },
+) {
+  const includeThoughts = options?.includeThoughts ?? true;
   const response = await geminiAI.models.generateContent({
     model: geminiModel,
     contents: [{ role: "user", parts: [{ text: input }] }],
     config: {
       systemInstruction: prompt,
       responseMimeType: "application/json",
-      maxOutputTokens: 32768,
-      thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" },
+      maxOutputTokens: options?.maxOutputTokens ?? 32768,
+      ...(includeThoughts ? { thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" } } : {}),
     } as any,
   });
 
@@ -754,18 +760,12 @@ export async function extractMetadata(paperContent: string): Promise<{ title: st
     value === "Unknown Authors" ||
     /^(submitted by\b|abstract\b)/i.test(value);
   try {
-    const response = await getOpenAI().chat.completions.create({
-      model: GPT_MODEL,
-      max_completion_tokens: 512,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: METADATA_PROMPT },
-        { role: "user", content: stripControlChars(paperContent).substring(0, 6000) },
-      ],
-    });
-    const content = response.choices[0]?.message?.content;
-    if (!content) throw new Error("No metadata response");
-    const parsed = extractJson(content) as Record<string, unknown>;
+    const { parsed } = await callGemini(
+      METADATA_PROMPT,
+      stripControlChars(paperContent).substring(0, 6000),
+      GEMINI_PASS_MODEL,
+      { maxOutputTokens: 512, includeThoughts: false },
+    );
     const title = asString(parsed.title, fallback.title);
     const authors = asString(parsed.authors, fallback.authors);
     const bestTitle =

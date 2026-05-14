@@ -16,7 +16,7 @@ interface QueuedFile {
   error?: string;
 }
 
-const MAX_QUEUED_PDFS = 10;
+const MAX_QUEUED_PDFS = 50;
 
 function isValidUrl(value: string) {
   try { new URL(value); return true; } catch { return false; }
