@@ -129,6 +129,38 @@ router.get("/papers/:id", async (req, res) => {
   }
 });
 
+// PATCH /api/papers/:id — owner or admin can correct extracted paper metadata
+router.patch("/papers/:id", async (req, res) => {
+  if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, req.params.id));
+    if (!paper) { res.status(404).json({ error: "Paper not found" }); return; }
+
+    const isAdmin = ADMIN_EMAIL && req.user.email === ADMIN_EMAIL;
+    if (!isAdmin && paper.authorId !== req.user.id) { res.status(403).json({ error: "Forbidden" }); return; }
+
+    const title = typeof req.body.title === "string" ? req.body.title.trim() : "";
+    const paperAuthors = typeof req.body.paperAuthors === "string" ? req.body.paperAuthors.trim() : "";
+
+    if (!title) { res.status(400).json({ error: "Title is required" }); return; }
+    if (title.length > 500) { res.status(400).json({ error: "Title is too long" }); return; }
+    if (paperAuthors.length > 1000) { res.status(400).json({ error: "Authors field is too long" }); return; }
+
+    const [updated] = await db.update(papersTable)
+      .set({
+        title,
+        paperAuthors: paperAuthors || null,
+      })
+      .where(eq(papersTable.id, req.params.id))
+      .returning();
+
+    res.json({ paper: updated });
+  } catch (err: any) {
+    logger.error({ err }, "Error updating paper metadata");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/papers — submit paper (extracts metadata, generates AI review, stores all)
 router.post("/papers", async (req, res) => {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BookOpen, Sparkles, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink, Check } from 'lucide-react';
+import { BookOpen, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink, Check, Pencil, Download, ChevronDown } from 'lucide-react';
 import LatexText from './components/LatexText';
 import { format, formatDistanceToNow } from 'date-fns';
 import { useAuth, AuthUser } from '@workspace/auth-web';
@@ -115,6 +115,11 @@ export default function App() {
 
   const isAdmin = !!(user && ADMIN_EMAIL && user.email === ADMIN_EMAIL);
   const [shareCopied, setShareCopied] = useState(false);
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const [metadataEditorOpen, setMetadataEditorOpen] = useState(false);
+  const [metadataTitle, setMetadataTitle] = useState('');
+  const [metadataAuthors, setMetadataAuthors] = useState('');
+  const [metadataSaving, setMetadataSaving] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedField, setSelectedField] = useState('All Fields');
   const [selectedSubfield, setSelectedSubfield] = useState('All Subfields');
@@ -297,8 +302,108 @@ export default function App() {
     const url = `${window.location.origin}${paperPath(selectedPaperId)}`;
     navigator.clipboard.writeText(url).then(() => {
       setShareCopied(true);
+      setShareMenuOpen(false);
       setTimeout(() => setShareCopied(false), 2000);
     });
+  };
+
+  const openMetadataEditor = () => {
+    if (!selectedPaper) return;
+    setMetadataTitle(selectedPaper.title || '');
+    setMetadataAuthors(selectedPaper.paperAuthors || '');
+    setMetadataEditorOpen(true);
+  };
+
+  const handleSaveMetadata = async () => {
+    if (!selectedPaper) return;
+    setMetadataSaving(true);
+    try {
+      const data = await apiFetch(`/api/papers/${selectedPaper.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: metadataTitle,
+          paperAuthors: metadataAuthors,
+        }),
+      });
+      setSelectedPaper(data.paper);
+      setPapers(prev => prev.map(p => p.id === data.paper.id ? { ...p, ...data.paper } : p));
+      setMetadataEditorOpen(false);
+    } catch (err: any) {
+      window.alert(`Could not update paper metadata: ${err.message}`);
+    } finally {
+      setMetadataSaving(false);
+    }
+  };
+
+  const escapeHtml = (value: unknown) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+  const handleDownloadReviewPdf = () => {
+    if (!selectedPaper || !selectedReview) return;
+
+    const review = selectedReview as any;
+    const fields = [
+      ['Central Claim', review.centralClaim],
+      ['Summary', review.summary],
+      ['Correctness', review.correctness],
+      ['Novelty', review.novelty],
+      ['Established Results', review.establishedResults],
+      ['Interpretive Claims', review.interpretiveClaims],
+      ['Speculative Claims', review.speculativeClaims],
+      ['Explanatory Economy', review.economy],
+      ['Scope and Depth', review.scopeDepth],
+      ['Unifying Power', review.unifyingPower],
+      ['Strongest Case for Importance', review.strongestCaseForImportance],
+      ['Strongest Objection', review.strongestObjection],
+      ['Decisive Check', review.decisiveCheck],
+      ['Internal Technical Traction', review.internalTechnicalTraction],
+      ['Final Judgment', review.finalJudgment || review.overallEvaluation],
+      ['Related Work', review.relatedWork],
+    ].filter((field): field is [string, string] => typeof field[1] === 'string' && field[1].trim().length > 0);
+
+    const score = review.overallIntrinsicScore ?? review.score ?? selectedPaper.score;
+    const submittedAt = format(new Date(selectedPaper.createdAt), 'MMM d, yyyy h:mm a');
+    const html = `<!doctype html>
+      <html>
+        <head>
+          <title>${escapeHtml(selectedPaper.title)} - Modern Science Review</title>
+          <style>
+            body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #0f172a; margin: 48px; line-height: 1.55; }
+            h1 { font-size: 30px; line-height: 1.15; margin: 0 0 12px; }
+            h2 { font-size: 15px; text-transform: uppercase; letter-spacing: .08em; margin: 28px 0 8px; color: #475569; }
+            .meta { color: #64748b; font-size: 13px; margin-bottom: 24px; }
+            .score { display: inline-block; border: 1px solid #a7f3d0; background: #ecfdf5; color: #047857; border-radius: 12px; padding: 8px 14px; font-weight: 800; margin: 8px 0 22px; }
+            p { white-space: pre-wrap; margin: 0; }
+            footer { margin-top: 40px; border-top: 1px solid #e2e8f0; padding-top: 16px; color: #64748b; font-size: 12px; }
+            @media print { body { margin: 32px; } button { display: none; } }
+          </style>
+        </head>
+        <body>
+          <h1>${escapeHtml(selectedPaper.title)}</h1>
+          <div class="meta">
+            ${escapeHtml(selectedPaper.paperAuthors || 'Unknown authors')}<br />
+            Submitted ${escapeHtml(submittedAt)} by ${escapeHtml(selectedPaper.authorName)}
+          </div>
+          ${score != null ? `<div class="score">Final Score ${escapeHtml(score)}</div>` : ''}
+          ${fields.map(([label, value]) => `<section><h2>${escapeHtml(label)}</h2><p>${escapeHtml(value)}</p></section>`).join('')}
+          <footer>Modern Science Review · ${escapeHtml(window.location.origin + paperPath(selectedPaper.id))}</footer>
+          <script>window.addEventListener('load', () => setTimeout(() => window.print(), 150));</script>
+        </body>
+      </html>`;
+
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer');
+    if (!printWindow) {
+      window.alert('Allow popups for this site to export the review as a PDF.');
+      return;
+    }
+    printWindow.document.write(html);
+    printWindow.document.close();
+    setShareMenuOpen(false);
   };
 
   const handleShowHowItWorks = () => {
@@ -589,9 +694,12 @@ export default function App() {
                   <div className="space-y-4">
                     <div className="flex items-center gap-3">
                       <div className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">Scientific Paper</div>
-                      <div className="flex items-center gap-1 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+                      <div className="relative group/submission-date flex items-center gap-1 text-[10px] text-slate-400 font-bold uppercase tracking-widest cursor-help">
                         <Clock className="w-3 h-3" />
                         Submitted {format(new Date(selectedPaper.createdAt), 'MMM d, yyyy h:mm a')} · {formatDistanceToNow(new Date(selectedPaper.createdAt))} ago
+                        <div className="absolute left-0 top-full mt-2 w-max max-w-xs rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold normal-case tracking-normal text-white shadow-xl opacity-0 pointer-events-none group-hover/submission-date:opacity-100 transition-opacity z-30">
+                          Submitted by {selectedPaper.authorName}
+                        </div>
                       </div>
                     </div>
                     <h1 className="text-4xl md:text-6xl font-black text-slate-900 leading-tight"><LatexText>{selectedPaper.title}</LatexText></h1>
@@ -602,14 +710,20 @@ export default function App() {
                         </div>
                         <div>
                           <span className="font-bold text-slate-900 block leading-tight text-lg">
-                            {selectedPaper.paperAuthors || selectedPaper.authorName}
+                            {selectedPaper.paperAuthors || 'Unknown authors'}
                           </span>
-                          {selectedPaper.paperAuthors && (
-                            <span className="text-xs text-slate-400">Submitted by {selectedPaper.authorName}</span>
-                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-3">
+                        {user && (user.id === selectedPaper.authorId || user.email === ADMIN_EMAIL) && (
+                          <button
+                            onClick={openMetadataEditor}
+                            title="Edit title and authors"
+                            className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-200 rounded-2xl hover:bg-slate-50 transition-colors shadow-sm text-sm font-bold text-slate-600"
+                          >
+                            <Pencil className="w-4 h-4" /> Edit
+                          </button>
+                        )}
                         {selectedPaper.pdfUrl && (
                           <a
                             href={selectedPaper.pdfUrl}
@@ -621,14 +735,34 @@ export default function App() {
                           </a>
                         )}
 
-                        <button
-                          onClick={handleShare}
-                          title="Copy link to this review"
-                          className={`flex items-center gap-2 px-4 py-3 rounded-2xl font-bold transition-colors shadow-sm border text-sm ${shareCopied ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-                        >
-                          {shareCopied ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
-                          {shareCopied ? 'Copied!' : 'Share'}
-                        </button>
+                        <div className="relative">
+                          <button
+                            onClick={() => setShareMenuOpen(open => !open)}
+                            title="Share or export this review"
+                            className={`flex items-center gap-2 px-4 py-3 rounded-2xl font-bold transition-colors shadow-sm border text-sm ${shareCopied ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                          >
+                            {shareCopied ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+                            {shareCopied ? 'Copied!' : 'Share'}
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                          {shareMenuOpen && (
+                            <div className="absolute right-0 top-full mt-2 z-40 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+                              <button
+                                onClick={handleShare}
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50"
+                              >
+                                <Share2 className="w-4 h-4" /> Copy review link
+                              </button>
+                              <button
+                                onClick={handleDownloadReviewPdf}
+                                disabled={!selectedReview}
+                                className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+                              >
+                                <Download className="w-4 h-4" /> Download as PDF
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         {user && (user.id === selectedPaper.authorId || user.email === ADMIN_EMAIL) && (
                           <button onClick={() => handleDeletePaper(selectedPaper.id)} className="p-3 bg-rose-50 border border-rose-100 rounded-2xl hover:bg-rose-100 transition-colors shadow-sm">
                             <Trash2 className="w-5 h-5 text-rose-600" />
@@ -702,6 +836,66 @@ export default function App() {
         )}
         {showPromptAnalysis && (
           <PromptAnalysis onClose={() => setShowPromptAnalysis(false)} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {metadataEditorOpen && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="w-full max-w-xl rounded-3xl bg-white p-6 shadow-2xl"
+            >
+              <div className="mb-5">
+                <h2 className="text-xl font-black text-slate-900">Edit Paper Metadata</h2>
+                <p className="mt-1 text-sm font-medium text-slate-500">Correct the title or author list extracted from the PDF.</p>
+              </div>
+
+              <div className="space-y-4">
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-black uppercase tracking-widest text-slate-400">Title</span>
+                  <textarea
+                    value={metadataTitle}
+                    onChange={(e) => setMetadataTitle(e.target.value)}
+                    className="min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                  />
+                </label>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-black uppercase tracking-widest text-slate-400">Authors</span>
+                  <textarea
+                    value={metadataAuthors}
+                    onChange={(e) => setMetadataAuthors(e.target.value)}
+                    placeholder="Author One, Author Two"
+                    className="min-h-24 w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-900 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+                  />
+                </label>
+              </div>
+
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  onClick={() => setMetadataEditorOpen(false)}
+                  className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-bold text-slate-600 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveMetadata}
+                  disabled={metadataSaving || !metadataTitle.trim()}
+                  className="flex items-center gap-2 rounded-2xl bg-indigo-600 px-5 py-3 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {metadataSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                  Save Changes
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
