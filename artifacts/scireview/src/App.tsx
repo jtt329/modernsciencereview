@@ -336,7 +336,11 @@ export default function App() {
     }
   };
 
-  const pdfText = (value: unknown) => String(value ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const pdfText = (value: unknown) => String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/\*\*/g, '')
+    .replace(/`/g, '');
 
   const pdfHexString = (value: string) => {
     const chars = ['FEFF'];
@@ -381,38 +385,184 @@ export default function App() {
     return lines;
   };
 
-  const createReviewPdfBlob = (lines: Array<{ text: string; size: number; gap?: number }>) => {
+  type PdfColor = [number, number, number];
+  type PdfMetric = { label: string; value: number | string; suffix?: string };
+  type PdfSection = { label: string; value: string; color: PdfColor };
+
+  const createReviewPdfBlob = ({
+    title,
+    authors,
+    submittedAt,
+    submitter,
+    score,
+    modelName,
+    classification,
+    comparisonCohort,
+    metrics,
+    sections,
+    url,
+  }: {
+    title: string;
+    authors: string;
+    submittedAt: string;
+    submitter: string;
+    score: number | string | null | undefined;
+    modelName?: string | null;
+    classification?: string;
+    comparisonCohort?: string;
+    metrics: PdfMetric[];
+    sections: PdfSection[];
+    url: string;
+  }) => {
     const pageWidth = 612;
     const pageHeight = 792;
-    const margin = 54;
+    const margin = 36;
+    const contentWidth = pageWidth - margin * 2;
+    const bg: PdfColor = [0.07, 0.06, 0.13];
+    const bgAccent: PdfColor = [0.13, 0.09, 0.25];
+    const panel: PdfColor = [0.12, 0.11, 0.20];
+    const panelAlt: PdfColor = [0.15, 0.13, 0.25];
+    const border: PdfColor = [0.28, 0.25, 0.39];
+    const white: PdfColor = [1, 1, 1];
+    const slate: PdfColor = [0.78, 0.82, 0.90];
+    const muted: PdfColor = [0.56, 0.63, 0.74];
+    const indigo: PdfColor = [0.51, 0.55, 1];
+    const emerald: PdfColor = [0.25, 0.84, 0.58];
+    const teal: PdfColor = [0.32, 0.89, 0.78];
+    const amber: PdfColor = [0.96, 0.67, 0.21];
+    const rose: PdfColor = [0.98, 0.45, 0.55];
     const pages: string[][] = [[]];
     let y = pageHeight - margin;
 
+    const color = ([r, g, b]: PdfColor) => `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)}`;
+
+    const addBackground = (commands: string[]) => {
+      commands.push(`${color(bg)} rg 0 0 ${pageWidth} ${pageHeight} re f`);
+      commands.push(`${color(bgAccent)} rg 0 ${pageHeight - 230} ${pageWidth} 230 re f`);
+    };
+
+    addBackground(pages[0]);
+
     const addPage = () => {
       pages.push([]);
+      addBackground(pages[pages.length - 1]);
       y = pageHeight - margin;
     };
 
-    lines.forEach(({ text, size, gap }) => {
-      const lineGap = gap ?? Math.ceil(size * 1.45);
-      if (y < margin + lineGap) addPage();
-      if (text) {
-        pages[pages.length - 1].push(`BT /F1 ${size} Tf ${margin} ${y} Td ${pdfHexString(text)} Tj ET`);
-      }
-      y -= lineGap;
+    const drawRect = (x: number, bottomY: number, width: number, height: number, fill: PdfColor, stroke?: PdfColor) => {
+      const commands = pages[pages.length - 1];
+      commands.push(`${color(fill)} rg ${x} ${bottomY} ${width} ${height} re f`);
+      if (stroke) commands.push(`${color(stroke)} RG 1 w ${x} ${bottomY} ${width} ${height} re S`);
+    };
+
+    const drawText = (text: string, x: number, textY: number, size: number, fill: PdfColor, bold = false) => {
+      if (!text) return;
+      const font = bold ? 'F2' : 'F1';
+      pages[pages.length - 1].push(`${color(fill)} rg BT /${font} ${size} Tf ${x} ${textY} Td ${pdfHexString(text)} Tj ET`);
+    };
+
+    const ensureSpace = (height: number) => {
+      if (y - height < margin) addPage();
+    };
+
+    const drawWrapped = (text: string, x: number, startY: number, size: number, fill: PdfColor, maxChars: number, lineHeight: number, bold = false) => {
+      let cursor = startY;
+      wrapPdfText(text, maxChars).forEach((line) => {
+        if (line) drawText(line, x, cursor, size, fill, bold);
+        cursor -= line ? lineHeight : lineHeight * 0.6;
+      });
+      return cursor;
+    };
+
+    const drawSection = ({ label, value, color: labelColor }: PdfSection) => {
+      const lines = wrapPdfText(value, 82);
+      const height = Math.max(84, 48 + lines.length * 14);
+      ensureSpace(height + 12);
+      const top = y;
+      drawRect(margin, top - height, contentWidth, height, panel, border);
+      drawText(label.toUpperCase(), margin + 18, top - 24, 8, labelColor, true);
+      let textY = top - 46;
+      lines.forEach((line) => {
+        if (line) drawText(line, margin + 18, textY, 10, slate);
+        textY -= line ? 14 : 8;
+      });
+      y = top - height - 12;
+    };
+
+    const scoreNumber = typeof score === 'number' ? score : Number(score);
+    const hasScore = score != null && score !== '' && Number.isFinite(scoreNumber);
+    const scoreTheme = !hasScore || scoreNumber >= 80
+      ? { fill: [0.84, 0.98, 0.91] as PdfColor, text: [0.03, 0.48, 0.34] as PdfColor }
+      : scoreNumber >= 60
+        ? { fill: [1, 0.96, 0.80] as PdfColor, text: [0.72, 0.36, 0.03] as PdfColor }
+        : { fill: [1, 0.89, 0.91] as PdfColor, text: [0.74, 0.12, 0.24] as PdfColor };
+
+    const titleLines = wrapPdfText(title, 58).slice(0, 3);
+    ensureSpace(160);
+    drawRect(margin, y - 112, contentWidth, 112, panelAlt, border);
+    drawText('MODERN SCIENCE REVIEW', margin + 18, y - 24, 8, indigo, true);
+    let titleY = y - 46;
+    titleLines.forEach((line) => {
+      drawText(line, margin + 18, titleY, 16, white, true);
+      titleY -= 20;
     });
+    const authorY = titleY - 2;
+    drawWrapped(authors || 'Unknown authors', margin + 18, authorY, 9, muted, 86, 12);
+    drawText(`Submitted ${submittedAt} by ${submitter || 'Unknown submitter'}`, margin + 18, y - 96, 8, muted);
+    y -= 138;
+
+    ensureSpace(98);
+    drawRect(margin, y - 84, contentWidth, 84, panelAlt, border);
+    drawRect(margin + 18, y - 53, 32, 32, [0.19, 0.21, 0.43], [0.31, 0.36, 0.72]);
+    drawText('AI Scientific Review', margin + 62, y - 32, 18, white, true);
+    if (modelName) drawText(modelName, margin + 62, y - 50, 8, indigo, true);
+    if (hasScore) {
+      drawRect(pageWidth - margin - 122, y - 58, 104, 38, scoreTheme.fill, scoreTheme.text);
+      drawText('FINAL', pageWidth - margin - 108, y - 43, 8, scoreTheme.text, true);
+      drawText(String(Math.round(scoreNumber)), pageWidth - margin - 68, y - 46, 22, scoreTheme.text, true);
+    }
+    y -= 108;
+
+    ensureSpace(86);
+    const halfWidth = (contentWidth - 12) / 2;
+    drawRect(margin, y - 70, halfWidth, 70, panel, border);
+    drawText('CLASSIFICATION', margin + 16, y - 24, 8, indigo, true);
+    drawWrapped(classification || 'Unclassified', margin + 16, y - 44, 10, white, 35, 13, true);
+    drawRect(margin + halfWidth + 12, y - 70, halfWidth, 70, panel, border);
+    drawText('COMPARISON COHORT', margin + halfWidth + 28, y - 24, 8, teal, true);
+    drawWrapped(comparisonCohort || 'Not specified', margin + halfWidth + 28, y - 44, 10, white, 35, 13, true);
+    y -= 92;
+
+    if (metrics.length) {
+      ensureSpace(88);
+      const metricWidth = (contentWidth - 24) / 4;
+      metrics.slice(0, 4).forEach((metric, index) => {
+        const x = margin + index * (metricWidth + 8);
+        drawRect(x, y - 72, metricWidth, 72, panel, border);
+        drawText(String(metric.value), x + 12, y - 28, 17, white, true);
+        if (metric.suffix) drawText(metric.suffix, x + 37, y - 28, 8, muted, true);
+        drawWrapped(metric.label, x + 12, y - 48, 7, muted, 16, 10, true);
+      });
+      y -= 94;
+    }
+
+    sections.forEach(drawSection);
+
+    ensureSpace(36);
+    drawText(`Modern Science Review - ${url}`, margin, y - 10, 8, muted);
 
     const objects: string[] = [];
     const pageObjectIds: number[] = [];
     objects[1] = '<< /Type /Catalog /Pages 2 0 R >>';
     objects[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>';
+    objects[4] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>';
 
     pages.forEach((commands, index) => {
-      const pageObjectId = 4 + index * 2;
+      const pageObjectId = 5 + index * 2;
       const contentObjectId = pageObjectId + 1;
       const stream = commands.join('\n');
       pageObjectIds.push(pageObjectId);
-      objects[pageObjectId] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentObjectId} 0 R >>`;
+      objects[pageObjectId] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObjectId} 0 R >>`;
       objects[contentObjectId] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
     });
 
@@ -433,49 +583,90 @@ export default function App() {
     return new Blob([pdf], { type: 'application/pdf' });
   };
 
+  const getFinalReviewPdfContent = (review: any, paper: Paper) => {
+    let parsedCoverage: any = null;
+    if (review.coverageLedgerJson) {
+      try {
+        parsedCoverage = JSON.parse(review.coverageLedgerJson);
+      } catch {
+        parsedCoverage = null;
+      }
+    }
+    let storedAggregate: any = null;
+    if (review.aggregateMetaJson) {
+      try {
+        storedAggregate = JSON.parse(review.aggregateMetaJson);
+      } catch {
+        storedAggregate = null;
+      }
+    }
+    const aggregate = storedAggregate ?? parsedCoverage?.aggregate ?? null;
+    const coverageLedger = parsedCoverage?.coverageLedger ?? parsedCoverage ?? null;
+    const listText = (items?: string[]) => Array.isArray(items) && items.length ? items.map(item => `- ${item}`).join('\n') : '';
+    const publicVerdict = review.publicVerdict || aggregate?.publicOneParagraphVerdict || parsedCoverage?.publicVerdict || review.finalJudgment || review.overallEvaluation;
+    const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField || paper.field;
+    const classification = aggregate?.finalClassification || review.bestClassification || 'Unclassified';
+    const score = aggregate?.finalScoreBand?.median ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score ?? paper.score;
+    const metrics = [
+      ['Intrinsic Merit', review.intrinsicScientificMeritScore],
+      ['Target Breadth', review.explanatoryTargetBreadthScore],
+      ['Theory Breadth', review.theorySpaceBreadthScore],
+      ['Breadth of Impact', review.breadthOfImpactScore],
+    ]
+      .filter((metric): metric is [string, number] => Number.isFinite(Number(metric[1])))
+      .map(([label, value]) => ({ label, value: Number(value), suffix: '/10' }));
+    const sectionValues: Array<[string, string | undefined, PdfColor]> = [
+      ['Verdict', publicVerdict, [0.25, 0.84, 0.58]],
+      ['Summary', review.summary, [0.51, 0.55, 1]],
+      ['Central Claim', review.centralClaim, [0.51, 0.55, 1]],
+      ['Direct Targets', listText(coverageLedger?.directTargets), [0.32, 0.89, 0.78]],
+      ['Imported Inputs', listText(coverageLedger?.importedInputs), [0.32, 0.89, 0.78]],
+      ['Theory-Space Variants', listText(coverageLedger?.theorySpaceVariants), [0.32, 0.89, 0.78]],
+      ['Mechanism-Sharing Assessment', coverageLedger?.mechanismSharingAssessment, [0.32, 0.89, 0.78]],
+      ['Established Results', review.establishedResults, [0.25, 0.84, 0.58]],
+      ['Interpretive Claims', review.interpretiveClaims, [0.96, 0.67, 0.21]],
+      ['Speculative Claims', review.speculativeClaims, [0.98, 0.45, 0.55]],
+      ['Correctness', review.correctness, [0.25, 0.84, 0.58]],
+      ['Novelty', review.novelty, [0.96, 0.67, 0.21]],
+      ['Internal Technical Traction', review.internalTechnicalTraction, [0.51, 0.55, 1]],
+      ['Explanatory Economy', review.economy, [0.51, 0.55, 1]],
+      ['Explanatory Target Breadth', review.explanatoryTargetBreadth, [0.51, 0.55, 1]],
+      ['Theory-Space Breadth', review.theorySpaceBreadth, [0.51, 0.55, 1]],
+      ['Scope and Depth', review.scopeDepth, [0.51, 0.55, 1]],
+      ['Unifying Power', review.unifyingPower, [0.51, 0.55, 1]],
+      ['Strongest Case for Importance', review.strongestCaseForImportance, [0.96, 0.67, 0.21]],
+      ['Strongest Objection', review.strongestObjection, [0.98, 0.45, 0.55]],
+      ['Decisive Check', review.decisiveCheck, [0.32, 0.89, 0.78]],
+      ['Final Judgment', review.finalJudgment || review.overallEvaluation, [0.25, 0.84, 0.58]],
+      ['Related Work', review.relatedWork, [0.51, 0.55, 1]],
+    ];
+    const sections = sectionValues
+      .filter((section): section is [string, string, PdfColor] => typeof section[1] === 'string' && section[1].trim().length > 0)
+      .map(([label, value, color]) => ({ label, value, color }));
+
+    return { score, metrics, sections, classification, comparisonCohort };
+  };
+
   const handleDownloadReviewPdf = () => {
     if (!selectedPaper || !selectedReview) return;
 
     const review = selectedReview as any;
-    const fields = [
-      ['Central Claim', review.centralClaim],
-      ['Summary', review.summary],
-      ['Correctness', review.correctness],
-      ['Novelty', review.novelty],
-      ['Established Results', review.establishedResults],
-      ['Interpretive Claims', review.interpretiveClaims],
-      ['Speculative Claims', review.speculativeClaims],
-      ['Explanatory Economy', review.economy],
-      ['Scope and Depth', review.scopeDepth],
-      ['Unifying Power', review.unifyingPower],
-      ['Strongest Case for Importance', review.strongestCaseForImportance],
-      ['Strongest Objection', review.strongestObjection],
-      ['Decisive Check', review.decisiveCheck],
-      ['Internal Technical Traction', review.internalTechnicalTraction],
-      ['Final Judgment', review.finalJudgment || review.overallEvaluation],
-      ['Related Work', review.relatedWork],
-    ].filter((field): field is [string, string] => typeof field[1] === 'string' && field[1].trim().length > 0);
-
-    const score = review.overallIntrinsicScore ?? review.score ?? selectedPaper.score;
+    const { score, metrics, sections, classification, comparisonCohort } = getFinalReviewPdfContent(review, selectedPaper);
     const submittedAt = format(new Date(selectedPaper.createdAt), 'MMM d, yyyy h:mm a');
-    const pdfLines: Array<{ text: string; size: number; gap?: number }> = [
-      ...wrapPdfText(selectedPaper.title, 55).map(text => ({ text, size: 16, gap: 20 })),
-      { text: '', size: 10, gap: 8 },
-      ...wrapPdfText(selectedPaper.paperAuthors || 'Unknown authors', 92).map(text => ({ text, size: 10, gap: 13 })),
-      ...wrapPdfText(`Submitted ${submittedAt} by ${selectedPaper.authorName}`, 92).map(text => ({ text, size: 10, gap: 13 })),
-      ...(score != null ? [{ text: `Final Score ${score}`, size: 13, gap: 24 }] : []),
-    ];
-
-    fields.forEach(([label, value]) => {
-      pdfLines.push({ text: '', size: 10, gap: 10 });
-      pdfLines.push({ text: label.toUpperCase(), size: 12, gap: 18 });
-      wrapPdfText(value, 88).forEach(text => pdfLines.push({ text, size: 10, gap: text ? 14 : 8 }));
+    const reviewUrl = `${window.location.origin}${paperPath(selectedPaper.id)}`;
+    const blob = createReviewPdfBlob({
+      title: selectedPaper.title,
+      authors: selectedPaper.paperAuthors || 'Unknown authors',
+      submittedAt,
+      submitter: selectedPaper.authorName,
+      score,
+      modelName: review.modelName || selectedPaper.modelName,
+      classification,
+      comparisonCohort,
+      metrics,
+      sections,
+      url: reviewUrl,
     });
-
-    pdfLines.push({ text: '', size: 10, gap: 12 });
-    pdfLines.push({ text: `Modern Science Review - ${window.location.origin}${paperPath(selectedPaper.id)}`, size: 9, gap: 12 });
-
-    const blob = createReviewPdfBlob(pdfLines);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const filename = selectedPaper.title
