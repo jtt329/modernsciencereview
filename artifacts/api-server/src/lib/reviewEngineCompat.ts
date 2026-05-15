@@ -360,8 +360,32 @@ Return a JSON object with exactly two fields:
 - authors: string (comma-separated list of author names as written, or "Unknown Authors" if not found)
 Output valid JSON only.`;
 
+const MODEL_CALL_ATTEMPTS = 3;
+
 function stripControlChars(text: string) {
   return text.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function withModelRetries<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MODEL_CALL_ATTEMPTS; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt === MODEL_CALL_ATTEMPTS) break;
+      await sleep(1200 * attempt * attempt + Math.floor(Math.random() * 400));
+    }
+  }
+  throw new Error(`${label} failed after ${MODEL_CALL_ATTEMPTS} attempts: ${errorMessage(lastError)}`);
 }
 
 function asString(value: unknown, fallback = "") {
@@ -731,18 +755,20 @@ function heuristicMetadata(paperContent: string) {
 }
 
 async function callGpt(prompt: string, input: string) {
-  const response = await getOpenAI().chat.completions.create({
-    model: GPT_MODEL,
-    max_completion_tokens: 8192,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: prompt },
-      { role: "user", content: input },
-    ],
+  return withModelRetries(GPT_MODEL, async () => {
+    const response = await getOpenAI().chat.completions.create({
+      model: GPT_MODEL,
+      max_completion_tokens: 8192,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: prompt },
+        { role: "user", content: input },
+      ],
+    });
+    const content = response.choices[0]?.message?.content;
+    if (!content) throw new Error("No response from GPT model.");
+    return { parsed: extractJson(content), thinkingText: null as string | null };
   });
-  const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error("No response from GPT model.");
-  return { parsed: extractJson(content), thinkingText: null as string | null };
 }
 
 async function callGemini(
@@ -752,25 +778,27 @@ async function callGemini(
   options?: { maxOutputTokens?: number; includeThoughts?: boolean },
 ) {
   const includeThoughts = options?.includeThoughts ?? true;
-  const response = await geminiAI.models.generateContent({
-    model: geminiModel,
-    contents: [{ role: "user", parts: [{ text: input }] }],
-    config: {
-      systemInstruction: prompt,
-      responseMimeType: "application/json",
-      maxOutputTokens: options?.maxOutputTokens ?? 32768,
-      ...(includeThoughts ? { thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" } } : {}),
-    } as any,
-  });
+  return withModelRetries(geminiModel, async () => {
+    const response = await geminiAI.models.generateContent({
+      model: geminiModel,
+      contents: [{ role: "user", parts: [{ text: input }] }],
+      config: {
+        systemInstruction: prompt,
+        responseMimeType: "application/json",
+        maxOutputTokens: options?.maxOutputTokens ?? 32768,
+        ...(includeThoughts ? { thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" } } : {}),
+      } as any,
+    });
 
-  const parts: any[] = (response as any).candidates?.[0]?.content?.parts ?? [];
-  const thinkingParts = parts.filter((part: any) => part.thought === true);
-  const thinkingText = thinkingParts.length > 0
-    ? thinkingParts.map((part: any) => part.text ?? "").join("\n\n").trim()
-    : null;
-  const content = response.text;
-  if (!content) throw new Error("No response from Gemini model.");
-  return { parsed: extractJson(content), thinkingText };
+    const parts: any[] = (response as any).candidates?.[0]?.content?.parts ?? [];
+    const thinkingParts = parts.filter((part: any) => part.thought === true);
+    const thinkingText = thinkingParts.length > 0
+      ? thinkingParts.map((part: any) => part.text ?? "").join("\n\n").trim()
+      : null;
+    const content = response.text;
+    if (!content) throw new Error("No response from Gemini model.");
+    return { parsed: extractJson(content), thinkingText };
+  });
 }
 
 async function runModel(prompt: string, input: string, model: ReviewModel, geminiModel = GEMINI_META_MODEL) {

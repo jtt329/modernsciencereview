@@ -35,6 +35,8 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
   const [doneCount, setDoneCount] = useState(0);
 
   const isBatch = files.length > 1;
+  const remainingFiles = files.filter(f => f.status !== 'done');
+  const failedFiles = files.filter(f => f.status === 'error');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setError(null);
@@ -89,29 +91,34 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
         return;
       }
 
-      if (files.length === 0) return;
-
-      if (files.length === 1) {
-        const base64 = await readFileAsBase64(files[0].file);
-        await onSubmit({ type: 'pdf', data: base64, model, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl });
+      const filesToProcess = files.filter(f => f.status !== 'done');
+      if (filesToProcess.length === 0) {
         onClose();
         return;
       }
 
-      let done = 0;
-      for (const qf of files) {
+      let done = files.filter(f => f.status === 'done').length;
+      let failures = 0;
+      const skipSelectAfterSubmit = files.length > 1;
+      setDoneCount(done);
+      for (const qf of filesToProcess) {
         setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'processing' } : f));
         try {
           const base64 = await readFileAsBase64(qf.file);
-          await onSubmit({ type: 'pdf', data: base64, model, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }, true);
+          await onSubmit({ type: 'pdf', data: base64, model, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }, skipSelectAfterSubmit);
           done++;
           setDoneCount(done);
           setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'done' } : f));
         } catch (err: any) {
+          failures++;
           setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'error', error: err?.message ?? String(err) } : f));
         }
       }
-      onClose();
+      if (failures > 0) {
+        setError(`${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);
+      } else {
+        onClose();
+      }
     } catch (err: any) {
       setError(err?.message ?? String(err) ?? 'Something went wrong. Please try again.');
     } finally {
@@ -122,7 +129,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
   const pdfUrlValid = isValidUrl(pdfUrl.trim());
   const isFormValid = submissionType === 'text'
     ? !!text.trim()
-    : files.length > 0;
+    : remainingFiles.length > 0;
 
   return (
     <motion.div
@@ -413,7 +420,11 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             ) : (
               <>
                 <Send className="w-5 h-5" />
-                {isBatch ? `Submit ${files.length} Papers` : 'Submit for AI Review'}
+                {failedFiles.length > 0
+                  ? `Retry ${remainingFiles.length} Failed/Pending`
+                  : isBatch
+                    ? `Submit ${files.length} Papers`
+                    : 'Submit for AI Review'}
               </>
             )}
           </motion.button>
