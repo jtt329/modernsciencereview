@@ -147,7 +147,7 @@ Keep separate:
 - framework conditionality
 - breadth of consequences if correct
 
-First determine the comparison cohort. Use the narrowest serious research cohort that a working expert would naturally use, but do not choose an artificially tiny cohort merely to inflate the score. Also identify the broader field.
+First determine the comparison cohort. Use the narrowest serious research cohort that a working expert would naturally use, but do not choose an artificially tiny or framework-insulated cohort merely to inflate the score. Also identify the broader field. If the manuscript belongs to a speculative, minority, or framework-dependent research program, score it with that conditionality in view and compare it against the broader adjacent field as well as its immediate specialty.
 
 Definitions:
 
@@ -186,6 +186,11 @@ Anchored 0-100 scientific merit scale:
 
 Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
 
+High-score calibration:
+- A score of 95 or above requires more than being impressive inside a narrow or speculative specialty. It should have unusually strong internal support, decisive technical leverage, broad consequences, cross-framework relevance, empirical force, or field-level conceptual necessity.
+- If the paper's importance depends heavily on accepting a controversial or unestablished framework, reflect that in framework conditionality and be cautious about scores above 90 unless the manuscript itself supplies unusually strong robustness, independent checks, or consequences outside that framework.
+- A paper can be excellent within a speculative program while still scoring below field-defining level when judged against the broader adjacent science.
+
 Scale instructions:
 - intrinsicTechnicalScore, explanatoryTargetBreadthScore, theorySpaceBreadthScore, and breadthOfImpactScore are on a 0-10 scale.
 - specialtyRelativeScore, broadFieldRelativeScore, crossFieldConsequenceScore, and every number inside scoreBand are on a 0-100 scale.
@@ -197,6 +202,7 @@ Formatting instructions:
 - Wrap inline mathematical expressions in $...$.
 - Wrap display equations in $$...$$.
 - Do not leave equations as plain text if you can express them in LaTeX.
+- Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings, for example write $\\alpha$ rather than $\alpha$.
 
 Use the full range.
 
@@ -319,6 +325,13 @@ Anchored 0-100 scientific merit scale:
 - 100: reserve for an essentially historic, maximally convincing result.
 
 Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
+
+High-score calibration:
+- A final score of 95 or above requires more than being impressive inside a narrow or speculative specialty. It should have unusually strong internal support, decisive technical leverage, broad consequences, cross-framework relevance, empirical force, or field-level conceptual necessity.
+- If the manuscript's importance depends heavily on accepting a controversial or unestablished framework, reflect that in the final score and classification. Be cautious about scores above 90 unless the manuscript itself supplies unusually strong robustness, independent checks, or consequences outside that framework.
+- Do not let an artificially narrow comparison cohort turn a framework-conditional niche advance into a field-defining result.
+
+Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings, for example write $\\alpha$ rather than $\alpha$.
 
 Do not defer to human expert consensus. This is a model-based judgment under the review protocol.
 
@@ -484,13 +497,47 @@ function extractJson(raw: string): unknown {
     return parseWithRepair(trimmed);
   } catch {}
 
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    return parseWithRepair(trimmed.slice(firstBrace, lastBrace + 1));
+  const jsonObject = extractFirstJsonObject(trimmed);
+  if (jsonObject) {
+    return parseWithRepair(jsonObject);
   }
 
   throw new Error("Could not parse model response as JSON.");
+}
+
+function extractFirstJsonObject(value: string) {
+  const start = value.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < value.length; i += 1) {
+    const char = value[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return value.slice(start, i + 1);
+    }
+  }
+
+  return null;
 }
 
 function repairInvalidJsonEscapes(value: string) {
@@ -498,6 +545,7 @@ function repairInvalidJsonEscapes(value: string) {
   let inString = false;
   let escaped = false;
   const validEscapes = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
+  const isHex = (char: string | undefined) => !!char && /^[0-9a-fA-F]$/.test(char);
 
   for (let i = 0; i < value.length; i += 1) {
     const char = value[i];
@@ -509,6 +557,11 @@ function repairInvalidJsonEscapes(value: string) {
     }
 
     if (escaped) {
+      if (char === "u" && !(isHex(value[i + 1]) && isHex(value[i + 2]) && isHex(value[i + 3]) && isHex(value[i + 4]))) {
+        repaired += "\\\\u";
+        escaped = false;
+        continue;
+      }
       if (!validEscapes.has(char)) repaired += "\\";
       repaired += char;
       escaped = false;
@@ -517,6 +570,19 @@ function repairInvalidJsonEscapes(value: string) {
 
     if (char === "\\") {
       escaped = true;
+      continue;
+    }
+
+    if (char === "\n") {
+      repaired += "\\n";
+      continue;
+    }
+    if (char === "\r") {
+      repaired += "\\r";
+      continue;
+    }
+    if (char === "\t") {
+      repaired += "\\t";
       continue;
     }
 
