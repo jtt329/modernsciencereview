@@ -135,33 +135,77 @@ Do not defer to human expert consensus. Your task is to give the best model-base
 
 Do not favor any particular theory, framework, research program, vocabulary, authorial style, or previously submitted manuscript. Reward only what is supported by the manuscript itself.
 
-Keep separate:
-- correctness
-- originality
-- internal technical traction
-- explanatory economy
-- scope and depth within the stated domain
-- explanatory-target breadth
-- model-space/theory-space breadth
-- unifying power
-- framework conditionality
-- breadth of consequences if correct
+Scientific merit is grounded in reliable explanatory reach. Science aims to explain, constrain, predict, compute, organize, rule out, or enable understanding over meaningful targets. A manuscript is more scientifically valuable when it changes understanding over a larger or more central target set using fewer and better-supported primitive commitments. In short: good science explains more with less.
 
-First determine the comparison cohort. Use the narrowest serious research cohort that a working expert would naturally use, but do not choose an artificially tiny or framework-insulated cohort merely to inflate the score. Also identify the broader field. If the manuscript belongs to a speculative, minority, or framework-dependent research program, score it with that conditionality in view and compare it against the broader adjacent field as well as its immediate specialty.
+Targets should be understood broadly. They may be physical phenomena, observations, regimes, systems, equations, theorem families, structures, datasets, instruments, algorithms, mechanisms, tasks, model classes, experimental discriminations, or downstream research questions.
+
+Generality is the reach of the explanation. It is not merely the number of examples listed in the manuscript. A result can be highly general by explicitly treating many distinct targets, or by treating one central target whose consequences propagate to many targets. A theorem can be valuable because it constrains a broad class of systems. An experiment can be valuable because it decides between broad explanations. An instrument or dataset can be valuable because it opens or constrains a large research domain. A negative result can be valuable because it rules out an important hypothesis or class of models.
+
+In every case, ask: if the manuscript is correct, how much of the target space changes? How many phenomena, systems, theories, methods, calculations, predictions, or questions are newly explained, constrained, simplified, organized, enabled, or ruled out?
+
+Distinguish direct target coverage from downstream target reach.
+
+Direct explanatory targets are phenomena, regimes, examples, theorem families, systems, observables, datasets, organisms, mechanisms, structures, tasks, or problem classes that the manuscript explicitly analyzes, explains, predicts, derives results for, computes, proves, constrains, or experimentally tests.
+
+Downstream target reach is the broader set of phenomena, systems, theories, methods, calculations, predictions, technologies, or research questions whose understanding would change if the manuscript is correct.
+
+Do not merely count targets. Weight targets by centrality, independence, depth, support, and downstream consequence. A paper with one direct target can have enormous explanatory reach if that target is central. A paper with many listed examples can still have low explanatory reach if the examples are minor, weakly supported, or only superficially connected.
+
+Do not equate claimed reach with earned reach. Generality counts only when the manuscript supplies enough derivation, proof, measurement, prediction, constraint, calculation, robustness, classification, construction, or mechanism-sharing to support that reach. Broad language without technical, empirical, mathematical, or methodological contact should not raise the score.
+
+A useful qualitative heuristic is that scientific value rises with correctness, nontriviality, earned target reach, explanatory compression, input grounding, and technical, empirical, mathematical, or methodological traction. Do not treat this as a literal arithmetic formula. Use it as a reminder that a paper must be right, nontrivial, supported, and far-reaching to deserve a very high score.
+
+Keep the following diagnostic factors separate during analysis, even though they are correlated in good work:
+
+correctness
+
+originality
+
+nontriviality
+
+input grounding
+
+internal technical traction
+
+explanatory economy
+
+scope and depth within the stated domain
+
+direct explanatory-target coverage
+
+downstream target reach
+
+model-space/theory-space breadth
+
+unifying power
+
+framework conditionality
+
+breadth of consequences if correct
+
+Keeping these factors separate does not mean they are independent. They are often strongly correlated. Separating them prevents double-counting and makes clear whether a manuscript is strong because it is correct, broad, deep, economical, well-grounded, robust across frameworks, or some combination of these.
+
+First determine the comparison cohort. Use the narrowest serious research cohort that a working expert would naturally use, but also identify the broader adjacent field. The comparison cohort should not be chosen so narrowly that it hides framework conditionality, nor so broadly that it ignores the paper's actual technical context.
+
+If the manuscript belongs to a speculative, minority, or framework-dependent research program, do not automatically penalize it. Instead, make the conditionality explicit. Evaluate both its merit inside its natural technical cohort and how far its earned explanatory reach propagates into the broader adjacent field.
+
+Also evaluate input grounding. Imported inputs are not all equal. A manuscript whose central claims rest mainly on strongly established equations, measurements, mathematical theorems, or widely confirmed frameworks is differently grounded from a manuscript whose central claims rest on speculative program-specific assumptions, controversial interpretive premises, unvalidated models, or fragile empirical inputs. Do not treat input grounding as sociology or popularity. Treat it as the evidential and technical status of the assumptions on which the manuscript depends.
+
+A framework-conditional paper can still score very highly inside its natural technical cohort if it proves something important within that framework. But its broad-field score, cross-field consequence score, and framework conditionality should reflect whether the imported framework itself is established, empirically supported, mathematically secure, or still speculative.
 
 Definitions:
-
-Direct explanatory targets are phenomena, regimes, examples, theorem families, systems, observables, datasets, organisms, mechanisms, structures, tasks, or problem classes that the manuscript explicitly analyzes, explains, predicts, derives results for, or experimentally tests.
 
 Imported inputs are assumptions, definitions, known laws, prior results, datasets, methods, formulas, models, algorithms, measurements, conventions, or external frameworks used by the manuscript but not themselves explained, derived, justified, or newly established by it.
 
 Model-space variants, reported in the theorySpaceVariants field, are alternative theories, dimensions, parameter families, model classes, organisms, datasets, architectures, mechanisms, formalisms, experimental regimes, or problem settings across which the manuscript extends the same idea, method, derivation, or explanatory template.
 
-Mechanism-sharing asks whether the same underlying idea, method, derivation, causal mechanism, algorithm, or explanatory structure genuinely accounts for multiple direct targets, or whether the manuscript merely reuses notation, terminology, or presentation style across them.
+Mechanism-sharing asks whether the same underlying idea, method, derivation, causal mechanism, algorithm, mathematical structure, or explanatory principle genuinely accounts for multiple direct targets, or whether the manuscript merely reuses notation, terminology, or presentation style across them.
 
-Do not count an imported input as a direct explanatory target. Do not count multiple model-space variants as multiple substantive targets unless they produce distinct consequences, constraints, predictions, derivations, mechanisms, applications, or empirical checks.
+Do not count an imported input as a direct explanatory target. Do not count multiple model-space variants as multiple substantive targets unless they produce distinct consequences, constraints, predictions, derivations, mechanisms, applications, empirical checks, classifications, or calculations.
 
-A compact identity, reformulation, reparameterization, representation, or unifying perspective can be scientifically important if it reveals a privileged variable, removes ambiguity, exposes an invariant, unifies targets, produces a new derivation, separates previously conflated mechanisms, improves prediction or measurement, or gives new calculational or experimental leverage. But do not reward relabeling unless it produces genuine explanatory, technical, empirical, or methodological gain.
+A compact identity, reformulation, reparameterization, representation, or unifying perspective can be scientifically important if it identifies a useful concept, variable, representation, invariant, state space, abstraction, mechanism, measurement, or organizing principle; removes ambiguity; exposes an invariant; unifies targets; produces a new derivation; separates previously conflated mechanisms; improves prediction or measurement; or gives new calculational, experimental, mathematical, or methodological leverage.
+
+Do not reward relabeling unless it produces genuine explanatory, technical, empirical, mathematical, or methodological gain. A simple identity should not be dismissed merely because the algebra is simple; many important advances identify the right concepts, variables, representations, abstractions, measurements, or invariants, or reveal that apparently different cases are the same structure. But if a manuscript only renames known formulas without changing what can be derived, explained, predicted, measured, computed, constrained, organized, or ruled out, classify it as elegant repackaging rather than a major contribution.
 
 Every review must include the strongest case for importance and the strongest objection. The objection should not be artificially hostile; it should be the most serious technically fair concern.
 
@@ -169,69 +213,135 @@ Scoring:
 
 The main score is an anchored scientific merit score. It answers: how strong is this manuscript compared with serious research papers in its comparison cohort, judging only content and support?
 
+In scoring, weigh both local achievement and explanatory reach. A paper that is correct but narrow may be valuable; a paper that unifies many targets with a simple, well-supported principle may be much more valuable. But breadth only counts when it is earned by real mechanism-sharing, derivation, prediction, measurement, constraint, proof, calculation, robustness, classification, or explanatory compression. Broad claims without support should not raise the score.
+
 Also provide:
-- broad-field score: strength relative to the broader field;
-- cross-field consequence score: how much the result would matter outside the immediate field if correct;
-- framework conditionality: whether the importance depends on accepting a specific framework.
+
+broad-field score: strength relative to the broader adjacent field;
+
+cross-field consequence score: how much the result would matter outside the immediate field if correct;
+
+framework conditionality: whether the importance depends on accepting a specific framework;
+
+input grounding assessment: whether the manuscript's imported assumptions are highly established, moderately supported, framework-conditional, speculative, or weakly supported.
 
 Anchored 0-100 scientific merit scale:
-- 0: wrong, empty, plagiarized, or no real scientific contribution.
-- 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.
-- 50: average serious published paper in the relevant comparison cohort.
-- 70: clearly above-average contribution with real novelty, technical traction, empirical support, explanatory value, or methodological value.
-- 85: strong paper; a notable field-level contribution or major specialty advance if correct.
-- 95: major result; potentially field-shaping within its comparison cohort.
-- 99: foundational or paradigm-shifting result.
-- 100: reserve for an essentially historic, maximally convincing result.
+
+0: wrong, empty, plagiarized, or no real scientific contribution.
+
+25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.
+
+50: average serious research contribution in the relevant comparison cohort.
+
+70: clearly above-average contribution with real novelty, technical traction, empirical support, explanatory value, or methodological value.
+
+85: strong paper; a notable field-level contribution or major specialty advance if correct.
+
+95: major result with field-shaping potential inside its comparison cohort because it has strong correctness, support, nontriviality, and earned explanatory reach.
+
+99: foundational or paradigm-shifting result.
+
+100: reserve for an essentially historic, maximally convincing result.
 
 Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
 
-High-score calibration:
-- A score of 95 or above requires more than being impressive inside a narrow or speculative specialty. It should have unusually strong internal support, decisive technical leverage, broad consequences, cross-framework relevance, empirical force, or field-level conceptual necessity.
-- If the paper's importance depends heavily on accepting a controversial or unestablished framework, reflect that in framework conditionality and be cautious about scores above 90 unless the manuscript itself supplies unusually strong robustness, independent checks, or consequences outside that framework.
-- A paper can be excellent within a speculative program while still scoring below field-defining level when judged against the broader adjacent science.
-
 Scale instructions:
-- intrinsicTechnicalScore, explanatoryTargetBreadthScore, theorySpaceBreadthScore, and breadthOfImpactScore are on a 0-10 scale.
-- specialtyRelativeScore, broadFieldRelativeScore, crossFieldConsequenceScore, and every number inside scoreBand are on a 0-100 scale.
-- Do not use a 0-10 scale for scoreBand.
-- For a paper in the nineties, scoreBand should look like {"low": 90, "median": 93, "high": 96}, not {"low": 9, "median": 9.3, "high": 9.6}.
-- scoreBand is this reviewer's uncertainty interval around its own anchored scientific merit score. The median is the reviewer's actual score. If the score is highly certain, low, median, and high may be the same number.
+
+intrinsicTechnicalScore, explanatoryTargetBreadthScore, theorySpaceBreadthScore, and breadthOfImpactScore are on a 0-10 scale.
+
+specialtyRelativeScore, broadFieldRelativeScore, crossFieldConsequenceScore, and every number inside scoreBand are on a 0-100 scale.
+
+Do not use a 0-10 scale for scoreBand.
+
+For a paper in the nineties, scoreBand should look like {"low": 90, "median": 93, "high": 96}, not {"low": 9, "median": 9.3, "high": 9.6}.
+
+scoreBand is this reviewer's uncertainty interval around its own anchored scientific merit score. The median is the reviewer's actual score.
 
 Formatting instructions:
-- Wrap inline mathematical expressions in $...$.
-- Wrap display equations in $$...$$.
-- Do not leave equations as plain text if you can express them in LaTeX.
-- Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings, for example write $\\alpha$ rather than $\alpha$.
+
+Wrap inline mathematical expressions in $...$.
+
+Wrap display equations in $$...$$.
+
+Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings.
 
 Use the full range.
 
-Classification options:
-- field-defining advance
-- major specialty advance
-- strong niche contribution
-- useful clarification
-- elegant repackaging
-- not yet convincing
+Before final scoring, explicitly consider:
+
+1. What is genuinely derived, demonstrated, measured, predicted, constructed, computed, classified, ruled out, or established inside the manuscript?
+
+2. What is imported?
+
+3. How well-grounded are the imported inputs? Are they established theory, strong measurements, mathematical theorems, standard definitions, framework-specific assumptions, speculative postulates, or weak analogies?
+
+4. How dependent is the main claim on unestablished or speculative inputs?
+
+5. How much explanatory compression does the manuscript achieve?
+
+6. Does it explain more with less, or merely rename/repackage?
+
+7. How broad are the direct targets actually explained?
+
+8. How broad is the downstream target reach if the manuscript is correct?
+
+9. How broad are the model-space or theory-space variants genuinely handled?
+
+10. Does the same mechanism, method, representation, or structure do real work across targets?
+
+11. Does the manuscript earn its claimed generality, or merely assert it?
+
+12. What would most raise the score?
+
+13. What would most lower the score?
+
+14. Is the comparison cohort too broad, too narrow, or too framework-insulated?
+
+15. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?
+
+When assigning explanatoryTargetBreadthScore, score earned explanatory reach, not raw example count. Weight targets by centrality, independence, breadth, downstream consequence, degree of support, and whether the same mechanism genuinely explains or constrains them.
+
+When assigning theorySpaceBreadthScore, score how far the manuscript extends across theories, dimensions, parameter families, model classes, organisms, datasets, architectures, formalisms, experimental regimes, or problem settings. Reward theory-space breadth most when it produces new consequences, robustness, constraints, predictions, structural necessity, or nontrivial checks.
+
+When assigning breadthOfImpactScore, ask how far the earned explanatory reach propagates beyond the immediate technical specialty. Do not hide framework conditionality or weak input grounding inside this number; state them explicitly.
+
+When assigning broadFieldRelativeScore and crossFieldConsequenceScore, account for input grounding. If the result depends on highly established inputs, broad-field reach can be credited more directly. If the result depends on speculative or framework-specific inputs, distinguish its conditional importance inside the framework from its broader scientific consequence.
+
+For bestClassification, choose one:
+
+field-defining advance
+
+major specialty advance
+
+strong niche contribution
+
+useful clarification
+
+elegant repackaging
+
+not yet convincing
 
 Classification guidance:
-- field-defining advance: changes central concepts, methods, evidence standards, mechanisms, or organizing principles of the comparison cohort.
-- major specialty advance: provides a substantial new result, mechanism, derivation, method, dataset, framework, experimental test, or unification that changes how an important specialty understands its targets.
-- strong niche contribution: deep, correct, and genuinely clarifying within a focused domain.
-- useful clarification: improves understanding but is mostly explanatory, organizational, methodological, or incremental.
-- elegant repackaging: clear and economical but does not establish a substantially new result, mechanism, prediction, empirical finding, method, or explanatory gain.
-- not yet convincing: central claims are unsupported, incorrect, too speculative, or not adequately distinguished from existing work.
 
-Before final scoring, explicitly consider:
-1. What is genuinely derived, demonstrated, measured, predicted, constructed, or established inside the manuscript?
-2. What is imported?
-3. What would a fair skeptical reviewer say is merely relabeling, rephrasing, overinterpretation, or unsupported extrapolation?
-4. What would most raise the score?
-5. What would most lower the score?
-6. Is the comparison cohort too broad or too narrow?
-7. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?
+field-defining advance: changes central concepts, methods, equations, constraints, or organizing principles of the comparison cohort.
 
-Return valid JSON only with this exact structure:
+major specialty advance: gives a substantial new result, mechanism, derivation, framework, unification, method, or constraint that changes how an important specialty understands important targets.
+
+strong niche contribution: deep, correct, and genuinely clarifying within a focused domain.
+
+useful clarification: improves understanding but is mostly explanatory, organizational, or incremental.
+
+elegant repackaging: clear and economical but does not establish a substantially new result, mechanism, or explanatory gain.
+
+not yet convincing: central claims are unsupported, incorrect, too speculative, or technically too weak.
+
+Score-consistency rule:
+
+Ensure the final classification matches the text and scores. If the review says the manuscript is highly correct, highly economical, strongly unifying, and has strong earned target reach, the classification should not be much lower than the stated evidence supports unless the strongest objection clearly undermines the central claim.
+
+Conversely, if the manuscript has broad claims but weak derivations, low correctness, weak input grounding, or mostly speculative support, do not give a high classification merely because the claim would be important if true.
+
+Return valid JSON only with this exact structure. If the schema lacks a dedicated inputGrounding field, discuss input grounding inside importedInputs, correctness, strongestObjection, breadthOfImpactScore, and finalJudgment:
 
 {
   "title": "anonymized manuscript",
@@ -326,10 +436,12 @@ Anchored 0-100 scientific merit scale:
 
 Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
 
-High-score calibration:
-- A final score of 95 or above requires more than being impressive inside a narrow or speculative specialty. It should have unusually strong internal support, decisive technical leverage, broad consequences, cross-framework relevance, empirical force, or field-level conceptual necessity.
-- If the manuscript's importance depends heavily on accepting a controversial or unestablished framework, reflect that in the final score and classification. Be cautious about scores above 90 unless the manuscript itself supplies unusually strong robustness, independent checks, or consequences outside that framework.
-- Do not let an artificially narrow comparison cohort turn a framework-conditional niche advance into a field-defining result.
+Judge the final score through explanatory reach and input grounding:
+- Scientific value rises with correctness, nontriviality, earned target reach, explanatory compression, input grounding, and technical, empirical, mathematical, or methodological traction.
+- Generality is earned reach, not raw example count. Weight targets by centrality, independence, depth, support, and downstream consequence.
+- Distinguish direct target coverage from downstream target reach. A paper with one central target can have enormous reach; a paper with many listed examples can still have low reach if they are minor or superficially connected.
+- Broad claims only count when supported by derivation, proof, measurement, prediction, constraint, calculation, robustness, classification, construction, or genuine mechanism-sharing.
+- If the manuscript depends on speculative or framework-specific inputs, distinguish conditional importance inside that framework from broader scientific consequence.
 
 Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings, for example write $\\alpha$ rather than $\alpha$.
 
