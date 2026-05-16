@@ -127,6 +127,13 @@ type MultiPassReviewResult = {
   thinkingText: string | null;
 };
 
+type IndividualPassResult = {
+  review: IndividualReview;
+  thinkingText: string | null;
+  index: number;
+  modelName: string;
+};
+
 export const REVIEW_SYSTEM_INSTRUCTION = `You are reviewing an anonymous scientific manuscript from its contents alone.
 
 Ignore author identity, institution, venue, citation counts, publication status, historical fame, and later influence. If any of that information appears in the text, ignore it. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.
@@ -404,7 +411,7 @@ Output valid JSON only.`;
 
 const AGGREGATOR_SYSTEM_INSTRUCTION = `You are the fourth anonymous manuscript reviewer and final meta-reviewer.
 
-You will receive the blinded manuscript text and three full independent anonymous reviews produced under the same rubric.
+You will receive the blinded manuscript text and the available full independent anonymous reviews produced under the same rubric. Normally there are three independent reviews. If only two reviews are supplied, proceed carefully and explicitly treat the final score as less certain.
 
 Read the manuscript yourself first. Then audit the three reviews. Do not simply average the scores. Compare the reasoning against the manuscript.
 
@@ -1038,6 +1045,34 @@ async function runModel(prompt: string, input: string, model: ReviewModel, gemin
   return model === "gemini" ? callGemini(prompt, input, geminiModel) : callGpt(prompt, input);
 }
 
+async function runIndividualPass(
+  prompt: string,
+  input: string,
+  model: ReviewModel,
+  index: number,
+): Promise<IndividualPassResult> {
+  try {
+    const { parsed, thinkingText } = await runModel(prompt, input, model, GEMINI_PASS_MODEL);
+    return {
+      review: normalizeIndividualReview(parsed),
+      thinkingText,
+      index,
+      modelName: model === "gemini" ? GEMINI_PASS_MODEL : GPT_MODEL,
+    };
+  } catch (error) {
+    if (model !== "gemini" || GEMINI_PASS_MODEL === GEMINI_META_MODEL) throw error;
+
+    const { parsed, thinkingText } = await callGemini(prompt, input, GEMINI_META_MODEL);
+    const fallbackNote = `Flash pass ${index + 1} failed after retries; recovered with ${GEMINI_META_MODEL}.\nFailure: ${errorMessage(error)}`;
+    return {
+      review: normalizeIndividualReview(parsed),
+      thinkingText: [fallbackNote, thinkingText].filter(Boolean).join("\n\n"),
+      index,
+      modelName: `${GEMINI_PASS_MODEL} fallback ${GEMINI_META_MODEL}`,
+    };
+  }
+}
+
 function buildAggregateInput(blindedContent: string, reviews: IndividualReview[]) {
   return JSON.stringify({
     blindedManuscript: blindedContent,
@@ -1087,8 +1122,9 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       GEMINI_PASS_MODEL,
       { maxOutputTokens: 512, includeThoughts: false },
     );
-    const title = asString(parsed.title, fallback.title);
-    const authors = asString(parsed.authors, fallback.authors);
+    const parsedMetadata = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    const title = asString(parsedMetadata.title, fallback.title);
+    const authors = asString(parsedMetadata.authors, fallback.authors);
     const bestTitle =
       isSuspiciousTitle(title) ||
       (fallback.title !== "Unknown Title" && fallback.title.length > title.length + 12)
@@ -1113,20 +1149,34 @@ async function generateMultiPassReview(
   const blindedContent = blindManuscriptText(paperContent);
   const thinkingChunks: string[] = [];
 
-  const passResults = await Promise.all(Array.from({ length: REVIEW_PASS_COUNT }, async (_unused, index) => {
-    const { parsed, thinkingText } = await runModel(systemPrompt, blindedContent, model, GEMINI_PASS_MODEL);
-    return {
-      review: normalizeIndividualReview(parsed),
-      thinkingText,
-      index,
-    };
-  }));
+  const settledPassResults = await Promise.allSettled(
+    Array.from({ length: REVIEW_PASS_COUNT }, async (_unused, index) =>
+      runIndividualPass(systemPrompt, blindedContent, model, index),
+    ),
+  );
+
+  const passResults = settledPassResults
+    .filter((result): result is PromiseFulfilledResult<IndividualPassResult> => result.status === "fulfilled")
+    .map((result) => result.value)
+    .sort((a, b) => a.index - b.index);
+
+  const passFailures = settledPassResults
+    .map((result, index) => ({ result, index }))
+    .filter((item): item is { result: PromiseRejectedResult; index: number } => item.result.status === "rejected");
+
+  if (passResults.length < 2) {
+    const details = passFailures.map(({ result, index }) => `pass ${index + 1}: ${errorMessage(result.reason)}`).join("; ");
+    throw new Error(`Review failed: only ${passResults.length} of ${REVIEW_PASS_COUNT} independent passes completed. ${details}`);
+  }
 
   const individualReviews = passResults.map((result) => result.review);
   for (const result of passResults) {
     if (result.thinkingText) {
-      thinkingChunks.push(`Pass ${result.index + 1}\n${result.thinkingText}`);
+      thinkingChunks.push(`Pass ${result.index + 1} (${result.modelName})\n${result.thinkingText}`);
     }
+  }
+  for (const { result, index } of passFailures) {
+    thinkingChunks.push(`Pass ${index + 1} failed\n${errorMessage(result.reason)}`);
   }
 
   const { parsed: aggregateParsed, thinkingText: aggregateThinking } = await runModel(
