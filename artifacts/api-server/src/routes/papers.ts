@@ -172,11 +172,16 @@ router.post("/papers", async (req, res) => {
     let paperContent: string;
     let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
     const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
+    const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string } = {
+      fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
+    };
 
     if (source.type === "pdf") {
       const buffer = Buffer.from(source.data, "base64");
       const pdfParse = (await import("pdf-parse")).default;
       const parsed = await pdfParse(buffer);
+      metadataHints.pdfTitle = typeof parsed.info?.Title === "string" ? parsed.info.Title : undefined;
+      metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
       paperContent = parsed.text;
       if (!paperContent || paperContent.trim().length < 50) {
         res.status(400).json({ error: "Could not extract readable text from PDF. Try submitting as raw text instead." });
@@ -195,6 +200,9 @@ router.post("/papers", async (req, res) => {
       const buffer = Buffer.from(arrayBuf);
       const pdfParse = (await import("pdf-parse")).default;
       const parsed = await pdfParse(buffer);
+      metadataHints.fileName ||= url.split("/").pop()?.split("?")[0];
+      metadataHints.pdfTitle = typeof parsed.info?.Title === "string" ? parsed.info.Title : undefined;
+      metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
       paperContent = parsed.text;
       if (!paperContent || paperContent.trim().length < 50) {
         res.status(400).json({ error: "Could not extract readable text from the linked PDF." });
@@ -210,7 +218,7 @@ router.post("/papers", async (req, res) => {
     const selectedModel: ReviewModel = req.body.model === "gemini" ? "gemini" : "gpt";
 
     // Step 1: extract real title and authors (before anonymous review)
-    const metadata = await extractLatestMetadata(paperContent);
+    const metadata = await extractLatestMetadata(paperContent, metadataHints);
 
     // Step 2: run the new three-pass blind review flow
     const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(paperContent, selectedModel);

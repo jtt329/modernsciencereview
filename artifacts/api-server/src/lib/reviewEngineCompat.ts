@@ -368,9 +368,18 @@ Return valid JSON only:
 }`;
 
 const METADATA_PROMPT = `Extract the title and authors from the scientific paper text provided.
+You will receive JSON containing filename hints, embedded PDF metadata, and the beginning of the extracted paper text.
+Prefer the title and author block printed in the manuscript header. Use embedded PDF metadata or the filename only as fallback hints, because they are often abbreviated, stale, or machine-generated.
+
+Rules:
+- Return the full paper title, not the journal name, arXiv id, DOI, running header, abstract sentence, section heading, or filename code.
+- Return paper authors only: personal names as written, comma-separated. Omit affiliations, departments, emails, dates, ORCID ids, footnote symbols, and addresses.
+- If the extracted text clearly shows only one author from a multi-author line, preserve all visible names rather than inventing missing names.
+- If title or authors are genuinely not recoverable, use "Unknown Title" or "Unknown Authors".
+
 Return a JSON object with exactly two fields:
-- title: string (the paper title, or "Unknown Title" if not found)
-- authors: string (comma-separated list of author names as written, or "Unknown Authors" if not found)
+- title: string
+- authors: string
 Output valid JSON only.`;
 
 const MODEL_CALL_ATTEMPTS = 3;
@@ -737,15 +746,52 @@ function blindManuscriptText(paperContent: string) {
     .trim();
 }
 
-function heuristicMetadata(paperContent: string) {
+type MetadataHints = {
+  fileName?: string;
+  pdfTitle?: string;
+  pdfAuthor?: string;
+};
+
+function cleanMetadataText(value?: string) {
+  return stripControlChars(value || "")
+    .replace(/\.[Pp][Dd][Ff]$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isUsefulTitleHint(value?: string) {
+  const cleaned = cleanMetadataText(value);
+  if (cleaned.length < 8 || cleaned.length > 220) return false;
+  if (/^(untitled|unknown|arxiv|paper|document)$/i.test(cleaned)) return false;
+  if (/^[a-z]+[0-9]{2,}$/i.test(cleaned)) return false;
+  if (/^\d{4}\.\d{4,5}(v\d+)?$/i.test(cleaned)) return false;
+  if (!/[A-Za-z]{4}/.test(cleaned)) return false;
+  return true;
+}
+
+function isUsefulAuthorHint(value?: string) {
+  const cleaned = cleanMetadataText(value);
+  if (cleaned.length < 3 || cleaned.length > 300) return false;
+  if (/^(unknown|anonymous|admin|root|user|owner)$/i.test(cleaned)) return false;
+  if (/@|\b(university|institute|department|laboratory|college|school|press|journal)\b/i.test(cleaned)) return false;
+  if (!/[A-Za-z]{2}/.test(cleaned)) return false;
+  return true;
+}
+
+function manuscriptHeaderText(paperContent: string) {
   const cleaned = stripControlChars(paperContent).replace(/\r\n/g, "\n");
-  const lines = cleaned.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 40);
+  const lines = cleaned.split("\n").map((line) => line.trim()).filter(Boolean).slice(0, 80);
   const abstractIndex = lines.findIndex((line) => /^abstract\b/i.test(line));
-  const headerLines = (abstractIndex > 0 ? lines.slice(0, abstractIndex) : lines).filter((line) =>
+  return (abstractIndex > 0 ? lines.slice(0, abstractIndex) : lines.slice(0, 40)).filter((line) =>
     !/^(arxiv:|doi:|submitted by\b|submitted to\b|keywords?\b|pacs\b|msc\b)/i.test(line) &&
     !/\b\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{4}\b/.test(line) &&
     !/^[A-Za-z-]+\/[A-Za-z.-]+\d+v\d+/i.test(line),
   );
+}
+
+function heuristicMetadata(paperContent: string, hints: MetadataHints = {}) {
+  const headerLines = manuscriptHeaderText(paperContent);
 
   const looksLikeAffiliation = (line: string) =>
     /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(line);
@@ -798,7 +844,12 @@ function heuristicMetadata(paperContent: string) {
     }
   }
 
-  const titleCandidate = titleLines.length > 0 ? titleLines.join(" ").replace(/\s+/g, " ").trim() : "Unknown Title";
+  const headerTitle = titleLines.length > 0 ? titleLines.join(" ").replace(/\s+/g, " ").trim() : "";
+  const titleCandidate =
+    headerTitle ||
+    (isUsefulTitleHint(hints.pdfTitle) ? cleanMetadataText(hints.pdfTitle) : "") ||
+    (isUsefulTitleHint(hints.fileName) ? cleanMetadataText(hints.fileName) : "") ||
+    "Unknown Title";
 
   const authorStartIndex = titleStartIndex === -1 ? -1 : titleStartIndex + titleLines.length;
   const authorLines: string[] = [];
@@ -810,9 +861,13 @@ function heuristicMetadata(paperContent: string) {
     }
   }
 
-  const authorCandidate = authorLines.length > 0
+  const headerAuthors = authorLines.length > 0
     ? authorLines.join(", ").replace(/\s*,\s*/g, ", ").replace(/\s+/g, " ").trim()
-    : "Unknown Authors";
+    : "";
+  const authorCandidate =
+    headerAuthors ||
+    (isUsefulAuthorHint(hints.pdfAuthor) ? cleanMetadataText(hints.pdfAuthor) : "") ||
+    "Unknown Authors";
 
   return {
     title: titleCandidate,
@@ -889,8 +944,16 @@ function pickRepresentativeReview(reviews: IndividualReview[], medianScore: numb
   })[0];
 }
 
-export async function extractMetadata(paperContent: string): Promise<{ title: string; authors: string }> {
-  const fallback = heuristicMetadata(paperContent);
+export async function extractMetadata(paperContent: string, hints: MetadataHints = {}): Promise<{ title: string; authors: string }> {
+  const fallback = heuristicMetadata(paperContent, hints);
+  const metadataInput = JSON.stringify({
+    fileNameHint: cleanMetadataText(hints.fileName),
+    embeddedPdfTitleHint: cleanMetadataText(hints.pdfTitle),
+    embeddedPdfAuthorHint: cleanMetadataText(hints.pdfAuthor),
+    heuristicTitleFallback: fallback.title,
+    heuristicAuthorsFallback: fallback.authors,
+    manuscriptHeaderText: manuscriptHeaderText(paperContent).join("\n").slice(0, 5000),
+  }, null, 2);
   const looksTruncatedTitle = (value: string) =>
     /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
   const isSuspiciousTitle = (value: string) =>
@@ -902,11 +965,13 @@ export async function extractMetadata(paperContent: string): Promise<{ title: st
   const isSuspiciousAuthors = (value: string) =>
     !value ||
     value === "Unknown Authors" ||
-    /^(submitted by\b|abstract\b)/i.test(value);
+    /^(submitted by\b|abstract\b)/i.test(value) ||
+    /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(value) ||
+    value.length > 500;
   try {
     const { parsed } = await callGemini(
       METADATA_PROMPT,
-      stripControlChars(paperContent).substring(0, 6000),
+      metadataInput,
       GEMINI_PASS_MODEL,
       { maxOutputTokens: 512, includeThoughts: false },
     );

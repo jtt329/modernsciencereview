@@ -53,7 +53,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
           reader.onerror = reject;
           reader.readAsDataURL(bulkFile.file);
         });
-        await onSubmit({ type: 'pdf', data: base64, model }, true);
+        await onSubmit({ type: 'pdf', data: base64, model, fileName: bulkFile.file.name }, true);
         setFiles(prev => prev.map(f => f.id === bulkFile.id ? { ...f, status: 'done' } : f));
       } catch (err: any) {
         setFiles(prev => prev.map(f => f.id === bulkFile.id ? { ...f, status: 'error', error: err.message } : f));

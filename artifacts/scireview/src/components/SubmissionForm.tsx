@@ -105,7 +105,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
         setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'processing' } : f));
         try {
           const base64 = await readFileAsBase64(qf.file);
-          await onSubmit({ type: 'pdf', data: base64, model, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }, skipSelectAfterSubmit);
+          await onSubmit({ type: 'pdf', data: base64, model, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }, skipSelectAfterSubmit);
           done++;
           setDoneCount(done);
           setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'done' } : f));
