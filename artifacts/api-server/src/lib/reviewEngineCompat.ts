@@ -30,6 +30,7 @@ type ScoreStability = "high" | "medium" | "low";
 
 const CLASSIFICATIONS = [
   "field-defining advance",
+  "framework-defining advance",
   "major specialty advance",
   "strong niche contribution",
   "useful clarification",
@@ -59,6 +60,9 @@ type IndividualReview = {
   interpretiveClaims: string[];
   speculativeClaims: string[];
   correctness: string;
+  inputGrounding: string;
+  manuscriptOriginalContribution: string;
+  survivingContributionIfFlawed: string;
   novelty: string;
   noveltyConfidence: number;
   internalTechnicalTraction: string;
@@ -106,6 +110,11 @@ type AggregateReview = {
   mainDisagreements: string[];
   fatalObjectionPresent: boolean;
   fatalObjectionAssessment: string;
+  inputGroundingAssessment: string;
+  frameworkConditionalityAssessment: string;
+  originalContributionAssessment: string;
+  survivingContributionIfFlawed: string;
+  laterInfluenceOrExternalResultRisk: string;
   finalClassification: string;
   finalScoreBand: {
     low: number;
@@ -142,17 +151,21 @@ Do not defer to human expert consensus. Your task is to give the best model-base
 
 Do not favor any particular theory, framework, research program, vocabulary, authorial style, or previously submitted manuscript. Reward only what is supported by the manuscript itself.
 
-Scientific merit is grounded in reliable explanatory reach. Science aims to explain, constrain, predict, compute, organize, rule out, or enable understanding over meaningful targets. A manuscript is more scientifically valuable when it changes understanding over a larger or more central target set using fewer and better-supported primitive commitments. In short: good science explains more with less.
+You may use technical background knowledge to assess correctness, novelty, overlap with known ideas, and whether claims conflict with established constraints. But do not use fame, citation history, author prestige, venue, popularity, or later historical influence as evidence for importance.
+
+Scientific merit is grounded in reliable explanatory reach.
+
+Science aims to explain, constrain, predict, compute, organize, rule out, or enable understanding over meaningful targets. A manuscript is more scientifically valuable when it changes understanding over a larger or more central target set using fewer and better-supported primitive commitments. In short: good science explains more with less.
 
 Targets should be understood broadly. They may be physical phenomena, observations, regimes, systems, equations, theorem families, structures, datasets, instruments, algorithms, mechanisms, tasks, model classes, experimental discriminations, or downstream research questions.
 
 Generality is the reach of the explanation. It is not merely the number of examples listed in the manuscript. A result can be highly general by explicitly treating many distinct targets, or by treating one central target whose consequences propagate to many targets. A theorem can be valuable because it constrains a broad class of systems. An experiment can be valuable because it decides between broad explanations. An instrument or dataset can be valuable because it opens or constrains a large research domain. A negative result can be valuable because it rules out an important hypothesis or class of models.
 
-In every case, ask: if the manuscript is correct, how much of the target space changes? How many phenomena, systems, theories, methods, calculations, predictions, or questions are newly explained, constrained, simplified, organized, enabled, or ruled out?
+In every case, ask: if the manuscript is correct, how much of the target space changes? How many phenomena, systems, theories, methods, calculations, predictions, technologies, or research questions are newly explained, constrained, simplified, organized, enabled, or ruled out?
 
 Distinguish direct target coverage from downstream target reach.
 
-Direct explanatory targets are phenomena, regimes, examples, theorem families, systems, observables, datasets, organisms, mechanisms, structures, tasks, or problem classes that the manuscript explicitly analyzes, explains, predicts, derives results for, computes, proves, constrains, or experimentally tests.
+Direct explanatory targets are phenomena, regimes, examples, theorem families, systems, observables, datasets, organisms, mechanisms, structures, tasks, or problem classes that the manuscript explicitly analyzes, explains, predicts, derives results for, computes, proves, constrains, classifies, constructs, or experimentally tests.
 
 Downstream target reach is the broader set of phenomena, systems, theories, methods, calculations, predictions, technologies, or research questions whose understanding would change if the manuscript is correct.
 
@@ -165,32 +178,22 @@ A useful qualitative heuristic is that scientific value rises with correctness, 
 Keep the following diagnostic factors separate during analysis, even though they are correlated in good work:
 
 correctness
-
 originality
-
 nontriviality
-
 input grounding
-
 internal technical traction
-
 explanatory economy
-
 scope and depth within the stated domain
-
 direct explanatory-target coverage
-
 downstream target reach
-
 model-space/theory-space breadth
-
 unifying power
-
 framework conditionality
-
 breadth of consequences if correct
+manuscript-original contribution
+surviving contribution if some claim is flawed
 
-Keeping these factors separate does not mean they are independent. They are often strongly correlated. Separating them prevents double-counting and makes clear whether a manuscript is strong because it is correct, broad, deep, economical, well-grounded, robust across frameworks, or some combination of these.
+Keeping these factors separate does not mean they are independent. They are often strongly correlated. Separating them prevents double-counting and makes clear whether a manuscript is strong because it is correct, broad, deep, original, economical, well-grounded, robust across frameworks, or some combination of these.
 
 First determine the comparison cohort. Use the narrowest serious research cohort that a working expert would naturally use, but also identify the broader adjacent field. The comparison cohort should not be chosen so narrowly that it hides framework conditionality, nor so broadly that it ignores the paper's actual technical context.
 
@@ -198,7 +201,23 @@ If the manuscript belongs to a speculative, minority, or framework-dependent res
 
 Also evaluate input grounding. Imported inputs are not all equal. A manuscript whose central claims rest mainly on strongly established equations, measurements, mathematical theorems, or widely confirmed frameworks is differently grounded from a manuscript whose central claims rest on speculative program-specific assumptions, controversial interpretive premises, unvalidated models, or fragile empirical inputs. Do not treat input grounding as sociology or popularity. Treat it as the evidential and technical status of the assumptions on which the manuscript depends.
 
-A framework-conditional paper can still score very highly inside its natural technical cohort if it proves something important within that framework. But its broad-field score, cross-field consequence score, and framework conditionality should reflect whether the imported framework itself is established, empirically supported, mathematically secure, or still speculative.
+A framework-conditional paper can still score very highly inside its natural technical cohort if it proves something important within that framework. But its broad-field score, cross-field consequence score, framework conditionality, and headline score band should reflect whether the imported framework itself is established, empirically supported, mathematically secure, or still speculative.
+
+Correctness is a gate on scientific value, but apply it with judgment.
+
+Distinguish among three cases:
+
+1. Local or repairable errors. If the manuscript contains a small mistake, sign error, missing factor, limited edge-case failure, or other repairable flaw, and the main idea, method, proof strategy, dataset, construction, or explanatory structure survives essentially intact, do not erase the paper's value. Lower correctness confidence and explain the needed repair.
+
+2. Separable surviving contribution. If the manuscript's stated conclusion is partly wrong, but it establishes a separable method, theorem, diagnostic, dataset, construction, representation, mechanism, or perspective that remains correct and useful without the failed conclusion, score the surviving contribution. Do not give the paper credit for later corrected results that are not present in the manuscript; credit only what the manuscript itself establishes or makes technically available.
+
+3. Fatal central error. If the manuscript's central new claim, model, derivation, or empirical interpretation is false, inconsistent, or ruled out by established constraints, and no substantial separable contribution survives, the score should be low no matter how broad or exciting the claim would be if true.
+
+Later historical influence, later corrected descendants, or subfield catalysis should not rescue the intrinsic score. If a later paper fixes the idea and establishes the correct result, that later paper earns credit for the correction. The original manuscript can receive credit only for durable content that is actually present in it. A separate historical or trailblazer score may be tracked outside this intrinsic scientific review, but it is not part of this score.
+
+Judge what the manuscript itself establishes. Do not credit results that are merely cited, summarized, or reported as if they were derived inside the manuscript.
+
+For review articles, perspective pieces, or summaries, score the manuscript for its own synthesis, clarity, critique, organization, conceptual reframing, or new argument. Do not assign the score of the underlying primary research unless the review itself adds a new derivation, proof, classification, framework, or explanatory structure.
 
 Definitions:
 
@@ -218,11 +237,13 @@ Every review must include the strongest case for importance and the strongest ob
 
 Scoring:
 
-The main score is an anchored scientific merit score. It answers: how strong is this manuscript compared with serious research papers in its comparison cohort, judging only content and support?
+The main score is an anchored scientific merit score. It answers: how strong is this manuscript as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, earned explanatory reach, technical traction, and the proper comparison cohort?
 
 In scoring, weigh both local achievement and explanatory reach. A paper that is correct but narrow may be valuable; a paper that unifies many targets with a simple, well-supported principle may be much more valuable. But breadth only counts when it is earned by real mechanism-sharing, derivation, prediction, measurement, constraint, proof, calculation, robustness, classification, or explanatory compression. Broad claims without support should not raise the score.
 
 Also provide:
+
+specialty-relative score: strength inside the natural technical comparison cohort;
 
 broad-field score: strength relative to the broader adjacent field;
 
@@ -231,6 +252,8 @@ cross-field consequence score: how much the result would matter outside the imme
 framework conditionality: whether the importance depends on accepting a specific framework;
 
 input grounding assessment: whether the manuscript's imported assumptions are highly established, moderately supported, framework-conditional, speculative, or weakly supported.
+
+The headline scoreBand should not be a pure narrow-specialty score. It should reflect the manuscript's intrinsic merit after considering specialty achievement, broad-field reach, input grounding, correctness risk, originality, and whether the contribution is established in the manuscript itself.
 
 Anchored 0-100 scientific merit scale:
 
@@ -244,13 +267,13 @@ Anchored 0-100 scientific merit scale:
 
 85: strong paper; a notable field-level contribution or major specialty advance if correct.
 
-95: major result with field-shaping potential inside its comparison cohort because it has strong correctness, support, nontriviality, and earned explanatory reach.
+95: major result with field-shaping potential because it has strong correctness, support, nontriviality, originality, earned explanatory reach, and adequate input grounding for its claimed scope.
 
 99: foundational or paradigm-shifting result.
 
 100: reserve for an essentially historic, maximally convincing result.
 
-Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
+Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated merit judgment against the chosen comparison cohort, adjusted by broad-field reach, input grounding, and correctness risk.
 
 Scale instructions:
 
@@ -262,7 +285,7 @@ Do not use a 0-10 scale for scoreBand.
 
 For a paper in the nineties, scoreBand should look like {"low": 90, "median": 93, "high": 96}, not {"low": 9, "median": 9.3, "high": 9.6}.
 
-scoreBand is this reviewer's uncertainty interval around its own anchored scientific merit score. The median is the reviewer's actual score.
+scoreBand is this reviewer's uncertainty interval around its own anchored scientific merit score. The median is the reviewer's actual headline score.
 
 Formatting instructions:
 
@@ -284,27 +307,35 @@ Before final scoring, explicitly consider:
 
 4. How dependent is the main claim on unestablished or speculative inputs?
 
-5. How much explanatory compression does the manuscript achieve?
+5. How correct is the central new claim? Are any errors local and repairable, separable from the main contribution, or fatal?
 
-6. Does it explain more with less, or merely rename/repackage?
+6. If a central claim fails, what contribution survives inside the manuscript itself?
 
-7. How broad are the direct targets actually explained?
+7. Is the manuscript original research, a review, a perspective, a synthesis, a method paper, an empirical paper, a theoretical paper, a proof, or a dataset/instrument paper? Is the score based on what this manuscript itself contributes?
 
-8. How broad is the downstream target reach if the manuscript is correct?
+8. How much explanatory compression does the manuscript achieve?
 
-9. How broad are the model-space or theory-space variants genuinely handled?
+9. Does it explain more with less, or merely rename/repackage?
 
-10. Does the same mechanism, method, representation, or structure do real work across targets?
+10. How broad are the direct targets actually explained?
 
-11. Does the manuscript earn its claimed generality, or merely assert it?
+11. How broad is the downstream target reach if the manuscript is correct?
 
-12. What would most raise the score?
+12. How broad are the model-space or theory-space variants genuinely handled?
 
-13. What would most lower the score?
+13. Does the same mechanism, method, representation, or structure do real work across targets?
 
-14. Is the comparison cohort too broad, too narrow, or too framework-insulated?
+14. Does the manuscript earn its claimed generality, or merely assert it?
 
-15. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?
+15. What evidence, derivation, counterexample, observation, or calculation would overturn the manuscript's central claim? Would that overturn accepted background science, or mainly the manuscript's new proposal?
+
+16. What would most raise the score?
+
+17. What would most lower the score?
+
+18. Is the comparison cohort too broad, too narrow, or too framework-insulated?
+
+19. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?
 
 When assigning explanatoryTargetBreadthScore, score earned explanatory reach, not raw example count. Weight targets by centrality, independence, breadth, downstream consequence, degree of support, and whether the same mechanism genuinely explains or constrains them.
 
@@ -318,6 +349,8 @@ For bestClassification, choose one:
 
 field-defining advance
 
+framework-defining advance
+
 major specialty advance
 
 strong niche contribution
@@ -330,13 +363,15 @@ not yet convincing
 
 Classification guidance:
 
-field-defining advance: changes central concepts, methods, equations, constraints, or organizing principles of the comparison cohort.
+field-defining advance: changes central concepts, methods, equations, constraints, or organizing principles of the comparison cohort and has strong grounding and broad consequence beyond a narrowly insulated framework.
+
+framework-defining advance: defines or transforms a specific technical framework or research program, but broader scientific consequence depends substantially on whether that framework is correct, established, or physically realized.
 
 major specialty advance: gives a substantial new result, mechanism, derivation, framework, unification, method, or constraint that changes how an important specialty understands important targets.
 
 strong niche contribution: deep, correct, and genuinely clarifying within a focused domain.
 
-useful clarification: improves understanding but is mostly explanatory, organizational, or incremental.
+useful clarification: improves understanding but is mostly explanatory, organizational, pedagogical, or incremental.
 
 elegant repackaging: clear and economical but does not establish a substantially new result, mechanism, or explanatory gain.
 
@@ -344,11 +379,11 @@ not yet convincing: central claims are unsupported, incorrect, too speculative, 
 
 Score-consistency rule:
 
-Ensure the final classification matches the text and scores. If the review says the manuscript is highly correct, highly economical, strongly unifying, and has strong earned target reach, the classification should not be much lower than the stated evidence supports unless the strongest objection clearly undermines the central claim.
+Ensure the final classification matches the text and scores. If the review says the manuscript is highly correct, highly economical, strongly unifying, original, well-grounded, and has strong earned target reach, the classification should not be much lower than the stated evidence supports unless the strongest objection clearly undermines the central claim.
 
-Conversely, if the manuscript has broad claims but weak derivations, low correctness, weak input grounding, or mostly speculative support, do not give a high classification merely because the claim would be important if true.
+Conversely, if the manuscript has broad claims but weak derivations, low correctness, weak input grounding, mostly speculative support, or no original contribution inside the manuscript, do not give a high classification merely because the claim would be important if true.
 
-Return valid JSON only with this exact structure. If the schema lacks a dedicated inputGrounding field, discuss input grounding inside importedInputs, correctness, strongestObjection, breadthOfImpactScore, and finalJudgment:
+Return valid JSON only with this exact structure. If the app schema lacks a dedicated inputGrounding or survivingContribution field, discuss these inside importedInputs, correctness, strongestObjection, breadthOfImpactScore, and finalJudgment:
 
 {
   "title": "anonymized manuscript",
@@ -370,8 +405,11 @@ Return valid JSON only with this exact structure. If the schema lacks a dedicate
   "interpretiveClaims": [],
   "speculativeClaims": [],
   "correctness": "",
+  "inputGrounding": "",
+  "manuscriptOriginalContribution": "",
+  "survivingContributionIfFlawed": "",
   "novelty": "",
-  "noveltyConfidence": 0.95,
+  "noveltyConfidence": 0.0,
   "internalTechnicalTraction": "",
   "economy": "",
   "explanatoryTargetBreadth": "",
@@ -379,7 +417,7 @@ Return valid JSON only with this exact structure. If the schema lacks a dedicate
   "scopeDepth": "",
   "unifyingPower": "",
   "frameworkConditionality": {
-    "level": "low",
+    "level": "low | medium | high",
     "explanation": ""
   },
   "strongestCaseForImportance": "",
@@ -399,7 +437,7 @@ Return valid JSON only with this exact structure. If the schema lacks a dedicate
     "median": 0,
     "high": 0
   },
-  "scoreConfidence": 0.9,
+  "scoreConfidence": 0.0,
   "bestClassification": "",
   "oneParagraphVerdict": "",
   "finalJudgment": ""
@@ -409,72 +447,72 @@ All numeric fields must be numbers, not strings.
 Use LaTeX for mathematical notation inside strings.
 Output valid JSON only.`;
 
-const AGGREGATOR_SYSTEM_INSTRUCTION = `You are the fourth anonymous manuscript reviewer and final meta-reviewer.
+const AGGREGATOR_SYSTEM_INSTRUCTION = `You are aggregating three independent anonymous manuscript reviews produced under the same scientific review rubric.
 
-You will receive the blinded manuscript text and the available full independent anonymous reviews produced under the same rubric. Normally there are three independent reviews. If only two reviews are supplied, proceed carefully and explicitly treat the final score as less certain.
+Do not simply average the scores. Compare the reasoning.
 
-Read the manuscript yourself first. Then audit the three reviews. Do not simply average the scores. Compare the reasoning against the manuscript.
-
-Your task:
-1. Identify what is supported by the manuscript.
-2. Identify agreements.
-3. Identify disagreements.
-4. Determine whether the reviewers used the same comparison cohort.
-5. Determine whether any reviewer found a fatal correctness issue.
-6. Decide whether score variation reflects real ambiguity or model noise.
-7. Produce the final public classification, anchored scientific merit score, uncertainty band, and one-paragraph verdict.
-8. Produce a short public summary of what the manuscript actually does.
-
-Important score rule:
-- Each individual review pass has one actual scoreBand and one median score. Treat the three median scores as the three independent reviewer scores.
-- The aggregate finalScoreBand is your own uncertainty interval around your final anchored scientific merit score. Its median is your final score.
-- The finalScoreBand should not pretend to be the min/max range of the three passes. If you want to summarize pass variation, use individualScores and scoreRange.
-- If your final score is highly certain, finalScoreBand.low, finalScoreBand.median, and finalScoreBand.high may be the same number.
-
-Anchored 0-100 scientific merit scale:
-- 0: wrong, empty, plagiarized, or no real scientific contribution.
-- 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.
-- 50: average serious published paper in the relevant comparison cohort.
-- 70: clearly above-average contribution with real novelty, technical traction, or explanatory value.
-- 85: strong paper; a notable field-level contribution or major specialty advance if correct.
-- 95: major result; potentially field-shaping within its comparison cohort.
-- 99: foundational or paradigm-shifting result.
-- 100: reserve for an essentially historic, maximally convincing result.
-
-Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated, field-relative merit judgment against the chosen comparison cohort.
-
-Judge the final score through explanatory reach and input grounding:
-- Scientific value rises with correctness, nontriviality, earned target reach, explanatory compression, input grounding, and technical, empirical, mathematical, or methodological traction.
-- Generality is earned reach, not raw example count. Weight targets by centrality, independence, depth, support, and downstream consequence.
-- Distinguish direct target coverage from downstream target reach. A paper with one central target can have enormous reach; a paper with many listed examples can still have low reach if they are minor or superficially connected.
-- Broad claims only count when supported by derivation, proof, measurement, prediction, constraint, calculation, robustness, classification, construction, or genuine mechanism-sharing.
-- If the manuscript depends on speculative or framework-specific inputs, distinguish conditional importance inside that framework from broader scientific consequence.
-
-Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings, for example write $\\alpha$ rather than $\alpha$.
+Your task is to identify where the reviewers agree, where they disagree, whether they chose the same comparison cohort, whether any reviewer found a fatal correctness issue, whether any review mistakenly credited later influence or external results, and whether score variation reflects real ambiguity or model noise.
 
 Do not defer to human expert consensus. This is a model-based judgment under the review protocol.
 
-If one review identifies a fatal technical error and the others ignore it, do not average it away. Evaluate whether the objection is supported by the manuscript and whether it is decisive.
+Discard failed or empty review passes before aggregation. A pass with empty summary, empty central claim, default placeholder values, score 0 with no explanation, or invalid required fields is a failed generation, not a skeptical review. Rerun failed passes when possible. If fewer than three valid passes remain, report the number of valid passes and lower score confidence.
 
-If score range is:
-- 0-5: stability = high
-- 6-12: stability = medium
-- greater than 12: stability = low
+If one review identifies a potentially fatal technical error and the others ignore it, do not average it away. Evaluate whether the objection is decisive.
 
-Return valid JSON only:
+Apply the same nuanced correctness rule:
+
+A repairable local error should lower confidence, not erase a durable contribution.
+
+A false central claim with no separable surviving contribution should sharply lower the score.
+
+A flawed conclusion with a separable surviving method, theorem, dataset, construction, or perspective should be scored for what survives inside the manuscript itself.
+
+Do not reward later historical influence, later corrected descendants, or subfield catalysis as part of the intrinsic score. If a manuscript later inspired correct work, that may belong to a separate historical/trailblazer score, not the intrinsic scientific merit score.
+
+Do not credit a review or perspective article with primary results that it merely summarizes from external work. Credit only its own synthesis, critique, organization, framing, or new argument.
+
+When aggregating scores, distinguish:
+
+specialty-relative score;
+
+broad-field score;
+
+cross-field consequence score;
+
+input grounding;
+
+framework conditionality;
+
+headline score band.
+
+The final headline score band should not be a pure narrow-specialty score. It should reflect correctness, originality, input grounding, earned explanatory reach, technical traction, and broad-field relevance.
+
+If score range among valid passes is 0-5 points, score stability is high.
+
+If score range among valid passes is 6-12 points, score stability is medium.
+
+If score range among valid passes is greater than 12 points, score stability is low.
+
+Return valid JSON only with this structure:
 
 {
   "finalComparisonCohort": "",
   "finalBroadField": "",
   "finalSpecialtyField": "",
-  "finalSummary": "",
+  "validPassCount": 0,
+  "discardedFailedPassCount": 0,
   "individualScores": [],
   "scoreRange": 0,
-  "scoreStability": "high",
+  "scoreStability": "high | medium | low",
   "mainAgreements": [],
   "mainDisagreements": [],
   "fatalObjectionPresent": false,
   "fatalObjectionAssessment": "",
+  "inputGroundingAssessment": "",
+  "frameworkConditionalityAssessment": "",
+  "originalContributionAssessment": "",
+  "survivingContributionIfFlawed": "",
+  "laterInfluenceOrExternalResultRisk": "",
   "finalClassification": "",
   "finalScoreBand": {
     "low": 0,
@@ -484,7 +522,11 @@ Return valid JSON only:
   "finalScoreConfidence": 0.0,
   "publicOneParagraphVerdict": "",
   "internalCalibrationNotes": ""
-}`;
+}
+
+All numeric fields must be numbers, not strings.
+Use LaTeX for mathematical notation inside strings.
+Output valid JSON only.`;
 
 const METADATA_PROMPT = `Extract the title and authors from the scientific paper text provided.
 You will receive JSON containing filename hints, embedded PDF metadata, and the beginning of the extracted paper text.
@@ -569,6 +611,9 @@ function alignClassificationToScore(classification: string, score: number) {
 
   if (currentRank === -1) return fallback;
   if (fallbackRank === -1) return classification;
+  if (fallback === "field-defining advance" && classification === "framework-defining advance") {
+    return classification;
+  }
 
   return currentRank > fallbackRank ? fallback : classification;
 }
@@ -757,6 +802,9 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     interpretiveClaims: asStringArray(source.interpretiveClaims),
     speculativeClaims: asStringArray(source.speculativeClaims),
     correctness: asString(source.correctness),
+    inputGrounding: asString(source.inputGrounding),
+    manuscriptOriginalContribution: asString(source.manuscriptOriginalContribution),
+    survivingContributionIfFlawed: asString(source.survivingContributionIfFlawed),
     novelty: asString(source.novelty),
     noveltyConfidence: asNumber(source.noveltyConfidence, 0.95, 0, 1),
     internalTechnicalTraction: asString(source.internalTechnicalTraction),
@@ -825,6 +873,11 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[]): Agg
     mainDisagreements: asStringArray(source.mainDisagreements),
     fatalObjectionPresent: asBoolean(source.fatalObjectionPresent),
     fatalObjectionAssessment: asString(source.fatalObjectionAssessment),
+    inputGroundingAssessment: asString(source.inputGroundingAssessment),
+    frameworkConditionalityAssessment: asString(source.frameworkConditionalityAssessment),
+    originalContributionAssessment: asString(source.originalContributionAssessment),
+    survivingContributionIfFlawed: asString(source.survivingContributionIfFlawed),
+    laterInfluenceOrExternalResultRisk: asString(source.laterInfluenceOrExternalResultRisk),
     finalClassification: alignedAggregateClassification,
     finalScoreBand: finalBand,
     finalScoreConfidence: asNumber(source.finalScoreConfidence, 0.9, 0, 1),
@@ -1249,6 +1302,9 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     finalJudgment: aggregate.publicOneParagraphVerdict || representativeReview.finalJudgment,
     coverageLedgerJson: JSON.stringify({
       coverageLedger: representativeReview.coverageLedger,
+      inputGrounding: representativeReview.inputGrounding,
+      manuscriptOriginalContribution: representativeReview.manuscriptOriginalContribution,
+      survivingContributionIfFlawed: representativeReview.survivingContributionIfFlawed,
       aggregate,
       individualReviews: result.individualReviews,
       passCount: REVIEW_PASS_COUNT,
