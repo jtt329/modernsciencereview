@@ -67,8 +67,66 @@ function cleanTitle(title: string) {
   return title.replace(/^(\[PDF\]|\[PDF Upload\])\s*/i, '');
 }
 
+function normalizeTitle(title: string) {
+  return cleanTitle(title)
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
 function truncate(text: string, max = 30) {
   return text.length > max ? text.slice(0, max) + '…' : text;
+}
+
+interface ScoreComparison {
+  otherAverage: number;
+  delta: number;
+  count: number;
+}
+
+function average(values: number[]) {
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+function buildSessionComparisons(session: Session, sessions: Session[]) {
+  const comparisons = new Map<string, ScoreComparison>();
+  const otherScoresByTitle = new Map<string, number[]>();
+
+  for (const otherSession of sessions) {
+    if (otherSession.id === session.id) continue;
+    for (const paper of otherSession.papers) {
+      if (paper.overallScore == null) continue;
+      const key = normalizeTitle(paper.title);
+      if (!key) continue;
+      if (!otherScoresByTitle.has(key)) otherScoresByTitle.set(key, []);
+      otherScoresByTitle.get(key)!.push(paper.overallScore);
+    }
+  }
+
+  for (const paper of session.papers) {
+    if (paper.overallScore == null) continue;
+    const key = normalizeTitle(paper.title);
+    const otherScores = otherScoresByTitle.get(key) ?? [];
+    const otherAverage = average(otherScores);
+    if (otherAverage == null) continue;
+    comparisons.set(paper.id, {
+      otherAverage,
+      delta: paper.overallScore - otherAverage,
+      count: otherScores.length,
+    });
+  }
+
+  return comparisons;
+}
+
+function formatScore(value: number) {
+  return value.toFixed(1).replace(/\.0$/, '');
+}
+
+function formatDelta(value: number) {
+  const rounded = formatScore(Math.abs(value));
+  return value > 0 ? `+${rounded}` : value < 0 ? `-${rounded}` : '0';
 }
 
 const REVIEW_SECTIONS: { key: keyof StoredReview; label: string }[] = [
@@ -163,9 +221,14 @@ function ReviewPanel({ reviewJson }: { reviewJson: string }) {
   );
 }
 
-function PaperRow({ paper }: { paper: SessionPaper }) {
+function PaperRow({ paper, comparison }: { paper: SessionPaper; comparison?: ScoreComparison }) {
   const [expanded, setExpanded] = useState(false);
   const hasReview = !!paper.reviewJson;
+  const deltaColor = comparison
+    ? comparison.delta > 0.5 ? 'text-emerald-700'
+    : comparison.delta < -0.5 ? 'text-rose-700'
+    : 'text-slate-500'
+    : 'text-slate-400';
 
   return (
     <>
@@ -190,6 +253,16 @@ function PaperRow({ paper }: { paper: SessionPaper }) {
         <td className="py-2 pr-3 text-right font-black text-xs" style={{ color: SCORE_COLOR(paper.overallScore ?? 0) }}>
           {paper.overallScore ?? '—'}
         </td>
+        <td className="py-2 pr-3 text-right text-slate-600 text-xs">
+          {comparison ? (
+            <span title={`Average of ${comparison.count} saved score${comparison.count !== 1 ? 's' : ''} for this paper on other prompts`}>
+              {formatScore(comparison.otherAverage)}
+            </span>
+          ) : '—'}
+        </td>
+        <td className={`py-2 pr-3 text-right font-black text-xs ${deltaColor}`}>
+          {comparison ? formatDelta(comparison.delta) : '—'}
+        </td>
         <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.intrinsicMeritScore ?? '—'}</td>
         <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.explanatoryTargetBreadthScore ?? '—'}</td>
         <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.theorySpaceBreadthScore ?? '—'}</td>
@@ -198,7 +271,7 @@ function PaperRow({ paper }: { paper: SessionPaper }) {
       <AnimatePresence>
         {expanded && paper.reviewJson && (
           <tr>
-            <td colSpan={8} className="p-0">
+            <td colSpan={10} className="p-0">
               <motion.div
                 initial={{ height: 0, opacity: 0 }}
                 animate={{ height: 'auto', opacity: 1 }}
@@ -217,7 +290,7 @@ function PaperRow({ paper }: { paper: SessionPaper }) {
   );
 }
 
-function SessionCard({ session }: { session: Session }) {
+function SessionCard({ session, sessions }: { session: Session; sessions: Session[] }) {
   const [open, setOpen] = useState(true);
   const [showPrompt, setShowPrompt] = useState(false);
   const [restoreConfirm, setRestoreConfirm] = useState(false);
@@ -248,12 +321,20 @@ function SessionCard({ session }: { session: Session }) {
   const sortedPapers = [...session.papers].sort(
     (a, b) => (b.overallScore ?? 0) - (a.overallScore ?? 0)
   );
+  const comparisons = buildSessionComparisons(session, sessions);
+  const comparisonValues = [...comparisons.values()];
+  const averageDelta = average(comparisonValues.map(c => c.delta));
+  const improvedCount = comparisonValues.filter(c => c.delta > 0.5).length;
+  const lowerCount = comparisonValues.filter(c => c.delta < -0.5).length;
+  const similarCount = comparisonValues.length - improvedCount - lowerCount;
 
   const chartData = sortedPapers.map(p => ({
     name: truncate(cleanTitle(p.title)),
     fullTitle: cleanTitle(p.title),
     modelName: p.modelName || 'unknown model',
     Overall: p.overallScore ?? 0,
+    OtherAverage: comparisons.get(p.id)?.otherAverage ?? null,
+    Delta: comparisons.get(p.id)?.delta ?? null,
   }));
 
   return (
@@ -350,6 +431,42 @@ function SessionCard({ session }: { session: Session }) {
 
               {chartData.length > 0 && (
                 <>
+                  <div>
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">
+                      This prompt vs other saved prompts
+                    </p>
+                    {comparisonValues.length > 0 ? (
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                        <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Matched Papers</p>
+                          <p className="text-2xl font-black text-slate-900 mt-1">{comparisonValues.length}</p>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Average Delta</p>
+                          <p className={`text-2xl font-black mt-1 ${averageDelta != null && averageDelta > 0.5 ? 'text-emerald-700' : averageDelta != null && averageDelta < -0.5 ? 'text-rose-700' : 'text-slate-900'}`}>
+                            {averageDelta != null ? formatDelta(averageDelta) : '—'}
+                          </p>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Higher / Similar</p>
+                          <p className="text-2xl font-black text-slate-900 mt-1">
+                            <span className="text-emerald-700">{improvedCount}</span>
+                            <span className="text-slate-300"> / </span>
+                            <span>{similarCount}</span>
+                          </p>
+                        </div>
+                        <div className="bg-white border border-slate-200 rounded-xl px-4 py-3">
+                          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Lower</p>
+                          <p className="text-2xl font-black text-rose-700 mt-1">{lowerCount}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-400 italic">
+                        No matching paper titles were found in other saved prompt sessions yet.
+                      </p>
+                    )}
+                  </div>
+
                   {/* Overall score chart */}
                   <div>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Overall Intrinsic Score (/100) — highest first</p>
@@ -369,6 +486,11 @@ function SessionCard({ session }: { session: Session }) {
                                   <Cpu className="w-3 h-3" /> {d.modelName}
                                 </p>
                                 <p className="text-sm font-black text-indigo-600">{d.Overall}/100 overall</p>
+                                {d.OtherAverage != null && (
+                                  <p className="text-xs font-bold text-slate-600 mt-1">
+                                    Other prompt avg: {formatScore(d.OtherAverage)} · Δ {formatDelta(d.Delta ?? 0)}
+                                  </p>
+                                )}
                               </div>
                             );
                           }}
@@ -395,6 +517,8 @@ function SessionCard({ session }: { session: Session }) {
                             <th className="text-left font-black text-slate-500 pb-2 pr-3">Field</th>
                             <th className="text-left font-black text-slate-500 pb-2 pr-3">Model</th>
                             <th className="text-right font-black text-slate-500 pb-2 pr-3">Overall</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Other Avg</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Δ</th>
                             <th className="text-right font-black text-slate-500 pb-2 pr-3">Merit</th>
                             <th className="text-right font-black text-slate-500 pb-2 pr-3">Target</th>
                             <th className="text-right font-black text-slate-500 pb-2 pr-3">Theory</th>
@@ -402,7 +526,7 @@ function SessionCard({ session }: { session: Session }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {sortedPapers.map(p => <PaperRow key={p.id} paper={p} />)}
+                          {sortedPapers.map(p => <PaperRow key={p.id} paper={p} comparison={comparisons.get(p.id)} />)}
                         </tbody>
                       </table>
                     </div>
@@ -488,7 +612,7 @@ export default function PromptAnalysis({ onClose }: Props) {
               <p className="text-sm mt-1">Use "Delete All" to snapshot and save the current papers.</p>
             </div>
           )}
-          {sessions.map(s => <SessionCard key={s.id} session={s} />)}
+          {sessions.map(s => <SessionCard key={s.id} session={s} sessions={sessions} />)}
         </div>
       </motion.div>
     </motion.div>
