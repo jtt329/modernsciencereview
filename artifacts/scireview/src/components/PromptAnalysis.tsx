@@ -1,9 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, ChevronDown, ChevronUp, BarChart2, FileText, Clock, Cpu, RotateCcw, CheckCircle2, AlertCircle } from 'lucide-react';
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
-} from 'recharts';
 
 interface StoredReview {
   centralClaim?: string;
@@ -73,10 +70,6 @@ function normalizeTitle(title: string) {
     .replace(/\.[a-z0-9]+$/i, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
-}
-
-function truncate(text: string, max = 30) {
-  return text.length > max ? text.slice(0, max) + '…' : text;
 }
 
 interface ScoreComparison {
@@ -328,15 +321,6 @@ function SessionCard({ session, sessions }: { session: Session; sessions: Sessio
   const lowerCount = comparisonValues.filter(c => c.delta < -0.5).length;
   const similarCount = comparisonValues.length - improvedCount - lowerCount;
 
-  const chartData = sortedPapers.map(p => ({
-    name: truncate(cleanTitle(p.title)),
-    fullTitle: cleanTitle(p.title),
-    modelName: p.modelName || 'unknown model',
-    Overall: p.overallScore ?? 0,
-    OtherAverage: comparisons.get(p.id)?.otherAverage ?? null,
-    Delta: comparisons.get(p.id)?.delta ?? null,
-  }));
-
   return (
     <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
       <div className="flex items-center gap-2 p-5 bg-white border-b border-slate-100">
@@ -429,7 +413,7 @@ function SessionCard({ session, sessions }: { session: Session; sessions: Sessio
                 </AnimatePresence>
               </div>
 
-              {chartData.length > 0 && (
+              {sortedPapers.length > 0 && (
                 <>
                   <div>
                     <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">
@@ -465,43 +449,6 @@ function SessionCard({ session, sessions }: { session: Session; sessions: Sessio
                         No matching paper titles were found in other saved prompt sessions yet.
                       </p>
                     )}
-                  </div>
-
-                  {/* Overall score chart */}
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Overall Intrinsic Score (/100) — highest first</p>
-                    <ResponsiveContainer width="100%" height={Math.max(120, chartData.length * 44)}>
-                      <BarChart data={chartData} layout="vertical" margin={{ left: 8, right: 40, top: 0, bottom: 0 }}>
-                        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                        <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
-                        <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 11 }} />
-                        <Tooltip
-                          content={({ active, payload }) => {
-                            if (!active || !payload?.length) return null;
-                            const d = payload[0].payload;
-                            return (
-                              <div className="bg-white border border-slate-200 rounded-xl p-3 shadow-lg max-w-xs">
-                                <p className="text-xs font-bold text-slate-800 mb-1 leading-snug">{d.fullTitle}</p>
-                                <p className="text-[11px] text-slate-500 mb-2 flex items-center gap-1">
-                                  <Cpu className="w-3 h-3" /> {d.modelName}
-                                </p>
-                                <p className="text-sm font-black text-indigo-600">{d.Overall}/100 overall</p>
-                                {d.OtherAverage != null && (
-                                  <p className="text-xs font-bold text-slate-600 mt-1">
-                                    Other prompt avg: {formatScore(d.OtherAverage)} · Δ {formatDelta(d.Delta ?? 0)}
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          }}
-                        />
-                        <Bar dataKey="Overall" radius={[0, 6, 6, 0]}>
-                          {chartData.map((d, i) => (
-                            <Cell key={i} fill={SCORE_COLOR(d.Overall)} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
                   </div>
 
                   {/* Table with expandable review rows */}
