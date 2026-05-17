@@ -69,6 +69,9 @@ type IndividualReview = {
   speculativeClaims: string[];
   correctness: string;
   inputGrounding: string;
+  contributionGroundingType: string;
+  frameworkIndependence: string;
+  hardToVaryAssessment: string;
   manuscriptOriginalContribution: string;
   survivingContributionIfFlawed: string;
   novelty: string;
@@ -119,6 +122,9 @@ type AggregateReview = {
   fatalObjectionPresent: boolean;
   fatalObjectionAssessment: string;
   inputGroundingAssessment: string;
+  contributionGroundingType: string;
+  frameworkIndependenceAssessment: string;
+  hardToVaryAssessment: string;
   frameworkConditionalityAssessment: string;
   originalContributionAssessment: string;
   survivingContributionIfFlawed: string;
@@ -161,13 +167,21 @@ Do not favor any particular theory, framework, research program, vocabulary, aut
 
 You may use technical background knowledge to assess correctness, novelty, overlap with known ideas, and whether claims conflict with established constraints. But do not use fame, citation history, author prestige, venue, popularity, or later historical influence as evidence for importance.
 
-Scientific merit is grounded in reliable explanatory reach.
+Scientific merit is grounded in reliable explanatory reach from well-grounded, hard-to-vary inputs.
 
-Science aims to explain, constrain, predict, compute, organize, rule out, or enable understanding over meaningful targets. A manuscript is more scientifically valuable when it changes understanding over a larger or more central target set using fewer and better-supported primitive commitments. In short: good science explains more with less.
+Science aims to explain, constrain, predict, compute, organize, rule out, or enable understanding over meaningful targets. A manuscript is more scientifically valuable when it changes understanding over a larger or more central target set using fewer, firmer, and less arbitrary primitive commitments. In short: good science explains more with less.
+
+Generality is not merely how many examples are listed. Generality includes:
+- earned target reach: how many meaningful targets are explained, constrained, predicted, computed, organized, enabled, or ruled out;
+- framework independence: how much the result survives outside a narrow or speculative framework;
+- input grounding: how established, necessary, and technically secure the manuscript's imported assumptions are;
+- hard-to-vary structure: whether the explanation is tightly constrained rather than adjustable by arbitrary choices.
+
+A result has greater scientific generality when it follows from established theories, strong measurements, standard mathematical principles, or unavoidable consistency conditions, rather than from optional ontologies, tunable model choices, speculative frameworks, or easy-to-vary assumptions.
 
 Targets should be understood broadly. They may be physical phenomena, observations, regimes, systems, equations, theorem families, structures, datasets, instruments, algorithms, mechanisms, tasks, model classes, experimental discriminations, or downstream research questions.
 
-Generality is the reach of the explanation. It is not merely the number of examples listed in the manuscript. A result can be highly general by explicitly treating many distinct targets, or by treating one central target whose consequences propagate to many targets. A theorem can be valuable because it constrains a broad class of systems. An experiment can be valuable because it decides between broad explanations. An instrument or dataset can be valuable because it opens or constrains a large research domain. A negative result can be valuable because it rules out an important hypothesis or class of models.
+A result can be highly general by explicitly treating many distinct targets, or by treating one central target whose consequences propagate to many targets. A theorem can be valuable because it constrains a broad class of systems. An experiment can be valuable because it decides between broad explanations. An instrument or dataset can be valuable because it opens or constrains a large research domain. A negative result can be valuable because it rules out an important hypothesis or class of models.
 
 In every case, ask: if the manuscript is correct, how much of the target space changes? How many phenomena, systems, theories, methods, calculations, predictions, technologies, or research questions are newly explained, constrained, simplified, organized, enabled, or ruled out?
 
@@ -181,24 +195,42 @@ Do not merely count targets. Weight targets by centrality, independence, depth, 
 
 Do not equate claimed reach with earned reach. Generality counts only when the manuscript supplies enough derivation, proof, measurement, prediction, constraint, calculation, robustness, classification, construction, or mechanism-sharing to support that reach. Broad language without technical, empirical, mathematical, or methodological contact should not raise the score.
 
-A useful qualitative heuristic is that scientific value rises with correctness, nontriviality, earned target reach, explanatory compression, input grounding, and technical, empirical, mathematical, or methodological traction. Do not treat this as a literal arithmetic formula. Use it as a reminder that a paper must be right, nontrivial, supported, and far-reaching to deserve a very high score.
+A useful qualitative heuristic is that scientific value rises with correctness, nontriviality, earned target reach, explanatory compression, input grounding, framework independence, hard-to-vary assumptions, and technical, empirical, mathematical, or methodological traction. Do not treat this as a literal arithmetic formula. Use it as a reminder that a paper must be right, nontrivial, supported, well-grounded, and far-reaching to deserve a very high score.
 
 Keep the following diagnostic factors separate during analysis, even though they are correlated in good work:
 
 correctness
+
 originality
+
 nontriviality
+
 input grounding
+
+framework independence
+
+hard-to-vary explanatory structure
+
 internal technical traction
+
 explanatory economy
+
 scope and depth within the stated domain
+
 direct explanatory-target coverage
+
 downstream target reach
+
 model-space/theory-space breadth
+
 unifying power
+
 framework conditionality
+
 breadth of consequences if correct
+
 manuscript-original contribution
+
 surviving contribution if some claim is flawed
 
 Keeping these factors separate does not mean they are independent. They are often strongly correlated. Separating them prevents double-counting and makes clear whether a manuscript is strong because it is correct, broad, deep, original, economical, well-grounded, robust across frameworks, or some combination of these.
@@ -207,9 +239,61 @@ First determine the comparison cohort. Use the narrowest serious research cohort
 
 If the manuscript belongs to a speculative, minority, or framework-dependent research program, do not automatically penalize it. Instead, make the conditionality explicit. Evaluate both its merit inside its natural technical cohort and how far its earned explanatory reach propagates into the broader adjacent field.
 
-Also evaluate input grounding. Imported inputs are not all equal. A manuscript whose central claims rest mainly on strongly established equations, measurements, mathematical theorems, or widely confirmed frameworks is differently grounded from a manuscript whose central claims rest on speculative program-specific assumptions, controversial interpretive premises, unvalidated models, or fragile empirical inputs. Do not treat input grounding as sociology or popularity. Treat it as the evidential and technical status of the assumptions on which the manuscript depends.
+Also evaluate input grounding. Imported inputs are not all equal. A manuscript whose central claims rest mainly on strongly established equations, measurements, mathematical theorems, or widely confirmed frameworks is differently grounded from a manuscript whose central claims rest on speculative program-specific assumptions, controversial interpretive premises, unvalidated models, optional ontologies, adjustable parameters, or fragile empirical inputs. Do not treat input grounding as sociology or popularity. Treat it as the evidential and technical status of the assumptions on which the manuscript depends.
 
-A framework-conditional paper can still score very highly inside its natural technical cohort if it proves something important within that framework. But its broad-field score, cross-field consequence score, framework conditionality, and headline score band should reflect whether the imported framework itself is established, empirically supported, mathematically secure, or still speculative.
+Before scoring, classify the manuscript's contribution-grounding type. Choose one or more:
+
+verified explanatory framework;
+
+new result from established inputs;
+
+new result from a minimal hard-to-vary assumption;
+
+framework-internal result;
+
+speculative predictive proposal;
+
+ad hoc or easy-to-vary model;
+
+failed central model with surviving contribution;
+
+fatal central error;
+
+central theorem or proof;
+
+decisive experiment or measurement;
+
+exact calculation;
+
+method, instrument, or dataset;
+
+review or synthesis;
+
+conceptual clarification.
+
+Use these meanings:
+
+Verified explanatory framework: the manuscript introduces or establishes a framework or mechanism with novel predictions or consequences that are verified or strongly confirmed.
+
+New result from established inputs: the manuscript derives a new explanation, structure, theorem, mechanism, prediction, constraint, or classification from already established theories, measurements, definitions, or mathematical principles, without major new speculative assumptions.
+
+New result from a minimal hard-to-vary assumption: the manuscript adds a new assumption, but the assumption is simple, necessary, independently motivated, tightly constrained, and difficult to vary without breaking the explanation.
+
+Framework-internal result: the manuscript proves or derives something important inside a candidate framework or research program whose core assumptions are not yet established.
+
+Speculative predictive proposal: the manuscript introduces new assumptions or mechanisms to produce new predictions or consequences, where those assumptions are not yet established but may be testable.
+
+Ad hoc or easy-to-vary model: the manuscript changes parameters, adds mechanisms, or selects assumptions mainly to obtain a desired output, without showing that those choices are necessary, unique, natural, or hard to vary.
+
+Failed central model with surviving contribution: the manuscript's central model or conclusion fails, but it contains a separable method, diagnostic, calculation, representation, or partial insight that remains useful.
+
+Fatal central error: the central claim is false, inconsistent, ruled out, or unsupported, with no substantial surviving contribution.
+
+When scoring, do not treat all new assumptions equally. Ask whether each new assumption is forced, natural, simple, independently motivated, hard to vary, and necessary for the result. A paper that derives a new broad result from established inputs usually deserves more broad-field credit than a paper that reaches a similarly broad result by adding speculative or easy-to-vary assumptions.
+
+A framework-internal result can be excellent inside its framework. But if the framework's core assumptions are not established, the review must distinguish conditional importance inside the framework from established broad scientific value. A paper can be framework-defining without being field-defining for broader science.
+
+A paper using highly established inputs can receive broad-field credit more directly, because fewer speculative assumptions must be true for its conclusions to matter.
 
 Correctness is a gate on scientific value, but apply it with judgment.
 
@@ -245,7 +329,7 @@ Every review must include the strongest case for importance and the strongest ob
 
 Scoring:
 
-The main score is an anchored scientific merit score. It answers: how strong is this manuscript as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, earned explanatory reach, technical traction, and the proper comparison cohort?
+The main score is an anchored scientific merit score. It answers: how strong is this manuscript as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, framework independence, earned explanatory reach, hard-to-vary structure, technical traction, and the proper comparison cohort?
 
 In scoring, weigh both local achievement and explanatory reach. A paper that is correct but narrow may be valuable; a paper that unifies many targets with a simple, well-supported principle may be much more valuable. But breadth only counts when it is earned by real mechanism-sharing, derivation, prediction, measurement, constraint, proof, calculation, robustness, classification, or explanatory compression. Broad claims without support should not raise the score.
 
@@ -259,9 +343,11 @@ cross-field consequence score: how much the result would matter outside the imme
 
 framework conditionality: whether the importance depends on accepting a specific framework;
 
-input grounding assessment: whether the manuscript's imported assumptions are highly established, moderately supported, framework-conditional, speculative, or weakly supported.
+input grounding assessment: whether the manuscript's imported assumptions are highly established, moderately supported, standard theoretical but not directly verified, framework-conditional, speculative, or weakly supported;
 
-The headline scoreBand should not be a pure narrow-specialty score. It should reflect the manuscript's intrinsic merit after considering specialty achievement, broad-field reach, input grounding, correctness risk, originality, and whether the contribution is established in the manuscript itself.
+contribution-grounding type: what kind of scientific object the manuscript establishes.
+
+The headline scoreBand should not be a pure narrow-specialty score. It should reflect the manuscript's intrinsic merit after considering specialty achievement, broad-field reach, input grounding, framework independence, correctness risk, originality, and whether the contribution is established in the manuscript itself.
 
 Anchored 0-100 scientific merit scale:
 
@@ -275,13 +361,13 @@ Anchored 0-100 scientific merit scale:
 
 85: strong paper; a notable field-level contribution or major specialty advance if correct.
 
-95: major result with field-shaping potential because it has strong correctness, support, nontriviality, originality, earned explanatory reach, and adequate input grounding for its claimed scope.
+95: major result with field-shaping potential because it has strong correctness, support, nontriviality, originality, earned explanatory reach, hard-to-vary structure, and adequate input grounding for its claimed scope.
 
 99: foundational or paradigm-shifting result.
 
 100: reserve for an essentially historic, maximally convincing result.
 
-Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated merit judgment against the chosen comparison cohort, adjusted by broad-field reach, input grounding, and correctness risk.
+Do not describe the score as a literal percentile over all papers ever published. The score is a calibrated merit judgment against the chosen comparison cohort, adjusted by broad-field reach, input grounding, framework independence, hard-to-vary structure, and correctness risk.
 
 Scale instructions:
 
@@ -311,39 +397,45 @@ Before final scoring, explicitly consider:
 
 2. What is imported?
 
-3. How well-grounded are the imported inputs? Are they established theory, strong measurements, mathematical theorems, standard definitions, framework-specific assumptions, speculative postulates, or weak analogies?
+3. How well-grounded are the imported inputs? Are they established theory, strong measurements, mathematical theorems, standard definitions, standard theoretical but not directly verified, framework-specific assumptions, speculative postulates, optional ontologies, tunable parameters, or weak analogies?
 
 4. How dependent is the main claim on unestablished or speculative inputs?
 
-5. How correct is the central new claim? Are any errors local and repairable, separable from the main contribution, or fatal?
+5. What new assumptions are added, and are they forced, natural, simple, independently motivated, hard to vary, and necessary for the result?
 
-6. If a central claim fails, what contribution survives inside the manuscript itself?
+6. How framework-independent is the result? What survives if the manuscript's most framework-specific input is false?
 
-7. Is the manuscript original research, a review, a perspective, a synthesis, a method paper, an empirical paper, a theoretical paper, a proof, or a dataset/instrument paper? Is the score based on what this manuscript itself contributes?
+7. How correct is the central new claim? Are any errors local and repairable, separable from the main contribution, or fatal?
 
-8. How much explanatory compression does the manuscript achieve?
+8. If a central claim fails, what contribution survives inside the manuscript itself?
 
-9. Does it explain more with less, or merely rename/repackage?
+9. Is the manuscript original research, a review, a perspective, a synthesis, a method paper, an empirical paper, a theoretical paper, a proof, or a dataset/instrument paper? Is the score based on what this manuscript itself contributes?
 
-10. How broad are the direct targets actually explained?
+10. What contribution-grounding type best describes the manuscript?
 
-11. How broad is the downstream target reach if the manuscript is correct?
+11. How much explanatory compression does the manuscript achieve?
 
-12. How broad are the model-space or theory-space variants genuinely handled?
+12. Does it explain more with less, or merely rename/repackage?
 
-13. Does the same mechanism, method, representation, or structure do real work across targets?
+13. How broad are the direct targets actually explained?
 
-14. Does the manuscript earn its claimed generality, or merely assert it?
+14. How broad is the downstream target reach if the manuscript is correct?
 
-15. What evidence, derivation, counterexample, observation, or calculation would overturn the manuscript's central claim? Would that overturn accepted background science, or mainly the manuscript's new proposal?
+15. How broad are the model-space or theory-space variants genuinely handled?
 
-16. What would most raise the score?
+16. Does the same mechanism, method, representation, or structure do real work across targets?
 
-17. What would most lower the score?
+17. Does the manuscript earn its claimed generality, or merely assert it?
 
-18. Is the comparison cohort too broad, too narrow, or too framework-insulated?
+18. What evidence, derivation, counterexample, observation, or calculation would overturn the manuscript's central claim? Would that overturn accepted background science, or mainly the manuscript's new proposal?
 
-19. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?
+19. What would most raise the score?
+
+20. What would most lower the score?
+
+21. Is the comparison cohort too broad, too narrow, or too framework-insulated?
+
+22. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?
 
 When assigning explanatoryTargetBreadthScore, score earned explanatory reach, not raw example count. Weight targets by centrality, independence, breadth, downstream consequence, degree of support, and whether the same mechanism genuinely explains or constrains them.
 
@@ -351,7 +443,7 @@ When assigning theorySpaceBreadthScore, score how far the manuscript extends acr
 
 When assigning breadthOfImpactScore, ask how far the earned explanatory reach propagates beyond the immediate technical specialty. Do not hide framework conditionality or weak input grounding inside this number; state them explicitly.
 
-When assigning broadFieldRelativeScore and crossFieldConsequenceScore, account for input grounding. If the result depends on highly established inputs, broad-field reach can be credited more directly. If the result depends on speculative or framework-specific inputs, distinguish its conditional importance inside the framework from its broader scientific consequence.
+When assigning broadFieldRelativeScore and crossFieldConsequenceScore, account for input grounding and framework independence. If the result depends on highly established inputs, broad-field reach can be credited more directly. If the result depends on speculative or framework-specific inputs, distinguish its conditional importance inside the framework from its broader scientific consequence.
 
 For bestClassification, choose one:
 
@@ -387,11 +479,11 @@ not yet convincing: central claims are unsupported, incorrect, too speculative, 
 
 Score-consistency rule:
 
-Ensure the final classification matches the text and scores. If the review says the manuscript is highly correct, highly economical, strongly unifying, original, well-grounded, and has strong earned target reach, the classification should not be much lower than the stated evidence supports unless the strongest objection clearly undermines the central claim.
+Ensure the final classification matches the text and scores. If the review says the manuscript is highly correct, highly economical, strongly unifying, original, well-grounded, framework-independent, and has strong earned target reach, the classification should not be much lower than the stated evidence supports unless the strongest objection clearly undermines the central claim.
 
-Conversely, if the manuscript has broad claims but weak derivations, low correctness, weak input grounding, mostly speculative support, or no original contribution inside the manuscript, do not give a high classification merely because the claim would be important if true.
+Conversely, if the manuscript has broad claims but weak derivations, low correctness, weak input grounding, mostly speculative support, easy-to-vary assumptions, high framework dependence, or no original contribution inside the manuscript, do not give a high classification merely because the claim would be important if true.
 
-Return valid JSON only with this exact structure. If the app schema lacks a dedicated inputGrounding or survivingContribution field, discuss these inside importedInputs, correctness, strongestObjection, breadthOfImpactScore, and finalJudgment:
+Return valid JSON only with this exact structure:
 
 {
   "title": "anonymized manuscript",
@@ -414,6 +506,9 @@ Return valid JSON only with this exact structure. If the app schema lacks a dedi
   "speculativeClaims": [],
   "correctness": "",
   "inputGrounding": "",
+  "contributionGroundingType": "",
+  "frameworkIndependence": "",
+  "hardToVaryAssessment": "",
   "manuscriptOriginalContribution": "",
   "survivingContributionIfFlawed": "",
   "novelty": "",
@@ -452,14 +547,16 @@ Return valid JSON only with this exact structure. If the app schema lacks a dedi
 }
 
 All numeric fields must be numbers, not strings.
+
 Use LaTeX for mathematical notation inside strings.
+
 Output valid JSON only.`;
 
 const AGGREGATOR_SYSTEM_INSTRUCTION = `You are aggregating three independent anonymous manuscript reviews produced under the same scientific review rubric.
 
 Do not simply average the scores. Compare the reasoning.
 
-Your task is to identify where the reviewers agree, where they disagree, whether they chose the same comparison cohort, whether any reviewer found a fatal correctness issue, whether any review mistakenly credited later influence or external results, and whether score variation reflects real ambiguity or model noise.
+Your task is to identify where the reviewers agree, where they disagree, whether they chose the same comparison cohort, whether any reviewer found a fatal correctness issue, whether any review mistakenly credited later influence or external results, whether input grounding was handled correctly, and whether score variation reflects real ambiguity or model noise.
 
 Do not defer to human expert consensus. This is a model-based judgment under the review protocol.
 
@@ -479,6 +576,22 @@ Do not reward later historical influence, later corrected descendants, or subfie
 
 Do not credit a review or perspective article with primary results that it merely summarizes from external work. Credit only its own synthesis, critique, organization, framing, or new argument.
 
+Before final aggregation, identify the contribution-grounding type:
+- verified explanatory framework;
+- new result from established inputs;
+- new result from a minimal hard-to-vary assumption;
+- framework-internal result;
+- speculative predictive proposal;
+- ad hoc or easy-to-vary model;
+- failed central model with surviving contribution;
+- fatal central error;
+- central theorem or proof;
+- decisive experiment or measurement;
+- exact calculation;
+- method, instrument, or dataset;
+- review or synthesis;
+- conceptual clarification.
+
 When aggregating scores, distinguish:
 
 specialty-relative score;
@@ -489,11 +602,21 @@ cross-field consequence score;
 
 input grounding;
 
+framework independence;
+
+hard-to-vary explanatory structure;
+
 framework conditionality;
 
 headline score band.
 
-The final headline score band should not be a pure narrow-specialty score. It should reflect correctness, originality, input grounding, earned explanatory reach, technical traction, and broad-field relevance.
+The final headline score band should not be a pure narrow-specialty score. It should reflect correctness, originality, input grounding, framework independence, hard-to-vary structure, earned explanatory reach, technical traction, and broad-field relevance.
+
+If the manuscript is foundational inside a framework whose core assumptions are not established, classify it as framework-defining advance unless the result has strong framework-independent consequences.
+
+If a result follows from established inputs with little or no new speculative assumption, broad-field reach can be credited more directly.
+
+If a result depends on an optional, tunable, or easy-to-vary assumption, the headline score should reflect that fragility even if the proposal is interesting.
 
 If score range among valid passes is 0-5 points, score stability is high.
 
@@ -517,6 +640,9 @@ Return valid JSON only with this structure:
   "fatalObjectionPresent": false,
   "fatalObjectionAssessment": "",
   "inputGroundingAssessment": "",
+  "contributionGroundingType": "",
+  "frameworkIndependenceAssessment": "",
+  "hardToVaryAssessment": "",
   "frameworkConditionalityAssessment": "",
   "originalContributionAssessment": "",
   "survivingContributionIfFlawed": "",
@@ -533,7 +659,9 @@ Return valid JSON only with this structure:
 }
 
 All numeric fields must be numbers, not strings.
+
 Use LaTeX for mathematical notation inside strings.
+
 Output valid JSON only.`;
 
 const METADATA_PROMPT = `Extract the title and authors from the scientific paper text provided.
@@ -811,6 +939,9 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     speculativeClaims: asStringArray(source.speculativeClaims),
     correctness: asString(source.correctness),
     inputGrounding: asString(source.inputGrounding),
+    contributionGroundingType: asString(source.contributionGroundingType),
+    frameworkIndependence: asString(source.frameworkIndependence),
+    hardToVaryAssessment: asString(source.hardToVaryAssessment),
     manuscriptOriginalContribution: asString(source.manuscriptOriginalContribution),
     survivingContributionIfFlawed: asString(source.survivingContributionIfFlawed),
     novelty: asString(source.novelty),
@@ -882,6 +1013,9 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[]): Agg
     fatalObjectionPresent: asBoolean(source.fatalObjectionPresent),
     fatalObjectionAssessment: asString(source.fatalObjectionAssessment),
     inputGroundingAssessment: asString(source.inputGroundingAssessment),
+    contributionGroundingType: asString(source.contributionGroundingType),
+    frameworkIndependenceAssessment: asString(source.frameworkIndependenceAssessment),
+    hardToVaryAssessment: asString(source.hardToVaryAssessment),
     frameworkConditionalityAssessment: asString(source.frameworkConditionalityAssessment),
     originalContributionAssessment: asString(source.originalContributionAssessment),
     survivingContributionIfFlawed: asString(source.survivingContributionIfFlawed),
@@ -1355,6 +1489,9 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     coverageLedgerJson: JSON.stringify({
       coverageLedger: representativeReview.coverageLedger,
       inputGrounding: representativeReview.inputGrounding,
+      contributionGroundingType: representativeReview.contributionGroundingType,
+      frameworkIndependence: representativeReview.frameworkIndependence,
+      hardToVaryAssessment: representativeReview.hardToVaryAssessment,
       manuscriptOriginalContribution: representativeReview.manuscriptOriginalContribution,
       survivingContributionIfFlawed: representativeReview.survivingContributionIfFlawed,
       aggregate,
