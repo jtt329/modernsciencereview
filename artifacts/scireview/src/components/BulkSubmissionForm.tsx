@@ -9,11 +9,34 @@ interface BulkFile {
   file: File;
   status: 'pending' | 'processing' | 'done' | 'error';
   error?: string;
+  attempts?: number;
 }
 
 interface BulkSubmissionFormProps {
   onSubmit: (source: ReviewSource, skipSelect?: boolean) => Promise<void>;
   onClose: () => void;
+}
+
+const MAX_AUTO_RETRIES = 3;
+const TRANSIENT_RETRY_DELAY_MS = 45_000;
+const BETWEEN_FILE_DELAY_MS = 2_500;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientReviewError(message: string) {
+  return /transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
+}
+
+function updateFile(prev: BulkFile[], id: string, patch: Partial<BulkFile>, moveToEnd = false) {
+  const index = prev.findIndex((file) => file.id === id);
+  if (index === -1) return prev;
+  const updated = { ...prev[index], ...patch };
+  if (!moveToEnd) {
+    return prev.map((file) => file.id === id ? updated : file);
+  }
+  return [...prev.slice(0, index), ...prev.slice(index + 1), updated];
 }
 
 export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmissionFormProps) {
@@ -40,12 +63,15 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
   const doneCount = files.filter(f => f.status === 'done').length;
 
   const handleBulkSubmit = async (retryErrors = false) => {
-    const toProcess = files.filter(f => retryErrors ? f.status === 'error' : f.status === 'pending');
-    if (toProcess.length === 0) return;
+    const queue = files
+      .filter(f => retryErrors ? f.status === 'error' : f.status === 'pending')
+      .map((bulkFile) => ({ bulkFile, attempts: retryErrors ? 0 : bulkFile.attempts ?? 0 }));
+    if (queue.length === 0) return;
     setIsSubmitting(true);
 
-    for (const bulkFile of toProcess) {
-      setFiles(prev => prev.map(f => f.id === bulkFile.id ? { ...f, status: 'processing' } : f));
+    while (queue.length > 0) {
+      const { bulkFile, attempts } = queue.shift()!;
+      setFiles(prev => updateFile(prev, bulkFile.id, { status: 'processing', attempts }));
       try {
         const base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -54,9 +80,26 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
           reader.readAsDataURL(bulkFile.file);
         });
         await onSubmit({ type: 'pdf', data: base64, model, fileName: bulkFile.file.name }, true);
-        setFiles(prev => prev.map(f => f.id === bulkFile.id ? { ...f, status: 'done' } : f));
+        setFiles(prev => updateFile(prev, bulkFile.id, { status: 'done', error: undefined, attempts: 0 }));
       } catch (err: any) {
-        setFiles(prev => prev.map(f => f.id === bulkFile.id ? { ...f, status: 'error', error: err.message } : f));
+        const message = err?.message || String(err);
+        const nextAttempts = attempts + 1;
+        if (isTransientReviewError(message) && nextAttempts <= MAX_AUTO_RETRIES) {
+          setFiles(prev => updateFile(
+            prev,
+            bulkFile.id,
+            {
+              status: 'pending',
+              attempts: nextAttempts,
+              error: `Transient model error; requeued for automatic retry ${nextAttempts}/${MAX_AUTO_RETRIES}.`,
+            },
+            true,
+          ));
+          queue.push({ bulkFile, attempts: nextAttempts });
+          await sleep(queue.length === 1 ? TRANSIENT_RETRY_DELAY_MS : BETWEEN_FILE_DELAY_MS);
+        } else {
+          setFiles(prev => updateFile(prev, bulkFile.id, { status: 'error', error: message, attempts: nextAttempts }));
+        }
       }
     }
     setIsSubmitting(false);
@@ -193,7 +236,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
           {errorCount > 0 && pendingCount === 0 && !isSubmitting ? (
             <>
               <button
-                onClick={() => setFiles(prev => prev.map(f => ({ ...f, status: 'pending', error: undefined })))}
+                onClick={() => setFiles(prev => prev.map(f => ({ ...f, status: 'pending', error: undefined, attempts: 0 })))}
                 className="flex items-center gap-2 px-6 py-3 rounded-2xl font-bold text-slate-600 border border-slate-200 hover:bg-slate-50 transition-colors"
               >
                 <RotateCcw className="w-4 h-4" /> Restart All

@@ -679,7 +679,7 @@ Return a JSON object with exactly two fields:
 - authors: string
 Output valid JSON only.`;
 
-const MODEL_CALL_ATTEMPTS = 3;
+const MODEL_CALL_ATTEMPTS = 4;
 
 function stripControlChars(text: string) {
   return text.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
@@ -690,7 +690,34 @@ function sleep(ms: number) {
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+  const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed = JSON.parse(raw);
+    const apiError = parsed?.error;
+    if (apiError) {
+      return [
+        apiError.code ? `code ${apiError.code}` : "",
+        apiError.status,
+        apiError.message,
+      ].filter(Boolean).join(": ");
+    }
+  } catch {}
+  return raw;
+}
+
+function isTransientModelError(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    /\b(429|500|502|503|504)\b/.test(message) ||
+    /resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|deadline|internal/.test(message)
+  );
+}
+
+function retryDelayMs(attempt: number, error: unknown) {
+  const transientDelays = [2500, 9000, 25000];
+  const normalDelays = [1200, 4800, 12000];
+  const delays = isTransientModelError(error) ? transientDelays : normalDelays;
+  return (delays[attempt - 1] ?? 12000) + Math.floor(Math.random() * 750);
 }
 
 async function withModelRetries<T>(label: string, fn: () => Promise<T>): Promise<T> {
@@ -701,10 +728,11 @@ async function withModelRetries<T>(label: string, fn: () => Promise<T>): Promise
     } catch (error) {
       lastError = error;
       if (attempt === MODEL_CALL_ATTEMPTS) break;
-      await sleep(1200 * attempt * attempt + Math.floor(Math.random() * 400));
+      await sleep(retryDelayMs(attempt, error));
     }
   }
-  throw new Error(`${label} failed after ${MODEL_CALL_ATTEMPTS} attempts: ${errorMessage(lastError)}`);
+  const prefix = isTransientModelError(lastError) ? "Transient model error: " : "";
+  throw new Error(`${prefix}${label} failed after ${MODEL_CALL_ATTEMPTS} attempts: ${errorMessage(lastError)}`);
 }
 
 function asString(value: unknown, fallback = "") {
@@ -1296,14 +1324,18 @@ async function runIndividualPass(
   } catch (error) {
     if (model !== "gemini" || GEMINI_PASS_MODEL === GEMINI_META_MODEL) throw error;
 
-    const { parsed, thinkingText } = await callGemini(prompt, input, GEMINI_META_MODEL);
-    const fallbackNote = `Flash pass ${index + 1} failed after retries; recovered with ${GEMINI_META_MODEL}.\nFailure: ${errorMessage(error)}`;
-    return {
-      review: normalizeIndividualReview(parsed),
-      thinkingText: [fallbackNote, thinkingText].filter(Boolean).join("\n\n"),
-      index,
-      modelName: `${GEMINI_PASS_MODEL} fallback ${GEMINI_META_MODEL}`,
-    };
+    try {
+      const { parsed, thinkingText } = await callGemini(prompt, input, GEMINI_META_MODEL);
+      const fallbackNote = `Flash pass ${index + 1} failed after retries; recovered with ${GEMINI_META_MODEL}.\nFailure: ${errorMessage(error)}`;
+      return {
+        review: normalizeIndividualReview(parsed),
+        thinkingText: [fallbackNote, thinkingText].filter(Boolean).join("\n\n"),
+        index,
+        modelName: `${GEMINI_PASS_MODEL} fallback ${GEMINI_META_MODEL}`,
+      };
+    } catch (fallbackError) {
+      throw new Error(`Flash pass failed (${errorMessage(error)}); Pro fallback failed (${errorMessage(fallbackError)})`);
+    }
   }
 }
 
@@ -1388,23 +1420,26 @@ async function generateMultiPassReview(
   const blindedContent = blindReviewInput(paperContent);
   const thinkingChunks: string[] = [];
 
-  const settledPassResults = await Promise.allSettled(
-    Array.from({ length: REVIEW_PASS_COUNT }, async (_unused, index) =>
-      runIndividualPass(systemPrompt, blindedContent, model, index),
-    ),
-  );
+  const passResults: IndividualPassResult[] = [];
+  const passFailures: { reason: unknown; index: number }[] = [];
 
-  const passResults = settledPassResults
-    .filter((result): result is PromiseFulfilledResult<IndividualPassResult> => result.status === "fulfilled")
-    .map((result) => result.value)
-    .sort((a, b) => a.index - b.index);
+  for (let index = 0; index < REVIEW_PASS_COUNT; index += 1) {
+    try {
+      passResults.push(await runIndividualPass(systemPrompt, blindedContent, model, index));
+    } catch (reason) {
+      passFailures.push({ reason, index });
+      if (passResults.length === 0 && isTransientModelError(reason)) {
+        break;
+      }
+    }
 
-  const passFailures = settledPassResults
-    .map((result, index) => ({ result, index }))
-    .filter((item): item is { result: PromiseRejectedResult; index: number } => item.result.status === "rejected");
+    if (index < REVIEW_PASS_COUNT - 1) {
+      await sleep(1500 + Math.floor(Math.random() * 600));
+    }
+  }
 
   if (passResults.length < 2) {
-    const details = passFailures.map(({ result, index }) => `pass ${index + 1}: ${errorMessage(result.reason)}`).join("; ");
+    const details = passFailures.map(({ reason, index }) => `pass ${index + 1}: ${errorMessage(reason)}`).join("; ");
     throw new Error(`Review failed: only ${passResults.length} of ${REVIEW_PASS_COUNT} independent passes completed. ${details}`);
   }
 
@@ -1414,8 +1449,8 @@ async function generateMultiPassReview(
       thinkingChunks.push(`Pass ${result.index + 1} (${result.modelName})\n${result.thinkingText}`);
     }
   }
-  for (const { result, index } of passFailures) {
-    thinkingChunks.push(`Pass ${index + 1} failed\n${errorMessage(result.reason)}`);
+  for (const { reason, index } of passFailures) {
+    thinkingChunks.push(`Pass ${index + 1} failed\n${errorMessage(reason)}`);
   }
 
   const { parsed: aggregateParsed, thinkingText: aggregateThinking } = await runModel(

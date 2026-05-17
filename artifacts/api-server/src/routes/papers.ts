@@ -265,7 +265,10 @@ router.post("/papers", async (req, res) => {
     res.json({ paper, review });
   } catch (err: any) {
     logger.error({ err }, "Error creating paper");
-    res.status(500).json({ error: err.message });
+    const message = err instanceof Error ? err.message : String(err);
+    const transient =
+      /transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
+    res.status(transient ? 503 : 500).json({ error: message, transient });
   }
 });
 
