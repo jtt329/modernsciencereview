@@ -153,7 +153,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             <div>
               <h2 className="text-xl font-black tracking-tight">Submit Scientific Paper</h2>
               <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">
-                Blind AI Review · {model === 'gemini' ? 'Gemini Flash + Pro' : 'GPT-5.4 Pro'}
+                Blind AI Review · {model === 'gemini' ? 'Gemini Flash x3 + Median' : 'GPT-5.4 Pro'}
                 {isBatch && ` · ${files.length} papers queued`}
               </p>
             </div>
@@ -198,7 +198,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
               </label>
               <div className="flex gap-2">
                 {([
-                  { id: 'gemini', label: 'Gemini Flash + Pro' },
+                  { id: 'gemini', label: 'Gemini Flash x3 + Median' },
                   { id: 'gpt', label: 'GPT-5.4 Pro' },
                 ] as const).map((m) => (
                   <button
@@ -264,7 +264,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
                         {qf.status === 'processing' && (
-                          <p className="text-xs text-indigo-500">Reviewing with {model === 'gemini' ? 'Gemini Flash + Pro' : 'GPT-5.4 Pro'}…</p>
+                          <p className="text-xs text-indigo-500">Reviewing with {model === 'gemini' ? 'Gemini Flash x3 + Median' : 'GPT-5.4 Pro'}…</p>
                         )}
                         {qf.status === 'error' && <p className="text-xs text-rose-600 truncate">{qf.error}</p>}
                       </div>
@@ -415,7 +415,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                {isBatch ? `${doneCount}/${files.length} done…` : `Reviewing with ${model === 'gemini' ? 'Gemini Flash + Pro' : 'GPT-5.4 Pro'}…`}
+                {isBatch ? `${doneCount}/${files.length} done…` : `Reviewing with ${model === 'gemini' ? 'Gemini Flash x3 + Median' : 'GPT-5.4 Pro'}…`}
               </>
             ) : (
               <>

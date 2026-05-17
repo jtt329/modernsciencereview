@@ -159,6 +159,80 @@ type IndividualPassResult = {
 
 export const REVIEW_SYSTEM_INSTRUCTION = `You are reviewing an anonymous scientific manuscript from its contents alone.
 
+Ignore author identity, institution, venue, citation counts, publication status, historical fame, later influence, and whether the work is familiar. If any of that information appears in the text, ignore it. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.
+
+Do not defer to human expert consensus. Give the best model-based scientific judgment under this review protocol.
+
+Core standard:
+Correctness is the gate. Explanatory reach is the main source of value.
+
+A manuscript is scientifically valuable to the extent that it correctly explains, constrains, predicts, computes, organizes, rules out, or enables understanding over meaningful targets using fewer, firmer, and less arbitrary commitments. In short: good science explains more with less.
+
+Targets may be physical phenomena, observations, regimes, systems, equations, theorem families, structures, datasets, instruments, algorithms, mechanisms, tasks, model classes, experimental discriminations, or downstream research questions.
+
+Do not merely count examples. Weight targets by centrality, independence, support, and downstream consequence. One central target can have enormous reach if many things depend on it. Many listed examples can have low reach if they are minor or only superficially connected.
+
+Correctness gate:
+If the central new claim is false, inconsistent, or ruled out by established constraints, the score should be low unless the manuscript establishes a clearly separable correct result that remains valuable without the failed claim. A small repairable error should lower confidence, not erase a durable contribution. A fatal central error with no substantial surviving contribution should receive a very low score.
+
+Do not give credit for later historical influence, later corrected descendants, famous authorship, or results established elsewhere. Score only what is present in this manuscript.
+
+For review articles, perspective pieces, or summaries, score the manuscript for its own synthesis, critique, organization, conceptual reframing, or new argument. Do not assign it the score of the primary research it summarizes unless it adds a new derivation, proof, classification, framework, or explanatory structure.
+
+Input grounding matters:
+Imported inputs are not all equal. A result derived from established theories, strong measurements, standard definitions, or mathematical theorems is more broadly grounded than a result that depends on a speculative framework, optional ontology, tunable parameter, or weak analogy. A paper can be excellent inside a framework, but if its importance depends on that framework being correct, make the conditionality explicit and reflect it in the broad-field score and final classification.
+
+Framework independence is one form of generality. A result that survives across frameworks is broader than a result that only works inside one unestablished framework. A framework-internal breakthrough may be a framework-defining advance without being field-defining for broader science.
+
+Reformulations and simple identities:
+A compact identity, reformulation, reparameterization, representation, or organizing perspective can be scientifically important if it identifies a useful concept, variable, representation, invariant, state space, abstraction, mechanism, measurement, or organizing principle; removes ambiguity; unifies targets; produces a new derivation; separates previously conflated mechanisms; improves prediction or measurement; or gives new calculational, experimental, mathematical, or methodological leverage.
+
+Do not dismiss a result merely because the algebra is simple. But do not reward relabeling unless it changes what can be derived, explained, predicted, measured, computed, constrained, organized, or ruled out.
+
+Before scoring, explicitly identify:
+1. the central new claim;
+2. what is genuinely established inside the manuscript;
+3. what is imported;
+4. the direct explanatory targets;
+5. the model-space or theory-space variants;
+6. whether one mechanism genuinely connects the targets;
+7. whether the key inputs are established, speculative, or framework-conditional;
+8. whether the central claim is correct, locally flawed, uncertain, or fatally flawed;
+9. the strongest case for importance;
+10. the strongest objection;
+11. what would most raise or lower the score.
+
+Scoring guide:
+0-10: fatal central error, empty contribution, or no real scientific merit.
+10-30: seriously flawed, mostly unsupported, or wrong but with a small surviving insight.
+30-50: coherent but weak, mostly speculative, mostly pedagogical, mostly summary, or mostly restatement.
+50-70: useful clarification or limited contribution.
+70-85: strong niche contribution or clearly above-average research.
+85-94: major specialty advance with strong correctness, originality, support, and earned explanatory reach.
+95-98: field-defining or framework-defining result with exceptional correctness, originality, support, and explanatory reach.
+99-100: historic, paradigm-shifting, maximally convincing result.
+
+Use the full range. Most ordinary papers should not be above 85. Scores above 90 should require unusually strong correctness, originality, support, and earned explanatory reach. Broad claims without support should not raise the score.
+
+Classifications:
+- field-defining advance
+- framework-defining advance
+- major specialty advance
+- strong niche contribution
+- useful clarification
+- elegant repackaging
+- not yet convincing
+
+Use "framework-defining advance" when the paper is foundational inside a candidate framework or research program, but broader scientific consequence depends substantially on whether that framework is correct or physically realized.
+
+Use "field-defining advance" only when the manuscript changes central concepts, methods, equations, constraints, or organizing principles of the comparison cohort and has strong grounding beyond a narrowly insulated framework.
+
+Return valid JSON only using the current app schema. If the schema has fields for comparison cohort, direct targets, imported inputs, theory-space variants, mechanism sharing, input grounding, framework conditionality, score band, and classification, fill them. If the schema lacks a dedicated field, discuss the issue in correctness, strongest objection, final judgment, or the nearest available field.
+
+All numeric fields must be numbers, not strings. Use LaTeX for mathematical notation inside strings.`;
+
+const LEGACY_GROUNDING_LADDER_PROMPT = `You are reviewing an anonymous scientific manuscript from its contents alone.
+
 Ignore author identity, institution, venue, citation counts, publication status, historical fame, and later influence. If any of that information appears in the text, ignore it. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.
 
 Do not defer to human expert consensus. Your task is to give the best model-based scientific judgment under this review protocol.
@@ -552,118 +626,6 @@ Use LaTeX for mathematical notation inside strings.
 
 Output valid JSON only.`;
 
-const AGGREGATOR_SYSTEM_INSTRUCTION = `You are aggregating three independent anonymous manuscript reviews produced under the same scientific review rubric.
-
-Do not simply average the scores. Compare the reasoning.
-
-Your task is to identify where the reviewers agree, where they disagree, whether they chose the same comparison cohort, whether any reviewer found a fatal correctness issue, whether any review mistakenly credited later influence or external results, whether input grounding was handled correctly, and whether score variation reflects real ambiguity or model noise.
-
-Do not defer to human expert consensus. This is a model-based judgment under the review protocol.
-
-Discard failed or empty review passes before aggregation. A pass with empty summary, empty central claim, default placeholder values, score 0 with no explanation, or invalid required fields is a failed generation, not a skeptical review. Rerun failed passes when possible. If fewer than three valid passes remain, report the number of valid passes and lower score confidence.
-
-If one review identifies a potentially fatal technical error and the others ignore it, do not average it away. Evaluate whether the objection is decisive.
-
-Apply the same nuanced correctness rule:
-
-A repairable local error should lower confidence, not erase a durable contribution.
-
-A false central claim with no separable surviving contribution should sharply lower the score.
-
-A flawed conclusion with a separable surviving method, theorem, dataset, construction, or perspective should be scored for what survives inside the manuscript itself.
-
-Do not reward later historical influence, later corrected descendants, or subfield catalysis as part of the intrinsic score. If a manuscript later inspired correct work, that may belong to a separate historical/trailblazer score, not the intrinsic scientific merit score.
-
-Do not credit a review or perspective article with primary results that it merely summarizes from external work. Credit only its own synthesis, critique, organization, framing, or new argument.
-
-Before final aggregation, identify the contribution-grounding type:
-- verified explanatory framework;
-- new result from established inputs;
-- new result from a minimal hard-to-vary assumption;
-- framework-internal result;
-- speculative predictive proposal;
-- ad hoc or easy-to-vary model;
-- failed central model with surviving contribution;
-- fatal central error;
-- central theorem or proof;
-- decisive experiment or measurement;
-- exact calculation;
-- method, instrument, or dataset;
-- review or synthesis;
-- conceptual clarification.
-
-When aggregating scores, distinguish:
-
-specialty-relative score;
-
-broad-field score;
-
-cross-field consequence score;
-
-input grounding;
-
-framework independence;
-
-hard-to-vary explanatory structure;
-
-framework conditionality;
-
-headline score band.
-
-The final headline score band should not be a pure narrow-specialty score. It should reflect correctness, originality, input grounding, framework independence, hard-to-vary structure, earned explanatory reach, technical traction, and broad-field relevance.
-
-If the manuscript is foundational inside a framework whose core assumptions are not established, classify it as framework-defining advance unless the result has strong framework-independent consequences.
-
-If a result follows from established inputs with little or no new speculative assumption, broad-field reach can be credited more directly.
-
-If a result depends on an optional, tunable, or easy-to-vary assumption, the headline score should reflect that fragility even if the proposal is interesting.
-
-If score range among valid passes is 0-5 points, score stability is high.
-
-If score range among valid passes is 6-12 points, score stability is medium.
-
-If score range among valid passes is greater than 12 points, score stability is low.
-
-Return valid JSON only with this structure:
-
-{
-  "finalComparisonCohort": "",
-  "finalBroadField": "",
-  "finalSpecialtyField": "",
-  "validPassCount": 0,
-  "discardedFailedPassCount": 0,
-  "individualScores": [],
-  "scoreRange": 0,
-  "scoreStability": "high | medium | low",
-  "mainAgreements": [],
-  "mainDisagreements": [],
-  "fatalObjectionPresent": false,
-  "fatalObjectionAssessment": "",
-  "inputGroundingAssessment": "",
-  "contributionGroundingType": "",
-  "frameworkIndependenceAssessment": "",
-  "hardToVaryAssessment": "",
-  "frameworkConditionalityAssessment": "",
-  "originalContributionAssessment": "",
-  "survivingContributionIfFlawed": "",
-  "laterInfluenceOrExternalResultRisk": "",
-  "finalClassification": "",
-  "finalScoreBand": {
-    "low": 0,
-    "median": 0,
-    "high": 0
-  },
-  "finalScoreConfidence": 0.0,
-  "publicOneParagraphVerdict": "",
-  "internalCalibrationNotes": ""
-}
-
-All numeric fields must be numbers, not strings.
-
-Use LaTeX for mathematical notation inside strings.
-
-Output valid JSON only.`;
-
 const METADATA_PROMPT = `Extract the title and authors from the scientific paper text provided.
 You will receive JSON containing filename hints, embedded PDF metadata, and the beginning of the extracted paper text.
 Prefer the title and author block printed in the manuscript header. Use embedded PDF metadata or the filename only as fallback hints, because they are often abbreviated, stale, or machine-generated.
@@ -746,10 +708,6 @@ function asNumber(value: unknown, fallback = 0, min?: number, max?: number) {
   return max != null ? Math.min(max, minSafe) : minSafe;
 }
 
-function asBoolean(value: unknown, fallback = false) {
-  return typeof value === "boolean" ? value : fallback;
-}
-
 function asStringArray(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => asString(item)).filter(Boolean);
@@ -808,6 +766,32 @@ function normalizeScoreBand(value: unknown) {
 
   const sorted = [low, median, high].sort((a, b) => a - b).map((item) => Math.round(item));
   return { low: sorted[0], median: sorted[1], high: sorted[2] };
+}
+
+function firstNumber(values: unknown[]) {
+  for (const value of values) {
+    const raw = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+    if (Number.isFinite(raw)) return raw;
+  }
+  return null;
+}
+
+function normalizeScoreBandWithFallback(source: Record<string, unknown>) {
+  const band = normalizeScoreBand(source.scoreBand);
+  const explicitScore = firstNumber([
+    source.score,
+    source.overallScore,
+    source.overallIntrinsicScore,
+    source.scientificMeritScore,
+    source.finalScore,
+  ]);
+
+  if (band.low === 0 && band.median === 0 && band.high === 0 && explicitScore != null) {
+    const score = Math.round(Math.max(0, Math.min(100, explicitScore)));
+    return { low: score, median: score, high: score };
+  }
+
+  return band;
 }
 
 function rangeToStability(range: number): ScoreStability {
@@ -940,7 +924,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     ? (source.frameworkConditionality as Record<string, unknown>)
     : {};
 
-  const normalizedScoreBand = normalizeScoreBand(source.scoreBand);
+  const normalizedScoreBand = normalizeScoreBandWithFallback(source);
   const normalizedSpecialtyScore = Math.round(asNumber(source.specialtyRelativeScore, normalizedScoreBand.median, 0, 100));
   const normalizedClassification =
     normalizeClassification(source.bestClassification) || classificationFallbackFromScore(normalizedScoreBand.median);
@@ -1004,56 +988,38 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
   };
 }
 
-function normalizeAggregateReview(input: unknown, fallbackScores: number[]): AggregateReview {
-  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
-  const scores = Array.isArray(source.individualScores)
-    ? (source.individualScores as unknown[]).map((item) => Math.round(asNumber(item, 0, 0, 100)))
-    : fallbackScores;
-  const usableScores = scores.length > 0 ? scores : fallbackScores;
-  const band = normalizeScoreBand(source.finalScoreBand);
-  const defaultBand = usableScores.length > 0
-    ? { low: Math.min(...usableScores), median: Math.round(usableScores.reduce((sum, item) => sum + item, 0) / usableScores.length), high: Math.max(...usableScores) }
-    : { low: 0, median: 0, high: 0 };
-  const finalBand = band.low === 0 && band.median === 0 && band.high === 0 ? defaultBand : band;
-  const range = finalBand.high - finalBand.low;
+function individualReviewReasoningText(review: IndividualReview) {
+  return [
+    review.summary,
+    review.centralClaim,
+    review.correctness,
+    review.inputGrounding,
+    review.novelty,
+    review.strongestCaseForImportance,
+    review.strongestObjection,
+    review.oneParagraphVerdict,
+    review.finalJudgment,
+  ].filter(Boolean).join("\n").trim();
+}
 
-  const fallbackClassification = classificationFallbackFromScore(finalBand.median);
-  const alignedAggregateClassification = alignClassificationToScore(
-    normalizeClassification(source.finalClassification) || fallbackClassification,
-    finalBand.median,
-  );
+function validateIndividualReview(review: IndividualReview) {
+  const reasoningText = individualReviewReasoningText(review);
+  const score = review.scoreBand.median;
+  const hasCoreReasoning =
+    reasoningText.length >= 80 &&
+    Boolean(review.correctness || review.finalJudgment || review.oneParagraphVerdict || review.summary);
 
-  return {
-    finalComparisonCohort: asString(source.finalComparisonCohort),
-    finalBroadField: asString(source.finalBroadField),
-    finalSpecialtyField: asString(source.finalSpecialtyField),
-    finalSummary: asString(source.finalSummary),
-    individualScores: usableScores,
-    scoreRange: Math.round(asNumber(source.scoreRange, range, 0, 100)),
-    scoreStability: (() => {
-      const candidate = asString(source.scoreStability).toLowerCase();
-      return candidate === "high" || candidate === "medium" || candidate === "low"
-        ? candidate
-        : rangeToStability(range);
-    })(),
-    mainAgreements: asStringArray(source.mainAgreements),
-    mainDisagreements: asStringArray(source.mainDisagreements),
-    fatalObjectionPresent: asBoolean(source.fatalObjectionPresent),
-    fatalObjectionAssessment: asString(source.fatalObjectionAssessment),
-    inputGroundingAssessment: asString(source.inputGroundingAssessment),
-    contributionGroundingType: asString(source.contributionGroundingType),
-    frameworkIndependenceAssessment: asString(source.frameworkIndependenceAssessment),
-    hardToVaryAssessment: asString(source.hardToVaryAssessment),
-    frameworkConditionalityAssessment: asString(source.frameworkConditionalityAssessment),
-    originalContributionAssessment: asString(source.originalContributionAssessment),
-    survivingContributionIfFlawed: asString(source.survivingContributionIfFlawed),
-    laterInfluenceOrExternalResultRisk: asString(source.laterInfluenceOrExternalResultRisk),
-    finalClassification: alignedAggregateClassification,
-    finalScoreBand: finalBand,
-    finalScoreConfidence: asNumber(source.finalScoreConfidence, 0.9, 0, 1),
-    publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict),
-    internalCalibrationNotes: asString(source.internalCalibrationNotes),
-  };
+  if (!Number.isFinite(score) || score < 0 || score > 100) {
+    throw new Error("Generated review did not include a valid 0-100 score.");
+  }
+
+  if (!hasCoreReasoning) {
+    throw new Error("Generated review was blank or missing substantive reasoning.");
+  }
+
+  if (score === 0 && reasoningText.length < 180) {
+    throw new Error("Generated review returned score 0 without enough reasoning; treating as failed generation.");
+  }
 }
 
 function toMarkdownList(items: string[]) {
@@ -1255,7 +1221,7 @@ export function buildPdfFallbackText(hints: MetadataHints) {
 
 async function callGpt(prompt: string, input: ReviewInput) {
   if (typeof input !== "string") {
-    throw new Error("OpenAI review currently requires extractable PDF text. Try Gemini Flash + Pro for this PDF.");
+    throw new Error("OpenAI review currently requires extractable PDF text. Try Gemini Flash x3 + Median for this PDF.");
   }
   return withModelRetries(GPT_MODEL, async () => {
     const response = await getOpenAI().chat.completions.create({
@@ -1315,8 +1281,10 @@ async function runIndividualPass(
 ): Promise<IndividualPassResult> {
   try {
     const { parsed, thinkingText } = await runModel(prompt, input, model, GEMINI_PASS_MODEL);
+    const review = normalizeIndividualReview(parsed);
+    validateIndividualReview(review);
     return {
-      review: normalizeIndividualReview(parsed),
+      review,
       thinkingText,
       index,
       modelName: model === "gemini" ? GEMINI_PASS_MODEL : GPT_MODEL,
@@ -1326,9 +1294,11 @@ async function runIndividualPass(
 
     try {
       const { parsed, thinkingText } = await callGemini(prompt, input, GEMINI_META_MODEL);
+      const review = normalizeIndividualReview(parsed);
+      validateIndividualReview(review);
       const fallbackNote = `Flash pass ${index + 1} failed after retries; recovered with ${GEMINI_META_MODEL}.\nFailure: ${errorMessage(error)}`;
       return {
-        review: normalizeIndividualReview(parsed),
+        review,
         thinkingText: [fallbackNote, thinkingText].filter(Boolean).join("\n\n"),
         index,
         modelName: `${GEMINI_PASS_MODEL} fallback ${GEMINI_META_MODEL}`,
@@ -1339,27 +1309,62 @@ async function runIndividualPass(
   }
 }
 
-function buildAggregateInput(blindedContent: ReviewInput, reviews: IndividualReview[]): ReviewInput {
-  const text = JSON.stringify({
-    blindedManuscript: reviewInputText(blindedContent),
-    reviewPasses: reviews.map((review, index) => ({
-      passNumber: index + 1,
-      review,
-    })),
-  }, null, 2);
-  if (typeof blindedContent === "string") return text;
-  return {
-    ...blindedContent,
-    text,
-  };
-}
-
 function pickRepresentativeReview(reviews: IndividualReview[], medianScore: number) {
   return [...reviews].sort((a, b) => {
     const aDelta = Math.abs(a.scoreBand.median - medianScore);
     const bDelta = Math.abs(b.scoreBand.median - medianScore);
     return aDelta - bDelta;
   })[0];
+}
+
+function medianScore(scores: number[]) {
+  const sorted = [...scores].sort((a, b) => a - b);
+  const midpoint = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[midpoint];
+  return Math.round((sorted[midpoint - 1] + sorted[midpoint]) / 2);
+}
+
+function buildMechanicalAggregateReview(reviews: IndividualReview[]): AggregateReview {
+  const individualScores = reviews.map((review) => review.scoreBand.median);
+  const finalMedian = medianScore(individualScores);
+  const finalLow = Math.min(...individualScores);
+  const finalHigh = Math.max(...individualScores);
+  const scoreRange = finalHigh - finalLow;
+  const representativeReview = pickRepresentativeReview(reviews, finalMedian);
+  const averageConfidence =
+    reviews.reduce((sum, review) => sum + review.scoreConfidence, 0) / Math.max(1, reviews.length);
+  const stabilityPenalty = scoreRange > 12 ? 0.2 : scoreRange > 5 ? 0.1 : 0;
+
+  return {
+    finalComparisonCohort: representativeReview.comparisonCohort,
+    finalBroadField: representativeReview.broadField,
+    finalSpecialtyField: representativeReview.specialtyField,
+    finalSummary: representativeReview.summary,
+    individualScores,
+    scoreRange,
+    scoreStability: rangeToStability(scoreRange),
+    mainAgreements: [],
+    mainDisagreements: [],
+    fatalObjectionPresent: false,
+    fatalObjectionAssessment: "",
+    inputGroundingAssessment: representativeReview.inputGrounding,
+    contributionGroundingType: representativeReview.contributionGroundingType,
+    frameworkIndependenceAssessment: representativeReview.frameworkIndependence,
+    hardToVaryAssessment: representativeReview.hardToVaryAssessment,
+    frameworkConditionalityAssessment: representativeReview.frameworkConditionality.explanation,
+    originalContributionAssessment: representativeReview.manuscriptOriginalContribution,
+    survivingContributionIfFlawed: representativeReview.survivingContributionIfFlawed,
+    laterInfluenceOrExternalResultRisk: "",
+    finalClassification: representativeReview.bestClassification || classificationFallbackFromScore(finalMedian),
+    finalScoreBand: {
+      low: finalLow,
+      median: finalMedian,
+      high: finalHigh,
+    },
+    finalScoreConfidence: Math.max(0, Math.min(1, Number((averageConfidence - stabilityPenalty).toFixed(2)))),
+    publicOneParagraphVerdict: representativeReview.oneParagraphVerdict || representativeReview.finalJudgment,
+    internalCalibrationNotes: "Mechanical aggregation only: final score is the median of the valid independent pass scores; score range and stability are computed directly from those scores. No semantic meta-reviewer was used.",
+  };
 }
 
 export async function extractMetadata(paperContent: string, hints: MetadataHints = {}): Promise<{ title: string; authors: string }> {
@@ -1422,25 +1427,27 @@ async function generateMultiPassReview(
 
   const passResults: IndividualPassResult[] = [];
   const passFailures: { reason: unknown; index: number }[] = [];
+  const maxPassAttempts = REVIEW_PASS_COUNT * 2;
 
-  for (let index = 0; index < REVIEW_PASS_COUNT; index += 1) {
+  for (let attempt = 0; passResults.length < REVIEW_PASS_COUNT && attempt < maxPassAttempts; attempt += 1) {
+    const index = passResults.length;
     try {
       passResults.push(await runIndividualPass(systemPrompt, blindedContent, model, index));
     } catch (reason) {
-      passFailures.push({ reason, index });
+      passFailures.push({ reason, index: attempt });
       if (passResults.length === 0 && isTransientModelError(reason)) {
         break;
       }
     }
 
-    if (index < REVIEW_PASS_COUNT - 1) {
+    if (passResults.length < REVIEW_PASS_COUNT) {
       await sleep(1500 + Math.floor(Math.random() * 600));
     }
   }
 
-  if (passResults.length < 2) {
-    const details = passFailures.map(({ reason, index }) => `pass ${index + 1}: ${errorMessage(reason)}`).join("; ");
-    throw new Error(`Review failed: only ${passResults.length} of ${REVIEW_PASS_COUNT} independent passes completed. ${details}`);
+  if (passResults.length < REVIEW_PASS_COUNT) {
+    const details = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
+    throw new Error(`Review failed: only ${passResults.length} of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${details}`);
   }
 
   const individualReviews = passResults.map((result) => result.review);
@@ -1450,26 +1457,19 @@ async function generateMultiPassReview(
     }
   }
   for (const { reason, index } of passFailures) {
-    thinkingChunks.push(`Pass ${index + 1} failed\n${errorMessage(reason)}`);
+    thinkingChunks.push(`Discarded failed pass attempt ${index + 1}\n${errorMessage(reason)}`);
   }
 
-  const { parsed: aggregateParsed, thinkingText: aggregateThinking } = await runModel(
-    AGGREGATOR_SYSTEM_INSTRUCTION,
-    buildAggregateInput(blindedContent, individualReviews),
-    model,
-    GEMINI_META_MODEL,
-  );
-
-  if (aggregateThinking) {
-    thinkingChunks.push(`Aggregator\n${aggregateThinking}`);
-  }
-
-  const fallbackScores = individualReviews.map((review) => review.scoreBand.median);
-  const aggregate = normalizeAggregateReview(aggregateParsed, fallbackScores);
+  const aggregate = buildMechanicalAggregateReview(individualReviews);
   const representativeReview = pickRepresentativeReview(individualReviews, aggregate.finalScoreBand.median);
+  thinkingChunks.push(aggregate.internalCalibrationNotes);
+
+  const usedFallbackModel = passResults.some((result) => result.modelName.includes("fallback"));
 
   return {
-    modelName: model === "gemini" ? `${GEMINI_PASS_MODEL} + ${GEMINI_META_MODEL}` : GPT_MODEL,
+    modelName: model === "gemini"
+      ? `${GEMINI_PASS_MODEL}${usedFallbackModel ? ` fallback ${GEMINI_META_MODEL}` : ""} · mechanical median`
+      : `${GPT_MODEL} · mechanical median`,
     systemPrompt,
     blindedContent,
     individualReviews,
