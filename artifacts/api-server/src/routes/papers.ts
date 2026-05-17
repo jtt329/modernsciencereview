@@ -7,8 +7,10 @@ import { logger } from "../lib/logger";
 import {
   GEMINI_META_MODEL,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
+  buildPdfFallbackText,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
+  type ReviewInput,
   type ReviewModel,
 } from "../lib/reviewEngineCompat";
 
@@ -170,8 +172,10 @@ router.post("/papers", async (req, res) => {
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
 
     let paperContent: string;
+    let reviewInput: ReviewInput | null = null;
     let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
     const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
+    const selectedModel: ReviewModel = req.body.model === "gemini" ? "gemini" : "gpt";
     const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string } = {
       fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
     };
@@ -184,8 +188,16 @@ router.post("/papers", async (req, res) => {
       metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
       paperContent = parsed.text;
       if (!paperContent || paperContent.trim().length < 50) {
-        res.status(400).json({ error: "Could not extract readable text from PDF. Try submitting as raw text instead." });
-        return;
+        if (selectedModel !== "gemini") {
+          res.status(400).json({ error: "Could not extract readable text from PDF. Try Gemini Flash + Pro or submit as raw text instead." });
+          return;
+        }
+        paperContent = buildPdfFallbackText(metadataHints);
+        reviewInput = {
+          text: paperContent,
+          pdfBase64: source.data,
+          mimeType: "application/pdf",
+        };
       }
     } else if (source.type === "url") {
       const url = source.data?.trim();
@@ -205,8 +217,16 @@ router.post("/papers", async (req, res) => {
       metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
       paperContent = parsed.text;
       if (!paperContent || paperContent.trim().length < 50) {
-        res.status(400).json({ error: "Could not extract readable text from the linked PDF." });
-        return;
+        if (selectedModel !== "gemini") {
+          res.status(400).json({ error: "Could not extract readable text from the linked PDF. Try Gemini Flash + Pro or submit as raw text instead." });
+          return;
+        }
+        paperContent = buildPdfFallbackText(metadataHints);
+        reviewInput = {
+          text: paperContent,
+          pdfBase64: buffer.toString("base64"),
+          mimeType: "application/pdf",
+        };
       }
       submittedPdfUrl = url;
     } else {
@@ -215,13 +235,11 @@ router.post("/papers", async (req, res) => {
     // Strip null bytes and non-printable control characters that break JSON serialisation
     paperContent = paperContent.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
 
-    const selectedModel: ReviewModel = req.body.model === "gemini" ? "gemini" : "gpt";
-
     // Step 1: extract real title and authors (before anonymous review)
     const metadata = await extractLatestMetadata(paperContent, metadataHints);
 
     // Step 2: run the new three-pass blind review flow
-    const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(paperContent, selectedModel);
+    const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(reviewInput ?? paperContent, selectedModel);
 
     const submitterName = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email || "Anonymous";
 

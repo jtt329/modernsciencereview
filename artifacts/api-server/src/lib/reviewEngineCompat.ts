@@ -25,6 +25,14 @@ function getOpenAI() {
 
 export type ReviewModel = "gpt" | "gemini";
 
+export type ReviewInput =
+  | string
+  | {
+      text: string;
+      pdfBase64: string;
+      mimeType?: string;
+    };
+
 type FrameworkLevel = "low" | "medium" | "high";
 type ScoreStability = "high" | "medium" | "low";
 
@@ -129,7 +137,7 @@ type AggregateReview = {
 type MultiPassReviewResult = {
   modelName: string;
   systemPrompt: string;
-  blindedContent: string;
+  blindedContent: ReviewInput;
   individualReviews: IndividualReview[];
   aggregate: AggregateReview;
   representativeReview: IndividualReview;
@@ -1047,7 +1055,46 @@ function heuristicMetadata(paperContent: string, hints: MetadataHints = {}) {
   };
 }
 
-async function callGpt(prompt: string, input: string) {
+function reviewInputText(input: ReviewInput) {
+  return typeof input === "string" ? input : input.text;
+}
+
+function reviewInputParts(input: ReviewInput) {
+  if (typeof input === "string") return [{ text: input }];
+  return [
+    { text: input.text },
+    {
+      inlineData: {
+        mimeType: input.mimeType || "application/pdf",
+        data: input.pdfBase64,
+      },
+    },
+  ];
+}
+
+function blindReviewInput(input: ReviewInput): ReviewInput {
+  if (typeof input === "string") return blindManuscriptText(input);
+  return {
+    ...input,
+    text: `${blindManuscriptText(input.text)}
+
+The manuscript is attached as a PDF because plain text extraction was not reliable. Read the attached PDF directly. If author names, affiliations, venue names, or citation/reception signals appear in the PDF, ignore them under the anonymity rules. Base the review only on the manuscript's scientific content.`,
+  };
+}
+
+export function buildPdfFallbackText(hints: MetadataHints) {
+  return [
+    "Plain-text extraction from this PDF was not reliable, so the manuscript PDF is attached for Gemini-native reading.",
+    hints.fileName ? `Filename hint: ${hints.fileName}` : "",
+    hints.pdfTitle ? `Embedded PDF title hint: ${hints.pdfTitle}` : "",
+    hints.pdfAuthor ? `Embedded PDF author hint: ${hints.pdfAuthor}` : "",
+  ].filter(Boolean).join("\n");
+}
+
+async function callGpt(prompt: string, input: ReviewInput) {
+  if (typeof input !== "string") {
+    throw new Error("OpenAI review currently requires extractable PDF text. Try Gemini Flash + Pro for this PDF.");
+  }
   return withModelRetries(GPT_MODEL, async () => {
     const response = await getOpenAI().chat.completions.create({
       model: GPT_MODEL,
@@ -1066,7 +1113,7 @@ async function callGpt(prompt: string, input: string) {
 
 async function callGemini(
   prompt: string,
-  input: string,
+  input: ReviewInput,
   geminiModel = GEMINI_META_MODEL,
   options?: { maxOutputTokens?: number; includeThoughts?: boolean },
 ) {
@@ -1074,7 +1121,7 @@ async function callGemini(
   return withModelRetries(geminiModel, async () => {
     const response = await geminiAI.models.generateContent({
       model: geminiModel,
-      contents: [{ role: "user", parts: [{ text: input }] }],
+      contents: [{ role: "user", parts: reviewInputParts(input) }],
       config: {
         systemInstruction: prompt,
         responseMimeType: "application/json",
@@ -1094,13 +1141,13 @@ async function callGemini(
   });
 }
 
-async function runModel(prompt: string, input: string, model: ReviewModel, geminiModel = GEMINI_META_MODEL) {
+async function runModel(prompt: string, input: ReviewInput, model: ReviewModel, geminiModel = GEMINI_META_MODEL) {
   return model === "gemini" ? callGemini(prompt, input, geminiModel) : callGpt(prompt, input);
 }
 
 async function runIndividualPass(
   prompt: string,
-  input: string,
+  input: ReviewInput,
   model: ReviewModel,
   index: number,
 ): Promise<IndividualPassResult> {
@@ -1126,14 +1173,19 @@ async function runIndividualPass(
   }
 }
 
-function buildAggregateInput(blindedContent: string, reviews: IndividualReview[]) {
-  return JSON.stringify({
-    blindedManuscript: blindedContent,
+function buildAggregateInput(blindedContent: ReviewInput, reviews: IndividualReview[]): ReviewInput {
+  const text = JSON.stringify({
+    blindedManuscript: reviewInputText(blindedContent),
     reviewPasses: reviews.map((review, index) => ({
       passNumber: index + 1,
       review,
     })),
   }, null, 2);
+  if (typeof blindedContent === "string") return text;
+  return {
+    ...blindedContent,
+    text,
+  };
 }
 
 function pickRepresentativeReview(reviews: IndividualReview[], medianScore: number) {
@@ -1194,12 +1246,12 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
 }
 
 async function generateMultiPassReview(
-  paperContent: string,
+  paperContent: ReviewInput,
   model: ReviewModel,
   promptOverride?: string,
 ): Promise<MultiPassReviewResult> {
   const systemPrompt = promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION;
-  const blindedContent = blindManuscriptText(paperContent);
+  const blindedContent = blindReviewInput(paperContent);
   const thinkingChunks: string[] = [];
 
   const settledPassResults = await Promise.allSettled(
@@ -1335,7 +1387,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
 }
 
 export async function generateCompatReview(
-  paperContent: string,
+  paperContent: ReviewInput,
   model: ReviewModel,
   promptOverride?: string,
 ) {
