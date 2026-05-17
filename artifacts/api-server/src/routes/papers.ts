@@ -175,7 +175,7 @@ router.post("/papers", async (req, res) => {
     let reviewInput: ReviewInput | null = null;
     let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
     const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
-    const selectedModel: ReviewModel = req.body.model === "gemini" ? "gemini" : "gpt";
+    const selectedModel: ReviewModel = "gemini";
     const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string } = {
       fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
     };

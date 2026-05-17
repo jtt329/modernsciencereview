@@ -110,6 +110,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
+  const scoreStability = storedAggregate?.scoreStability || (review as any).scoreStability || parsedCoverage?.scoreStability || null;
   const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
   const passScoreBands = storedIndividualReviews.map((pass: any) =>
     normalizeDisplayedBand(
@@ -202,12 +203,12 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
                 {selectedPass
                   ? 'This is the anchored scientific merit score assigned by this individual independent review pass.'
-                  : 'This is the final anchored scientific merit score computed as the median of the three valid independent review-pass scores. It is calibrated against the chosen comparison cohort, not a literal percentile over all papers.'}
+                  : 'This is the final anchored scientific merit score assigned by the Gemini Pro adjudicator after reading the paper and auditing the two independent passes. It is calibrated against the chosen comparison cohort, not a literal percentile over all papers.'}
               </div>
             </div>
           </div>
 
-          <div className="grid md:grid-cols-2 gap-3">
+          <div className="grid md:grid-cols-3 gap-3">
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
               <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
@@ -216,6 +217,12 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
               <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
             </div>
+            {!selectedPass && scoreStability && (
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Stability</p>
+                <p className="text-sm font-bold text-white mt-1 capitalize">{scoreStability}</p>
+              </div>
+            )}
           </div>
 
           {storedIndividualReviews.length > 0 && (

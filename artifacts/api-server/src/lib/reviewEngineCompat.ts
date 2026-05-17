@@ -2,17 +2,14 @@ import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 
 export const GPT_MODEL = "gpt-5.4-pro";
-export const GEMINI_PASS_MODEL =
-  process.env.SCIREVIEW_GEMINI_PASS_MODEL?.trim() ||
-  process.env.SCIREVIEW_GEMINI_FLASH_MODEL?.trim() ||
-  "gemini-3-flash-preview";
-export const GEMINI_META_MODEL =
-  process.env.SCIREVIEW_GEMINI_META_MODEL?.trim() ||
+export const GEMINI_PRO_MODEL =
   process.env.SCIREVIEW_GEMINI_PRO_MODEL?.trim() ||
   process.env.SCIREVIEW_GEMINI_MODEL?.trim() ||
-  "gemini-3-pro-preview";
+  "gemini-3.1-pro-preview";
+export const GEMINI_PASS_MODEL = GEMINI_PRO_MODEL;
+export const GEMINI_META_MODEL = GEMINI_PRO_MODEL;
 export const GEMINI_MODEL = GEMINI_META_MODEL;
-export const REVIEW_PASS_COUNT = 3;
+export const REVIEW_PASS_COUNT = 2;
 
 let openai: OpenAI | null = null;
 function getOpenAI() {
@@ -230,6 +227,64 @@ Use "field-defining advance" only when the manuscript changes central concepts, 
 Return valid JSON only using the current app schema. If the schema has fields for comparison cohort, direct targets, imported inputs, theory-space variants, mechanism sharing, input grounding, framework conditionality, score band, and classification, fill them. If the schema lacks a dedicated field, discuss the issue in correctness, strongest objection, final judgment, or the nearest available field.
 
 All numeric fields must be numbers, not strings. Use LaTeX for mathematical notation inside strings.`;
+
+const ADJUDICATOR_SYSTEM_INSTRUCTION = `You are the final scientific review adjudicator.
+
+You receive an anonymous manuscript plus two independent reviews produced from the same review prompt.
+
+Read the manuscript yourself first. Then audit both reviews. Do not merely average their scores.
+
+Your task:
+- identify whether either review found a fatal correctness issue;
+- decide whether the manuscript itself establishes the claimed contribution;
+- check framework conditionality and input grounding;
+- check whether direct targets, imported inputs, theory-space variants, and mechanism-sharing were handled correctly;
+- decide the final score band, final classification, score stability, comparison cohort, and public verdict;
+- make sure the final classification matches the reasoning.
+
+Use the same scoring guide as the review passes. Scores above 90 require unusually strong correctness, originality, support, and earned explanatory reach. Broad claims without support should not raise the score.
+
+Score stability should reflect disagreement between the two independent scores and whether the disagreement comes from real ambiguity or a likely bad pass:
+- high: scores and reasoning broadly agree;
+- medium: modest score disagreement or some interpretive tension;
+- low: large score disagreement or materially different correctness assessments.
+
+Treat invalid, empty, or score-0-without-reasoning reviews as failed generations. If both reviews are valid, adjudicate between them. If one review is clearly defective, explain that in internalCalibrationNotes and rely more on the valid review plus your own reading of the manuscript.
+
+Return valid JSON only with this exact structure:
+
+{
+  "finalComparisonCohort": "",
+  "finalBroadField": "",
+  "finalSpecialtyField": "",
+  "finalSummary": "",
+  "individualScores": [],
+  "scoreRange": 0,
+  "scoreStability": "high | medium | low",
+  "mainAgreements": [],
+  "mainDisagreements": [],
+  "fatalObjectionPresent": false,
+  "fatalObjectionAssessment": "",
+  "inputGroundingAssessment": "",
+  "contributionGroundingType": "",
+  "frameworkIndependenceAssessment": "",
+  "hardToVaryAssessment": "",
+  "frameworkConditionalityAssessment": "",
+  "originalContributionAssessment": "",
+  "survivingContributionIfFlawed": "",
+  "laterInfluenceOrExternalResultRisk": "",
+  "finalClassification": "",
+  "finalScoreBand": {
+    "low": 0,
+    "median": 0,
+    "high": 0
+  },
+  "finalScoreConfidence": 0.0,
+  "publicOneParagraphVerdict": "",
+  "internalCalibrationNotes": ""
+}
+
+All numeric fields must be numbers, not strings. Output valid JSON only.`;
 
 const LEGACY_GROUNDING_LADDER_PROMPT = `You are reviewing an anonymous scientific manuscript from its contents alone.
 
@@ -706,6 +761,10 @@ function asNumber(value: unknown, fallback = 0, min?: number, max?: number) {
   const safe = Number.isFinite(raw) ? raw : fallback;
   const minSafe = min != null ? Math.max(min, safe) : safe;
   return max != null ? Math.min(max, minSafe) : minSafe;
+}
+
+function asBoolean(value: unknown, fallback = false) {
+  return typeof value === "boolean" ? value : fallback;
 }
 
 function asStringArray(value: unknown) {
@@ -1221,7 +1280,7 @@ export function buildPdfFallbackText(hints: MetadataHints) {
 
 async function callGpt(prompt: string, input: ReviewInput) {
   if (typeof input !== "string") {
-    throw new Error("OpenAI review currently requires extractable PDF text. Try Gemini Flash x3 + Median for this PDF.");
+    throw new Error("OpenAI review currently requires extractable PDF text. Try Gemini Pro x2 + Adjudicator for this PDF.");
   }
   return withModelRetries(GPT_MODEL, async () => {
     const response = await getOpenAI().chat.completions.create({
@@ -1245,7 +1304,7 @@ async function callGemini(
   geminiModel = GEMINI_META_MODEL,
   options?: { maxOutputTokens?: number; includeThoughts?: boolean },
 ) {
-  const includeThoughts = options?.includeThoughts ?? true;
+  const includeThoughts = options?.includeThoughts ?? false;
   return withModelRetries(geminiModel, async () => {
     const response = await geminiAI.models.generateContent({
       model: geminiModel,
@@ -1276,37 +1335,23 @@ async function runModel(prompt: string, input: ReviewInput, model: ReviewModel, 
 async function runIndividualPass(
   prompt: string,
   input: ReviewInput,
-  model: ReviewModel,
+  _model: ReviewModel,
   index: number,
 ): Promise<IndividualPassResult> {
-  try {
-    const { parsed, thinkingText } = await runModel(prompt, input, model, GEMINI_PASS_MODEL);
-    const review = normalizeIndividualReview(parsed);
-    validateIndividualReview(review);
-    return {
-      review,
-      thinkingText,
-      index,
-      modelName: model === "gemini" ? GEMINI_PASS_MODEL : GPT_MODEL,
-    };
-  } catch (error) {
-    if (model !== "gemini" || GEMINI_PASS_MODEL === GEMINI_META_MODEL) throw error;
-
-    try {
-      const { parsed, thinkingText } = await callGemini(prompt, input, GEMINI_META_MODEL);
-      const review = normalizeIndividualReview(parsed);
-      validateIndividualReview(review);
-      const fallbackNote = `Flash pass ${index + 1} failed after retries; recovered with ${GEMINI_META_MODEL}.\nFailure: ${errorMessage(error)}`;
-      return {
-        review,
-        thinkingText: [fallbackNote, thinkingText].filter(Boolean).join("\n\n"),
-        index,
-        modelName: `${GEMINI_PASS_MODEL} fallback ${GEMINI_META_MODEL}`,
-      };
-    } catch (fallbackError) {
-      throw new Error(`Flash pass failed (${errorMessage(error)}); Pro fallback failed (${errorMessage(fallbackError)})`);
-    }
-  }
+  const { parsed, thinkingText } = await callGemini(
+    prompt,
+    input,
+    GEMINI_PASS_MODEL,
+    { maxOutputTokens: 16384, includeThoughts: false },
+  );
+  const review = normalizeIndividualReview(parsed);
+  validateIndividualReview(review);
+  return {
+    review,
+    thinkingText,
+    index,
+    modelName: GEMINI_PASS_MODEL,
+  };
 }
 
 function pickRepresentativeReview(reviews: IndividualReview[], medianScore: number) {
@@ -1324,47 +1369,84 @@ function medianScore(scores: number[]) {
   return Math.round((sorted[midpoint - 1] + sorted[midpoint]) / 2);
 }
 
-function buildMechanicalAggregateReview(reviews: IndividualReview[]): AggregateReview {
-  const individualScores = reviews.map((review) => review.scoreBand.median);
-  const finalMedian = medianScore(individualScores);
-  const finalLow = Math.min(...individualScores);
-  const finalHigh = Math.max(...individualScores);
-  const scoreRange = finalHigh - finalLow;
-  const representativeReview = pickRepresentativeReview(reviews, finalMedian);
-  const averageConfidence =
-    reviews.reduce((sum, review) => sum + review.scoreConfidence, 0) / Math.max(1, reviews.length);
-  const stabilityPenalty = scoreRange > 12 ? 0.2 : scoreRange > 5 ? 0.1 : 0;
+function normalizeAggregateReview(input: unknown, fallbackScores: number[], fallbackReview: IndividualReview): AggregateReview {
+  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const individualScores = Array.isArray(source.individualScores)
+    ? (source.individualScores as unknown[]).map((item) => Math.round(asNumber(item, 0, 0, 100))).filter((item) => Number.isFinite(item))
+    : fallbackScores;
+  const usableScores = individualScores.length > 0 ? individualScores : fallbackScores;
+  const defaultLow = Math.min(...usableScores);
+  const defaultHigh = Math.max(...usableScores);
+  const defaultMedian = medianScore(usableScores);
+  const parsedBand = normalizeScoreBand(source.finalScoreBand);
+  const finalScoreBand = parsedBand.low === 0 && parsedBand.median === 0 && parsedBand.high === 0
+    ? { low: defaultLow, median: defaultMedian, high: defaultHigh }
+    : parsedBand;
+  const scoreRange = Math.round(asNumber(source.scoreRange, finalScoreBand.high - finalScoreBand.low, 0, 100));
+  const scoreStabilityCandidate = asString(source.scoreStability).toLowerCase();
+  const scoreStability: ScoreStability =
+    scoreStabilityCandidate === "high" || scoreStabilityCandidate === "medium" || scoreStabilityCandidate === "low"
+      ? scoreStabilityCandidate
+      : rangeToStability(scoreRange);
+  const classification =
+    normalizeClassification(source.finalClassification) ||
+    fallbackReview.bestClassification ||
+    classificationFallbackFromScore(finalScoreBand.median);
 
   return {
-    finalComparisonCohort: representativeReview.comparisonCohort,
-    finalBroadField: representativeReview.broadField,
-    finalSpecialtyField: representativeReview.specialtyField,
-    finalSummary: representativeReview.summary,
-    individualScores,
+    finalComparisonCohort: asString(source.finalComparisonCohort, fallbackReview.comparisonCohort),
+    finalBroadField: asString(source.finalBroadField, fallbackReview.broadField),
+    finalSpecialtyField: asString(source.finalSpecialtyField, fallbackReview.specialtyField),
+    finalSummary: asString(source.finalSummary, fallbackReview.summary),
+    individualScores: usableScores,
     scoreRange,
-    scoreStability: rangeToStability(scoreRange),
-    mainAgreements: [],
-    mainDisagreements: [],
-    fatalObjectionPresent: false,
-    fatalObjectionAssessment: "",
-    inputGroundingAssessment: representativeReview.inputGrounding,
-    contributionGroundingType: representativeReview.contributionGroundingType,
-    frameworkIndependenceAssessment: representativeReview.frameworkIndependence,
-    hardToVaryAssessment: representativeReview.hardToVaryAssessment,
-    frameworkConditionalityAssessment: representativeReview.frameworkConditionality.explanation,
-    originalContributionAssessment: representativeReview.manuscriptOriginalContribution,
-    survivingContributionIfFlawed: representativeReview.survivingContributionIfFlawed,
-    laterInfluenceOrExternalResultRisk: "",
-    finalClassification: representativeReview.bestClassification || classificationFallbackFromScore(finalMedian),
-    finalScoreBand: {
-      low: finalLow,
-      median: finalMedian,
-      high: finalHigh,
-    },
-    finalScoreConfidence: Math.max(0, Math.min(1, Number((averageConfidence - stabilityPenalty).toFixed(2)))),
-    publicOneParagraphVerdict: representativeReview.oneParagraphVerdict || representativeReview.finalJudgment,
-    internalCalibrationNotes: "Mechanical aggregation only: final score is the median of the valid independent pass scores; score range and stability are computed directly from those scores. No semantic meta-reviewer was used.",
+    scoreStability,
+    mainAgreements: asStringArray(source.mainAgreements),
+    mainDisagreements: asStringArray(source.mainDisagreements),
+    fatalObjectionPresent: asBoolean(source.fatalObjectionPresent),
+    fatalObjectionAssessment: asString(source.fatalObjectionAssessment),
+    inputGroundingAssessment: asString(source.inputGroundingAssessment, fallbackReview.inputGrounding),
+    contributionGroundingType: asString(source.contributionGroundingType, fallbackReview.contributionGroundingType),
+    frameworkIndependenceAssessment: asString(source.frameworkIndependenceAssessment, fallbackReview.frameworkIndependence),
+    hardToVaryAssessment: asString(source.hardToVaryAssessment, fallbackReview.hardToVaryAssessment),
+    frameworkConditionalityAssessment: asString(source.frameworkConditionalityAssessment, fallbackReview.frameworkConditionality.explanation),
+    originalContributionAssessment: asString(source.originalContributionAssessment, fallbackReview.manuscriptOriginalContribution),
+    survivingContributionIfFlawed: asString(source.survivingContributionIfFlawed, fallbackReview.survivingContributionIfFlawed),
+    laterInfluenceOrExternalResultRisk: asString(source.laterInfluenceOrExternalResultRisk),
+    finalClassification: alignClassificationToScore(classification, finalScoreBand.median),
+    finalScoreBand,
+    finalScoreConfidence: asNumber(source.finalScoreConfidence, fallbackReview.scoreConfidence, 0, 1),
+    publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict, fallbackReview.oneParagraphVerdict || fallbackReview.finalJudgment),
+    internalCalibrationNotes: asString(source.internalCalibrationNotes, "Gemini Pro adjudicator reviewed the manuscript and both independent Gemini Pro passes."),
   };
+}
+
+function buildAdjudicatorInput(blindedContent: ReviewInput, reviews: IndividualReview[]): ReviewInput {
+  const text = JSON.stringify({
+    blindedManuscript: reviewInputText(blindedContent),
+    independentReviewPasses: reviews.map((review, index) => ({
+      passNumber: index + 1,
+      score: review.scoreBand.median,
+      scoreBand: review.scoreBand,
+      classification: review.bestClassification,
+      comparisonCohort: review.comparisonCohort,
+      broadField: review.broadField,
+      specialtyField: review.specialtyField,
+      centralClaim: review.centralClaim,
+      coverageLedger: review.coverageLedger,
+      correctness: review.correctness,
+      inputGrounding: review.inputGrounding,
+      frameworkConditionality: review.frameworkConditionality,
+      strongestCaseForImportance: review.strongestCaseForImportance,
+      strongestObjection: review.strongestObjection,
+      decisiveCheck: review.decisiveCheck,
+      oneParagraphVerdict: review.oneParagraphVerdict,
+      finalJudgment: review.finalJudgment,
+    })),
+  }, null, 2);
+
+  if (typeof blindedContent === "string") return text;
+  return { ...blindedContent, text };
 }
 
 export async function extractMetadata(paperContent: string, hints: MetadataHints = {}): Promise<{ title: string; authors: string }> {
@@ -1418,7 +1500,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
 
 async function generateMultiPassReview(
   paperContent: ReviewInput,
-  model: ReviewModel,
+  _model: ReviewModel,
   promptOverride?: string,
 ): Promise<MultiPassReviewResult> {
   const systemPrompt = promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION;
@@ -1427,12 +1509,12 @@ async function generateMultiPassReview(
 
   const passResults: IndividualPassResult[] = [];
   const passFailures: { reason: unknown; index: number }[] = [];
-  const maxPassAttempts = REVIEW_PASS_COUNT * 2;
+  const maxPassAttempts = REVIEW_PASS_COUNT + 1;
 
   for (let attempt = 0; passResults.length < REVIEW_PASS_COUNT && attempt < maxPassAttempts; attempt += 1) {
     const index = passResults.length;
     try {
-      passResults.push(await runIndividualPass(systemPrompt, blindedContent, model, index));
+      passResults.push(await runIndividualPass(systemPrompt, blindedContent, "gemini", index));
     } catch (reason) {
       passFailures.push({ reason, index: attempt });
       if (passResults.length === 0 && isTransientModelError(reason)) {
@@ -1460,16 +1542,23 @@ async function generateMultiPassReview(
     thinkingChunks.push(`Discarded failed pass attempt ${index + 1}\n${errorMessage(reason)}`);
   }
 
-  const aggregate = buildMechanicalAggregateReview(individualReviews);
+  const fallbackScores = individualReviews.map((review) => review.scoreBand.median);
+  const fallbackRepresentativeReview = pickRepresentativeReview(individualReviews, medianScore(fallbackScores));
+  const { parsed: aggregateParsed, thinkingText: adjudicatorThinking } = await callGemini(
+    ADJUDICATOR_SYSTEM_INSTRUCTION,
+    buildAdjudicatorInput(blindedContent, individualReviews),
+    GEMINI_META_MODEL,
+    { maxOutputTokens: 16384, includeThoughts: false },
+  );
+  const aggregate = normalizeAggregateReview(aggregateParsed, fallbackScores, fallbackRepresentativeReview);
   const representativeReview = pickRepresentativeReview(individualReviews, aggregate.finalScoreBand.median);
+  if (adjudicatorThinking) {
+    thinkingChunks.push(`Adjudicator (${GEMINI_META_MODEL})\n${adjudicatorThinking}`);
+  }
   thinkingChunks.push(aggregate.internalCalibrationNotes);
 
-  const usedFallbackModel = passResults.some((result) => result.modelName.includes("fallback"));
-
   return {
-    modelName: model === "gemini"
-      ? `${GEMINI_PASS_MODEL}${usedFallbackModel ? ` fallback ${GEMINI_META_MODEL}` : ""} · mechanical median`
-      : `${GPT_MODEL} · mechanical median`,
+    modelName: `${GEMINI_PRO_MODEL} x2 + adjudicator`,
     systemPrompt,
     blindedContent,
     individualReviews,
