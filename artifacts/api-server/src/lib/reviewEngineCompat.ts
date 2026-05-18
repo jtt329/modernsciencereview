@@ -154,7 +154,7 @@ type IndividualPassResult = {
   modelName: string;
 };
 
-export const REVIEW_SYSTEM_INSTRUCTION = `You are reviewing an anonymous scientific manuscript from its contents alone.
+const MINIMAL_REVIEW_SYSTEM_INSTRUCTION = `You are reviewing an anonymous scientific manuscript from its contents alone.
 
 Ignore author identity, institution, venue, citation counts, publication status, historical fame, later influence, and whether the work is familiar. If any of that information appears in the text, ignore it. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.
 
@@ -347,7 +347,7 @@ Return valid JSON only with this exact structure:
 
 All numeric fields must be numbers, not strings. Output valid JSON only.`;
 
-const LEGACY_GROUNDING_LADDER_PROMPT = `You are reviewing an anonymous scientific manuscript from its contents alone.
+export const REVIEW_SYSTEM_INSTRUCTION = `You are reviewing an anonymous scientific manuscript from its contents alone.
 
 Ignore author identity, institution, venue, citation counts, publication status, historical fame, and later influence. If any of that information appears in the text, ignore it. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.
 
@@ -1199,9 +1199,14 @@ function individualReviewReasoningText(review: IndividualReview) {
   ].filter(Boolean).join("\n").trim();
 }
 
+function hasSubstantiveText(value: string, minLength = 40) {
+  return value.trim().length >= minLength;
+}
+
 function validateIndividualReview(review: IndividualReview) {
   const reasoningText = individualReviewReasoningText(review);
   const score = review.scoreBand.median;
+  const requiredMissing: string[] = [];
   const hasCoreReasoning =
     reasoningText.length >= 80 &&
     Boolean(review.correctness || review.finalJudgment || review.oneParagraphVerdict || review.summary);
@@ -1216,6 +1221,35 @@ function validateIndividualReview(review: IndividualReview) {
 
   if (score === 0 && reasoningText.length < 180) {
     throw new Error("Generated review returned score 0 without enough reasoning; treating as failed generation.");
+  }
+
+  if (!hasSubstantiveText(review.summary, 80)) requiredMissing.push("summary");
+  if (!hasSubstantiveText(review.centralClaim, 40)) requiredMissing.push("centralClaim");
+  if (!hasSubstantiveText(review.correctness, 40)) requiredMissing.push("correctness");
+  if (!hasSubstantiveText(review.novelty, 40)) requiredMissing.push("novelty");
+  if (!hasSubstantiveText(review.strongestObjection, 40)) requiredMissing.push("strongestObjection");
+  if (!hasSubstantiveText(review.finalJudgment || review.oneParagraphVerdict, 80)) {
+    requiredMissing.push("finalJudgment");
+  }
+
+  if (
+    review.coverageLedger.directTargets.length === 0 ||
+    review.coverageLedger.importedInputs.length === 0
+  ) {
+    requiredMissing.push("coverageLedger");
+  }
+
+  if (
+    review.intrinsicTechnicalScore <= 0 &&
+    review.explanatoryTargetBreadthScore <= 0 &&
+    review.theorySpaceBreadthScore <= 0 &&
+    review.breadthOfImpactScore <= 0
+  ) {
+    requiredMissing.push("diagnosticScores");
+  }
+
+  if (requiredMissing.length > 0) {
+    throw new Error(`Generated review omitted required diagnostic fields: ${requiredMissing.join(", ")}.`);
   }
 }
 
