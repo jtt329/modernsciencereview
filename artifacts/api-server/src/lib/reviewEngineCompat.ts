@@ -224,7 +224,68 @@ Use "framework-defining advance" when the paper is foundational inside a candida
 
 Use "field-defining advance" only when the manuscript changes central concepts, methods, equations, constraints, or organizing principles of the comparison cohort and has strong grounding beyond a narrowly insulated framework.
 
-Return valid JSON only using the current app schema. If the schema has fields for comparison cohort, direct targets, imported inputs, theory-space variants, mechanism sharing, input grounding, framework conditionality, score band, and classification, fill them. If the schema lacks a dedicated field, discuss the issue in correctness, strongest objection, final judgment, or the nearest available field.
+Return valid JSON only with this exact structure. Do not omit summary, correctness, strongestObjection, finalJudgment, bestClassification, or scoreBand.median:
+
+{
+  "title": "anonymized manuscript",
+  "authorName": "anonymized",
+  "comparisonCohort": "",
+  "broadField": "",
+  "specialtyField": "",
+  "subfields": [],
+  "paperType": "",
+  "summary": "",
+  "centralClaim": "",
+  "coverageLedger": {
+    "directTargets": [],
+    "importedInputs": [],
+    "theorySpaceVariants": [],
+    "mechanismSharingAssessment": ""
+  },
+  "establishedResults": [],
+  "interpretiveClaims": [],
+  "speculativeClaims": [],
+  "correctness": "",
+  "inputGrounding": "",
+  "contributionGroundingType": "",
+  "frameworkIndependence": "",
+  "hardToVaryAssessment": "",
+  "manuscriptOriginalContribution": "",
+  "survivingContributionIfFlawed": "",
+  "novelty": "",
+  "noveltyConfidence": 0.0,
+  "internalTechnicalTraction": "",
+  "economy": "",
+  "explanatoryTargetBreadth": "",
+  "theorySpaceBreadth": "",
+  "scopeDepth": "",
+  "unifyingPower": "",
+  "frameworkConditionality": {
+    "level": "low | medium | high",
+    "explanation": ""
+  },
+  "strongestCaseForImportance": "",
+  "strongestObjection": "",
+  "decisiveCheck": "",
+  "whatWouldRaiseScore": "",
+  "whatWouldLowerScore": "",
+  "intrinsicTechnicalScore": 0,
+  "explanatoryTargetBreadthScore": 0,
+  "theorySpaceBreadthScore": 0,
+  "breadthOfImpactScore": 0,
+  "specialtyRelativeScore": 0,
+  "broadFieldRelativeScore": 0,
+  "crossFieldConsequenceScore": 0,
+  "scoreBand": {
+    "low": 0,
+    "median": 0,
+    "high": 0
+  },
+  "scoreConfidence": 0.0,
+  "bestClassification": "",
+  "oneParagraphVerdict": "",
+  "finalJudgment": ""
+}
 
 All numeric fields must be numbers, not strings. Use LaTeX for mathematical notation inside strings.`;
 
@@ -756,6 +817,14 @@ function asString(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
 }
 
+function firstString(values: unknown[], fallback = "") {
+  for (const value of values) {
+    const text = asString(value);
+    if (text) return text;
+  }
+  return fallback;
+}
+
 function asNumber(value: unknown, fallback = 0, min?: number, max?: number) {
   const raw = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
   const safe = Number.isFinite(raw) ? raw : fallback;
@@ -770,6 +839,14 @@ function asBoolean(value: unknown, fallback = false) {
 function asStringArray(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.map((item) => asString(item)).filter(Boolean);
+}
+
+function firstStringArray(values: unknown[]) {
+  for (const value of values) {
+    const items = asStringArray(value);
+    if (items.length > 0) return items;
+  }
+  return [];
 }
 
 function classificationFallbackFromScore(score: number) {
@@ -986,52 +1063,101 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
   const normalizedScoreBand = normalizeScoreBandWithFallback(source);
   const normalizedSpecialtyScore = Math.round(asNumber(source.specialtyRelativeScore, normalizedScoreBand.median, 0, 100));
   const normalizedClassification =
-    normalizeClassification(source.bestClassification) || classificationFallbackFromScore(normalizedScoreBand.median);
+    normalizeClassification(firstString([
+      source.bestClassification,
+      source.classification,
+      source.finalClassification,
+      source.category,
+    ])) || classificationFallbackFromScore(normalizedScoreBand.median);
   const alignedClassification = alignClassificationToScore(normalizedClassification, normalizedScoreBand.median);
 
   return {
     title: "anonymized manuscript",
     authorName: "anonymized",
-    comparisonCohort: asString(source.comparisonCohort),
-    broadField: asString(source.broadField),
-    specialtyField: asString(source.specialtyField),
-    subfields: asStringArray(source.subfields),
-    paperType: asString(source.paperType),
-    summary: asString(source.summary),
-    centralClaim: asString(source.centralClaim),
+    comparisonCohort: firstString([source.comparisonCohort, source.comparison_cohort, source.cohort]),
+    broadField: firstString([source.broadField, source.broad_field, source.field]),
+    specialtyField: firstString([source.specialtyField, source.specialty_field, source.subfield]),
+    subfields: firstStringArray([source.subfields, source.subFields, source.sub_fields]),
+    paperType: firstString([source.paperType, source.paper_type, source.manuscriptType]),
+    summary: firstString([source.summary, source.abstract, source.overview, source.reviewSummary, source.finalSummary]),
+    centralClaim: firstString([source.centralClaim, source.central_claim, source.mainClaim, source.claim]),
     coverageLedger: {
-      directTargets: asStringArray(coverage.directTargets),
-      importedInputs: asStringArray(coverage.importedInputs),
-      theorySpaceVariants: asStringArray(coverage.theorySpaceVariants),
-      mechanismSharingAssessment: asString(coverage.mechanismSharingAssessment),
+      directTargets: firstStringArray([coverage.directTargets, source.directTargets, source.direct_targets]),
+      importedInputs: firstStringArray([coverage.importedInputs, source.importedInputs, source.imported_inputs]),
+      theorySpaceVariants: firstStringArray([
+        coverage.theorySpaceVariants,
+        source.theorySpaceVariants,
+        source.theory_space_variants,
+        source.modelSpaceVariants,
+      ]),
+      mechanismSharingAssessment: firstString([
+        coverage.mechanismSharingAssessment,
+        source.mechanismSharingAssessment,
+        source.mechanism_sharing_assessment,
+      ]),
     },
-    establishedResults: asStringArray(source.establishedResults),
-    interpretiveClaims: asStringArray(source.interpretiveClaims),
-    speculativeClaims: asStringArray(source.speculativeClaims),
-    correctness: asString(source.correctness),
-    inputGrounding: asString(source.inputGrounding),
-    contributionGroundingType: asString(source.contributionGroundingType),
-    frameworkIndependence: asString(source.frameworkIndependence),
-    hardToVaryAssessment: asString(source.hardToVaryAssessment),
-    manuscriptOriginalContribution: asString(source.manuscriptOriginalContribution),
-    survivingContributionIfFlawed: asString(source.survivingContributionIfFlawed),
-    novelty: asString(source.novelty),
+    establishedResults: firstStringArray([source.establishedResults, source.established_results]),
+    interpretiveClaims: firstStringArray([source.interpretiveClaims, source.interpretive_claims]),
+    speculativeClaims: firstStringArray([source.speculativeClaims, source.speculative_claims]),
+    correctness: firstString([
+      source.correctness,
+      source.correctnessAnalysis,
+      source.technicalCorrectness,
+      source.validity,
+    ]),
+    inputGrounding: firstString([source.inputGrounding, source.input_grounding, source.grounding]),
+    contributionGroundingType: firstString([
+      source.contributionGroundingType,
+      source.contribution_grounding_type,
+      source.groundingType,
+    ]),
+    frameworkIndependence: firstString([
+      source.frameworkIndependence,
+      source.framework_independence,
+      source.frameworkIndependenceAssessment,
+    ]),
+    hardToVaryAssessment: firstString([source.hardToVaryAssessment, source.hard_to_vary_assessment]),
+    manuscriptOriginalContribution: firstString([
+      source.manuscriptOriginalContribution,
+      source.originalContribution,
+      source.manuscript_original_contribution,
+    ]),
+    survivingContributionIfFlawed: firstString([
+      source.survivingContributionIfFlawed,
+      source.survivingContribution,
+      source.surviving_contribution_if_flawed,
+    ]),
+    novelty: firstString([source.novelty, source.originality]),
     noveltyConfidence: asNumber(source.noveltyConfidence, 0.95, 0, 1),
-    internalTechnicalTraction: asString(source.internalTechnicalTraction),
-    economy: asString(source.economy),
-    explanatoryTargetBreadth: asString(source.explanatoryTargetBreadth),
-    theorySpaceBreadth: asString(source.theorySpaceBreadth),
-    scopeDepth: asString(source.scopeDepth),
-    unifyingPower: asString(source.unifyingPower),
+    internalTechnicalTraction: firstString([source.internalTechnicalTraction, source.technicalTraction]),
+    economy: firstString([source.economy, source.explanatoryEconomy]),
+    explanatoryTargetBreadth: firstString([source.explanatoryTargetBreadth, source.targetBreadth]),
+    theorySpaceBreadth: firstString([source.theorySpaceBreadth, source.modelSpaceBreadth]),
+    scopeDepth: firstString([source.scopeDepth, source.depth]),
+    unifyingPower: firstString([source.unifyingPower, source.unification]),
     frameworkConditionality: {
-      level: normalizeFrameworkLevel(framework.level),
-      explanation: asString(framework.explanation),
+      level: normalizeFrameworkLevel(firstString([framework.level, source.frameworkConditionalityLevel])),
+      explanation: firstString([
+        framework.explanation,
+        source.frameworkConditionality,
+        source.frameworkConditionalityAssessment,
+        source.framework_conditionality,
+      ]),
     },
-    strongestCaseForImportance: asString(source.strongestCaseForImportance),
-    strongestObjection: asString(source.strongestObjection),
-    decisiveCheck: asString(source.decisiveCheck),
-    whatWouldRaiseScore: asString(source.whatWouldRaiseScore),
-    whatWouldLowerScore: asString(source.whatWouldLowerScore),
+    strongestCaseForImportance: firstString([
+      source.strongestCaseForImportance,
+      source.strongestCase,
+      source.caseForImportance,
+    ]),
+    strongestObjection: firstString([
+      source.strongestObjection,
+      source.mainObjection,
+      source.objection,
+      source.weaknesses,
+    ]),
+    decisiveCheck: firstString([source.decisiveCheck, source.keyCheck, source.keyTest]),
+    whatWouldRaiseScore: firstString([source.whatWouldRaiseScore, source.raiseScore, source.scoreUpside]),
+    whatWouldLowerScore: firstString([source.whatWouldLowerScore, source.lowerScore, source.scoreDownside]),
     intrinsicTechnicalScore: Math.round(asNumber(source.intrinsicTechnicalScore, 0, 0, 10)),
     explanatoryTargetBreadthScore: Math.round(asNumber(source.explanatoryTargetBreadthScore, 0, 0, 10)),
     theorySpaceBreadthScore: Math.round(asNumber(source.theorySpaceBreadthScore, 0, 0, 10)),
@@ -1042,8 +1168,20 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     scoreBand: normalizedScoreBand,
     scoreConfidence: asNumber(source.scoreConfidence, 0.9, 0, 1),
     bestClassification: alignedClassification,
-    oneParagraphVerdict: asString(source.oneParagraphVerdict),
-    finalJudgment: asString(source.finalJudgment),
+    oneParagraphVerdict: firstString([
+      source.oneParagraphVerdict,
+      source.publicVerdict,
+      source.verdict,
+      source.publicOneParagraphVerdict,
+    ]),
+    finalJudgment: firstString([
+      source.finalJudgment,
+      source.overallEvaluation,
+      source.overall_evaluation,
+      source.evaluation,
+      source.finalVerdict,
+      source.verdict,
+    ]),
   };
 }
 
