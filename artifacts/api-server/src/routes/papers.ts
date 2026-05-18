@@ -6,6 +6,7 @@ import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
 import {
   GEMINI_META_MODEL,
+  REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   buildPdfFallbackText,
   extractMetadata as extractLatestMetadata,
@@ -31,7 +32,7 @@ const router = Router();
 
 // GET /api/papers/system-prompt — return the review system prompt
 router.get("/papers/system-prompt", (_req, res) => {
-  res.json({ prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION });
+  res.json({ prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION, promptVersion: REVIEW_PROMPT_VERSION });
 });
 
 // GET /api/papers/export — download all reviews as structured JSON (model output only)
@@ -86,7 +87,13 @@ router.get("/papers/export", async (_req, res) => {
       };
     });
 
-    res.json({ exportedAt: new Date().toISOString(), systemPrompt: LATEST_REVIEW_SYSTEM_INSTRUCTION, count: exported.length, papers: exported });
+    res.json({
+      exportedAt: new Date().toISOString(),
+      promptVersion: REVIEW_PROMPT_VERSION,
+      systemPrompt: LATEST_REVIEW_SYSTEM_INSTRUCTION,
+      count: exported.length,
+      papers: exported,
+    });
   } catch (err: any) {
     logger.error({ err }, "Error exporting papers");
     res.status(500).json({ error: err.message });
