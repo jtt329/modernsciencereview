@@ -757,7 +757,7 @@ Return a JSON object with exactly two fields:
 - authors: string
 Output valid JSON only.`;
 
-const MODEL_CALL_ATTEMPTS = 4;
+const MODEL_CALL_ATTEMPTS = 5;
 
 function stripControlChars(text: string) {
   return text.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
@@ -792,10 +792,18 @@ function isTransientModelError(error: unknown) {
 }
 
 function retryDelayMs(attempt: number, error: unknown) {
-  const transientDelays = [2500, 9000, 25000];
-  const normalDelays = [1200, 4800, 12000];
+  const transientDelays = [3000, 12000, 30000, 60000];
+  const normalDelays = [1200, 4800, 12000, 24000];
   const delays = isTransientModelError(error) ? transientDelays : normalDelays;
   return (delays[attempt - 1] ?? 12000) + Math.floor(Math.random() * 750);
+}
+
+function passAttemptDelayMs(attempt: number, error: unknown) {
+  if (isTransientModelError(error)) {
+    const transientDelays = [30000, 60000, 90000, 120000];
+    return (transientDelays[attempt] ?? 120000) + Math.floor(Math.random() * 1000);
+  }
+  return 1500 + Math.floor(Math.random() * 600);
 }
 
 async function withModelRetries<T>(label: string, fn: () => Promise<T>): Promise<T> {
@@ -1681,21 +1689,20 @@ async function generateMultiPassReview(
 
   const passResults: IndividualPassResult[] = [];
   const passFailures: { reason: unknown; index: number }[] = [];
-  const maxPassAttempts = REVIEW_PASS_COUNT + 1;
+  const maxPassAttempts = REVIEW_PASS_COUNT + 2;
 
   for (let attempt = 0; passResults.length < REVIEW_PASS_COUNT && attempt < maxPassAttempts; attempt += 1) {
     const index = passResults.length;
+    let pauseAfterAttemptMs = 1500 + Math.floor(Math.random() * 600);
     try {
       passResults.push(await runIndividualPass(systemPrompt, blindedContent, "gemini", index));
     } catch (reason) {
       passFailures.push({ reason, index: attempt });
-      if (passResults.length === 0 && isTransientModelError(reason)) {
-        break;
-      }
+      pauseAfterAttemptMs = passAttemptDelayMs(attempt, reason);
     }
 
     if (passResults.length < REVIEW_PASS_COUNT) {
-      await sleep(1500 + Math.floor(Math.random() * 600));
+      await sleep(pauseAfterAttemptMs);
     }
   }
 
