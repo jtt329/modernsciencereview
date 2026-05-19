@@ -17,6 +17,46 @@ interface QueuedFile {
 }
 
 const MAX_QUEUED_PDFS = 50;
+const SUBMISSION_RETRY_DELAYS_MS = [15_000, 45_000, 90_000, 180_000];
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function formatDelay(ms: number) {
+  const seconds = Math.ceil(ms / 1000);
+  return seconds >= 60 ? `${Math.round(seconds / 60)} min` : `${seconds} sec`;
+}
+
+function errorMessage(err: unknown) {
+  if (err instanceof Error) return err.message || String(err);
+  return String(err);
+}
+
+function isConnectionLoss(message: string) {
+  return /failed to fetch|load failed|networkerror|network request failed|connection|timed out|aborted/i.test(message);
+}
+
+function isRetryableSubmissionError(err: unknown) {
+  const status = typeof (err as any)?.status === 'number' ? (err as any).status : 0;
+  if ((err as any)?.transient || [429, 500, 502, 503, 504].includes(status)) return true;
+  return /failed to fetch|load failed|networkerror|network request failed|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(errorMessage(err));
+}
+
+async function waitForApiHealth(maxWaitMs = 180_000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < maxWaitMs) {
+    try {
+      const response = await fetch('/api/healthz', {
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      if (response.ok) return true;
+    } catch {}
+    await sleep(5_000);
+  }
+  return false;
+}
 
 function isValidUrl(value: string) {
   try { new URL(value); return true; } catch { return false; }
@@ -75,6 +115,47 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
       reader.readAsDataURL(file);
     });
 
+  const setFileStatus = (id: string, patch: Partial<QueuedFile>) => {
+    setFiles(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f));
+  };
+
+  const submitWithRetries = async (
+    qf: QueuedFile,
+    source: ReviewSource,
+    skipSelectAfterSubmit: boolean,
+  ) => {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt <= SUBMISSION_RETRY_DELAYS_MS.length; attempt++) {
+      try {
+        setFileStatus(qf.id, { status: 'processing', error: attempt > 0 ? `Retry ${attempt + 1} in progress...` : undefined });
+        await onSubmit(source, skipSelectAfterSubmit);
+        return;
+      } catch (err) {
+        lastError = err;
+        const message = errorMessage(err);
+        const canRetry = isRetryableSubmissionError(err) && attempt < SUBMISSION_RETRY_DELAYS_MS.length;
+        if (!canRetry) break;
+
+        const delay = SUBMISSION_RETRY_DELAYS_MS[attempt];
+        const waitingForApi = isConnectionLoss(message);
+        setFileStatus(qf.id, {
+          status: 'processing',
+          error: waitingForApi
+            ? `Connection dropped. Waiting for API health, then retrying in ${formatDelay(delay)}...`
+            : `Temporary model/API issue. Retrying in ${formatDelay(delay)}...`,
+        });
+
+        if (waitingForApi) {
+          await waitForApiHealth();
+        }
+        await sleep(delay);
+      }
+    }
+
+    throw lastError;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -101,21 +182,33 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
       let failures = 0;
       const skipSelectAfterSubmit = files.length > 1;
       setDoneCount(done);
+      let pausedForConnection = false;
       for (const qf of filesToProcess) {
-        setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'processing' } : f));
+        setFileStatus(qf.id, { status: 'processing', error: undefined });
         try {
           const base64 = await readFileAsBase64(qf.file);
-          await onSubmit({ type: 'pdf', data: base64, model, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }, skipSelectAfterSubmit);
+          await submitWithRetries(
+            qf,
+            { type: 'pdf', data: base64, model, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl },
+            skipSelectAfterSubmit,
+          );
           done++;
           setDoneCount(done);
-          setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'done' } : f));
+          setFileStatus(qf.id, { status: 'done', error: undefined });
         } catch (err: any) {
           failures++;
-          setFiles(prev => prev.map(f => f.id === qf.id ? { ...f, status: 'error', error: err?.message ?? String(err) } : f));
+          const message = err?.message ?? String(err);
+          setFileStatus(qf.id, { status: 'error', error: message });
+          if (isConnectionLoss(message) || isRetryableSubmissionError(err)) {
+            pausedForConnection = true;
+            break;
+          }
         }
       }
       if (failures > 0) {
-        setError(`${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);
+        setError(pausedForConnection
+          ? `The API/model connection is still unstable, so the queue paused instead of marking the rest as failed. Completed papers were saved. Retry the failed/pending papers when ready.`
+          : `${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);
       } else {
         onClose();
       }
@@ -263,7 +356,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
                         {qf.status === 'processing' && (
-                          <p className="text-xs text-indigo-500">Reviewing with Gemini Pro x2 + Adjudicator…</p>
+                          <p className="text-xs text-indigo-500 truncate">{qf.error || 'Reviewing with Gemini Pro x2 + Adjudicator…'}</p>
                         )}
                         {qf.status === 'error' && <p className="text-xs text-rose-600 truncate">{qf.error}</p>}
                       </div>
@@ -391,8 +484,8 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                 </p>
                 <p className="text-indigo-500 text-xs mt-1">
                   {isBatch
-                    ? 'Each completed paper is saved immediately. Please keep this window open while the remaining queue runs.'
-                    : 'This runs metadata extraction, three independent review passes in parallel, then a final meta-review. Please keep this window open.'}
+                    ? 'Each completed paper is saved immediately. Temporary network and model outages are retried before the queue moves on.'
+                    : 'This runs metadata extraction, two independent Gemini Pro review passes, then a Pro adjudicator. Please keep this window open.'}
                 </p>
               </div>
             </div>

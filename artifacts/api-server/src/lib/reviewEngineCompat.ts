@@ -370,6 +370,7 @@ Return a JSON object with exactly two fields:
 Output valid JSON only.`;
 
 const MODEL_CALL_ATTEMPTS = 5;
+const PASS_GENERATION_ATTEMPTS = 3;
 
 function stripControlChars(text: string) {
   return text.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
@@ -1146,6 +1147,25 @@ async function runIndividualPass(
   };
 }
 
+async function runPassWithGenerationRetries(
+  prompt: string,
+  input: ReviewInput,
+  index: number,
+): Promise<IndividualPassResult> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < PASS_GENERATION_ATTEMPTS; attempt += 1) {
+    try {
+      return await runIndividualPass(prompt, input, "gemini", index);
+    } catch (reason) {
+      lastError = reason;
+      if (attempt < PASS_GENERATION_ATTEMPTS - 1) {
+        await sleep(passAttemptDelayMs(attempt, reason));
+      }
+    }
+  }
+  throw new Error(`pass ${index + 1} failed after ${PASS_GENERATION_ATTEMPTS} generation attempts: ${errorMessage(lastError)}`);
+}
+
 function pickRepresentativeReview(reviews: IndividualReview[], medianScore: number) {
   return [...reviews].sort((a, b) => {
     const aDelta = Math.abs(a.scoreBand.median - medianScore);
@@ -1301,21 +1321,31 @@ async function generateMultiPassReview(
 
   const passResults: IndividualPassResult[] = [];
   const passFailures: { reason: unknown; index: number }[] = [];
+
+  const initialPasses = await Promise.allSettled(
+    Array.from({ length: REVIEW_PASS_COUNT }, (_unused, index) =>
+      runPassWithGenerationRetries(systemPrompt, blindedContent, index),
+    ),
+  );
+
+  for (let index = 0; index < initialPasses.length; index += 1) {
+    const result = initialPasses[index];
+    if (result.status === "fulfilled") {
+      passResults.push(result.value);
+    } else {
+      passFailures.push({ reason: result.reason, index });
+    }
+  }
+
+  let extraIndex = REVIEW_PASS_COUNT;
   const maxPassAttempts = REVIEW_PASS_COUNT + 2;
-
-  for (let attempt = 0; passResults.length < REVIEW_PASS_COUNT && attempt < maxPassAttempts; attempt += 1) {
-    const index = passResults.length;
-    let pauseAfterAttemptMs = 1500 + Math.floor(Math.random() * 600);
+  while (passResults.length < REVIEW_PASS_COUNT && extraIndex < maxPassAttempts) {
     try {
-      passResults.push(await runIndividualPass(systemPrompt, blindedContent, "gemini", index));
+      passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex));
     } catch (reason) {
-      passFailures.push({ reason, index: attempt });
-      pauseAfterAttemptMs = passAttemptDelayMs(attempt, reason);
+      passFailures.push({ reason, index: extraIndex });
     }
-
-    if (passResults.length < REVIEW_PASS_COUNT) {
-      await sleep(pauseAfterAttemptMs);
-    }
+    extraIndex += 1;
   }
 
   if (passResults.length < REVIEW_PASS_COUNT) {

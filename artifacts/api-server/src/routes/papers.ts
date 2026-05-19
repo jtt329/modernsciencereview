@@ -196,7 +196,7 @@ router.post("/papers", async (req, res) => {
       paperContent = parsed.text;
       if (!paperContent || paperContent.trim().length < 50) {
         if (selectedModel !== "gemini") {
-          res.status(400).json({ error: "Could not extract readable text from PDF. Try Gemini Flash + Pro or submit as raw text instead." });
+          res.status(400).json({ error: "Could not extract readable text from PDF. Try submitting as raw text instead." });
           return;
         }
         paperContent = buildPdfFallbackText(metadataHints);
@@ -225,7 +225,7 @@ router.post("/papers", async (req, res) => {
       paperContent = parsed.text;
       if (!paperContent || paperContent.trim().length < 50) {
         if (selectedModel !== "gemini") {
-          res.status(400).json({ error: "Could not extract readable text from the linked PDF. Try Gemini Flash + Pro or submit as raw text instead." });
+          res.status(400).json({ error: "Could not extract readable text from the linked PDF. Try submitting as raw text instead." });
           return;
         }
         paperContent = buildPdfFallbackText(metadataHints);
