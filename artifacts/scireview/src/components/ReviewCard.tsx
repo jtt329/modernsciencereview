@@ -99,6 +99,8 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const importedInputs = parsedCoverage?.importedInputs ?? coverageLedger?.importedInputs ?? [];
   const theorySpaceVariants = parsedCoverage?.theorySpaceVariants ?? coverageLedger?.theorySpaceVariants ?? [];
   const mechanismSharingAssessment = parsedCoverage?.mechanismSharingAssessment ?? coverageLedger?.mechanismSharingAssessment ?? '';
+  const inputConstructionOutputLedger = parsedCoverage?.inputConstructionOutputLedger ?? null;
+  const inputFundamentality = parsedCoverage?.inputFundamentality ?? '';
   const storedAggregate = storedAggregateFromField ?? parsedCoverage?.aggregate ?? null;
   const storedIndividualReviews = storedIndividualReviewsFromField.length > 0
     ? storedIndividualReviewsFromField
@@ -147,6 +149,14 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const currentImportedInputs = selectedPass?.coverageLedger?.importedInputs ?? importedInputs;
   const currentTheorySpaceVariants = selectedPass?.coverageLedger?.theorySpaceVariants ?? theorySpaceVariants;
   const currentMechanismSharingAssessment = selectedPass?.coverageLedger?.mechanismSharingAssessment ?? mechanismSharingAssessment;
+  const currentInputConstructionOutputLedger = selectedPass?.inputConstructionOutputLedger ?? inputConstructionOutputLedger;
+  const currentPrimitiveInputs = currentInputConstructionOutputLedger?.primitiveInputs ?? [];
+  const currentIntroducedConstructions = currentInputConstructionOutputLedger?.introducedConstructions ?? [];
+  const currentExternalEmbeddingsAndChecks = currentInputConstructionOutputLedger?.externalEmbeddingsAndChecks ?? [];
+  const currentDirectOutputs = currentInputConstructionOutputLedger?.directOutputs ?? [];
+  const currentDownstreamReach = currentInputConstructionOutputLedger?.downstreamReach ?? '';
+  const currentInputConstructionOutputAssessment = currentInputConstructionOutputLedger?.assessment ?? '';
+  const currentInputFundamentality = selectedPass?.inputFundamentality || inputFundamentality;
   const currentEstablishedResults = selectedPass ? toMarkdownList(selectedPass.establishedResults) : review.establishedResults;
   const currentInterpretiveClaims = selectedPass ? toMarkdownList(selectedPass.interpretiveClaims) : review.interpretiveClaims;
   const currentSpeculativeClaims = selectedPass ? toMarkdownList(selectedPass.speculativeClaims) : review.speculativeClaims;
@@ -306,6 +316,86 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               <Markdown>{currentCentralClaim}</Markdown>
             </Section>
           )}
+
+          {/* Input-Construction-Output Ledger */}
+          {currentInputConstructionOutputLedger && (() => {
+            const hasContent =
+              currentPrimitiveInputs.length ||
+              currentIntroducedConstructions.length ||
+              currentExternalEmbeddingsAndChecks.length ||
+              currentDirectOutputs.length ||
+              currentDownstreamReach ||
+              currentInputConstructionOutputAssessment ||
+              currentInputFundamentality;
+            if (!hasContent) return null;
+            return (
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+                <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest flex items-center gap-2">
+                  <BrainCircuit className="w-4 h-4" /> Input-Construction-Output Ledger
+                </h3>
+                <div className="grid md:grid-cols-2 gap-4">
+                  {currentPrimitiveInputs.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Primitive Inputs</p>
+                      <ul className="space-y-1">
+                        {currentPrimitiveInputs.map((item: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-cyan-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {currentIntroducedConstructions.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Introduced Constructions</p>
+                      <ul className="space-y-1">
+                        {currentIntroducedConstructions.map((item: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-indigo-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {currentExternalEmbeddingsAndChecks.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">External Embeddings/Checks</p>
+                      <ul className="space-y-1">
+                        {currentExternalEmbeddingsAndChecks.map((item: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {currentDirectOutputs.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Direct Outputs</p>
+                      <ul className="space-y-1">
+                        {currentDirectOutputs.map((item: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+                {currentInputFundamentality && (
+                  <div className="border-t border-white/10 pt-3">
+                    <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Input Fundamentality</p>
+                    <Markdown>{currentInputFundamentality}</Markdown>
+                  </div>
+                )}
+                {currentDownstreamReach && (
+                  <div className="border-t border-white/10 pt-3">
+                    <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest mb-1">Downstream Reach</p>
+                    <Markdown>{currentDownstreamReach}</Markdown>
+                  </div>
+                )}
+                {currentInputConstructionOutputAssessment && (
+                  <div className="border-t border-white/10 pt-3">
+                    <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-1">Assessment</p>
+                    <Markdown>{currentInputConstructionOutputAssessment}</Markdown>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Coverage Ledger (new prompt) */}
           {(review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {
