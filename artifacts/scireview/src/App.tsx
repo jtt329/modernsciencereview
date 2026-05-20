@@ -349,17 +349,29 @@ export default function App() {
     setShowHowItWorks(false);
   };
 
+  const fetchPapersExport = async () => {
+    const res = await fetch('/api/papers/export', { credentials: 'include' });
+    if (!res.ok) {
+      const message = await res.text();
+      throw new Error(message || `Export failed with status ${res.status}`);
+    }
+    return res.json();
+  };
+
+  const downloadPapersExport = (data: unknown) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `scireview-export-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleDownloadAll = async () => {
     try {
-      const res = await fetch('/api/papers/export', { credentials: 'include' });
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `scireview-export-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const data = await fetchPapersExport();
+      downloadPapersExport(data);
     } catch (err: any) {
       window.alert(`Export failed: ${err.message}`);
     }
@@ -369,11 +381,13 @@ export default function App() {
     if (!isAdmin) return;
     const count = papers.length;
     if (count === 0) { window.alert('No papers to delete.'); return; }
-    if (!window.confirm(`Save scores for all ${count} paper(s) to Prompt Analysis, then permanently delete them?`)) return;
+    if (!window.confirm(`Download a JSON export, save scores for all ${count} paper(s) to Prompt Analysis, then permanently delete them?`)) return;
     try {
+      const exportData = await fetchPapersExport();
+      downloadPapersExport(exportData);
       const result = await apiFetch('/api/admin/snapshot-and-delete', { method: 'POST' });
       await fetchPapers();
-      window.alert(`Saved ${result.paperCount} papers to Prompt Analysis and deleted them.`);
+      window.alert(`Exported, saved ${result.paperCount} papers to Prompt Analysis, and deleted them.`);
     } catch (err: any) {
       window.alert(`Error: ${err.message}`);
     }
