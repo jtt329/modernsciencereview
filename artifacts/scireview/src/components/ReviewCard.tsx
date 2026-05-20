@@ -203,7 +203,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
                 {selectedPass
                   ? 'This is the anchored scientific merit score assigned by this individual independent review pass.'
-                  : 'This is the final anchored scientific merit score assigned by the Gemini Pro adjudicator after reading the paper and auditing the two independent passes. It is calibrated against the chosen comparison cohort, not a literal percentile over all papers.'}
+                  : 'This is the final anchored scientific merit score assigned by the Gemini adjudicator after reading the paper and auditing the two independent passes. It is calibrated against the chosen comparison cohort, not a literal percentile over all papers.'}
               </div>
             </div>
           </div>

@@ -2,12 +2,14 @@ import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 
 export const GPT_MODEL = "gpt-5.4-pro";
+export const GEMINI_REVIEW_MODEL =
+  process.env.SCIREVIEW_GEMINI_REVIEW_MODEL?.trim() ||
+  "gemini-3.5-flash";
 export const GEMINI_PRO_MODEL =
   process.env.SCIREVIEW_GEMINI_PRO_MODEL?.trim() ||
-  process.env.SCIREVIEW_GEMINI_MODEL?.trim() ||
   "gemini-3.1-pro-preview";
-export const GEMINI_PASS_MODEL = GEMINI_PRO_MODEL;
-export const GEMINI_META_MODEL = GEMINI_PRO_MODEL;
+export const GEMINI_PASS_MODEL = GEMINI_REVIEW_MODEL;
+export const GEMINI_META_MODEL = GEMINI_REVIEW_MODEL;
 export const GEMINI_MODEL = GEMINI_META_MODEL;
 export const REVIEW_PASS_COUNT = 2;
 
@@ -1073,7 +1075,7 @@ export function buildPdfFallbackText(hints: MetadataHints) {
 
 async function callGpt(prompt: string, input: ReviewInput) {
   if (typeof input !== "string") {
-    throw new Error("OpenAI review currently requires extractable PDF text. Try Gemini Pro x2 + Adjudicator for this PDF.");
+    throw new Error("OpenAI review currently requires extractable PDF text. Try the Gemini review pipeline for this PDF.");
   }
   return withModelRetries(GPT_MODEL, async () => {
     const response = await getOpenAI().chat.completions.create({
@@ -1229,7 +1231,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     finalScoreBand,
     finalScoreConfidence: asNumber(source.finalScoreConfidence, fallbackReview.scoreConfidence, 0, 1),
     publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict, fallbackReview.oneParagraphVerdict || fallbackReview.finalJudgment),
-    internalCalibrationNotes: asString(source.internalCalibrationNotes, "Gemini Pro adjudicator reviewed the manuscript and both independent Gemini Pro passes."),
+    internalCalibrationNotes: asString(source.internalCalibrationNotes, `${GEMINI_META_MODEL} adjudicator reviewed the manuscript and both independent ${GEMINI_PASS_MODEL} passes.`),
   };
 }
 
@@ -1379,7 +1381,7 @@ async function generateMultiPassReview(
   thinkingChunks.push(aggregate.internalCalibrationNotes);
 
   return {
-    modelName: `${GEMINI_PRO_MODEL} x2 + adjudicator · ${REVIEW_PROMPT_VERSION}`,
+    modelName: `${GEMINI_PASS_MODEL} x2 + ${GEMINI_META_MODEL} adjudicator · ${REVIEW_PROMPT_VERSION}`,
     systemPrompt,
     blindedContent,
     individualReviews,
