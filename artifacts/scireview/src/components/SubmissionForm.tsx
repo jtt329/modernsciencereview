@@ -246,7 +246,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             <div>
               <h2 className="text-xl font-black tracking-tight">Submit Scientific Paper</h2>
               <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">
-                Blind AI Review · Gemini Pro x2 + Adjudicator
+                Blind AI Review · Gemini 3.5 Flash x2 + Adjudicator
                 {isBatch && ` · ${files.length} papers queued`}
               </p>
             </div>
@@ -291,7 +291,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
               </label>
               <div className="flex gap-2">
                 {([
-                  { id: 'gemini', label: 'Gemini Pro x2 + Adjudicator' },
+                  { id: 'gemini', label: 'Gemini 3.5 Flash x2 + Adjudicator' },
                 ] as const).map((m) => (
                   <button
                     key={m.id}
@@ -356,7 +356,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
                         {qf.status === 'processing' && (
-                          <p className="text-xs text-indigo-500 truncate">{qf.error || 'Reviewing with Gemini Pro x2 + Adjudicator…'}</p>
+                          <p className="text-xs text-indigo-500 truncate">{qf.error || 'Reviewing with Gemini 3.5 Flash x2 + Adjudicator…'}</p>
                         )}
                         {qf.status === 'error' && <p className="text-xs text-rose-600 truncate">{qf.error}</p>}
                       </div>
@@ -485,7 +485,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                 <p className="text-indigo-500 text-xs mt-1">
                   {isBatch
                     ? 'Each completed paper is saved immediately. Temporary network and model outages are retried before the queue moves on.'
-                    : 'This runs metadata extraction, two independent Gemini Pro review passes, then a Gemini Pro adjudicator. Please keep this window open.'}
+                    : 'This runs metadata extraction, two independent Gemini 3.5 Flash review passes, then a Gemini 3.5 Flash adjudicator. Please keep this window open.'}
                 </p>
               </div>
             </div>
@@ -507,7 +507,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                {isBatch ? `${doneCount}/${files.length} done…` : 'Reviewing with Gemini Pro x2 + Adjudicator…'}
+                {isBatch ? `${doneCount}/${files.length} done…` : 'Reviewing with Gemini 3.5 Flash x2 + Adjudicator…'}
               </>
             ) : (
               <>
