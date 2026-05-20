@@ -11,6 +11,7 @@ export const GEMINI_PRO_MODEL =
 export const GEMINI_PASS_MODEL = GEMINI_REVIEW_MODEL;
 export const GEMINI_META_MODEL = GEMINI_REVIEW_MODEL;
 export const GEMINI_MODEL = GEMINI_META_MODEL;
+export const GEMINI_PIPELINE_LABEL = `${GEMINI_PASS_MODEL} x2 + ${GEMINI_META_MODEL} adjudicator`;
 export const REVIEW_PASS_COUNT = 2;
 
 let openai: OpenAI | null = null;
@@ -1381,7 +1382,7 @@ async function generateMultiPassReview(
   thinkingChunks.push(aggregate.internalCalibrationNotes);
 
   return {
-    modelName: `${GEMINI_PASS_MODEL} x2 + ${GEMINI_META_MODEL} adjudicator · ${REVIEW_PROMPT_VERSION}`,
+    modelName: `${GEMINI_PIPELINE_LABEL} · ${REVIEW_PROMPT_VERSION}`,
     systemPrompt,
     blindedContent,
     individualReviews,
