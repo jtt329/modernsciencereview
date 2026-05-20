@@ -30,6 +30,16 @@ const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "
 
 const router = Router();
 
+function parseJsonObject(value: string | null): Record<string, any> | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // GET /api/papers/system-prompt — return the review system prompt
 router.get("/papers/system-prompt", (_req, res) => {
   res.json({ prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION, promptVersion: REVIEW_PROMPT_VERSION });
@@ -44,6 +54,7 @@ router.get("/papers/export", async (_req, res) => {
 
     const exported = papers.map(p => {
       const r = reviewMap.get(p.id);
+      const coverageLedger = r ? parseJsonObject(r.coverageLedgerJson) : null;
       return {
         paper: {
           id: p.id,
@@ -55,6 +66,8 @@ router.get("/papers/export", async (_req, res) => {
           pdfUrl: p.pdfUrl,
         },
         review: r ? {
+          promptVersion: coverageLedger?.promptVersion ?? REVIEW_PROMPT_VERSION,
+          systemPrompt: r.systemPrompt,
           modelName: r.modelName,
           overallIntrinsicScore: r.overallIntrinsicScore,
           intrinsicScientificMeritScore: r.intrinsicScientificMeritScore,
@@ -81,7 +94,7 @@ router.get("/papers/export", async (_req, res) => {
           decisiveCheck: r.decisiveCheck,
           finalJudgment: r.finalJudgment,
           relatedWork: r.relatedWork,
-          coverageLedger: r.coverageLedgerJson ? JSON.parse(r.coverageLedgerJson) : null,
+          coverageLedger,
           createdAt: r.createdAt,
         } : null,
       };

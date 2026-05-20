@@ -60,25 +60,23 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
       )}
 
       <div className="p-5">
-        {/* Author + date */}
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="w-6 h-6 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100 shrink-0">
-              <Users className="w-3 h-3 text-indigo-500" />
-            </div>
-            <span className="text-xs font-bold text-slate-600 truncate">{displayAuthors}</span>
-          </div>
-          <span className="text-[11px] text-slate-400 font-medium shrink-0 ml-3">
-            {format(paper.createdAt, 'MMM d, yyyy')}
-          </span>
-        </div>
-
-        {/* Title + tags (left) alongside score (right) */}
+        {/* Title, authors, and tags (left) alongside score (right) */}
         <div className="flex gap-4 mb-3">
           <div className="flex-1 min-w-0">
             <h3 className={`text-base font-bold text-slate-900 leading-snug mb-2 transition-colors ${isSelectable ? '' : 'group-hover/card:text-indigo-600'}`}>
               {paper.title}
             </h3>
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-6 h-6 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100 shrink-0">
+                  <Users className="w-3 h-3 text-indigo-500" />
+                </div>
+                <span className="text-xs font-bold text-slate-600 truncate">{displayAuthors}</span>
+              </div>
+              <span className="text-[11px] text-slate-400 font-medium shrink-0">
+                {format(paper.createdAt, 'MMM d, yyyy')}
+              </span>
+            </div>
             <div className="flex flex-wrap items-start gap-1.5">
               <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 text-[10px] font-black uppercase tracking-wider rounded-md border border-indigo-100">
                 {paper.field}
