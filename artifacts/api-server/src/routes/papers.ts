@@ -183,7 +183,7 @@ router.post("/papers", async (req, res) => {
     let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
     const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
     const selectedModel: ReviewModel = "gemini";
-    const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string } = {
+    const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string; pdfBase64?: string; mimeType?: string } = {
       fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
     };
 
@@ -193,6 +193,8 @@ router.post("/papers", async (req, res) => {
       const parsed = await pdfParse(buffer);
       metadataHints.pdfTitle = typeof parsed.info?.Title === "string" ? parsed.info.Title : undefined;
       metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
+      metadataHints.pdfBase64 = source.data;
+      metadataHints.mimeType = "application/pdf";
       paperContent = parsed.text;
       if (!paperContent || paperContent.trim().length < 50) {
         if (selectedModel !== "gemini") {
@@ -222,6 +224,8 @@ router.post("/papers", async (req, res) => {
       metadataHints.fileName ||= url.split("/").pop()?.split("?")[0];
       metadataHints.pdfTitle = typeof parsed.info?.Title === "string" ? parsed.info.Title : undefined;
       metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
+      metadataHints.pdfBase64 = buffer.toString("base64");
+      metadataHints.mimeType = "application/pdf";
       paperContent = parsed.text;
       if (!paperContent || paperContent.trim().length < 50) {
         if (selectedModel !== "gemini") {

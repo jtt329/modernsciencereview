@@ -9,6 +9,9 @@ export const GEMINI_REVIEW_MODEL =
 export const GEMINI_PRO_MODEL =
   process.env.SCIREVIEW_GEMINI_PRO_MODEL?.trim() ||
   "gemini-3.1-pro-preview";
+export const GEMINI_METADATA_MODEL =
+  process.env.SCIREVIEW_GEMINI_METADATA_MODEL?.trim() ||
+  GEMINI_REVIEW_MODEL;
 export const GEMINI_PASS_MODEL = GEMINI_PRO_MODEL;
 export const GEMINI_META_MODEL = GEMINI_PRO_MODEL;
 export const GEMINI_MODEL = GEMINI_META_MODEL;
@@ -376,14 +379,15 @@ const REVIEW_OUTPUT_SCHEMA_INSTRUCTION = "Current app JSON schema. Return valid 
 
 export const REVIEW_SYSTEM_INSTRUCTION = INPUT_CONSTRUCTION_OUTPUT_SCHEMA_V2_PROMPT;
 
-const METADATA_PROMPT = `Extract the title and authors from the scientific paper text provided.
-You will receive JSON containing filename hints, embedded PDF metadata, and the beginning of the extracted paper text.
-Prefer the title and author block printed in the manuscript header. Use embedded PDF metadata or the filename only as fallback hints, because they are often abbreviated, stale, or machine-generated.
+const METADATA_PROMPT = `Extract the exact manuscript title and paper authors from the scientific paper provided.
+You may receive the original PDF plus JSON containing filename hints, embedded PDF metadata, heuristic guesses, and extracted text. Prefer the title and author block printed in the manuscript itself, especially the first page/header. Use embedded PDF metadata or the filename only as fallback hints, because they are often abbreviated, stale, or machine-generated.
 
 Rules:
 - Return the full paper title, not the journal name, arXiv id, DOI, running header, abstract sentence, section heading, or filename code.
-- Return paper authors only: personal names as written, comma-separated. Omit affiliations, departments, emails, dates, ORCID ids, footnote symbols, and addresses.
-- If the extracted text clearly shows only one author from a multi-author line, preserve all visible names rather than inventing missing names.
+- If the title spans multiple visual or extracted-text lines, join the lines into one complete title in the correct order.
+- Return paper authors only: personal names as written, comma-separated, preserving author order. Omit affiliations, departments, emails, dates, ORCID ids, footnote symbols, and addresses.
+- If the author line uses superscripts, bullets, footnotes, or line breaks, strip the markers and preserve all author names.
+- Do not invent authors that are not visible in the manuscript. If only some names are visible, return the visible names.
 - If title or authors are genuinely not recoverable, use "Unknown Title" or "Unknown Authors".
 
 Return a JSON object with exactly two fields:
@@ -1049,6 +1053,8 @@ type MetadataHints = {
   fileName?: string;
   pdfTitle?: string;
   pdfAuthor?: string;
+  pdfBase64?: string;
+  mimeType?: string;
 };
 
 function cleanMetadataText(value?: string) {
@@ -1421,13 +1427,15 @@ function buildAdjudicatorInput(blindedContent: ReviewInput, reviews: IndividualR
 
 export async function extractMetadata(paperContent: string, hints: MetadataHints = {}): Promise<{ title: string; authors: string }> {
   const fallback = heuristicMetadata(paperContent, hints);
+  const headerText = manuscriptHeaderText(paperContent).join("\n");
   const metadataInput = JSON.stringify({
     fileNameHint: cleanMetadataText(hints.fileName),
     embeddedPdfTitleHint: cleanMetadataText(hints.pdfTitle),
     embeddedPdfAuthorHint: cleanMetadataText(hints.pdfAuthor),
     heuristicTitleFallback: fallback.title,
     heuristicAuthorsFallback: fallback.authors,
-    manuscriptHeaderText: manuscriptHeaderText(paperContent).join("\n").slice(0, 5000),
+    manuscriptHeaderText: headerText.slice(0, 8000),
+    extractedTextBeginning: stripControlChars(paperContent).slice(0, 16000),
   }, null, 2);
   const looksTruncatedTitle = (value: string) =>
     /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
@@ -1444,20 +1452,23 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(value) ||
     value.length > 500;
   try {
+    const metadataReviewInput: ReviewInput = hints.pdfBase64
+      ? {
+          text: metadataInput,
+          pdfBase64: hints.pdfBase64,
+          mimeType: hints.mimeType || "application/pdf",
+        }
+      : metadataInput;
     const { parsed } = await callGemini(
       METADATA_PROMPT,
-      metadataInput,
-      GEMINI_PASS_MODEL,
-      { maxOutputTokens: 512, includeThoughts: false },
+      metadataReviewInput,
+      GEMINI_METADATA_MODEL,
+      { maxOutputTokens: 768, includeThoughts: false },
     );
     const parsedMetadata = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
     const title = asString(parsedMetadata.title, fallback.title);
     const authors = asString(parsedMetadata.authors, fallback.authors);
-    const bestTitle =
-      isSuspiciousTitle(title) ||
-      (fallback.title !== "Unknown Title" && fallback.title.length > title.length + 12)
-        ? fallback.title
-        : title;
+    const bestTitle = isSuspiciousTitle(title) ? fallback.title : title;
     const bestAuthors = isSuspiciousAuthors(authors) ? fallback.authors : authors;
     return {
       title: bestTitle,
