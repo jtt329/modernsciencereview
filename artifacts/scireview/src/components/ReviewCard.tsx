@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, CheckCircle2, Zap, Award, Heart, MessageSquare, Info, X, Target, BookOpen, FlaskConical, Layers, Shield, AlertTriangle, Microscope, TrendingUp, GitBranch, Globe, ListChecks, BrainCircuit } from 'lucide-react';
+import { Sparkles, CheckCircle2, Award, Heart, Info, X, Target, BookOpen, Shield, AlertTriangle, Microscope, TrendingUp, GitBranch, ListChecks, BrainCircuit } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -43,7 +43,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const [showThinking, setShowThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<'combined' | number>('combined');
 
-  const toMarkdownList = (items?: string[]) => items && items.length > 0 ? items.map((item) => `- ${item}`).join('\n') : '';
   const normalizeDisplayedBand = (
     low: number | null | undefined,
     median: number | null | undefined,
@@ -100,14 +99,15 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
       storedAggregateFromField = null;
     }
   }
+  const storedAggregate = storedAggregateFromField ?? parsedCoverage?.aggregate ?? null;
   const coverageLedger = parsedCoverage?.coverageLedger ?? parsedCoverage ?? null;
   const directTargets = parsedCoverage?.directTargets ?? coverageLedger?.directTargets ?? [];
   const importedInputs = parsedCoverage?.importedInputs ?? coverageLedger?.importedInputs ?? [];
   const theorySpaceVariants = parsedCoverage?.theorySpaceVariants ?? coverageLedger?.theorySpaceVariants ?? [];
   const mechanismSharingAssessment = parsedCoverage?.mechanismSharingAssessment ?? coverageLedger?.mechanismSharingAssessment ?? '';
-  const inputConstructionOutputLedger = parsedCoverage?.inputConstructionOutputLedger ?? null;
-  const inputFundamentality = parsedCoverage?.inputFundamentality ?? '';
-  const storedAggregate = storedAggregateFromField ?? parsedCoverage?.aggregate ?? null;
+  const inputConstructionOutputLedger = parsedCoverage?.inputConstructionOutputLedger ?? storedAggregate?.inputConstructionOutputLedger ?? null;
+  const inputGrounding = parsedCoverage?.inputGrounding ?? storedAggregate?.inputGroundingAssessment ?? '';
+  const inputFundamentality = parsedCoverage?.inputFundamentality ?? storedAggregate?.inputFundamentalityAssessment ?? '';
   const storedIndividualReviews = storedIndividualReviewsFromField.length > 0
     ? storedIndividualReviewsFromField
     : Array.isArray(parsedCoverage?.individualReviews)
@@ -148,7 +148,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
   const currentComparisonCohort = selectedPass?.comparisonCohort || selectedPass?.broadField || comparisonCohort;
   const currentVerdict = selectedPass?.oneParagraphVerdict || selectedPass?.finalJudgment || aggregateVerdict;
-  const currentFinalJudgment = selectedPass?.finalJudgment || currentVerdict || review.finalJudgment || review.overallEvaluation;
   const currentSummary = selectedPass?.summary || review.summary;
   const currentCentralClaim = selectedPass?.centralClaim || review.centralClaim;
   const currentDirectTargets = selectedPass?.coverageLedger?.directTargets ?? directTargets;
@@ -162,22 +161,25 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const currentDirectOutputs = currentInputConstructionOutputLedger?.directOutputs ?? [];
   const currentDownstreamReach = currentInputConstructionOutputLedger?.downstreamReach ?? '';
   const currentInputConstructionOutputAssessment = currentInputConstructionOutputLedger?.assessment ?? '';
+  const hasIcoLedger = Boolean(
+    currentPrimitiveInputs.length ||
+    currentIntroducedConstructions.length ||
+    currentExternalEmbeddingsAndChecks.length ||
+    currentDirectOutputs.length ||
+    currentDownstreamReach ||
+    currentInputConstructionOutputAssessment
+  );
+  const currentInputGrounding = selectedPass?.inputGrounding || inputGrounding;
   const currentInputFundamentality = selectedPass?.inputFundamentality || inputFundamentality;
-  const currentEstablishedResults = selectedPass ? toMarkdownList(selectedPass.establishedResults) : review.establishedResults;
-  const currentInterpretiveClaims = selectedPass ? toMarkdownList(selectedPass.interpretiveClaims) : review.interpretiveClaims;
-  const currentSpeculativeClaims = selectedPass ? toMarkdownList(selectedPass.speculativeClaims) : review.speculativeClaims;
   const currentCorrectness = selectedPass?.correctness || review.correctness;
-  const currentNovelty = selectedPass?.novelty || review.novelty;
-  const currentNoveltyConfidence = selectedPass?.noveltyConfidence ?? review.noveltyConfidence;
-  const currentInternalTechnicalTraction = selectedPass?.internalTechnicalTraction || review.internalTechnicalTraction;
-  const currentEconomy = selectedPass?.economy || review.economy;
-  const currentScopeDepth = selectedPass?.scopeDepth || review.scopeDepth;
-  const currentUnifyingPower = selectedPass?.unifyingPower || review.unifyingPower;
-  const currentExplanatoryTargetBreadth = selectedPass?.explanatoryTargetBreadth || review.explanatoryTargetBreadth;
-  const currentTheorySpaceBreadth = selectedPass?.theorySpaceBreadth || review.theorySpaceBreadth;
   const currentStrongestCase = selectedPass?.strongestCaseForImportance || review.strongestCaseForImportance;
   const currentStrongestObjection = selectedPass?.strongestObjection || review.strongestObjection;
   const currentDecisiveCheck = selectedPass?.decisiveCheck || review.decisiveCheck;
+  const currentFrameworkConditionality = selectedPass?.frameworkConditionality?.explanation
+    || (review as any).frameworkConditionalityExplanation
+    || storedAggregate?.frameworkConditionalityAssessment
+    || parsedCoverage?.frameworkConditionalityAssessment
+    || '';
   const submittedAtLabel = Number.isFinite(review.createdAt)
     ? format(new Date(review.createdAt), 'MMM d, yyyy h:mm:ss a')
     : null;
@@ -224,21 +226,23 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           </div>
 
-          <div className="grid md:grid-cols-3 gap-3">
+          <div className="grid md:grid-cols-4 gap-3">
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
               <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+              <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Score Range</p>
+              <p className="text-sm font-bold text-white mt-1">{activeBand.low}-{activeBand.high}</p>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
               <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
             </div>
-            {!selectedPass && scoreStability && (
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Stability</p>
-                <p className="text-sm font-bold text-white mt-1 capitalize">{scoreStability}</p>
-              </div>
-            )}
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+              <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Stability</p>
+              <p className="text-sm font-bold text-white mt-1 capitalize">{!selectedPass && scoreStability ? scoreStability : 'Pass view'}</p>
+            </div>
           </div>
 
           {storedIndividualReviews.length > 0 && (
@@ -269,12 +273,32 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           )}
 
+          {/* Summary */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+              <BookOpen className="w-4 h-4" /> Review Summary
+            </h3>
+            <Markdown>{currentSummary}</Markdown>
+          </div>
+
+          {/* Central Claim */}
+          {currentCentralClaim && (
+            <Section icon={<Target className="w-4 h-4" />} label="Central Claim" color="text-sky-400">
+              <Markdown>{currentCentralClaim}</Markdown>
+            </Section>
+          )}
+
           {currentVerdict && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
               <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest flex items-center gap-2">
-                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Verdict' : 'Verdict'}
+                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Verdict' : 'Public Verdict'}
               </h3>
               <Markdown>{currentVerdict}</Markdown>
+              {submittedAtLabel && (
+                <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                  Submitted {submittedAtLabel}
+                </p>
+              )}
             </div>
           )}
 
@@ -290,7 +314,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               {currentTargetBreadthScore != null && (
                 <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
                   <div className="text-3xl font-black text-sky-300">{currentTargetBreadthScore}<span className="text-base font-bold text-sky-400/60">/10</span></div>
-                  <div className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mt-1">Target Breadth</div>
+                  <div className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mt-1">Explanatory Reach</div>
                 </div>
               )}
               {currentTheoryBreadthScore != null && (
@@ -308,21 +332,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           )}
 
-          {/* Summary */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-              <BookOpen className="w-4 h-4" /> Review Summary
-            </h3>
-            <Markdown>{currentSummary}</Markdown>
-          </div>
-
-          {/* Central Claim */}
-          {currentCentralClaim && (
-            <Section icon={<Target className="w-4 h-4" />} label="Central Claim" color="text-sky-400">
-              <Markdown>{currentCentralClaim}</Markdown>
-            </Section>
-          )}
-
           {/* Input-Construction-Output Ledger */}
           {currentInputConstructionOutputLedger && (() => {
             const hasContent =
@@ -331,8 +340,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
               currentExternalEmbeddingsAndChecks.length ||
               currentDirectOutputs.length ||
               currentDownstreamReach ||
-              currentInputConstructionOutputAssessment ||
-              currentInputFundamentality;
+              currentInputConstructionOutputAssessment;
             if (!hasContent) return null;
             return (
               <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
@@ -381,12 +389,6 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                     </div>
                   )}
                 </div>
-                {currentInputFundamentality && (
-                  <div className="border-t border-white/10 pt-3">
-                    <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Input Fundamentality</p>
-                    <Markdown>{currentInputFundamentality}</Markdown>
-                  </div>
-                )}
                 {currentDownstreamReach && (
                   <div className="border-t border-white/10 pt-3">
                     <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest mb-1">Downstream Reach</p>
@@ -404,7 +406,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
           })()}
 
           {/* Coverage Ledger (new prompt) */}
-          {(review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {
+          {!hasIcoLedger && (review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {
             const hasContent = currentDirectTargets?.length || currentImportedInputs?.length || currentTheorySpaceVariants?.length || currentMechanismSharingAssessment;
             if (!hasContent) return null;
             return (
@@ -454,93 +456,33 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             );
           })()}
 
-          {(currentExplanatoryTargetBreadth || currentTheorySpaceBreadth) && (
+          <div className="space-y-4">
+            <h3 className="text-xs font-black text-slate-300 uppercase tracking-widest flex items-center gap-2">
+              <Microscope className="w-4 h-4" /> Technical Assessment
+            </h3>
             <div className="grid md:grid-cols-2 gap-4">
-              {currentExplanatoryTargetBreadth && (
-                <Section icon={<Globe className="w-4 h-4" />} label="Explanatory-Target Breadth" color="text-sky-400">
-                  <Markdown>{currentExplanatoryTargetBreadth}</Markdown>
+              {currentCorrectness && (
+                <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Correctness" color="text-emerald-400">
+                  <Markdown>{currentCorrectness}</Markdown>
                 </Section>
               )}
-              {currentTheorySpaceBreadth && (
-                <Section icon={<GitBranch className="w-4 h-4" />} label="Theory-Space Breadth" color="text-violet-400">
-                  <Markdown>{currentTheorySpaceBreadth}</Markdown>
+              {currentInputGrounding && (
+                <Section icon={<Shield className="w-4 h-4" />} label="Input Grounding" color="text-cyan-400">
+                  <Markdown>{currentInputGrounding}</Markdown>
                 </Section>
               )}
-            </div>
-          )}
-
-          {(currentEstablishedResults || currentInterpretiveClaims || currentSpeculativeClaims) && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-black text-slate-400 uppercase tracking-widest">Evidence Breakdown</h3>
-              <div className="grid md:grid-cols-3 gap-4">
-                {currentEstablishedResults && (
-                  <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Established" color="text-emerald-400">
-                    <Markdown>{currentEstablishedResults}</Markdown>
-                  </Section>
-                )}
-                {currentInterpretiveClaims && (
-                  <Section icon={<Layers className="w-4 h-4" />} label="Interpretive" color="text-amber-400">
-                    <Markdown>{currentInterpretiveClaims}</Markdown>
-                  </Section>
-                )}
-                {currentSpeculativeClaims && (
-                  <Section icon={<FlaskConical className="w-4 h-4" />} label="Speculative" color="text-orange-400">
-                    <Markdown>{currentSpeculativeClaims}</Markdown>
-                  </Section>
-                )}
-              </div>
-            </div>
-          )}
-
-          <div className="grid md:grid-cols-2 gap-4">
-            <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Correctness" color="text-emerald-400">
-              <Markdown>{currentCorrectness}</Markdown>
-            </Section>
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-black text-amber-400 uppercase tracking-widest flex items-center gap-2">
-                  <Zap className="w-4 h-4" /> Novelty
-                </h3>
-                {currentNoveltyConfidence != null && (
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    Confidence {Math.round(Number(currentNoveltyConfidence) * 100)}%
-                  </span>
-                )}
-              </div>
-              <Markdown>{currentNovelty}</Markdown>
-            </div>
-          </div>
-
-          {currentInternalTechnicalTraction && (
-            <Section icon={<Microscope className="w-4 h-4" />} label="Internal Technical Traction" color="text-teal-400">
-              <Markdown>{currentInternalTechnicalTraction}</Markdown>
-            </Section>
-          )}
-
-          {(currentEconomy || currentScopeDepth || currentUnifyingPower) && (
-            <div className="grid md:grid-cols-3 gap-4">
-              {currentEconomy && (
-                <Section icon={<TrendingUp className="w-4 h-4" />} label="Explanatory Economy" color="text-cyan-400">
-                  <Markdown>{currentEconomy}</Markdown>
+              {currentInputFundamentality && (
+                <Section icon={<BrainCircuit className="w-4 h-4" />} label="Input Fundamentality" color="text-violet-400">
+                  <Markdown>{currentInputFundamentality}</Markdown>
                 </Section>
               )}
-              {currentScopeDepth && (
-                <Section icon={<Microscope className="w-4 h-4" />} label="Scope & Depth" color="text-violet-400">
-                  <Markdown>{currentScopeDepth}</Markdown>
+              {currentFrameworkConditionality && (
+                <Section icon={<GitBranch className="w-4 h-4" />} label="Framework Conditionality" color="text-amber-400">
+                  <Markdown>{currentFrameworkConditionality}</Markdown>
                 </Section>
               )}
-              {currentUnifyingPower && (
-                <Section icon={<Layers className="w-4 h-4" />} label="Unifying Power" color="text-fuchsia-400">
-                  <Markdown>{currentUnifyingPower}</Markdown>
-                </Section>
-              )}
-            </div>
-          )}
-
-          {(currentStrongestCase || currentStrongestObjection) && (
-            <div className="grid md:grid-cols-2 gap-4">
               {currentStrongestCase && (
-                <Section icon={<Shield className="w-4 h-4" />} label="Strongest Case For" color="text-green-400">
+                <Section icon={<TrendingUp className="w-4 h-4" />} label="Strongest Case" color="text-green-400">
                   <Markdown>{currentStrongestCase}</Markdown>
                 </Section>
               )}
@@ -550,27 +492,12 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                 </Section>
               )}
             </div>
-          )}
-
-          {currentDecisiveCheck && (
-            <Section icon={<Microscope className="w-4 h-4" />} label="Decisive Check" color="text-yellow-400">
-              <Markdown>{currentDecisiveCheck}</Markdown>
-            </Section>
-          )}
-
-          {currentFinalJudgment && (
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
-              <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-                <Award className="w-4 h-4" /> Final Judgment
-              </h3>
-              <Markdown>{currentFinalJudgment}</Markdown>
-              {submittedAtLabel && (
-                <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                  Submitted {submittedAtLabel}
-                </p>
-              )}
-            </div>
-          )}
+            {currentDecisiveCheck && (
+              <Section icon={<Microscope className="w-4 h-4" />} label="Decisive Check" color="text-yellow-400">
+                <Markdown>{currentDecisiveCheck}</Markdown>
+              </Section>
+            )}
+          </div>
 
           {review.relatedWork && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
