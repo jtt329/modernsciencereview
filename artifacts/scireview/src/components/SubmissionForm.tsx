@@ -17,7 +17,8 @@ interface QueuedFile {
 }
 
 const MAX_QUEUED_PDFS = 50;
-const SUBMISSION_RETRY_DELAYS_MS = [15_000, 45_000, 90_000, 180_000];
+const BATCH_CONCURRENCY = 2;
+const SUBMISSION_RETRY_DELAYS_MS = [15_000];
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -182,8 +183,9 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
       let failures = 0;
       const skipSelectAfterSubmit = files.length > 1;
       setDoneCount(done);
-      let pausedForConnection = false;
-      for (const qf of filesToProcess) {
+      let nextIndex = 0;
+
+      const processOne = async (qf: QueuedFile) => {
         setFileStatus(qf.id, { status: 'processing', error: undefined });
         try {
           const base64 = await readFileAsBase64(qf.file);
@@ -199,16 +201,23 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
           failures++;
           const message = err?.message ?? String(err);
           setFileStatus(qf.id, { status: 'error', error: message });
-          if (isConnectionLoss(message) || isRetryableSubmissionError(err)) {
-            pausedForConnection = true;
-            break;
-          }
         }
-      }
+      };
+
+      const workers = Array.from(
+        { length: Math.min(BATCH_CONCURRENCY, filesToProcess.length) },
+        async () => {
+          while (nextIndex < filesToProcess.length) {
+            const qf = filesToProcess[nextIndex++];
+            await processOne(qf);
+          }
+        },
+      );
+
+      await Promise.all(workers);
+
       if (failures > 0) {
-        setError(pausedForConnection
-          ? `The API/model connection is still unstable, so the queue paused instead of marking the rest as failed. Completed papers were saved. Retry the failed/pending papers when ready.`
-          : `${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);
+        setError(`${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);
       } else {
         onClose();
       }
@@ -327,7 +336,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                   {isDragActive ? 'Drop PDFs here…' : 'Drop PDFs here, or click to browse'}
                 </p>
                 <p className="text-sm text-slate-400 mt-1">
-                  Queue up to {MAX_QUEUED_PDFS} PDFs. Files are reviewed sequentially and saved as each review finishes.
+                  Queue up to {MAX_QUEUED_PDFS} PDFs. Up to {BATCH_CONCURRENCY} files are reviewed at once and saved as each review finishes.
                 </p>
               </div>
 
@@ -484,7 +493,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                 </p>
                 <p className="text-indigo-500 text-xs mt-1">
                   {isBatch
-                    ? 'Each completed paper is saved immediately. Temporary network and model outages are retried before the queue moves on.'
+                    ? `Up to ${BATCH_CONCURRENCY} papers are reviewed at once. Each completed paper is saved immediately, and failed papers do not block the rest of the queue.`
                     : 'This runs metadata extraction, two independent Gemini Pro review passes, then a Gemini Pro adjudicator. Please keep this window open.'}
                 </p>
               </div>

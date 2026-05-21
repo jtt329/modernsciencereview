@@ -395,8 +395,8 @@ Return a JSON object with exactly two fields:
 - authors: string
 Output valid JSON only.`;
 
-const MODEL_CALL_ATTEMPTS = 5;
-const PASS_GENERATION_ATTEMPTS = 3;
+const MODEL_CALL_ATTEMPTS = 3;
+const PASS_GENERATION_ATTEMPTS = 2;
 
 function stripControlChars(text: string) {
   return text.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
@@ -439,7 +439,7 @@ function retryDelayMs(attempt: number, error: unknown) {
 
 function passAttemptDelayMs(attempt: number, error: unknown) {
   if (isTransientModelError(error)) {
-    const transientDelays = [30000, 60000, 90000, 120000];
+    const transientDelays = [10000, 20000];
     return (transientDelays[attempt] ?? 120000) + Math.floor(Math.random() * 1000);
   }
   return 1500 + Math.floor(Math.random() * 600);
