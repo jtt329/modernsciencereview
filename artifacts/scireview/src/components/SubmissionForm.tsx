@@ -18,7 +18,7 @@ interface QueuedFile {
 
 const MAX_QUEUED_PDFS = 50;
 const BATCH_CONCURRENCY = 2;
-const SUBMISSION_RETRY_DELAYS_MS = [15_000];
+const SUBMISSION_RETRY_DELAYS_MS: number[] = [];
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));

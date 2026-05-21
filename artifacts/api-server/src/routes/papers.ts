@@ -105,6 +105,42 @@ async function existingLogicalSubmission(
   return { paper, review: review || null };
 }
 
+async function existingSourceSubmission(authorId: string, sourceHash: string, modelName: string) {
+  const userPapers = await db.select().from(papersTable).where(
+    and(
+      eq(papersTable.authorId, authorId),
+      eq(papersTable.modelName, modelName),
+    ),
+  ).orderBy(desc(papersTable.createdAt));
+  if (userPapers.length === 0) return null;
+
+  const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.modelName, modelName));
+  const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
+  for (const paper of userPapers) {
+    const review = reviewByPaper.get(paper.id);
+    const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
+    if (ledger?.submissionSourceHash === sourceHash) {
+      return { paper, review: review || null };
+    }
+  }
+  return null;
+}
+
+function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash: string | null) {
+  const ledger = parseJsonObject(reviewValues.coverageLedgerJson ?? null) ?? {};
+  reviewValues.coverageLedgerJson = JSON.stringify({
+    ...ledger,
+    submissionSourceHash: sourceHash,
+    retryPolicy: {
+      modelCallAttempts: Number(process.env.SCIREVIEW_MODEL_CALL_ATTEMPTS || 2),
+      passGenerationAttempts: Number(process.env.SCIREVIEW_PASS_GENERATION_ATTEMPTS || 1),
+      replacementPassAttempts: Number(process.env.SCIREVIEW_REPLACEMENT_PASS_ATTEMPTS || 1),
+      automaticWholePaperBrowserRetries: 0,
+    },
+  });
+  return reviewValues;
+}
+
 const COMPARATOR_STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is", "it",
   "of", "on", "or", "over", "the", "to", "via", "with", "within", "without", "paper", "review",
@@ -599,18 +635,24 @@ router.post("/papers", async (req, res) => {
     // Step 1: extract real title and authors (before anonymous review)
     const metadata = await extractLatestMetadata(paperContent, metadataHints);
 
-    // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
-    const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(
-      reviewInput ?? paperContent,
-      selectedModel,
-      undefined,
-      { selectComparatorContext },
-    );
+    const existingBySource = sourceHash
+      ? await existingSourceSubmission(req.user.id, sourceHash, expectedModelName)
+      : null;
+    if (existingBySource?.review) {
+      if (resolveSubmission) resolveSubmission(existingBySource);
+      if (submissionKey) {
+        const key = submissionKey;
+        setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
+      }
+      res.json(existingBySource);
+      return;
+    }
+
     const existingByMetadata = await existingLogicalSubmission(
       req.user.id,
       metadata.title,
       metadata.authors,
-      reviewMetadata.modelName,
+      expectedModelName,
     );
     if (existingByMetadata?.review) {
       if (resolveSubmission) resolveSubmission(existingByMetadata);
@@ -621,6 +663,15 @@ router.post("/papers", async (req, res) => {
       res.json(existingByMetadata);
       return;
     }
+
+    // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
+    const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(
+      reviewInput ?? paperContent,
+      selectedModel,
+      undefined,
+      { selectComparatorContext },
+    );
+    addSubmissionCostControls(reviewValues, sourceHash);
 
     const submitterName = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email || "Anonymous";
 

@@ -17,7 +17,7 @@ interface BulkSubmissionFormProps {
   onClose: () => void;
 }
 
-const MAX_AUTO_RETRIES = 3;
+const MAX_AUTO_RETRIES = 0;
 const TRANSIENT_RETRY_DELAY_MS = 45_000;
 const BETWEEN_FILE_DELAY_MS = 2_500;
 

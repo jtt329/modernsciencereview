@@ -531,8 +531,14 @@ Return a JSON object with exactly two fields:
 - authors: string
 Output valid JSON only.`;
 
-const MODEL_CALL_ATTEMPTS = 3;
-const PASS_GENERATION_ATTEMPTS = 2;
+function positiveIntEnv(name: string, fallback: number) {
+  const value = Number(process.env[name]);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+const MODEL_CALL_ATTEMPTS = positiveIntEnv("SCIREVIEW_MODEL_CALL_ATTEMPTS", 2);
+const PASS_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_PASS_GENERATION_ATTEMPTS", 1);
+const REPLACEMENT_PASS_ATTEMPTS = positiveIntEnv("SCIREVIEW_REPLACEMENT_PASS_ATTEMPTS", 1);
 
 function stripControlChars(text: string) {
   return text.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
@@ -1969,7 +1975,7 @@ async function generateMultiPassReview(
   }
 
   let extraIndex = REVIEW_PASS_COUNT;
-  const maxPassAttempts = REVIEW_PASS_COUNT + 2;
+  const maxPassAttempts = REVIEW_PASS_COUNT + REPLACEMENT_PASS_ATTEMPTS;
   while (passResults.length < REVIEW_PASS_COUNT && extraIndex < maxPassAttempts) {
     try {
       passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex));
