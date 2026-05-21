@@ -1,6 +1,9 @@
 import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
-import { ICO_SIMPLIFIED_V3_PROMPT } from "./prompts/icoSimplifiedV3";
+import {
+  ICO_COMPARATORS_V4_ADJUDICATOR_PROMPT,
+  ICO_COMPARATORS_V4_PROMPT,
+} from "./prompts/icoComparatorsV4";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -67,6 +70,45 @@ type InputConstructionOutputLedger = {
   assessment: string;
 };
 
+type ContributionArchetype = {
+  primary: string;
+  secondary: string;
+};
+
+type NearestComparator = {
+  paperTitle: string;
+  relationship: "direct" | "upstream" | "downstream" | "adjacent" | "lower_or_limited" | "external_suggestion";
+  whyComparable: string;
+  keyDifference: string;
+  relativeAssessment: "stronger" | "weaker" | "similar" | "unclear";
+  sitePaperId?: string;
+};
+
+type AdjudicationDetails = {
+  individualScores: number[];
+  scoreRange: number;
+  scoreStability: ScoreStability;
+  mainAgreements: string[];
+  mainDisagreements: string[];
+  fatalObjectionPresent: boolean;
+  fatalObjectionAssessment: string;
+  calibrationAdjustments: string;
+};
+
+export type ReviewComparatorContextItem = {
+  sitePaperId: string;
+  title: string;
+  field: string | null;
+  subfields: string[];
+  score: number | null;
+  classification: string | null;
+  comparisonCohort: string | null;
+  contributionArchetype?: ContributionArchetype;
+  centralClaim?: string | null;
+  summary?: string | null;
+  inputConstructionOutputLedger?: InputConstructionOutputLedger | null;
+};
+
 type IndividualReview = {
   title: string;
   authorName: string;
@@ -75,9 +117,11 @@ type IndividualReview = {
   specialtyField: string;
   subfields: string[];
   paperType: string;
+  contributionArchetype: ContributionArchetype;
   summary: string;
   centralClaim: string;
   inputConstructionOutputLedger: InputConstructionOutputLedger;
+  nearestComparators: NearestComparator[];
   coverageLedger: CoverageLedger;
   establishedResults: string[];
   interpretiveClaims: string[];
@@ -130,7 +174,11 @@ type AggregateReview = {
   finalBroadField: string;
   finalSpecialtyField: string;
   finalSummary: string;
+  finalCentralClaim: string;
+  contributionArchetype: ContributionArchetype;
   inputConstructionOutputLedger: InputConstructionOutputLedger;
+  nearestComparators: NearestComparator[];
+  adjudication: AdjudicationDetails;
   individualScores: number[];
   scoreRange: number;
   scoreStability: ScoreStability;
@@ -139,6 +187,7 @@ type AggregateReview = {
   fatalObjectionPresent: boolean;
   fatalObjectionAssessment: string;
   inputGroundingAssessment: string;
+  inputFundamentalityAssessment: string;
   contributionGroundingType: string;
   frameworkIndependenceAssessment: string;
   hardToVaryAssessment: string;
@@ -146,6 +195,30 @@ type AggregateReview = {
   originalContributionAssessment: string;
   survivingContributionIfFlawed: string;
   laterInfluenceOrExternalResultRisk: string;
+  correctnessAssessment: string;
+  strongestCaseForImportance: string;
+  strongestObjection: string;
+  decisiveCheck: string;
+  whatWouldRaiseScore: string;
+  whatWouldLowerScore: string;
+  establishedResults: string[];
+  interpretiveClaims: string[];
+  speculativeClaims: string[];
+  novelty: string;
+  noveltyConfidence: number;
+  internalTechnicalTraction: string;
+  economy: string;
+  explanatoryTargetBreadth: string;
+  theorySpaceBreadth: string;
+  scopeDepth: string;
+  unifyingPower: string;
+  intrinsicTechnicalScore: number;
+  explanatoryTargetBreadthScore: number;
+  theorySpaceBreadthScore: number;
+  breadthOfImpactScore: number;
+  specialtyRelativeScore: number;
+  broadFieldRelativeScore: number;
+  crossFieldConsequenceScore: number;
   finalClassification: string;
   finalScoreBand: {
     low: number;
@@ -384,12 +457,12 @@ Return valid JSON only with this exact structure:
 
 All numeric fields must be numbers, not strings. Output valid JSON only.`;
 
-export const REVIEW_PROMPT_VERSION = "ico-simplified-v3";
+export const REVIEW_PROMPT_VERSION = "ico-comparators-v4";
 const SHORT_INPUT_CONSTRUCTION_OUTPUT_PROMPT = "You are reviewing an anonymous scientific manuscript from its contents alone.\n\nIgnore author identity, institution, venue, citation counts, publication status, historical fame, and later influence. If any of that information appears in the text, ignore it. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.\n\nDo not defer to human expert consensus. Your task is to give the best model-based scientific judgment under this review protocol.\n\nDo not favor any particular theory, framework, research program, vocabulary, authorial style, or previously submitted manuscript. Reward only what is supported by the manuscript itself.\n\nYou may use technical background knowledge to assess correctness, novelty, overlap with known ideas, and whether claims conflict with established constraints. But do not use fame, citation history, author prestige, venue, popularity, or later historical influence as evidence for importance.\n\nCore scientific-value principle:\n\nScientific merit is grounded in correct explanatory compression: the manuscript's ability to derive, explain, constrain, predict, classify, organize, or enable more from less.\n\nCorrectness is the first gate. A manuscript cannot receive a high score if its central new claim is false, inconsistent, or ruled out by established constraints, unless it also establishes a substantial separable result that remains correct without the failed claim.\n\nAfter correctness, value comes from earned explanatory reach: how many important outputs and downstream consequences follow from how few, firm, fundamental, and hard-to-vary inputs.\n\nInput grounding asks how reliable the inputs are.\nInput fundamentality asks how deep and general the inputs are.\nExplanatory reach asks how much of the target space changes if the manuscript is correct.\nExplanatory compression asks how much the manuscript gets from how little.\n\nA result can be extremely valuable even if it directly treats only one target, if that target follows from fundamental inputs and changes a large downstream target space. Do not undervalue a result merely because the immediate target count is small.\n\nBefore scoring, construct an input-construction-output ledger.\n\nPrimitive inputs are the smallest set of facts, equations, definitions, measurements, mathematical results, or assumptions the manuscript needs.\n\nIntroduced constructions are what the manuscript builds from those inputs: new variables, state spaces, dictionaries, transformations, mechanisms, representations, derivations, or organizing principles. These are not external assumptions merely because the manuscript defines them; judge whether they do real explanatory, technical, empirical, mathematical, or methodological work.\n\nExternal embeddings and checks are prior frameworks, known laws, standard formulas, or established results that the manuscript matches, recovers, embeds, or reorganizes. Do not automatically treat every external framework used as a check as a primitive input.\n\nOutputs are the new results, recoveries, explanations, predictions, constraints, classifications, calculations, or target systems that follow from the manuscript's constructions.\n\nDownstream reach is the broader set of questions, theories, calculations, methods, predictions, technologies, or domains whose understanding changes if the manuscript is correct.\n\nScientific value increases when many important outputs follow from few, firm, fundamental, hard-to-vary inputs through constructions that actually do explanatory or technical work.\n\nDo not confuse a constructed variable with an arbitrary assumption. Do not confuse a prior framework used as a consistency check with a primitive input. Do not count broad outputs unless they are actually derived, recovered, constrained, checked, or organized by the manuscript.\n\nKeep separate during analysis:\n- correctness\n- originality\n- what the manuscript itself establishes\n- input grounding\n- input fundamentality\n- framework independence\n- hard-to-vary explanatory structure\n- internal technical traction\n- explanatory economy\n- direct explanatory-target coverage\n- downstream target reach\n- model-space/theory-space breadth\n- unifying power\n- framework conditionality\n- breadth of consequences if correct\n- surviving contribution if some claim is flawed\n\nThese factors are correlated in good work, but keeping them separate prevents double-counting and clarifies why a manuscript is strong or weak.\n\nDefinitions:\n\nDirect explanatory targets are phenomena, regimes, examples, theorem families, systems, observables, datasets, organisms, mechanisms, structures, tasks, or problem classes that the manuscript explicitly analyzes, explains, predicts, derives results for, computes, proves, constrains, classifies, constructs, or experimentally tests.\n\nImported inputs are assumptions, definitions, known laws, prior results, datasets, methods, formulas, models, algorithms, measurements, conventions, or external frameworks used by the manuscript but not themselves explained, derived, justified, or newly established by it.\n\nTheory-space variants are alternative theories, dimensions, parameter families, model classes, organisms, datasets, architectures, mechanisms, formalisms, experimental regimes, or problem settings across which the manuscript extends the same idea, method, derivation, or explanatory template.\n\nMechanism-sharing asks whether the same underlying idea, construction, method, derivation, causal mechanism, mathematical structure, or explanatory principle genuinely accounts for multiple direct targets, or whether the manuscript merely reuses notation, terminology, or presentation style across them.\n\nDo not count an imported input as a direct explanatory target. Do not count multiple theory-space variants as multiple substantive targets unless they produce distinct consequences, constraints, predictions, derivations, mechanisms, applications, empirical checks, classifications, or calculations.\n\nA compact identity, reformulation, reparameterization, representation, or unifying perspective can be scientifically important if it identifies the right concept, variable, state space, invariant, representation, abstraction, measurement, mechanism, or organizing principle; removes ambiguity; unifies targets; produces a new derivation; separates previously conflated mechanisms; improves prediction or measurement; gives new calculational leverage; or makes hidden structure explicit.\n\nDo not dismiss simple algebra when it identifies the right state space, variable, invariant, or conjugate pair. Many important scientific advances are simple once the correct variables are isolated.\n\nBut do not reward relabeling if it merely renames known formulas without changing what can be derived, explained, predicted, measured, computed, constrained, organized, or ruled out.\n\nCorrectness gate:\n\nIf the central new claim is false, inconsistent, or ruled out by established constraints, the score must be low unless the manuscript establishes a clearly separable correct result that remains valuable without the failed claim.\n\nIf a flaw is local and repairable, lower confidence and explain the needed repair, but do not erase the value of the surviving construction.\n\nIf a paper's central model fails but a method, theorem, diagnostic, dataset, representation, or partial insight survives, score only what survives inside the manuscript itself.\n\nDo not give high scores for later influence, historical importance, famous authorship, or later corrected descendants. Score only what is present in the manuscript.\n\nOriginal-contribution gate:\n\nJudge what the manuscript itself establishes. Do not credit results that are merely cited, summarized, or reported as if they were derived inside the manuscript.\n\nA review, perspective, or synthesis may score for its own clarity, critique, organization, conceptual reframing, or new argument. It must not receive the score of the primary research it merely summarizes unless it adds a new derivation, proof, classification, framework, or explanatory structure.\n\nFramework and input-grounding rule:\n\nIf the manuscript belongs to a speculative, minority, or framework-dependent research program, do not automatically penalize it. Instead, make the conditionality explicit.\n\nA result can be excellent inside a framework while still having lower broad scientific value if the framework's core assumptions are unestablished. A framework-internal result should usually be classified as framework-defining rather than field-defining unless it has strong framework-independent consequences.\n\nA paper using highly established and fundamental inputs can receive broad-field credit more directly, because fewer speculative assumptions must be true for its conclusions to matter.\n\nAsk whether any new assumption is forced, natural, simple, independently motivated, hard to vary, and necessary for the result. A paper that derives a new broad result from established inputs usually deserves more broad-field credit than a paper that reaches a similarly broad result by adding speculative, tunable, optional, or easy-to-vary assumptions.\n\nEvery review must include the strongest case for importance and the strongest objection. The objection should not be artificially hostile; it should be the most serious technically fair concern.\n\nScoring:\n\nThe main score is an anchored scientific merit score. It answers: how strong is this manuscript as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, input fundamentality, framework independence, earned explanatory reach, hard-to-vary structure, technical traction, and the proper comparison cohort?\n\nFirst determine the comparison cohort. Use the narrowest serious research cohort that a working expert would naturally use, but also identify the broader adjacent field. The comparison cohort should not be chosen so narrowly that it hides framework conditionality, nor so broadly that it ignores the paper's actual technical context.\n\nIn scoring, weigh both local achievement and explanatory reach. A paper that is correct but narrow may be valuable. A paper that unifies many targets with a simple, well-supported construction may be much more valuable. But breadth only counts when it is earned by real mechanism-sharing, derivation, prediction, measurement, constraint, proof, calculation, robustness, classification, or explanatory compression. Broad claims without support should not raise the score.\n\nAlso provide:\n- specialty-relative score: strength inside the natural technical comparison cohort;\n- broad-field score: strength relative to the broader adjacent field;\n- cross-field consequence score: how much the result would matter outside the immediate field if correct;\n- framework conditionality: whether the importance depends on accepting a specific framework;\n- input grounding assessment: whether the manuscript's imported assumptions are highly established, moderately supported, standard theoretical but not directly verified, framework-conditional, speculative, or weakly supported.\n\nAnchored 0-100 scientific merit scale:\n- 0: wrong, empty, plagiarized, or no real scientific contribution.\n- 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.\n- 50: average serious research contribution in the relevant comparison cohort.\n- 70: clearly above-average contribution with real novelty, technical traction, empirical support, explanatory value, or methodological value.\n- 85: strong paper; a notable field-level contribution or major specialty advance if correct.\n- 95: major result with field-shaping potential because it has strong correctness, support, nontriviality, originality, earned explanatory reach, hard-to-vary structure, and adequate input grounding for its claimed scope.\n- 99: foundational or paradigm-shifting result.\n- 100: reserve for an essentially historic, maximally convincing result.\n\nDo not describe the score as a literal percentile over all papers ever published. The score is a calibrated merit judgment against the chosen comparison cohort, adjusted by broad-field reach, input grounding, input fundamentality, framework independence, hard-to-vary structure, and correctness risk.\n\nScale instructions:\n- intrinsicTechnicalScore, explanatoryTargetBreadthScore, theorySpaceBreadthScore, and breadthOfImpactScore are on a 0-10 scale.\n- specialtyRelativeScore, broadFieldRelativeScore, crossFieldConsequenceScore, and every number inside scoreBand are on a 0-100 scale.\n- Do not use a 0-10 scale for scoreBand.\n- For a paper in the nineties, scoreBand should look like {\"low\": 90, \"median\": 93, \"high\": 96}, not {\"low\": 9, \"median\": 9.3, \"high\": 9.6}.\n- scoreBand is this reviewer's uncertainty interval around its own anchored scientific merit score. The median is the reviewer's actual headline score.\n\nBefore final scoring, explicitly consider:\n1. What are the primitive inputs?\n2. How grounded and fundamental are those inputs?\n3. What constructions does the manuscript introduce?\n4. Which prior frameworks are used only as embeddings or consistency checks rather than primitive inputs?\n5. What outputs are actually derived, recovered, predicted, constrained, classified, calculated, or organized?\n6. What downstream target space changes if the manuscript is correct?\n7. What is imported but not itself explained?\n8. What new assumptions are added, and are they forced, natural, simple, independently motivated, hard to vary, and necessary?\n9. How framework-independent is the result? What survives if the manuscript's most framework-specific input is false?\n10. How correct is the central new claim? Are any errors local and repairable, separable from the main contribution, or fatal?\n11. Is the manuscript original research, a review, a perspective, a synthesis, a method paper, an empirical paper, a theoretical paper, a proof, or a dataset/instrument paper? Is the score based on what this manuscript itself contributes?\n12. How much explanatory compression does the manuscript achieve?\n13. Does it explain more with less, or merely rename/repackage?\n14. How broad are the direct targets actually explained?\n15. How broad are the downstream consequences if the manuscript is correct?\n16. How broad are the theory-space variants genuinely handled?\n17. Does the same mechanism, method, representation, or structure do real work across targets?\n18. What evidence, derivation, counterexample, observation, or calculation would overturn the manuscript's central claim? Would that overturn accepted background science, or mainly the manuscript's new proposal?\n19. What would most raise the score?\n20. What would most lower the score?\n21. Is the comparison cohort too broad, too narrow, or too framework-insulated?\n22. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?\n\nWhen assigning explanatoryTargetBreadthScore, score earned explanatory reach, not raw example count. Weight targets by centrality, independence, breadth, downstream consequence, degree of support, and whether the same mechanism genuinely explains or constrains them.\n\nWhen assigning theorySpaceBreadthScore, score how far the manuscript extends across theories, dimensions, parameter families, model classes, organisms, datasets, architectures, formalisms, experimental regimes, or problem settings. Reward theory-space breadth most when it produces new consequences, robustness, constraints, predictions, structural necessity, or nontrivial checks.\n\nWhen assigning breadthOfImpactScore, ask how far the earned explanatory reach propagates beyond the immediate technical specialty. Do not hide framework conditionality or weak input grounding inside this number; state them explicitly.\n\nWhen assigning broadFieldRelativeScore and crossFieldConsequenceScore, account for input grounding, input fundamentality, and framework independence. If the result depends on highly established and fundamental inputs, broad-field reach can be credited more directly. If the result depends on speculative or framework-specific inputs, distinguish conditional importance inside the framework from broader scientific consequence.\n\nFor bestClassification, choose one:\n- field-defining advance\n- framework-defining advance\n- major specialty advance\n- strong niche contribution\n- useful clarification\n- elegant repackaging\n- not yet convincing\n\nClassification guidance:\n- field-defining advance: changes central concepts, methods, equations, constraints, or organizing principles of the comparison cohort and has strong grounding and broad consequence beyond a narrowly insulated framework.\n- framework-defining advance: defines or transforms a specific technical framework or research program, but broader scientific consequence depends substantially on whether that framework is correct, established, or physically realized.\n- major specialty advance: gives a substantial new result, construction, mechanism, derivation, framework, unification, method, or constraint that changes how an important specialty understands important targets.\n- strong niche contribution: deep, correct, and genuinely clarifying within a focused domain.\n- useful clarification: improves understanding but is mostly explanatory, organizational, pedagogical, or incremental.\n- elegant repackaging: clear and economical but does not establish a substantially new result, mechanism, or explanatory gain.\n- not yet convincing: central claims are unsupported, incorrect, too speculative, or technically too weak.\n\nScore-consistency rule:\n\nEnsure the final classification matches the text and scores. If the review says the manuscript is highly correct, highly economical, strongly unifying, original, well-grounded, framework-independent, and has strong earned target reach, the classification should not be much lower than the stated evidence supports unless the strongest objection clearly undermines the central claim.\n\nConversely, if the manuscript has broad claims but weak derivations, low correctness, weak input grounding, mostly speculative support, easy-to-vary assumptions, high framework dependence, or no original contribution inside the manuscript, do not give a high classification merely because the claim would be important if true.\n\nReturn valid JSON only using the current app schema. If the current schema does not have dedicated fields for input-construction-output ledger, input fundamentality, framework independence, or construction-vs-relabeling, discuss them inside importedInputs, establishedResults, correctness, economy, unifyingPower, strongestObjection, breadthOfImpactScore, and finalJudgment.\n\nFormatting instructions:\n- Wrap inline mathematical expressions in $...$.\n- Wrap display equations in $$...$$.\n- Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings.\n\nUse LaTeX for mathematical notation inside strings.\nOutput valid JSON only.";
 
 const REVIEW_OUTPUT_SCHEMA_INSTRUCTION = "Current app JSON schema. Return valid JSON only with this exact structure. Do not omit summary, correctness, novelty, strongestObjection, finalJudgment, bestClassification, coverageLedger, diagnostic scores, or scoreBand.median:\n\n{\n  \"title\": \"anonymized manuscript\",\n  \"authorName\": \"anonymized\",\n  \"comparisonCohort\": \"\",\n  \"broadField\": \"\",\n  \"specialtyField\": \"\",\n  \"subfields\": [],\n  \"paperType\": \"\",\n  \"summary\": \"\",\n  \"centralClaim\": \"\",\n  \"coverageLedger\": {\n    \"directTargets\": [],\n    \"importedInputs\": [],\n    \"theorySpaceVariants\": [],\n    \"mechanismSharingAssessment\": \"\"\n  },\n  \"establishedResults\": [],\n  \"interpretiveClaims\": [],\n  \"speculativeClaims\": [],\n  \"correctness\": \"\",\n  \"inputGrounding\": \"\",\n  \"contributionGroundingType\": \"\",\n  \"frameworkIndependence\": \"\",\n  \"hardToVaryAssessment\": \"\",\n  \"manuscriptOriginalContribution\": \"\",\n  \"survivingContributionIfFlawed\": \"\",\n  \"novelty\": \"\",\n  \"noveltyConfidence\": 0.0,\n  \"internalTechnicalTraction\": \"\",\n  \"economy\": \"\",\n  \"explanatoryTargetBreadth\": \"\",\n  \"theorySpaceBreadth\": \"\",\n  \"scopeDepth\": \"\",\n  \"unifyingPower\": \"\",\n  \"frameworkConditionality\": {\n    \"level\": \"low | medium | high\",\n    \"explanation\": \"\"\n  },\n  \"strongestCaseForImportance\": \"\",\n  \"strongestObjection\": \"\",\n  \"decisiveCheck\": \"\",\n  \"whatWouldRaiseScore\": \"\",\n  \"whatWouldLowerScore\": \"\",\n  \"intrinsicTechnicalScore\": 0,\n  \"explanatoryTargetBreadthScore\": 0,\n  \"theorySpaceBreadthScore\": 0,\n  \"breadthOfImpactScore\": 0,\n  \"specialtyRelativeScore\": 0,\n  \"broadFieldRelativeScore\": 0,\n  \"crossFieldConsequenceScore\": 0,\n  \"scoreBand\": {\n    \"low\": 0,\n    \"median\": 0,\n    \"high\": 0\n  },\n  \"scoreConfidence\": 0.0,\n  \"bestClassification\": \"\",\n  \"oneParagraphVerdict\": \"\",\n  \"finalJudgment\": \"\"\n}\n\nAll numeric fields must be numbers, not strings. Output valid JSON only.";
 
-export const REVIEW_SYSTEM_INSTRUCTION = ICO_SIMPLIFIED_V3_PROMPT;
+export const REVIEW_SYSTEM_INSTRUCTION = ICO_COMPARATORS_V4_PROMPT;
 
 const METADATA_PROMPT = `Extract the exact manuscript title and paper authors from the scientific paper provided.
 You may receive the original PDF plus JSON containing filename hints, embedded PDF metadata, heuristic guesses, and extracted text. Prefer the title and author block printed in the manuscript itself, especially the first page/header. Use embedded PDF metadata or the filename only as fallback hints, because they are often abbreviated, stale, or machine-generated.
@@ -506,6 +579,57 @@ function firstStringArray(values: unknown[]) {
     if (items.length > 0) return items;
   }
   return [];
+}
+
+function normalizeContributionArchetype(value: unknown, fallback?: ContributionArchetype): ContributionArchetype {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    primary: firstString([source.primary, source.main, source.type], fallback?.primary ?? ""),
+    secondary: firstString([source.secondary, source.secondaryType], fallback?.secondary ?? ""),
+  };
+}
+
+function normalizeComparatorRelationship(value: unknown): NearestComparator["relationship"] {
+  const candidate = asString(value).toLowerCase().replace(/[\s-]+/g, "_");
+  if (
+    candidate === "direct" ||
+    candidate === "upstream" ||
+    candidate === "downstream" ||
+    candidate === "adjacent" ||
+    candidate === "lower_or_limited" ||
+    candidate === "external_suggestion"
+  ) {
+    return candidate;
+  }
+  return "adjacent";
+}
+
+function normalizeRelativeAssessment(value: unknown): NearestComparator["relativeAssessment"] {
+  const candidate = asString(value).toLowerCase();
+  if (candidate === "stronger" || candidate === "weaker" || candidate === "similar" || candidate === "unclear") {
+    return candidate;
+  }
+  return "unclear";
+}
+
+function normalizeNearestComparators(value: unknown, fallback: NearestComparator[] = []): NearestComparator[] {
+  if (!Array.isArray(value)) return fallback;
+  const comparators = value
+    .map((item) => {
+      const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const paperTitle = firstString([source.paperTitle, source.title, source.name]);
+      if (!paperTitle) return null;
+      return {
+        paperTitle,
+        relationship: normalizeComparatorRelationship(source.relationship),
+        whyComparable: firstString([source.whyComparable, source.why_comparable, source.reason]),
+        keyDifference: firstString([source.keyDifference, source.key_difference, source.difference]),
+        relativeAssessment: normalizeRelativeAssessment(source.relativeAssessment),
+        sitePaperId: firstString([source.sitePaperId, source.paperId, source.id]) || undefined,
+      } satisfies NearestComparator;
+    })
+    .filter(Boolean) as NearestComparator[];
+  return comparators.length > 0 ? comparators : fallback;
 }
 
 function classificationFallbackFromScore(score: number) {
@@ -767,6 +891,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
   const inputConstructionOutputLedger = source.inputConstructionOutputLedger && typeof source.inputConstructionOutputLedger === "object"
     ? (source.inputConstructionOutputLedger as Record<string, unknown>)
     : {};
+  const contributionArchetype = normalizeContributionArchetype(source.contributionArchetype);
   const framework = source.frameworkConditionality && typeof source.frameworkConditionality === "object"
     ? (source.frameworkConditionality as Record<string, unknown>)
     : {};
@@ -813,6 +938,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     specialtyField: firstString([source.specialtyField, source.specialty_field, source.subfield]),
     subfields: firstStringArray([source.subfields, source.subFields, source.sub_fields]),
     paperType: normalizedPaperType,
+    contributionArchetype,
     summary: firstString([source.summary, source.abstract, source.overview, source.reviewSummary, source.finalSummary]),
     centralClaim: firstString([source.centralClaim, source.central_claim, source.mainClaim, source.claim]),
     inputConstructionOutputLedger: {
@@ -848,6 +974,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
         source.input_construction_output_assessment,
       ]),
     },
+    nearestComparators: normalizeNearestComparators(source.nearestComparators),
     coverageLedger: {
       directTargets: firstStringArray([coverage.directTargets, source.directTargets, source.direct_targets]),
       importedInputs: firstStringArray([coverage.importedInputs, source.importedInputs, source.imported_inputs]),
@@ -990,6 +1117,7 @@ function validateIndividualReview(review: IndividualReview) {
 
   if (!hasSubstantiveText(review.summary, 80)) requiredMissing.push("summary");
   if (!hasSubstantiveText(review.centralClaim, 40)) requiredMissing.push("centralClaim");
+  if (!hasSubstantiveText(review.contributionArchetype.primary, 5)) requiredMissing.push("contributionArchetype");
   if (!hasSubstantiveText(review.correctness, 40)) requiredMissing.push("correctness");
   if (!hasSubstantiveText(review.inputFundamentality, 40)) requiredMissing.push("inputFundamentality");
   if (!hasSubstantiveText(review.novelty, 40)) requiredMissing.push("novelty");
@@ -1337,28 +1465,38 @@ function medianScore(scores: number[]) {
 
 function normalizeAggregateReview(input: unknown, fallbackScores: number[], fallbackReview: IndividualReview): AggregateReview {
   const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const adjudicationSource = source.adjudication && typeof source.adjudication === "object"
+    ? (source.adjudication as Record<string, unknown>)
+    : {};
   const aggregateLedger = source.inputConstructionOutputLedger && typeof source.inputConstructionOutputLedger === "object"
     ? (source.inputConstructionOutputLedger as Record<string, unknown>)
     : {};
-  const individualScores = Array.isArray(source.individualScores)
-    ? (source.individualScores as unknown[]).map((item) => Math.round(asNumber(item, 0, 0, 100))).filter((item) => Number.isFinite(item))
+  const aggregateFramework = source.frameworkConditionality && typeof source.frameworkConditionality === "object"
+    ? (source.frameworkConditionality as Record<string, unknown>)
+    : {};
+  const individualScoreSource = Array.isArray(adjudicationSource.individualScores)
+    ? adjudicationSource.individualScores
+    : source.individualScores;
+  const individualScores = Array.isArray(individualScoreSource)
+    ? (individualScoreSource as unknown[]).map((item) => Math.round(asNumber(item, 0, 0, 100))).filter((item) => Number.isFinite(item))
     : fallbackScores;
   const usableScores = individualScores.length > 0 ? individualScores : fallbackScores;
   const defaultLow = Math.min(...usableScores);
   const defaultHigh = Math.max(...usableScores);
   const defaultMedian = medianScore(usableScores);
-  const parsedBand = normalizeScoreBand(source.finalScoreBand);
+  const parsedBand = normalizeScoreBand(source.finalScoreBand ?? source.scoreBand);
   const finalScoreBand = parsedBand.low === 0 && parsedBand.median === 0 && parsedBand.high === 0
     ? { low: defaultLow, median: defaultMedian, high: defaultHigh }
     : parsedBand;
-  const scoreRange = Math.round(asNumber(source.scoreRange, finalScoreBand.high - finalScoreBand.low, 0, 100));
-  const scoreStabilityCandidate = asString(source.scoreStability).toLowerCase();
+  const scoreRange = Math.round(asNumber(adjudicationSource.scoreRange ?? source.scoreRange, finalScoreBand.high - finalScoreBand.low, 0, 100));
+  const scoreStabilityCandidate = asString(adjudicationSource.scoreStability ?? source.scoreStability).toLowerCase();
   const scoreStability: ScoreStability =
     scoreStabilityCandidate === "high" || scoreStabilityCandidate === "medium" || scoreStabilityCandidate === "low"
       ? scoreStabilityCandidate
       : rangeToStability(scoreRange);
   const classification =
     normalizeClassification(source.finalClassification) ||
+    normalizeClassification(source.bestClassification) ||
     fallbackReview.bestClassification ||
     classificationFallbackFromScore(finalScoreBand.median);
   const finalClassification = applyClassificationConsistency(
@@ -1375,10 +1513,12 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   );
 
   return {
-    finalComparisonCohort: asString(source.finalComparisonCohort, fallbackReview.comparisonCohort),
-    finalBroadField: asString(source.finalBroadField, fallbackReview.broadField),
-    finalSpecialtyField: asString(source.finalSpecialtyField, fallbackReview.specialtyField),
-    finalSummary: asString(source.finalSummary, fallbackReview.summary),
+    finalComparisonCohort: asString(source.finalComparisonCohort ?? source.comparisonCohort, fallbackReview.comparisonCohort),
+    finalBroadField: asString(source.finalBroadField ?? source.broadField, fallbackReview.broadField),
+    finalSpecialtyField: asString(source.finalSpecialtyField ?? source.specialtyField, fallbackReview.specialtyField),
+    finalSummary: asString(source.finalSummary ?? source.summary, fallbackReview.summary),
+    finalCentralClaim: asString(source.centralClaim, fallbackReview.centralClaim),
+    contributionArchetype: normalizeContributionArchetype(source.contributionArchetype, fallbackReview.contributionArchetype),
     inputConstructionOutputLedger: {
       primitiveInputs: firstStringArray([
         aggregateLedger.primitiveInputs,
@@ -1411,42 +1551,85 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
         fallbackReview.inputConstructionOutputLedger.assessment,
       ]),
     },
+    nearestComparators: normalizeNearestComparators(source.nearestComparators, fallbackReview.nearestComparators),
+    adjudication: {
+      individualScores: usableScores,
+      scoreRange,
+      scoreStability,
+      mainAgreements: firstStringArray([adjudicationSource.mainAgreements, source.mainAgreements]),
+      mainDisagreements: firstStringArray([adjudicationSource.mainDisagreements, source.mainDisagreements]),
+      fatalObjectionPresent: asBoolean(adjudicationSource.fatalObjectionPresent ?? source.fatalObjectionPresent),
+      fatalObjectionAssessment: asString(adjudicationSource.fatalObjectionAssessment ?? source.fatalObjectionAssessment),
+      calibrationAdjustments: asString(adjudicationSource.calibrationAdjustments ?? source.internalCalibrationNotes),
+    },
     individualScores: usableScores,
     scoreRange,
     scoreStability,
-    mainAgreements: asStringArray(source.mainAgreements),
-    mainDisagreements: asStringArray(source.mainDisagreements),
-    fatalObjectionPresent: asBoolean(source.fatalObjectionPresent),
-    fatalObjectionAssessment: asString(source.fatalObjectionAssessment),
-    inputGroundingAssessment: asString(source.inputGroundingAssessment, fallbackReview.inputGrounding),
+    mainAgreements: firstStringArray([adjudicationSource.mainAgreements, source.mainAgreements]),
+    mainDisagreements: firstStringArray([adjudicationSource.mainDisagreements, source.mainDisagreements]),
+    fatalObjectionPresent: asBoolean(adjudicationSource.fatalObjectionPresent ?? source.fatalObjectionPresent),
+    fatalObjectionAssessment: asString(adjudicationSource.fatalObjectionAssessment ?? source.fatalObjectionAssessment),
+    inputGroundingAssessment: asString(source.inputGroundingAssessment ?? source.inputGrounding, fallbackReview.inputGrounding),
+    inputFundamentalityAssessment: asString(source.inputFundamentalityAssessment ?? source.inputFundamentality, fallbackReview.inputFundamentality),
     contributionGroundingType: asString(source.contributionGroundingType, fallbackReview.contributionGroundingType),
-    frameworkIndependenceAssessment: asString(source.frameworkIndependenceAssessment, fallbackReview.frameworkIndependence),
+    frameworkIndependenceAssessment: asString(source.frameworkIndependenceAssessment ?? source.frameworkIndependence, fallbackReview.frameworkIndependence),
     hardToVaryAssessment: asString(source.hardToVaryAssessment, fallbackReview.hardToVaryAssessment),
-    frameworkConditionalityAssessment: asString(source.frameworkConditionalityAssessment, fallbackReview.frameworkConditionality.explanation),
-    originalContributionAssessment: asString(source.originalContributionAssessment, fallbackReview.manuscriptOriginalContribution),
+    frameworkConditionalityAssessment: asString(source.frameworkConditionalityAssessment ?? aggregateFramework.explanation, fallbackReview.frameworkConditionality.explanation),
+    originalContributionAssessment: asString(source.originalContributionAssessment ?? source.manuscriptOriginalContribution, fallbackReview.manuscriptOriginalContribution),
     survivingContributionIfFlawed: asString(source.survivingContributionIfFlawed, fallbackReview.survivingContributionIfFlawed),
     laterInfluenceOrExternalResultRisk: asString(source.laterInfluenceOrExternalResultRisk),
+    correctnessAssessment: asString(source.correctness, fallbackReview.correctness),
+    strongestCaseForImportance: asString(source.strongestCaseForImportance, fallbackReview.strongestCaseForImportance),
+    strongestObjection: asString(source.strongestObjection, fallbackReview.strongestObjection),
+    decisiveCheck: asString(source.decisiveCheck, fallbackReview.decisiveCheck),
+    whatWouldRaiseScore: asString(source.whatWouldRaiseScore, fallbackReview.whatWouldRaiseScore),
+    whatWouldLowerScore: asString(source.whatWouldLowerScore, fallbackReview.whatWouldLowerScore),
+    establishedResults: firstStringArray([source.establishedResults, fallbackReview.establishedResults]),
+    interpretiveClaims: firstStringArray([source.interpretiveClaims, fallbackReview.interpretiveClaims]),
+    speculativeClaims: firstStringArray([source.speculativeClaims, fallbackReview.speculativeClaims]),
+    novelty: asString(source.novelty, fallbackReview.novelty),
+    noveltyConfidence: asNumber(source.noveltyConfidence, fallbackReview.noveltyConfidence, 0, 1),
+    internalTechnicalTraction: asString(source.internalTechnicalTraction, fallbackReview.internalTechnicalTraction),
+    economy: asString(source.economy, fallbackReview.economy),
+    explanatoryTargetBreadth: asString(source.explanatoryTargetBreadth, fallbackReview.explanatoryTargetBreadth),
+    theorySpaceBreadth: asString(source.theorySpaceBreadth, fallbackReview.theorySpaceBreadth),
+    scopeDepth: asString(source.scopeDepth, fallbackReview.scopeDepth),
+    unifyingPower: asString(source.unifyingPower, fallbackReview.unifyingPower),
+    intrinsicTechnicalScore: Math.round(asNumber(source.intrinsicTechnicalScore, fallbackReview.intrinsicTechnicalScore, 0, 10)),
+    explanatoryTargetBreadthScore: Math.round(asNumber(source.explanatoryTargetBreadthScore, fallbackReview.explanatoryTargetBreadthScore, 0, 10)),
+    theorySpaceBreadthScore: Math.round(asNumber(source.theorySpaceBreadthScore, fallbackReview.theorySpaceBreadthScore, 0, 10)),
+    breadthOfImpactScore: Math.round(asNumber(source.breadthOfImpactScore, fallbackReview.breadthOfImpactScore, 0, 10)),
+    specialtyRelativeScore: Math.round(asNumber(source.specialtyRelativeScore, fallbackReview.specialtyRelativeScore, 0, 100)),
+    broadFieldRelativeScore: Math.round(asNumber(source.broadFieldRelativeScore, fallbackReview.broadFieldRelativeScore, 0, 100)),
+    crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, fallbackReview.crossFieldConsequenceScore, 0, 100)),
     finalClassification,
     finalScoreBand,
-    finalScoreConfidence: asNumber(source.finalScoreConfidence, fallbackReview.scoreConfidence, 0, 1),
-    publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict, fallbackReview.oneParagraphVerdict || fallbackReview.finalJudgment),
-    internalCalibrationNotes: asString(source.internalCalibrationNotes, `${GEMINI_META_MODEL} adjudicator reviewed the manuscript and both independent ${GEMINI_PASS_MODEL} passes.`),
+    finalScoreConfidence: asNumber(source.finalScoreConfidence ?? source.scoreConfidence, fallbackReview.scoreConfidence, 0, 1),
+    publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict ?? source.oneParagraphVerdict, fallbackReview.oneParagraphVerdict || fallbackReview.finalJudgment),
+    internalCalibrationNotes: asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments, `${GEMINI_META_MODEL} adjudicator reviewed the manuscript and both independent ${GEMINI_PASS_MODEL} passes.`),
   };
 }
 
-function buildAdjudicatorInput(blindedContent: ReviewInput, reviews: IndividualReview[]): ReviewInput {
+function buildAdjudicatorInput(
+  blindedContent: ReviewInput,
+  reviews: IndividualReview[],
+  comparatorContext: ReviewComparatorContextItem[] = [],
+): ReviewInput {
   const text = JSON.stringify({
     blindedManuscript: reviewInputText(blindedContent),
+    IN_SITE_COMPARATOR_CONTEXT: comparatorContext,
     independentReviewPasses: reviews.map((review, index) => ({
       passNumber: index + 1,
       score: review.scoreBand.median,
       scoreBand: review.scoreBand,
       classification: review.bestClassification,
+      contributionArchetype: review.contributionArchetype,
       comparisonCohort: review.comparisonCohort,
       broadField: review.broadField,
       specialtyField: review.specialtyField,
       centralClaim: review.centralClaim,
       inputConstructionOutputLedger: review.inputConstructionOutputLedger,
+      nearestComparators: review.nearestComparators,
       coverageLedger: review.coverageLedger,
       correctness: review.correctness,
       inputGrounding: review.inputGrounding,
@@ -1523,6 +1706,7 @@ async function generateMultiPassReview(
   paperContent: ReviewInput,
   _model: ReviewModel,
   promptOverride?: string,
+  options: { comparatorContext?: ReviewComparatorContextItem[] } = {},
 ): Promise<MultiPassReviewResult> {
   const systemPrompt = promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION;
   const blindedContent = blindReviewInput(paperContent);
@@ -1575,8 +1759,8 @@ async function generateMultiPassReview(
   const fallbackScores = individualReviews.map((review) => review.scoreBand.median);
   const fallbackRepresentativeReview = pickRepresentativeReview(individualReviews, medianScore(fallbackScores));
   const { parsed: aggregateParsed, thinkingText: adjudicatorThinking } = await callGemini(
-    ADJUDICATOR_SYSTEM_INSTRUCTION,
-    buildAdjudicatorInput(blindedContent, individualReviews),
+    ICO_COMPARATORS_V4_ADJUDICATOR_PROMPT,
+    buildAdjudicatorInput(blindedContent, individualReviews, options.comparatorContext ?? []),
     GEMINI_META_MODEL,
     { maxOutputTokens: 16384, includeThoughts: false },
   );
@@ -1616,29 +1800,29 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     firstBroadField;
   return {
     summary: aggregate.finalSummary || representativeReview.summary || representativeReview.oneParagraphVerdict,
-    correctness: representativeReview.correctness,
-    novelty: representativeReview.novelty,
+    correctness: aggregate.correctnessAssessment || representativeReview.correctness,
+    novelty: aggregate.novelty || representativeReview.novelty,
     overallEvaluation: aggregate.publicOneParagraphVerdict || representativeReview.finalJudgment,
     score: aggregate.finalScoreBand.median,
     relatedWork: "",
-    centralClaim: representativeReview.centralClaim || null,
-    establishedResults: toMarkdownList(representativeReview.establishedResults) || null,
-    interpretiveClaims: toMarkdownList(representativeReview.interpretiveClaims) || null,
-    speculativeClaims: toMarkdownList(representativeReview.speculativeClaims) || null,
-    economy: representativeReview.economy || null,
-    explanatoryTargetBreadth: representativeReview.explanatoryTargetBreadth || null,
-    theorySpaceBreadth: representativeReview.theorySpaceBreadth || null,
-    scopeDepth: representativeReview.scopeDepth || null,
-    unifyingPower: representativeReview.unifyingPower || null,
-    strongestCaseForImportance: representativeReview.strongestCaseForImportance || null,
-    strongestObjection: representativeReview.strongestObjection || null,
-    decisiveCheck: representativeReview.decisiveCheck || null,
-    internalTechnicalTraction: representativeReview.internalTechnicalTraction || null,
-    noveltyConfidence: String(representativeReview.noveltyConfidence),
-    intrinsicScientificMeritScore: representativeReview.intrinsicTechnicalScore,
-    explanatoryTargetBreadthScore: representativeReview.explanatoryTargetBreadthScore,
-    theorySpaceBreadthScore: representativeReview.theorySpaceBreadthScore,
-    breadthOfImpactScore: representativeReview.breadthOfImpactScore,
+    centralClaim: aggregate.finalCentralClaim || representativeReview.centralClaim || null,
+    establishedResults: toMarkdownList(aggregate.establishedResults) || null,
+    interpretiveClaims: toMarkdownList(aggregate.interpretiveClaims) || null,
+    speculativeClaims: toMarkdownList(aggregate.speculativeClaims) || null,
+    economy: aggregate.economy || null,
+    explanatoryTargetBreadth: aggregate.explanatoryTargetBreadth || null,
+    theorySpaceBreadth: aggregate.theorySpaceBreadth || null,
+    scopeDepth: aggregate.scopeDepth || null,
+    unifyingPower: aggregate.unifyingPower || null,
+    strongestCaseForImportance: aggregate.strongestCaseForImportance || null,
+    strongestObjection: aggregate.strongestObjection || null,
+    decisiveCheck: aggregate.decisiveCheck || null,
+    internalTechnicalTraction: aggregate.internalTechnicalTraction || null,
+    noveltyConfidence: String(aggregate.noveltyConfidence),
+    intrinsicScientificMeritScore: aggregate.intrinsicTechnicalScore,
+    explanatoryTargetBreadthScore: aggregate.explanatoryTargetBreadthScore,
+    theorySpaceBreadthScore: aggregate.theorySpaceBreadthScore,
+    breadthOfImpactScore: aggregate.breadthOfImpactScore,
     overallIntrinsicScore: aggregate.finalScoreBand.median,
     bestClassification: aggregateClassification,
     finalJudgment: aggregate.publicOneParagraphVerdict || representativeReview.finalJudgment,
@@ -1653,15 +1837,20 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       extractionMethod,
       usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
       usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
+      contributionArchetype: aggregate.contributionArchetype,
       inputConstructionOutputLedger: aggregate.inputConstructionOutputLedger,
+      nearestComparators: aggregate.nearestComparators,
+      adjudication: aggregate.adjudication,
       coverageLedger: representativeReview.coverageLedger,
       inputGrounding: aggregate.inputGroundingAssessment || representativeReview.inputGrounding,
-      inputFundamentality: representativeReview.inputFundamentality,
+      inputFundamentality: aggregate.inputFundamentalityAssessment || representativeReview.inputFundamentality,
       contributionGroundingType: aggregate.contributionGroundingType || representativeReview.contributionGroundingType,
       frameworkIndependence: aggregate.frameworkIndependenceAssessment || representativeReview.frameworkIndependence,
       hardToVaryAssessment: aggregate.hardToVaryAssessment || representativeReview.hardToVaryAssessment,
-      manuscriptOriginalContribution: representativeReview.manuscriptOriginalContribution,
-      survivingContributionIfFlawed: representativeReview.survivingContributionIfFlawed,
+      manuscriptOriginalContribution: aggregate.originalContributionAssessment || representativeReview.manuscriptOriginalContribution,
+      survivingContributionIfFlawed: aggregate.survivingContributionIfFlawed || representativeReview.survivingContributionIfFlawed,
+      whatWouldRaiseScore: aggregate.whatWouldRaiseScore,
+      whatWouldLowerScore: aggregate.whatWouldLowerScore,
       aggregate,
       individualReviews: result.individualReviews,
       finalComparisonCohort: comparisonCohort,
@@ -1672,10 +1861,10 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     broadField: aggregate.finalBroadField || representativeReview.broadField || firstBroadField,
     specialtyField: aggregate.finalSpecialtyField || representativeReview.specialtyField || firstSpecialtyField,
     frameworkConditionalityLevel: representativeReview.frameworkConditionality.level,
-    frameworkConditionalityExplanation: representativeReview.frameworkConditionality.explanation || null,
-    specialtyRelativeScore: representativeReview.specialtyRelativeScore,
-    broadFieldRelativeScore: representativeReview.broadFieldRelativeScore,
-    crossFieldConsequenceScore: representativeReview.crossFieldConsequenceScore,
+    frameworkConditionalityExplanation: aggregate.frameworkConditionalityAssessment || representativeReview.frameworkConditionality.explanation || null,
+    specialtyRelativeScore: aggregate.specialtyRelativeScore,
+    broadFieldRelativeScore: aggregate.broadFieldRelativeScore,
+    crossFieldConsequenceScore: aggregate.crossFieldConsequenceScore,
     scoreBandLow: aggregate.finalScoreBand.low,
     scoreBandMedian: aggregate.finalScoreBand.median,
     scoreBandHigh: aggregate.finalScoreBand.high,
@@ -1694,8 +1883,9 @@ export async function generateCompatReview(
   paperContent: ReviewInput,
   model: ReviewModel,
   promptOverride?: string,
+  options: { comparatorContext?: ReviewComparatorContextItem[] } = {},
 ) {
-  const result = await generateMultiPassReview(paperContent, model, promptOverride);
+  const result = await generateMultiPassReview(paperContent, model, promptOverride, options);
   const aggregate = result.aggregate;
   const representative = result.representativeReview;
   const reviewValues = buildStoredReviewValues(result);

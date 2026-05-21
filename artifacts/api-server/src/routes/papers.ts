@@ -13,6 +13,7 @@ import {
   buildPdfFallbackText,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
+  type ReviewComparatorContextItem,
   type ReviewInput,
   type ReviewModel,
 } from "../lib/reviewEngineCompat";
@@ -95,6 +96,136 @@ async function existingLogicalSubmission(
   return { paper, review: review || null };
 }
 
+const COMPARATOR_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is", "it",
+  "of", "on", "or", "over", "the", "to", "via", "with", "within", "without", "paper", "review",
+  "study", "using", "through", "toward", "towards",
+]);
+
+function normalizeComparatorTitle(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function comparatorTokens(value: string) {
+  return new Set(
+    normalizeComparatorTitle(value)
+      .split(" ")
+      .filter((token) => token.length >= 4 && !COMPARATOR_STOP_WORDS.has(token))
+      .slice(0, 2000),
+  );
+}
+
+function tokenOverlapScore(sourceTokens: Set<string>, candidateText: string) {
+  if (sourceTokens.size === 0) return 0;
+  const candidateTokens = comparatorTokens(candidateText);
+  if (candidateTokens.size === 0) return 0;
+  let overlap = 0;
+  for (const token of sourceTokens) {
+    if (candidateTokens.has(token)) overlap += 1;
+  }
+  return overlap / Math.sqrt(sourceTokens.size * candidateTokens.size);
+}
+
+function safeStringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => (typeof item === "string" ? item.trim() : "")).filter(Boolean)
+    : [];
+}
+
+function compactLedger(value: any) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    primitiveInputs: safeStringArray(value.primitiveInputs).slice(0, 5),
+    introducedConstructions: safeStringArray(value.introducedConstructions).slice(0, 5),
+    externalEmbeddingsAndChecks: safeStringArray(value.externalEmbeddingsAndChecks).slice(0, 5),
+    directOutputs: safeStringArray(value.directOutputs).slice(0, 5),
+    downstreamReach: typeof value.downstreamReach === "string" ? value.downstreamReach.slice(0, 700) : "",
+    assessment: typeof value.assessment === "string" ? value.assessment.slice(0, 700) : "",
+  };
+}
+
+function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
+  const parsed = review ? parseJsonObject(review.coverageLedgerJson) : null;
+  const aggregate = parsed?.aggregate && typeof parsed.aggregate === "object" ? parsed.aggregate : null;
+  const contributionArchetype = parsed?.contributionArchetype ?? aggregate?.contributionArchetype ?? null;
+  const inputConstructionOutputLedger =
+    compactLedger(parsed?.inputConstructionOutputLedger ?? aggregate?.inputConstructionOutputLedger);
+
+  return {
+    contributionArchetype,
+    inputConstructionOutputLedger,
+    centralClaim: review?.centralClaim || aggregate?.finalCentralClaim || null,
+    summary: review?.summary || aggregate?.finalSummary || null,
+    classification: review?.bestClassification || aggregate?.finalClassification || null,
+    comparisonCohort: parsed?.finalComparisonCohort || aggregate?.finalComparisonCohort || null,
+    score: review?.overallIntrinsicScore ?? review?.score ?? null,
+  };
+}
+
+async function selectComparatorContext(title: string, paperContent: string): Promise<ReviewComparatorContextItem[]> {
+  const normalizedTitle = normalizeComparatorTitle(title);
+  const sourceTokens = comparatorTokens(`${title}\n${paperContent.slice(0, 24000)}`);
+  if (sourceTokens.size === 0) return [];
+
+  const existingPapers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+  const reviews = await db.select().from(reviewsTable);
+  const reviewMap = new Map(reviews.map((review) => [review.paperId, review]));
+
+  const candidates = existingPapers
+    .map((paper) => {
+      const review = reviewMap.get(paper.id) ?? null;
+      if (!review) return null;
+      const paperTitle = paper.title || "";
+      const candidateTitle = normalizeComparatorTitle(paperTitle);
+      if (!candidateTitle || candidateTitle === normalizedTitle) return null;
+
+      const metadata = comparatorMetadata(review);
+      const subfields = safeStringArray(paper.subfields);
+      const candidateText = [
+        paperTitle,
+        paper.field,
+        subfields.join(" "),
+        metadata.comparisonCohort,
+        metadata.classification,
+        metadata.centralClaim,
+        metadata.summary,
+        metadata.inputConstructionOutputLedger?.primitiveInputs.join(" "),
+        metadata.inputConstructionOutputLedger?.introducedConstructions.join(" "),
+        metadata.inputConstructionOutputLedger?.directOutputs.join(" "),
+      ].filter(Boolean).join("\n");
+
+      const overlap = tokenOverlapScore(sourceTokens, candidateText);
+      if (overlap <= 0) return null;
+
+      return {
+        rankScore: overlap,
+        item: {
+          sitePaperId: paper.id,
+          title: paperTitle,
+          field: paper.field || null,
+          subfields,
+          score: typeof metadata.score === "number" ? metadata.score : null,
+          classification: metadata.classification,
+          comparisonCohort: metadata.comparisonCohort,
+          contributionArchetype: metadata.contributionArchetype ?? undefined,
+          centralClaim: metadata.centralClaim ? String(metadata.centralClaim).slice(0, 900) : null,
+          summary: metadata.summary ? String(metadata.summary).slice(0, 900) : null,
+          inputConstructionOutputLedger: metadata.inputConstructionOutputLedger,
+        } satisfies ReviewComparatorContextItem,
+      };
+    })
+    .filter(Boolean) as { rankScore: number; item: ReviewComparatorContextItem }[];
+
+  return candidates
+    .sort((a, b) => b.rankScore - a.rankScore)
+    .slice(0, 18)
+    .map((candidate) => candidate.item);
+}
+
 // GET /api/papers/system-prompt — return the review system prompt
 router.get("/papers/system-prompt", (_req, res) => {
   res.json({ prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION, promptVersion: REVIEW_PROMPT_VERSION });
@@ -150,6 +281,17 @@ router.get("/papers/export", async (_req, res) => {
           finalJudgment: r.finalJudgment,
           relatedWork: r.relatedWork,
           coverageLedger,
+          contributionArchetype: coverageLedger?.contributionArchetype ?? coverageLedger?.aggregate?.contributionArchetype ?? null,
+          inputConstructionOutputLedger: coverageLedger?.inputConstructionOutputLedger ?? coverageLedger?.aggregate?.inputConstructionOutputLedger ?? null,
+          nearestComparators: coverageLedger?.nearestComparators ?? coverageLedger?.aggregate?.nearestComparators ?? [],
+          adjudication: coverageLedger?.adjudication ?? coverageLedger?.aggregate?.adjudication ?? null,
+          inputGrounding: coverageLedger?.inputGrounding ?? coverageLedger?.aggregate?.inputGroundingAssessment ?? null,
+          inputFundamentality: coverageLedger?.inputFundamentality ?? coverageLedger?.aggregate?.inputFundamentalityAssessment ?? null,
+          frameworkIndependence: coverageLedger?.frameworkIndependence ?? coverageLedger?.aggregate?.frameworkIndependenceAssessment ?? null,
+          hardToVaryAssessment: coverageLedger?.hardToVaryAssessment ?? coverageLedger?.aggregate?.hardToVaryAssessment ?? null,
+          manuscriptOriginalContribution: coverageLedger?.manuscriptOriginalContribution ?? coverageLedger?.aggregate?.originalContributionAssessment ?? null,
+          whatWouldRaiseScore: coverageLedger?.whatWouldRaiseScore ?? coverageLedger?.aggregate?.whatWouldRaiseScore ?? null,
+          whatWouldLowerScore: coverageLedger?.whatWouldLowerScore ?? coverageLedger?.aggregate?.whatWouldLowerScore ?? null,
           createdAt: r.createdAt,
         } : null,
       };
@@ -243,8 +385,8 @@ router.post("/papers", async (req, res) => {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
 
   let submissionKey: string | null = null;
-  let resolveSubmission: ((value: { paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }) => void) | null = null;
-  let rejectSubmission: ((reason?: unknown) => void) | null = null;
+  let resolveSubmission: ((value: { paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }) => void) | undefined;
+  let rejectSubmission: ((reason?: unknown) => void) | undefined;
   try {
     const { source } = req.body;
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
@@ -333,8 +475,14 @@ router.post("/papers", async (req, res) => {
     // Step 1: extract real title and authors (before anonymous review)
     const metadata = await extractLatestMetadata(paperContent, metadataHints);
 
-    // Step 2: run the new three-pass blind review flow
-    const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(reviewInput ?? paperContent, selectedModel);
+    // Step 2: run the two-pass blind review plus adjudicator flow
+    const comparatorContext = await selectComparatorContext(metadata.title, paperContent);
+    const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(
+      reviewInput ?? paperContent,
+      selectedModel,
+      undefined,
+      { comparatorContext },
+    );
     const existingByMetadata = await existingLogicalSubmission(
       req.user.id,
       metadata.title,
@@ -342,9 +490,10 @@ router.post("/papers", async (req, res) => {
       reviewMetadata.modelName,
     );
     if (existingByMetadata?.review) {
-      resolveSubmission?.(existingByMetadata);
+      if (resolveSubmission) resolveSubmission(existingByMetadata);
       if (submissionKey) {
-        setTimeout(() => recentSubmissions.delete(submissionKey!), 30 * 60 * 1000).unref?.();
+        const key = submissionKey;
+        setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
       }
       res.json(existingByMetadata);
       return;
@@ -377,13 +526,14 @@ router.post("/papers", async (req, res) => {
     }).returning();
 
     const payload = { paper, review };
-    resolveSubmission?.(payload);
+    if (resolveSubmission) resolveSubmission(payload);
     if (submissionKey) {
-      setTimeout(() => recentSubmissions.delete(submissionKey), 30 * 60 * 1000).unref?.();
+      const key = submissionKey;
+      setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
     }
     res.json(payload);
   } catch (err: any) {
-    rejectSubmission?.(err);
+    if (rejectSubmission) rejectSubmission(err);
     if (submissionKey) {
       recentSubmissions.delete(submissionKey);
     }

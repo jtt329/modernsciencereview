@@ -37,6 +37,17 @@ const Section = ({ icon, label, color, children }: { icon: React.ReactNode; labe
   </div>
 );
 
+const asArray = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean)
+    : [];
+
+const listMarkdown = (items: unknown): string =>
+  asArray(items).map((item) => `- ${item}`).join('\n');
+
+const hasText = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
+
 
 export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps) {
   const [showPrompt, setShowPrompt] = useState(false);
@@ -108,6 +119,9 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const inputConstructionOutputLedger = parsedCoverage?.inputConstructionOutputLedger ?? storedAggregate?.inputConstructionOutputLedger ?? null;
   const inputGrounding = parsedCoverage?.inputGrounding ?? storedAggregate?.inputGroundingAssessment ?? '';
   const inputFundamentality = parsedCoverage?.inputFundamentality ?? storedAggregate?.inputFundamentalityAssessment ?? '';
+  const aggregateAdjudication = parsedCoverage?.adjudication ?? storedAggregate?.adjudication ?? null;
+  const aggregateContributionArchetype = parsedCoverage?.contributionArchetype ?? storedAggregate?.contributionArchetype ?? null;
+  const aggregateNearestComparators = parsedCoverage?.nearestComparators ?? storedAggregate?.nearestComparators ?? [];
   const storedIndividualReviews = storedIndividualReviewsFromField.length > 0
     ? storedIndividualReviewsFromField
     : Array.isArray(parsedCoverage?.individualReviews)
@@ -118,7 +132,8 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
   const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
-  const scoreStability = storedAggregate?.scoreStability || (review as any).scoreStability || parsedCoverage?.scoreStability || null;
+  const scoreStability = aggregateAdjudication?.scoreStability || storedAggregate?.scoreStability || (review as any).scoreStability || parsedCoverage?.scoreStability || null;
+  const aggregateScoreRange = aggregateAdjudication?.scoreRange ?? storedAggregate?.scoreRange ?? parsedCoverage?.scoreRange ?? null;
   const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
   const passScoreBands = storedIndividualReviews.map((pass: any) =>
     normalizeDisplayedBand(
@@ -128,7 +143,7 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
       pass.bestClassification,
     )
   );
-  const passMedianScores = passScoreBands.map((band) => band.median);
+  const passMedianScores = passScoreBands.map((band: { median: number }) => band.median);
   const combinedBand = normalizeDisplayedBand(
     aggregateScoreBand?.low ?? review.scoreBandLow ?? review.overallIntrinsicScore ?? review.score,
     aggregateScoreBand?.median ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score,
@@ -180,6 +195,32 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
     || storedAggregate?.frameworkConditionalityAssessment
     || parsedCoverage?.frameworkConditionalityAssessment
     || '';
+  const currentFrameworkIndependence = selectedPass?.frameworkIndependence
+    || parsedCoverage?.frameworkIndependence
+    || storedAggregate?.frameworkIndependenceAssessment
+    || '';
+  const currentHardToVaryAssessment = selectedPass?.hardToVaryAssessment
+    || parsedCoverage?.hardToVaryAssessment
+    || storedAggregate?.hardToVaryAssessment
+    || '';
+  const currentOriginalContribution = selectedPass?.manuscriptOriginalContribution
+    || parsedCoverage?.manuscriptOriginalContribution
+    || storedAggregate?.originalContributionAssessment
+    || '';
+  const currentContributionArchetype = selectedPass?.contributionArchetype ?? aggregateContributionArchetype;
+  const currentNearestComparators = selectedPass?.nearestComparators ?? aggregateNearestComparators ?? [];
+  const currentEstablishedResults = listMarkdown(selectedPass?.establishedResults) || review.establishedResults || listMarkdown(storedAggregate?.establishedResults);
+  const currentInterpretiveClaims = listMarkdown(selectedPass?.interpretiveClaims) || review.interpretiveClaims || listMarkdown(storedAggregate?.interpretiveClaims);
+  const currentSpeculativeClaims = listMarkdown(selectedPass?.speculativeClaims) || review.speculativeClaims || listMarkdown(storedAggregate?.speculativeClaims);
+  const currentWhatWouldRaiseScore = selectedPass?.whatWouldRaiseScore || parsedCoverage?.whatWouldRaiseScore || storedAggregate?.whatWouldRaiseScore || '';
+  const currentWhatWouldLowerScore = selectedPass?.whatWouldLowerScore || parsedCoverage?.whatWouldLowerScore || storedAggregate?.whatWouldLowerScore || '';
+  const hasOptionalDetails = [
+    currentEstablishedResults,
+    currentInterpretiveClaims,
+    currentSpeculativeClaims,
+    currentWhatWouldRaiseScore,
+    currentWhatWouldLowerScore,
+  ].some(hasText) || (!selectedPass && storedIndividualReviews.length > 0);
   const submittedAtLabel = Number.isFinite(review.createdAt)
     ? format(new Date(review.createdAt), 'MMM d, yyyy h:mm:ss a')
     : null;
@@ -226,14 +267,14 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           </div>
 
-          <div className="grid md:grid-cols-4 gap-3">
+          <div className="grid md:grid-cols-5 gap-3">
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
               <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Score Range</p>
-              <p className="text-sm font-bold text-white mt-1">{activeBand.low}-{activeBand.high}</p>
+              <p className="text-sm font-bold text-white mt-1">{activeBand.low}-{activeBand.high}{!selectedPass && aggregateScoreRange != null ? ` (${aggregateScoreRange})` : ''}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
@@ -242,6 +283,10 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Stability</p>
               <p className="text-sm font-bold text-white mt-1 capitalize">{!selectedPass && scoreStability ? scoreStability : 'Pass view'}</p>
+            </div>
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+              <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparators</p>
+              <p className="text-sm font-bold text-white mt-1">{Array.isArray(currentNearestComparators) && currentNearestComparators.length > 0 ? `${currentNearestComparators.length} nearest` : 'Not shown'}</p>
             </div>
           </div>
 
@@ -273,6 +318,20 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
           )}
 
+          {currentVerdict && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
+              <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest flex items-center gap-2">
+                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Verdict' : 'Public Verdict'}
+              </h3>
+              <Markdown>{currentVerdict}</Markdown>
+              {submittedAtLabel && (
+                <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                  Submitted {submittedAtLabel}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Summary */}
           <div className="space-y-2">
             <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
@@ -288,18 +347,21 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </Section>
           )}
 
-          {currentVerdict && (
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
-              <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest flex items-center gap-2">
-                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Verdict' : 'Public Verdict'}
-              </h3>
-              <Markdown>{currentVerdict}</Markdown>
-              {submittedAtLabel && (
-                <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                  Submitted {submittedAtLabel}
-                </p>
-              )}
-            </div>
+          {currentContributionArchetype?.primary && (
+            <Section icon={<GitBranch className="w-4 h-4" />} label="Contribution Archetype" color="text-fuchsia-300">
+              <div className="grid sm:grid-cols-2 gap-3">
+                <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Primary</p>
+                  <p className="text-sm font-bold text-white mt-1">{currentContributionArchetype.primary}</p>
+                </div>
+                {currentContributionArchetype.secondary && (
+                  <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Secondary</p>
+                    <p className="text-sm font-bold text-white mt-1">{currentContributionArchetype.secondary}</p>
+                  </div>
+                )}
+              </div>
+            </Section>
           )}
 
           {/* Sub-scores (new format only) */}
@@ -405,6 +467,54 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             );
           })()}
 
+          {Array.isArray(currentNearestComparators) && currentNearestComparators.length > 0 && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+              <h3 className="text-xs font-black text-lime-300 uppercase tracking-widest flex items-center gap-2">
+                <GitBranch className="w-4 h-4" /> Nearest Comparators
+              </h3>
+              <div className="space-y-3">
+                {currentNearestComparators.map((comparator: any, index: number) => (
+                  <div key={`${comparator.sitePaperId || comparator.paperTitle || index}-${index}`} className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-black text-white">{comparator.paperTitle || comparator.title || 'Comparator'}</p>
+                        {comparator.sitePaperId && (
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">In-site comparator</p>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {comparator.relationship && (
+                          <span className="rounded-full bg-lime-400/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-lime-200">
+                            {String(comparator.relationship).replace(/_/g, ' ')}
+                          </span>
+                        )}
+                        {comparator.relativeAssessment && (
+                          <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-slate-200">
+                            {comparator.relativeAssessment}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-3">
+                      {comparator.whyComparable && (
+                        <div>
+                          <p className="text-[10px] font-black text-lime-300 uppercase tracking-widest mb-1">Why Comparable</p>
+                          <Markdown>{comparator.whyComparable}</Markdown>
+                        </div>
+                      )}
+                      {comparator.keyDifference && (
+                        <div>
+                          <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest mb-1">Key Difference</p>
+                          <Markdown>{comparator.keyDifference}</Markdown>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Coverage Ledger (new prompt) */}
           {!hasIcoLedger && (review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {
             const hasContent = currentDirectTargets?.length || currentImportedInputs?.length || currentTheorySpaceVariants?.length || currentMechanismSharingAssessment;
@@ -476,9 +586,24 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
                   <Markdown>{currentInputFundamentality}</Markdown>
                 </Section>
               )}
+              {currentFrameworkIndependence && (
+                <Section icon={<GitBranch className="w-4 h-4" />} label="Framework Independence" color="text-sky-300">
+                  <Markdown>{currentFrameworkIndependence}</Markdown>
+                </Section>
+              )}
               {currentFrameworkConditionality && (
                 <Section icon={<GitBranch className="w-4 h-4" />} label="Framework Conditionality" color="text-amber-400">
                   <Markdown>{currentFrameworkConditionality}</Markdown>
+                </Section>
+              )}
+              {currentHardToVaryAssessment && (
+                <Section icon={<Shield className="w-4 h-4" />} label="Hard-to-Vary Assessment" color="text-orange-300">
+                  <Markdown>{currentHardToVaryAssessment}</Markdown>
+                </Section>
+              )}
+              {currentOriginalContribution && (
+                <Section icon={<Microscope className="w-4 h-4" />} label="Manuscript Original Contribution" color="text-indigo-300">
+                  <Markdown>{currentOriginalContribution}</Markdown>
                 </Section>
               )}
               {currentStrongestCase && (
@@ -494,10 +619,64 @@ export default function ReviewCard({ review, onLike, isLiked }: ReviewCardProps)
             </div>
             {currentDecisiveCheck && (
               <Section icon={<Microscope className="w-4 h-4" />} label="Decisive Check" color="text-yellow-400">
-                <Markdown>{currentDecisiveCheck}</Markdown>
-              </Section>
-            )}
+              <Markdown>{currentDecisiveCheck}</Markdown>
+            </Section>
+          )}
           </div>
+
+          {hasOptionalDetails && (
+            <details className="bg-white/5 border border-white/10 rounded-2xl p-5 group">
+              <summary className="cursor-pointer text-xs font-black text-slate-300 uppercase tracking-widest">
+                Optional Details
+              </summary>
+              <div className="mt-4 space-y-4">
+                {currentEstablishedResults && (
+                  <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Established Results" color="text-emerald-300">
+                    <Markdown>{currentEstablishedResults}</Markdown>
+                  </Section>
+                )}
+                {currentInterpretiveClaims && (
+                  <Section icon={<BookOpen className="w-4 h-4" />} label="Interpretive Claims" color="text-sky-300">
+                    <Markdown>{currentInterpretiveClaims}</Markdown>
+                  </Section>
+                )}
+                {currentSpeculativeClaims && (
+                  <Section icon={<AlertTriangle className="w-4 h-4" />} label="Speculative Claims" color="text-amber-300">
+                    <Markdown>{currentSpeculativeClaims}</Markdown>
+                  </Section>
+                )}
+                {currentWhatWouldRaiseScore && (
+                  <Section icon={<TrendingUp className="w-4 h-4" />} label="What Would Raise Score" color="text-green-300">
+                    <Markdown>{currentWhatWouldRaiseScore}</Markdown>
+                  </Section>
+                )}
+                {currentWhatWouldLowerScore && (
+                  <Section icon={<AlertTriangle className="w-4 h-4" />} label="What Would Lower Score" color="text-rose-300">
+                    <Markdown>{currentWhatWouldLowerScore}</Markdown>
+                  </Section>
+                )}
+                {!selectedPass && storedIndividualReviews.length > 0 && (
+                  <Section icon={<ListChecks className="w-4 h-4" />} label="Individual Pass Details" color="text-violet-300">
+                    <div className="space-y-3">
+                      {storedIndividualReviews.map((pass: any, index: number) => {
+                        const band = passScoreBands[index];
+                        return (
+                          <div key={index} className="bg-white/5 border border-white/10 rounded-xl p-3">
+                            <p className="text-xs font-black text-white">Pass {index + 1} · {band?.median ?? '—'} · {pass.bestClassification || 'unclassified'}</p>
+                            {(pass.oneParagraphVerdict || pass.finalJudgment || pass.summary) && (
+                              <div className="mt-2">
+                                <Markdown>{pass.oneParagraphVerdict || pass.finalJudgment || pass.summary}</Markdown>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Section>
+                )}
+              </div>
+            </details>
+          )}
 
           {review.relatedWork && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">

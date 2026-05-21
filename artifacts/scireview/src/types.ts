@@ -54,6 +54,23 @@ export interface AIReview {
   finalJudgment?: string;
   // Coverage ledger (new prompt)
   coverageLedgerJson?: string;
+  individualReviewsJson?: string;
+  aggregateMetaJson?: string;
+  comparisonCohort?: string;
+  broadField?: string;
+  specialtyField?: string;
+  frameworkConditionalityLevel?: string;
+  frameworkConditionalityExplanation?: string;
+  specialtyRelativeScore?: number;
+  broadFieldRelativeScore?: number;
+  crossFieldConsequenceScore?: number;
+  scoreBandLow?: number;
+  scoreBandMedian?: number;
+  scoreBandHigh?: number;
+  scoreConfidence?: number;
+  scoreStability?: string;
+  publicVerdict?: string;
+  passCount?: number;
   // Model reasoning/thinking (Gemini only)
   thinkingText?: string | null;
   // Metadata
