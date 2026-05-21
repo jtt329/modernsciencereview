@@ -121,7 +121,6 @@ router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
         field: sp.field ?? "Unknown",
         score: sp.overallScore ?? null,
         modelName: sp.modelName ?? null,
-        sourceHash: null,
       }).returning();
 
       let rv: any = {};

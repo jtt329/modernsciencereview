@@ -31,6 +31,7 @@ const GPT_MODEL = "gpt-5.4-pro";
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
 const router = Router();
+const recentSubmissions = new Map<string, Promise<{ paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }>>();
 
 function parseJsonObject(value: string | null): Record<string, any> | null {
   if (!value) return null;
@@ -73,20 +74,6 @@ function dedupePapers<T extends typeof papersTable.$inferSelect>(papers: T[]): T
     seen.add(key);
     return true;
   });
-}
-
-async function existingSubmission(authorId: string, sourceHash: string | null, modelName: string) {
-  if (!sourceHash) return null;
-  const [paper] = await db.select().from(papersTable).where(
-    and(
-      eq(papersTable.authorId, authorId),
-      eq(papersTable.sourceHash, sourceHash),
-      eq(papersTable.modelName, modelName),
-    ),
-  );
-  if (!paper) return null;
-  const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
-  return { paper, review: review || null };
 }
 
 async function existingLogicalSubmission(
@@ -255,15 +242,24 @@ router.patch("/papers/:id", async (req, res) => {
 router.post("/papers", async (req, res) => {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
 
+  let submissionKey: string | null = null;
+  let resolveSubmission: ((value: { paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }) => void) | null = null;
+  let rejectSubmission: ((reason?: unknown) => void) | null = null;
   try {
     const { source } = req.body;
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
     const sourceHash = sourceHashFor(source);
     const expectedModelName = `${GEMINI_PIPELINE_LABEL} · ${REVIEW_PROMPT_VERSION}`;
-    const existing = await existingSubmission(req.user.id, sourceHash, expectedModelName);
-    if (existing?.review) {
-      res.json(existing);
+    submissionKey = sourceHash ? `${req.user.id}:${expectedModelName}:${sourceHash}` : null;
+    if (submissionKey && recentSubmissions.has(submissionKey)) {
+      res.json(await recentSubmissions.get(submissionKey));
       return;
+    }
+    if (submissionKey) {
+      recentSubmissions.set(submissionKey, new Promise((resolve, reject) => {
+        resolveSubmission = resolve;
+        rejectSubmission = reject;
+      }));
     }
 
     let paperContent: string;
@@ -346,6 +342,10 @@ router.post("/papers", async (req, res) => {
       reviewMetadata.modelName,
     );
     if (existingByMetadata?.review) {
+      resolveSubmission?.(existingByMetadata);
+      if (submissionKey) {
+        setTimeout(() => recentSubmissions.delete(submissionKey!), 30 * 60 * 1000).unref?.();
+      }
       res.json(existingByMetadata);
       return;
     }
@@ -364,18 +364,10 @@ router.post("/papers", async (req, res) => {
         subfields: reviewMetadata.subfields,
         score: reviewValues.score,
         modelName: reviewMetadata.modelName,
-        sourceHash,
         pdfUrl: submittedPdfUrl,
         displayPdf: submittedDisplayPdf ? 1 : 0,
       }).returning();
     } catch (insertErr: any) {
-      if (insertErr?.code === "23505" && sourceHash) {
-        const existing = await existingSubmission(req.user.id, sourceHash, reviewMetadata.modelName);
-        if (existing?.review) {
-          res.json(existing);
-          return;
-        }
-      }
       throw insertErr;
     }
 
@@ -384,8 +376,17 @@ router.post("/papers", async (req, res) => {
       ...reviewValues,
     }).returning();
 
-    res.json({ paper, review });
+    const payload = { paper, review };
+    resolveSubmission?.(payload);
+    if (submissionKey) {
+      setTimeout(() => recentSubmissions.delete(submissionKey), 30 * 60 * 1000).unref?.();
+    }
+    res.json(payload);
   } catch (err: any) {
+    rejectSubmission?.(err);
+    if (submissionKey) {
+      recentSubmissions.delete(submissionKey);
+    }
     logger.error({ err }, "Error creating paper");
     const message = err instanceof Error ? err.message : String(err);
     const transient =
