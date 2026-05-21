@@ -8,11 +8,14 @@ import { logger } from "../lib/logger";
 import {
   GEMINI_META_MODEL,
   GEMINI_PIPELINE_LABEL,
+  REVIEW_FULL_PROMPT_SYSTEM,
   REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   buildPdfFallbackText,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
+  recalibrateStoredAggregateWithComparators,
+  type ComparatorContextSelector,
   type ReviewComparatorContextItem,
   type ReviewInput,
   type ReviewModel,
@@ -75,6 +78,12 @@ function dedupePapers<T extends typeof papersTable.$inferSelect>(papers: T[]): T
     seen.add(key);
     return true;
   });
+}
+
+function requireAdmin(req: any, res: any): boolean {
+  if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return false; }
+  if (!ADMIN_EMAIL || req.user.email !== ADMIN_EMAIL) { res.status(403).json({ error: "Forbidden" }); return false; }
+  return true;
 }
 
 async function existingLogicalSubmission(
@@ -163,25 +172,44 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
     classification: review?.bestClassification || aggregate?.finalClassification || null,
     comparisonCohort: parsed?.finalComparisonCohort || aggregate?.finalComparisonCohort || null,
     score: review?.overallIntrinsicScore ?? review?.score ?? null,
+    frameworkConditionality: parsed?.frameworkConditionalityLevel || parsed?.aggregate?.comparatorProfile?.frameworkConditionality || null,
+    comparatorSearchSummary: parsed?.comparatorProfile?.comparatorSearchSummary || aggregate?.comparatorProfile?.comparatorSearchSummary || null,
   };
 }
 
-async function selectComparatorContext(title: string, paperContent: string): Promise<ReviewComparatorContextItem[]> {
-  const normalizedTitle = normalizeComparatorTitle(title);
-  const sourceTokens = comparatorTokens(`${title}\n${paperContent.slice(0, 24000)}`);
+async function selectComparatorContextForProfile(
+  profile: Parameters<ComparatorContextSelector>[0],
+  excludePaperId?: string,
+) {
+  const sourceText = [
+    profile.primaryCohort,
+    profile.adjacentBroadCohort,
+    profile.contributionArchetype?.primary,
+    profile.contributionArchetype?.secondary,
+    ...(Array.isArray(profile.primitiveInputs) ? profile.primitiveInputs : []),
+    ...(Array.isArray(profile.introducedConstructions) ? profile.introducedConstructions : []),
+    ...(Array.isArray(profile.externalEmbeddingsAndChecks) ? profile.externalEmbeddingsAndChecks : []),
+    ...(Array.isArray(profile.directOutputs) ? profile.directOutputs : []),
+    profile.downstreamReach,
+    profile.classification,
+    profile.comparatorSearchSummary,
+  ].filter(Boolean).join("\n");
+  const sourceTokens = comparatorTokens(sourceText);
   if (sourceTokens.size === 0) return [];
 
   const existingPapers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+  if (existingPapers.length <= 4) return [];
   const reviews = await db.select().from(reviewsTable);
   const reviewMap = new Map(reviews.map((review) => [review.paperId, review]));
 
   const candidates = existingPapers
     .map((paper) => {
+      if (paper.id === excludePaperId) return null;
       const review = reviewMap.get(paper.id) ?? null;
       if (!review) return null;
       const paperTitle = paper.title || "";
       const candidateTitle = normalizeComparatorTitle(paperTitle);
-      if (!candidateTitle || candidateTitle === normalizedTitle) return null;
+      if (!candidateTitle) return null;
 
       const metadata = comparatorMetadata(review);
       const subfields = safeStringArray(paper.subfields);
@@ -199,11 +227,13 @@ async function selectComparatorContext(title: string, paperContent: string): Pro
       ].filter(Boolean).join("\n");
 
       const overlap = tokenOverlapScore(sourceTokens, candidateText);
-      if (overlap <= 0) return null;
+      const sparseDatabase = existingPapers.length <= 15;
+      if (overlap <= (sparseDatabase ? 0.08 : 0.02)) return null;
 
       return {
         rankScore: overlap,
         item: {
+          comparatorId: "",
           sitePaperId: paper.id,
           title: paperTitle,
           field: paper.field || null,
@@ -215,6 +245,8 @@ async function selectComparatorContext(title: string, paperContent: string): Pro
           centralClaim: metadata.centralClaim ? String(metadata.centralClaim).slice(0, 900) : null,
           summary: metadata.summary ? String(metadata.summary).slice(0, 900) : null,
           inputConstructionOutputLedger: metadata.inputConstructionOutputLedger,
+          frameworkConditionality: metadata.frameworkConditionality,
+          comparatorSearchSummary: metadata.comparatorSearchSummary,
         } satisfies ReviewComparatorContextItem,
       };
     })
@@ -223,12 +255,93 @@ async function selectComparatorContext(title: string, paperContent: string): Pro
   return candidates
     .sort((a, b) => b.rankScore - a.rankScore)
     .slice(0, 18)
-    .map((candidate) => candidate.item);
+    .map((candidate, index) => ({
+      ...candidate.item,
+      comparatorId: `C${index + 1}`,
+    }));
 }
+
+const selectComparatorContext: ComparatorContextSelector = async (profile) => selectComparatorContextForProfile(profile);
 
 // GET /api/papers/system-prompt — return the review system prompt
 router.get("/papers/system-prompt", (_req, res) => {
-  res.json({ prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION, promptVersion: REVIEW_PROMPT_VERSION });
+  res.json({
+    prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION,
+    fullPromptSystem: REVIEW_FULL_PROMPT_SYSTEM,
+    promptVersion: REVIEW_PROMPT_VERSION,
+  });
+});
+
+// POST /api/papers/comparator-backfill — admin-only recalibration after a batch has populated the database
+router.post("/papers/comparator-backfill", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+    const reviews = await db.select().from(reviewsTable);
+    const reviewMap = new Map(reviews.map((review) => [review.paperId, review]));
+    let updated = 0;
+    let skipped = 0;
+    const errors: { paperId: string; title: string; error: string }[] = [];
+
+    for (const paper of papers) {
+      const review = reviewMap.get(paper.id);
+      if (!review) { skipped += 1; continue; }
+
+      const coverageLedger = parseJsonObject(review.coverageLedgerJson);
+      const aggregateMeta = parseJsonObject((review as any).aggregateMetaJson ?? null);
+      const aggregate = aggregateMeta ?? coverageLedger?.aggregate ?? null;
+      const promptVersion = coverageLedger?.promptVersion ?? "";
+      if (promptVersion !== REVIEW_PROMPT_VERSION || !aggregate?.comparatorProfile) {
+        skipped += 1;
+        continue;
+      }
+
+      try {
+        const comparatorContext = await selectComparatorContextForProfile(aggregate.comparatorProfile, paper.id);
+        const { aggregate: updatedAggregate, thinkingText } = await recalibrateStoredAggregateWithComparators(
+          aggregate,
+          comparatorContext,
+        );
+        const updatedCoverageLedger = {
+          ...coverageLedger,
+          nearestComparators: updatedAggregate.nearestComparators,
+          externalComparatorSuggestions: updatedAggregate.externalComparatorSuggestions,
+          publicComparatorSummary: updatedAggregate.publicComparatorSummary,
+          adminComparatorNotes: updatedAggregate.adminComparatorNotes,
+          comparatorProfile: updatedAggregate.comparatorProfile,
+          comparatorCalibration: updatedAggregate.comparatorCalibration,
+          blindIntrinsicScoreBand: updatedAggregate.blindIntrinsicScoreBand,
+          comparatorCalibratedFinalScoreBand: updatedAggregate.finalScoreBand,
+          aggregate: updatedAggregate,
+          finalComparisonCohort: updatedAggregate.finalComparisonCohort,
+          scoreStability: updatedAggregate.scoreStability,
+          backfilledAt: new Date().toISOString(),
+        };
+        const finalScore = updatedAggregate.finalScoreBand.median;
+        await db.update(reviewsTable)
+          .set({
+            score: finalScore,
+            overallIntrinsicScore: finalScore,
+            bestClassification: updatedAggregate.finalClassification,
+            finalJudgment: updatedAggregate.publicOneParagraphVerdict,
+            coverageLedgerJson: JSON.stringify(updatedCoverageLedger),
+            thinkingText: [review.thinkingText, thinkingText].filter(Boolean).join("\n\n---\n\n") || review.thinkingText,
+          })
+          .where(eq(reviewsTable.id, review.id));
+        await db.update(papersTable)
+          .set({ score: finalScore })
+          .where(eq(papersTable.id, paper.id));
+        updated += 1;
+      } catch (err: any) {
+        errors.push({ paperId: paper.id, title: paper.title, error: err?.message ?? String(err) });
+      }
+    }
+
+    res.json({ updated, skipped, errors });
+  } catch (err: any) {
+    logger.error({ err }, "Comparator backfill failed");
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/papers/export — download all reviews as structured JSON (model output only)
@@ -284,6 +397,17 @@ router.get("/papers/export", async (_req, res) => {
           contributionArchetype: coverageLedger?.contributionArchetype ?? coverageLedger?.aggregate?.contributionArchetype ?? null,
           inputConstructionOutputLedger: coverageLedger?.inputConstructionOutputLedger ?? coverageLedger?.aggregate?.inputConstructionOutputLedger ?? null,
           nearestComparators: coverageLedger?.nearestComparators ?? coverageLedger?.aggregate?.nearestComparators ?? [],
+          blindIntrinsicScoreBand: coverageLedger?.blindIntrinsicScoreBand ?? coverageLedger?.aggregate?.blindIntrinsicScoreBand ?? null,
+          comparatorCalibration: coverageLedger?.comparatorCalibration ?? coverageLedger?.aggregate?.comparatorCalibration ?? null,
+          comparatorCalibratedFinalScoreBand: coverageLedger?.comparatorCalibratedFinalScoreBand ?? coverageLedger?.aggregate?.finalScoreBand ?? null,
+          comparatorProfile: coverageLedger?.comparatorProfile ?? coverageLedger?.aggregate?.comparatorProfile ?? null,
+          externalComparatorSuggestions: coverageLedger?.externalComparatorSuggestions ?? coverageLedger?.aggregate?.externalComparatorSuggestions ?? [],
+          publicComparatorSummary: coverageLedger?.publicComparatorSummary ?? coverageLedger?.aggregate?.publicComparatorSummary ?? null,
+          adminComparatorNotes: coverageLedger?.adminComparatorNotes ?? coverageLedger?.aggregate?.adminComparatorNotes ?? null,
+          pdfVisibleFallbackUsed: coverageLedger?.pdfVisibleFallbackUsed ?? false,
+          blindingStrength: coverageLedger?.blindingStrength ?? "strong",
+          reviewPassComparison: coverageLedger?.reviewPassComparison ?? coverageLedger?.adjudication ?? coverageLedger?.aggregate?.adjudication ?? null,
+          finalIntrinsicReview: coverageLedger?.finalIntrinsicReview ?? null,
           adjudication: coverageLedger?.adjudication ?? coverageLedger?.aggregate?.adjudication ?? null,
           inputGrounding: coverageLedger?.inputGrounding ?? coverageLedger?.aggregate?.inputGroundingAssessment ?? null,
           inputFundamentality: coverageLedger?.inputFundamentality ?? coverageLedger?.aggregate?.inputFundamentalityAssessment ?? null,
@@ -475,13 +599,12 @@ router.post("/papers", async (req, res) => {
     // Step 1: extract real title and authors (before anonymous review)
     const metadata = await extractLatestMetadata(paperContent, metadataHints);
 
-    // Step 2: run the two-pass blind review plus adjudicator flow
-    const comparatorContext = await selectComparatorContext(metadata.title, paperContent);
+    // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
     const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(
       reviewInput ?? paperContent,
       selectedModel,
       undefined,
-      { comparatorContext },
+      { selectComparatorContext },
     );
     const existingByMetadata = await existingLogicalSubmission(
       req.user.id,
