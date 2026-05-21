@@ -10,6 +10,9 @@ function escapeHtml(text: string): string {
 
 function renderLatex(text: string): string {
   if (!text) return '';
+  text = String(text)
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math) => `$$${math}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, math) => `$${math}$`);
   let result = '';
   let remaining = text;
 

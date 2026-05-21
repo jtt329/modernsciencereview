@@ -7,6 +7,28 @@ const router = Router();
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
+function duplicateKey(paper: typeof papersTable.$inferSelect) {
+  const sourceHash = (paper as any).sourceHash;
+  if (sourceHash) return `source:${paper.authorId}:${sourceHash}:${paper.modelName ?? ""}`;
+  return [
+    "meta",
+    paper.authorId,
+    paper.title,
+    paper.paperAuthors ?? "",
+    paper.modelName ?? "",
+  ].join("\0").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function dedupePapers<T extends typeof papersTable.$inferSelect>(papers: T[]): T[] {
+  const seen = new Set<string>();
+  return papers.filter((paper) => {
+    const key = duplicateKey(paper);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function requireAdmin(req: any, res: any): boolean {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return false; }
   if (!ADMIN_EMAIL || req.user.email !== ADMIN_EMAIL) { res.status(403).json({ error: "Forbidden" }); return false; }
@@ -18,7 +40,7 @@ function requireAdmin(req: any, res: any): boolean {
 router.post("/admin/snapshot-and-delete", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const papers = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt));
+    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     if (papers.length === 0) {
       res.json({ sessionId: null, paperCount: 0, message: "No papers to snapshot." });
       return;
@@ -99,6 +121,7 @@ router.post("/admin/snapshots/:sessionId/restore", async (req, res) => {
         field: sp.field ?? "Unknown",
         score: sp.overallScore ?? null,
         modelName: sp.modelName ?? null,
+        sourceHash: null,
       }).returning();
 
       let rv: any = {};

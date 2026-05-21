@@ -1,11 +1,13 @@
 import { Router } from "express";
 import { db, papersTable, reviewsTable, commentsTable, likesTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
+import { createHash } from "crypto";
 import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
 import {
   GEMINI_META_MODEL,
+  GEMINI_PIPELINE_LABEL,
   REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   buildPdfFallbackText,
@@ -40,6 +42,72 @@ function parseJsonObject(value: string | null): Record<string, any> | null {
   }
 }
 
+function sourceHashFor(source: any): string | null {
+  if (!source?.type || typeof source.data !== "string") return null;
+  const normalized = source.type === "url" ? source.data.trim() : source.data;
+  if (!normalized) return null;
+  return createHash("sha256")
+    .update(source.type)
+    .update("\0")
+    .update(normalized)
+    .digest("hex");
+}
+
+function duplicateKey(paper: typeof papersTable.$inferSelect) {
+  const sourceHash = (paper as any).sourceHash;
+  if (sourceHash) return `source:${paper.authorId}:${sourceHash}:${paper.modelName ?? ""}`;
+  return [
+    "meta",
+    paper.authorId,
+    paper.title,
+    paper.paperAuthors ?? "",
+    paper.modelName ?? "",
+  ].join("\0").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function dedupePapers<T extends typeof papersTable.$inferSelect>(papers: T[]): T[] {
+  const seen = new Set<string>();
+  return papers.filter((paper) => {
+    const key = duplicateKey(paper);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+async function existingSubmission(authorId: string, sourceHash: string | null, modelName: string) {
+  if (!sourceHash) return null;
+  const [paper] = await db.select().from(papersTable).where(
+    and(
+      eq(papersTable.authorId, authorId),
+      eq(papersTable.sourceHash, sourceHash),
+      eq(papersTable.modelName, modelName),
+    ),
+  );
+  if (!paper) return null;
+  const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
+  return { paper, review: review || null };
+}
+
+async function existingLogicalSubmission(
+  authorId: string,
+  title: string,
+  paperAuthors: string,
+  modelName: string,
+) {
+  const [paper] = await db.select().from(papersTable).where(
+    and(
+      eq(papersTable.authorId, authorId),
+      eq(papersTable.title, title),
+      eq(papersTable.paperAuthors, paperAuthors),
+      eq(papersTable.modelName, modelName),
+    ),
+  ).orderBy(desc(papersTable.createdAt));
+  if (!paper) return null;
+  const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
+  return { paper, review: review || null };
+}
+
 // GET /api/papers/system-prompt — return the review system prompt
 router.get("/papers/system-prompt", (_req, res) => {
   res.json({ prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION, promptVersion: REVIEW_PROMPT_VERSION });
@@ -48,7 +116,7 @@ router.get("/papers/system-prompt", (_req, res) => {
 // GET /api/papers/export — download all reviews as structured JSON (model output only)
 router.get("/papers/export", async (_req, res) => {
   try {
-    const papers = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt));
+    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
 
@@ -116,7 +184,7 @@ router.get("/papers/export", async (_req, res) => {
 // GET /api/papers — list all papers
 router.get("/papers", async (req, res) => {
   try {
-    const papers = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt));
+    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select({
       paperId: reviewsTable.paperId,
       summary: reviewsTable.summary,
@@ -190,6 +258,13 @@ router.post("/papers", async (req, res) => {
   try {
     const { source } = req.body;
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
+    const sourceHash = sourceHashFor(source);
+    const expectedModelName = `${GEMINI_PIPELINE_LABEL} · ${REVIEW_PROMPT_VERSION}`;
+    const existing = await existingSubmission(req.user.id, sourceHash, expectedModelName);
+    if (existing?.review) {
+      res.json(existing);
+      return;
+    }
 
     let paperContent: string;
     let reviewInput: ReviewInput | null = null;
@@ -264,22 +339,45 @@ router.post("/papers", async (req, res) => {
 
     // Step 2: run the new three-pass blind review flow
     const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(reviewInput ?? paperContent, selectedModel);
+    const existingByMetadata = await existingLogicalSubmission(
+      req.user.id,
+      metadata.title,
+      metadata.authors,
+      reviewMetadata.modelName,
+    );
+    if (existingByMetadata?.review) {
+      res.json(existingByMetadata);
+      return;
+    }
 
     const submitterName = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email || "Anonymous";
 
-    const [paper] = await db.insert(papersTable).values({
-      title: metadata.title,
-      content: (source.type === "pdf" || source.type === "url") ? `[PDF] ${metadata.title}` : paperContent,
-      authorId: req.user.id,
-      authorName: submitterName,
-      paperAuthors: metadata.authors,
-      field: reviewMetadata.field,
-      subfields: reviewMetadata.subfields,
-      score: reviewValues.score,
-      modelName: reviewMetadata.modelName,
-      pdfUrl: submittedPdfUrl,
-      displayPdf: submittedDisplayPdf ? 1 : 0,
-    }).returning();
+    let paper: typeof papersTable.$inferSelect;
+    try {
+      [paper] = await db.insert(papersTable).values({
+        title: metadata.title,
+        content: (source.type === "pdf" || source.type === "url") ? `[PDF] ${metadata.title}` : paperContent,
+        authorId: req.user.id,
+        authorName: submitterName,
+        paperAuthors: metadata.authors,
+        field: reviewMetadata.field,
+        subfields: reviewMetadata.subfields,
+        score: reviewValues.score,
+        modelName: reviewMetadata.modelName,
+        sourceHash,
+        pdfUrl: submittedPdfUrl,
+        displayPdf: submittedDisplayPdf ? 1 : 0,
+      }).returning();
+    } catch (insertErr: any) {
+      if (insertErr?.code === "23505" && sourceHash) {
+        const existing = await existingSubmission(req.user.id, sourceHash, reviewMetadata.modelName);
+        if (existing?.review) {
+          res.json(existing);
+          return;
+        }
+      }
+      throw insertErr;
+    }
 
     const [review] = await db.insert(reviewsTable).values({
       paperId: paper.id,

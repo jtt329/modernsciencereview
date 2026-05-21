@@ -13,13 +13,14 @@ export const papersTable = pgTable("papers", {
   subfields: jsonb("subfields").$type<string[]>().default([]),
   score: integer("score"),
   modelName: varchar("model_name"),
+  sourceHash: varchar("source_hash"),
   pdfUrl: text("pdf_url"),
   displayPdf: integer("display_pdf").notNull().default(0),
   likesCount: integer("likes_count").notNull().default(0),
   viewCount: integer("view_count").notNull().default(0),
   commentCount: integer("comment_count").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [unique("unique_paper_source_model_per_author").on(t.authorId, t.sourceHash, t.modelName)]);
 
 export const reviewsTable = pgTable("reviews", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

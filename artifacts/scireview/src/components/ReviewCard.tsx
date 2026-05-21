@@ -14,10 +14,16 @@ interface ReviewCardProps {
   isLiked: boolean;
 }
 
+function normalizeMathMarkdown(text: string) {
+  return String(text ?? "")
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math) => `$$${math}$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, math) => `$${math}$`);
+}
+
 const Markdown = ({ children }: { children: string }) => (
   <div className="prose prose-invert prose-sm prose-p:my-0 prose-li:my-0 max-w-none text-slate-300 leading-relaxed">
     <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-      {children}
+      {normalizeMathMarkdown(children)}
     </ReactMarkdown>
   </div>
 );
