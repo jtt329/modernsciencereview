@@ -136,6 +136,7 @@ function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash
       passGenerationAttempts: Number(process.env.SCIREVIEW_PASS_GENERATION_ATTEMPTS || 1),
       replacementPassAttempts: Number(process.env.SCIREVIEW_REPLACEMENT_PASS_ATTEMPTS || 1),
       automaticWholePaperBrowserRetries: 0,
+      saveFallbackWhenAtLeastOnePassSucceeds: true,
     },
   });
   return reviewValues;

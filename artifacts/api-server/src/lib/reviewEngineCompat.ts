@@ -1275,14 +1275,9 @@ function individualReviewReasoningText(review: IndividualReview) {
   ].filter(Boolean).join("\n").trim();
 }
 
-function hasSubstantiveText(value: string, minLength = 40) {
-  return value.trim().length >= minLength;
-}
-
 function validateIndividualReview(review: IndividualReview) {
   const reasoningText = individualReviewReasoningText(review);
   const score = review.scoreBand.median;
-  const requiredMissing: string[] = [];
   const hasCoreReasoning =
     reasoningText.length >= 80 &&
     Boolean(review.correctness || review.finalJudgment || review.oneParagraphVerdict || review.summary);
@@ -1299,39 +1294,9 @@ function validateIndividualReview(review: IndividualReview) {
     throw new Error("Generated review returned score 0 without enough reasoning; treating as failed generation.");
   }
 
-  if (!hasSubstantiveText(review.summary, 80)) requiredMissing.push("summary");
-  if (!hasSubstantiveText(review.centralClaim, 40)) requiredMissing.push("centralClaim");
-  if (!hasSubstantiveText(review.contributionArchetype.primary, 5)) requiredMissing.push("contributionArchetype");
-  if (!hasSubstantiveText(review.correctness, 40)) requiredMissing.push("correctness");
-  if (!hasSubstantiveText(review.inputFundamentality, 40)) requiredMissing.push("inputFundamentality");
-  if (!hasSubstantiveText(review.novelty, 40)) requiredMissing.push("novelty");
-  if (!hasSubstantiveText(review.strongestObjection, 40)) requiredMissing.push("strongestObjection");
-  if (!hasSubstantiveText(review.finalJudgment || review.oneParagraphVerdict, 80)) {
-    requiredMissing.push("finalJudgment");
-  }
-
-  if (
-    review.inputConstructionOutputLedger.primitiveInputs.length === 0 ||
-    review.inputConstructionOutputLedger.introducedConstructions.length === 0 ||
-    review.inputConstructionOutputLedger.directOutputs.length === 0 ||
-    !hasSubstantiveText(review.inputConstructionOutputLedger.downstreamReach, 30) ||
-    !hasSubstantiveText(review.inputConstructionOutputLedger.assessment, 40)
-  ) {
-    requiredMissing.push("inputConstructionOutputLedger");
-  }
-
-  if (
-    review.intrinsicTechnicalScore <= 0 &&
-    review.explanatoryTargetBreadthScore <= 0 &&
-    review.theorySpaceBreadthScore <= 0 &&
-    review.breadthOfImpactScore <= 0
-  ) {
-    requiredMissing.push("diagnosticScores");
-  }
-
-  if (requiredMissing.length > 0) {
-    throw new Error(`Generated review omitted required diagnostic fields: ${requiredMissing.join(", ")}.`);
-  }
+  // Do not discard an otherwise substantive paid generation just because the
+  // model omitted a secondary diagnostic field. The adjudicator receives the
+  // manuscript text and can synthesize missing diagnostics in the final review.
 }
 
 function toMarkdownList(items: string[]) {
@@ -1985,9 +1950,14 @@ async function generateMultiPassReview(
     extraIndex += 1;
   }
 
+  if (passResults.length === 0) {
+    const details = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
+    throw new Error(`Review failed: 0 of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${details}`);
+  }
+
   if (passResults.length < REVIEW_PASS_COUNT) {
     const details = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
-    throw new Error(`Review failed: only ${passResults.length} of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${details}`);
+    thinkingChunks.push(`Proceeding with ${passResults.length} of ${REVIEW_PASS_COUNT} valid independent passes to avoid discarding paid successful work. Failed attempts: ${details}`);
   }
 
   const individualReviews = passResults.map((result) => result.review);
@@ -2002,13 +1972,40 @@ async function generateMultiPassReview(
 
   const fallbackScores = individualReviews.map((review) => review.scoreBand.median);
   const fallbackRepresentativeReview = pickRepresentativeReview(individualReviews, medianScore(fallbackScores));
-  const { parsed: aggregateParsed, thinkingText: adjudicatorThinking } = await callGemini(
-    BLIND_INTRINSIC_ADJUDICATOR_V6_PROMPT,
-    buildAdjudicatorInput(blindedContent, individualReviews),
-    GEMINI_META_MODEL,
-    { maxOutputTokens: 16384, includeThoughts: false },
-  );
-  let aggregate = normalizeAggregateReview(aggregateParsed, fallbackScores, fallbackRepresentativeReview);
+  let adjudicatorThinking: string | null = null;
+  let aggregate: AggregateReview;
+  try {
+    const adjudicatorResult = await callGemini(
+      BLIND_INTRINSIC_ADJUDICATOR_V6_PROMPT,
+      buildAdjudicatorInput(blindedContent, individualReviews),
+      GEMINI_META_MODEL,
+      { maxOutputTokens: 16384, includeThoughts: false },
+    );
+    adjudicatorThinking = adjudicatorResult.thinkingText;
+    aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
+  } catch (reason) {
+    aggregate = normalizeAggregateReview({
+      finalIntrinsicReview: fallbackRepresentativeReview,
+      reviewPassComparison: {
+        validPassCount: passResults.length,
+        individualScores: fallbackScores,
+        scoreRange: Math.max(...fallbackScores) - Math.min(...fallbackScores),
+        scoreStability: rangeToStability(Math.max(...fallbackScores) - Math.min(...fallbackScores)),
+        mainAgreements: [],
+        mainDisagreements: [],
+        fatalObjectionPresent: false,
+        fatalObjectionAssessment: "",
+      },
+    }, fallbackScores, fallbackRepresentativeReview);
+    aggregate = {
+      ...aggregate,
+      internalCalibrationNotes: [
+        aggregate.internalCalibrationNotes,
+        `Blind adjudicator failed; saved fallback from ${passResults.length} valid pass(es) instead of discarding paid work. ${errorMessage(reason)}`,
+      ].filter(Boolean).join("\n\n"),
+    };
+    thinkingChunks.push(`Blind adjudicator failed; saved pass-based fallback\n${errorMessage(reason)}`);
+  }
   const comparatorContext = options.selectComparatorContext
     ? await options.selectComparatorContext(aggregate.comparatorProfile, aggregate)
     : [];
@@ -2165,6 +2162,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       adjudicatorModel: GEMINI_META_MODEL,
       comparatorCalibrationModel: GEMINI_CALIBRATION_MODEL,
       passCount: REVIEW_PASS_COUNT,
+      validPassCount: result.individualReviews.length,
       pipelineMode: REVIEW_PIPELINE_MODE,
       schemaVersion: "v6",
       extractionMethod,
