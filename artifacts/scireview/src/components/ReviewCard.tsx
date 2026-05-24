@@ -249,7 +249,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
   const currentComparisonCohort = selectedPass?.comparisonCohort || selectedPass?.broadField || comparisonCohort;
   const currentVerdict = selectedPass?.oneParagraphVerdict || selectedPass?.finalJudgment || aggregateVerdict;
-  const currentSummary = selectedPass?.summary || review.summary;
   const currentCentralClaim = selectedPass?.centralClaim || review.centralClaim;
   const currentDirectTargets = selectedPass?.coverageLedger?.directTargets ?? directTargets;
   const currentImportedInputs = selectedPass?.coverageLedger?.importedInputs ?? importedInputs;
@@ -470,71 +469,67 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
           </div>
 
-          <div className="bg-slate-950/30 border border-white/10 rounded-2xl p-5 space-y-3">
-            {typeof scoreDetail === 'number' && (
-              <>
-                <h3 className="text-xs font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass {scoreDetail + 1}</h3>
-                <p className="text-sm text-slate-300">
-                  Showing the rendered details from independent blind review pass {scoreDetail + 1} below.
-                </p>
-              </>
-            )}
-            {scoreDetail === 'adjudicator' && (
-              <>
-                <h3 className="text-xs font-black text-sky-300 uppercase tracking-widest">Adjudicator Rating</h3>
-                <Markdown>{aggregateAdjudication?.mainDisagreements?.length
-                  ? `The adjudicator rating is ${adjudicatorRating}. Main disagreements: ${aggregateAdjudication.mainDisagreements.join('; ')}`
-                  : `The adjudicator rating is ${adjudicatorRating}. This is the blind intrinsic score before comparator calibration.`}</Markdown>
-              </>
-            )}
-            {scoreDetail === 'comparator' && (
-              <>
-                <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest">Comparator Adjustment</h3>
-                {comparatorCalibrationApplied ? (
-                  <div className="space-y-3">
-                    {calibrationRationale && <Markdown>{calibrationRationale}</Markdown>}
-                    {scoreGapAssessment && <Markdown>{scoreGapAssessment}</Markdown>}
-                    {Array.isArray(currentNearestComparators) && currentNearestComparators.length > 0 && (
-                      <div className="grid gap-3">
-                        {currentNearestComparators.map((comparator: any, index: number) => (
-                          <div key={`${comparator.sitePaperId || comparator.paperTitle || comparator.title || index}-${index}`} className="bg-white/5 border border-white/10 rounded-xl p-3">
-                            {comparator.sitePaperId ? (
-                              <a
-                                href={`/papers/${encodeURIComponent(comparator.sitePaperId)}`}
-                                className="text-sm font-black text-white hover:text-cyan-200 transition-colors"
-                              >
-                                {comparator.paperTitle || comparator.displayTitle || comparator.title || 'Comparator'}
-                              </a>
-                            ) : (
-                              <p className="text-sm font-black text-white">{comparator.paperTitle || comparator.displayTitle || comparator.title || 'Comparator'}</p>
-                            )}
-                            {(comparator.whyComparable || comparator.keyDifference || comparator.scoreGapJustification) && (
-                              <div className="mt-2 space-y-2">
-                                {comparator.whyComparable && <Markdown>{comparator.whyComparable}</Markdown>}
-                                {comparator.keyDifference && <Markdown>{comparator.keyDifference}</Markdown>}
-                                {comparator.scoreGapJustification && <Markdown>{comparator.scoreGapJustification}</Markdown>}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {!calibrationRationale && !scoreGapAssessment && (
-                      <p className="text-sm text-slate-300">Comparator calibration ran and produced adjustment {adjustmentLabel}.</p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-slate-300">{comparatorNotAppliedMessage}</p>
-                )}
-              </>
-            )}
-            {scoreDetail === 'final' && (
-              <>
-                <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest">Final Score</h3>
-                <Markdown>{currentVerdict || `Final score: ${finalScore}.`}</Markdown>
-              </>
-            )}
-          </div>
+          {scoreDetail !== 'final' && (
+            <div className="bg-slate-950/30 border border-white/10 rounded-2xl p-5 space-y-3">
+              {typeof scoreDetail === 'number' && (
+                <>
+                  <h3 className="text-xs font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass {scoreDetail + 1}</h3>
+                  <p className="text-sm text-slate-300">
+                    Showing the rendered details from independent blind review pass {scoreDetail + 1} below.
+                  </p>
+                </>
+              )}
+              {scoreDetail === 'adjudicator' && (
+                <>
+                  <h3 className="text-xs font-black text-sky-300 uppercase tracking-widest">Adjudicator Rating</h3>
+                  <Markdown>{aggregateAdjudication?.mainDisagreements?.length
+                    ? `The adjudicator rating is ${adjudicatorRating}. Main disagreements: ${aggregateAdjudication.mainDisagreements.join('; ')}`
+                    : `The adjudicator rating is ${adjudicatorRating}. This is the blind intrinsic score before comparator calibration.`}</Markdown>
+                </>
+              )}
+              {scoreDetail === 'comparator' && (
+                <>
+                  <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest">Comparator Adjustment</h3>
+                  {comparatorCalibrationApplied ? (
+                    <div className="space-y-3">
+                      {calibrationRationale && <Markdown>{calibrationRationale}</Markdown>}
+                      {scoreGapAssessment && <Markdown>{scoreGapAssessment}</Markdown>}
+                      {Array.isArray(currentNearestComparators) && currentNearestComparators.length > 0 && (
+                        <div className="grid gap-3">
+                          {currentNearestComparators.map((comparator: any, index: number) => (
+                            <div key={`${comparator.sitePaperId || comparator.paperTitle || comparator.title || index}-${index}`} className="bg-white/5 border border-white/10 rounded-xl p-3">
+                              {comparator.sitePaperId ? (
+                                <a
+                                  href={`/papers/${encodeURIComponent(comparator.sitePaperId)}`}
+                                  className="text-sm font-black text-white hover:text-cyan-200 transition-colors"
+                                >
+                                  {comparator.paperTitle || comparator.displayTitle || comparator.title || 'Comparator'}
+                                </a>
+                              ) : (
+                                <p className="text-sm font-black text-white">{comparator.paperTitle || comparator.displayTitle || comparator.title || 'Comparator'}</p>
+                              )}
+                              {(comparator.whyComparable || comparator.keyDifference || comparator.scoreGapJustification) && (
+                                <div className="mt-2 space-y-2">
+                                  {comparator.whyComparable && <Markdown>{comparator.whyComparable}</Markdown>}
+                                  {comparator.keyDifference && <Markdown>{comparator.keyDifference}</Markdown>}
+                                  {comparator.scoreGapJustification && <Markdown>{comparator.scoreGapJustification}</Markdown>}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {!calibrationRationale && !scoreGapAssessment && (
+                        <p className="text-sm text-slate-300">Comparator calibration ran and produced adjustment {adjustmentLabel}.</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-slate-300">{comparatorNotAppliedMessage}</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
 
           {isAdmin && !selectedPass && (subscoreConsistencyWarning || subscoreSaturationWarning) && (
             <div className="bg-amber-400/10 border border-amber-300/20 rounded-2xl p-4">
@@ -550,14 +545,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <Markdown>{currentCentralClaim}</Markdown>
             </Section>
           )}
-
-          {/* Summary */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-              <BookOpen className="w-4 h-4" /> Review Summary
-            </h3>
-            <Markdown>{currentSummary}</Markdown>
-          </div>
 
           {currentVerdict && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
