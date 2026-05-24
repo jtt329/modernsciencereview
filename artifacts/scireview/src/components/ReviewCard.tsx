@@ -395,11 +395,16 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     <React.Fragment key={index}>
                       {index > 0 && <span className="text-slate-500">,</span>}
                       <button
+                        aria-pressed={scoreDetail === index}
                         onClick={() => {
                           setActiveTab(index);
                           setScoreDetail(index);
                         }}
-                        className="rounded-lg bg-fuchsia-400/10 px-2 py-1 text-fuchsia-100 hover:bg-fuchsia-400/20 transition-colors"
+                        className={`rounded-lg border px-2 py-1 transition-colors ${
+                          scoreDetail === index
+                            ? 'border-white bg-fuchsia-400/25 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.35)]'
+                            : 'border-transparent bg-fuchsia-400/10 text-fuchsia-100 hover:bg-fuchsia-400/20'
+                        }`}
                       >
                         {score}
                       </button>
@@ -413,31 +418,46 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <span className="text-slate-300">)</span>
               <span className="text-slate-500">-&gt;</span>
               <button
+                aria-pressed={scoreDetail === 'adjudicator'}
                 onClick={() => {
                   setActiveTab('combined');
                   setScoreDetail('adjudicator');
                 }}
-                className="rounded-lg bg-sky-400/10 px-2 py-1 text-sky-100 hover:bg-sky-400/20 transition-colors"
+                className={`rounded-lg border px-2 py-1 transition-colors ${
+                  scoreDetail === 'adjudicator'
+                    ? 'border-white bg-sky-400/25 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.35)]'
+                    : 'border-transparent bg-sky-400/10 text-sky-100 hover:bg-sky-400/20'
+                }`}
               >
                 Adjudicator Rating {adjudicatorRating}
               </button>
               <span className="text-slate-500">-&gt;</span>
               <button
+                aria-pressed={scoreDetail === 'comparator'}
                 onClick={() => {
                   setActiveTab('combined');
                   setScoreDetail('comparator');
                 }}
-                className="rounded-lg bg-cyan-400/10 px-2 py-1 text-cyan-100 hover:bg-cyan-400/20 transition-colors"
+                className={`rounded-lg border px-2 py-1 transition-colors ${
+                  scoreDetail === 'comparator'
+                    ? 'border-white bg-cyan-400/25 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.35)]'
+                    : 'border-transparent bg-cyan-400/10 text-cyan-100 hover:bg-cyan-400/20'
+                }`}
               >
                 Adjustment {adjustmentLabel}
               </button>
               <span className="text-slate-500">-&gt;</span>
               <button
+                aria-pressed={scoreDetail === 'final'}
                 onClick={() => {
                   setActiveTab('combined');
                   setScoreDetail('final');
                 }}
-                className="rounded-lg bg-emerald-400/10 px-2 py-1 text-emerald-100 hover:bg-emerald-400/20 transition-colors"
+                className={`rounded-lg border px-2 py-1 transition-colors ${
+                  scoreDetail === 'final'
+                    ? 'border-white bg-emerald-400/25 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.35)]'
+                    : 'border-transparent bg-emerald-400/10 text-emerald-100 hover:bg-emerald-400/20'
+                }`}
               >
                 Final Score {finalScore}
               </button>
