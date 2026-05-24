@@ -49,6 +49,12 @@ const listMarkdown = (items: unknown): string =>
 const hasText = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
+const validSubscore = (value: unknown, isValid = true): number | null => {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  if (!isValid || !Number.isFinite(numeric) || numeric < 0 || numeric > 10) return null;
+  return Math.round(numeric);
+};
+
 
 export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }: ReviewCardProps) {
   const [showPrompt, setShowPrompt] = useState(false);
@@ -143,6 +149,24 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     : null;
   const calibrationRationale = comparatorCalibration?.calibrationRationale ?? '';
   const scoreGapAssessment = comparatorCalibration?.scoreGapAssessment ?? '';
+  const comparatorCalibrationStatus =
+    parsedCoverage?.comparatorCalibrationStatus ??
+    comparatorCalibration?.comparatorCalibrationStatus ??
+    (calibrationAdjustment != null ? 'applied' : 'unavailable');
+  const explanatoryDeltaAssessment =
+    parsedCoverage?.explanatoryDeltaAssessment ??
+    comparatorCalibration?.explanatoryDeltaAssessment ??
+    null;
+  const subscoreValidity = parsedCoverage?.subscoreValidity ?? storedAggregate?.subscoreValidity ?? {};
+  const subscoreConsistencyWarning =
+    parsedCoverage?.subscoreConsistencyWarning ??
+    aggregateAdjudication?.subscoreConsistencyWarning ??
+    storedAggregate?.subscoreConsistencyWarning ??
+    '';
+  const subscoreSaturationWarning =
+    Boolean(parsedCoverage?.subscoreSaturationWarning) ||
+    Boolean(aggregateAdjudication?.subscoreSaturationWarning) ||
+    Boolean(storedAggregate?.subscoreSaturationWarning);
   const publicComparatorSummary = parsedCoverage?.publicComparatorSummary ?? storedAggregate?.publicComparatorSummary ?? '';
   const externalComparatorSuggestions = parsedCoverage?.externalComparatorSuggestions ?? storedAggregate?.externalComparatorSuggestions ?? [];
   const adminComparatorNotes = parsedCoverage?.adminComparatorNotes ?? storedAggregate?.adminComparatorNotes ?? '';
@@ -258,10 +282,26 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const submittedAtLabel = Number.isFinite(review.createdAt)
     ? format(new Date(review.createdAt), 'MMM d, yyyy h:mm:ss a')
     : null;
-  const currentIntrinsicScore = selectedPass?.intrinsicTechnicalScore ?? review.intrinsicScientificMeritScore;
-  const currentTargetBreadthScore = selectedPass?.explanatoryTargetBreadthScore ?? review.explanatoryTargetBreadthScore;
-  const currentTheoryBreadthScore = selectedPass?.theorySpaceBreadthScore ?? review.theorySpaceBreadthScore;
-  const currentImpactScore = selectedPass?.breadthOfImpactScore ?? review.breadthOfImpactScore;
+  const selectedSubscoreValidity = selectedPass?.subscoreValidity ?? subscoreValidity;
+  const currentIntrinsicScore = validSubscore(
+    selectedPass?.intrinsicTechnicalScore ?? review.intrinsicScientificMeritScore,
+    selectedSubscoreValidity.intrinsicTechnicalScore !== false,
+  );
+  const currentTargetBreadthScore = validSubscore(
+    selectedPass?.explanatoryTargetBreadthScore ?? review.explanatoryTargetBreadthScore,
+    selectedSubscoreValidity.explanatoryTargetBreadthScore !== false,
+  );
+  const currentTheoryBreadthScore = validSubscore(
+    selectedPass?.theorySpaceBreadthScore ?? review.theorySpaceBreadthScore,
+    selectedSubscoreValidity.theorySpaceBreadthScore !== false,
+  );
+  const currentImpactScore = validSubscore(
+    selectedPass?.breadthOfImpactScore ?? review.breadthOfImpactScore,
+    selectedSubscoreValidity.breadthOfImpactScore !== false,
+  );
+  const passDisagreement = !selectedPass && passMedianScores.length > 1
+    ? Math.max(...passMedianScores) - Math.min(...passMedianScores)
+    : aggregateScoreRange;
 
   const scoreColor = displayScore >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' :
     displayScore >= 60 ? 'text-amber-600 bg-amber-50 border-amber-200' :
@@ -301,28 +341,49 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
           </div>
 
-          <div className="grid md:grid-cols-5 gap-3">
+          <div className="grid md:grid-cols-4 gap-3">
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
               <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Score Range</p>
-              <p className="text-sm font-bold text-white mt-1">{activeBand.low}-{activeBand.high}{!selectedPass && aggregateScoreRange != null ? ` (${aggregateScoreRange})` : ''}</p>
+              <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">{selectedPass ? 'Pass Score Band' : 'Final Score Band'}</p>
+              <p className="text-sm font-bold text-white mt-1">{activeBand.low}-{activeBand.median}-{activeBand.high}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
               <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
               <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
             </div>
             <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Stability</p>
-              <p className="text-sm font-bold text-white mt-1 capitalize">{!selectedPass && scoreStability ? scoreStability : 'Pass view'}</p>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparators</p>
-              <p className="text-sm font-bold text-white mt-1">{Array.isArray(currentNearestComparators) && currentNearestComparators.length > 0 ? `${currentNearestComparators.length} nearest` : 'Not shown'}</p>
+              <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparator Status</p>
+              <p className="text-sm font-bold text-white mt-1 capitalize">{String(comparatorCalibrationStatus).replace(/_/g, ' ')}</p>
             </div>
           </div>
+
+          {!selectedPass && (
+            <div className="grid md:grid-cols-5 gap-3">
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
+                <p className="text-sm font-bold text-white mt-1">{passMedianScores.length > 0 ? passMedianScores.join(', ') : 'Not stored'}</p>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Pass Disagreement</p>
+                <p className="text-sm font-bold text-white mt-1">{passDisagreement ?? 'Not stored'}</p>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Stability</p>
+                <p className="text-sm font-bold text-white mt-1 capitalize">{scoreStability || 'Not stored'}</p>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Blind Intrinsic</p>
+                <p className="text-sm font-bold text-white mt-1">{blindBand ? `${blindBand.low}-${blindBand.median}-${blindBand.high}` : 'Not stored'}</p>
+              </div>
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparator Adjustment</p>
+                <p className="text-sm font-bold text-white mt-1">{calibrationAdjustment != null ? `${calibrationAdjustment > 0 ? '+' : ''}${calibrationAdjustment}` : '+0'}</p>
+              </div>
+            </div>
+          )}
 
           {!selectedPass && (blindBand || comparatorCalibration || pdfVisibleFallbackUsed) && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
@@ -361,11 +422,36 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <Markdown>{scoreGapAssessment}</Markdown>
                 </div>
               )}
+              {explanatoryDeltaAssessment && typeof explanatoryDeltaAssessment === 'object' && Object.values(explanatoryDeltaAssessment).some(hasText) && (
+                <div>
+                  <p className="text-[10px] font-black text-lime-300 uppercase tracking-widest mb-1">Explanatory Delta</p>
+                  <div className="space-y-2">
+                    {[
+                      explanatoryDeltaAssessment.whatIsNewBeyondComparators,
+                      explanatoryDeltaAssessment.inputsComparison,
+                      explanatoryDeltaAssessment.constructionComparison,
+                      explanatoryDeltaAssessment.outputsComparison,
+                      explanatoryDeltaAssessment.downstreamReachComparison,
+                      explanatoryDeltaAssessment.frameworkConditionalityComparison,
+                    ].filter(hasText).map((item: string, index: number) => (
+                      <Markdown key={index}>{item}</Markdown>
+                    ))}
+                  </div>
+                </div>
+              )}
               {pdfVisibleFallbackUsed && (
                 <p className="text-xs text-amber-100/80">
                   Plain text extraction was weak, so Gemini read the PDF directly. The review still ignores identity signals, but this fallback can expose visible author/title information in the source PDF.
                 </p>
               )}
+            </div>
+          )}
+
+          {isAdmin && !selectedPass && (subscoreConsistencyWarning || subscoreSaturationWarning) && (
+            <div className="bg-amber-400/10 border border-amber-300/20 rounded-2xl p-4">
+              <p className="text-xs font-black text-amber-200 uppercase tracking-widest">Admin Score Validation</p>
+              {subscoreSaturationWarning && <p className="text-sm text-amber-50 mt-2">All four diagnostic subscores are 10. Inspect this review for subscore saturation.</p>}
+              {subscoreConsistencyWarning && <p className="text-sm text-amber-50 mt-2">{subscoreConsistencyWarning}</p>}
             </div>
           )}
 
@@ -444,32 +530,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
           )}
 
           {/* Sub-scores (new format only) */}
-          {isNewFormat && (currentIntrinsicScore != null || currentTargetBreadthScore != null || currentTheoryBreadthScore != null || currentImpactScore != null) && (
+          {isNewFormat && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {currentIntrinsicScore != null && (
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className="text-3xl font-black text-indigo-300">{currentIntrinsicScore}<span className="text-base font-bold text-indigo-400/60">/10</span></div>
-                  <div className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mt-1">Intrinsic Merit</div>
+              {[
+                { label: 'Intrinsic Merit', value: currentIntrinsicScore, color: 'text-indigo-300', subColor: 'text-indigo-400' },
+                { label: 'Explanatory Reach', value: currentTargetBreadthScore, color: 'text-sky-300', subColor: 'text-sky-400' },
+                { label: 'Theory Breadth', value: currentTheoryBreadthScore, color: 'text-violet-300', subColor: 'text-violet-400' },
+                { label: 'Impact Breadth', value: currentImpactScore, color: 'text-purple-300', subColor: 'text-purple-400' },
+              ].map((item) => (
+                <div key={item.label} className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
+                  <div className={`text-3xl font-black ${item.color}`}>
+                    {item.value == null ? 'N/A' : item.value}
+                    {item.value != null && <span className={`text-base font-bold ${item.subColor} opacity-60`}>/10</span>}
+                  </div>
+                  <div className={`text-[10px] font-bold ${item.subColor} uppercase tracking-widest mt-1`}>{item.label}</div>
                 </div>
-              )}
-              {currentTargetBreadthScore != null && (
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className="text-3xl font-black text-sky-300">{currentTargetBreadthScore}<span className="text-base font-bold text-sky-400/60">/10</span></div>
-                  <div className="text-[10px] font-bold text-sky-400 uppercase tracking-widest mt-1">Explanatory Reach</div>
-                </div>
-              )}
-              {currentTheoryBreadthScore != null && (
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className="text-3xl font-black text-violet-300">{currentTheoryBreadthScore}<span className="text-base font-bold text-violet-400/60">/10</span></div>
-                  <div className="text-[10px] font-bold text-violet-400 uppercase tracking-widest mt-1">Theory Breadth</div>
-                </div>
-              )}
-              {currentImpactScore != null && (
-                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className="text-3xl font-black text-purple-300">{currentImpactScore}<span className="text-base font-bold text-purple-400/60">/10</span></div>
-                  <div className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mt-1">Breadth of Impact</div>
-                </div>
-              )}
+              ))}
             </div>
           )}
 

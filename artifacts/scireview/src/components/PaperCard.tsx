@@ -103,7 +103,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
               </div>
               {paper.modelName && (
                 <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
-                  {paper.modelName.includes('blind adjudicator') ? 'Gemini Pro x2 + Calibration' : paper.modelName.startsWith('gemini-3.5-flash') ? 'Gemini 3.5 Flash x2 + Adjudicator' : paper.modelName.startsWith('gemini-3.1-pro') ? 'Gemini Pro x2 + Adjudicator' : paper.modelName.startsWith('gemini') ? 'Gemini x2 + Adjudicator' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}
+                  {paper.modelName.includes('benchmark ingestion') ? 'Gemini Pro x2 + Benchmark Ingestion' : paper.modelName.includes('comparator calibration') ? 'Gemini Pro x2 + Benchmark Calibration' : paper.modelName.includes('blind adjudicator') ? 'Gemini Pro x2 + Adjudicator' : paper.modelName.startsWith('gemini-3.5-flash') ? 'Gemini 3.5 Flash x2 + Adjudicator' : paper.modelName.startsWith('gemini-3.1-pro') ? 'Gemini Pro x2 + Adjudicator' : paper.modelName.startsWith('gemini') ? 'Gemini x2 + Adjudicator' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}
                 </span>
               )}
             </div>

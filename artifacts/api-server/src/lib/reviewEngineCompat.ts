@@ -1,11 +1,11 @@
 import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import {
-  BLIND_CALIBRATED_COMPARATORS_V6_FULL_PROMPT,
-  BLIND_INTRINSIC_ADJUDICATOR_V6_PROMPT,
-  BLIND_REVIEW_PASS_V6_PROMPT,
-  POST_REVIEW_COMPARATOR_CALIBRATION_V6_PROMPT,
-} from "./prompts/blindCalibratedComparatorsV6";
+  BENCHMARK_CALIBRATED_V8_FULL_PROMPT,
+  BENCHMARK_COMPARATOR_CALIBRATION_V8_PROMPT,
+  BLIND_INTRINSIC_ADJUDICATOR_V8_PROMPT,
+  BLIND_REVIEW_PASS_V8_PROMPT,
+} from "./prompts/benchmarkCalibratedV8";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -21,9 +21,26 @@ export const GEMINI_PASS_MODEL = GEMINI_PRO_MODEL;
 export const GEMINI_META_MODEL = GEMINI_PRO_MODEL;
 export const GEMINI_CALIBRATION_MODEL = GEMINI_PRO_MODEL;
 export const GEMINI_MODEL = GEMINI_META_MODEL;
-export const GEMINI_PIPELINE_LABEL = `${GEMINI_PASS_MODEL} x2 + ${GEMINI_META_MODEL} blind adjudicator + ${GEMINI_CALIBRATION_MODEL} calibration`;
+export const GEMINI_PIPELINE_LABEL = `${GEMINI_PASS_MODEL} x2 + ${GEMINI_META_MODEL} blind adjudicator`;
 export const REVIEW_PASS_COUNT = 2;
-export const REVIEW_PIPELINE_MODE = "blind-intrinsic-plus-comparator-calibration";
+export type ReviewPipelineMode = "benchmark-ingestion" | "normal-review";
+export const DEFAULT_REVIEW_PIPELINE_MODE: ReviewPipelineMode = "benchmark-ingestion";
+export const REVIEW_PIPELINE_MODE = DEFAULT_REVIEW_PIPELINE_MODE;
+export const BENCHMARK_SET_VERSION = process.env.SCIREVIEW_BENCHMARK_SET_VERSION?.trim() || "physics-horizon-v1";
+
+export function normalizeReviewPipelineMode(value: unknown): ReviewPipelineMode {
+  return value === "normal-review" ? "normal-review" : "benchmark-ingestion";
+}
+
+export function reviewPipelineLabel(mode: ReviewPipelineMode = DEFAULT_REVIEW_PIPELINE_MODE) {
+  return mode === "normal-review"
+    ? `${GEMINI_PIPELINE_LABEL} + ${GEMINI_CALIBRATION_MODEL} comparator calibration`
+    : `${GEMINI_PIPELINE_LABEL} + benchmark ingestion`;
+}
+
+export function expectedReviewModelName(mode: ReviewPipelineMode = DEFAULT_REVIEW_PIPELINE_MODE) {
+  return `${reviewPipelineLabel(mode)} · ${REVIEW_PROMPT_VERSION}`;
+}
 
 let openai: OpenAI | null = null;
 function getOpenAI() {
@@ -46,6 +63,13 @@ export type ReviewInput =
 
 type FrameworkLevel = "low" | "medium" | "high";
 type ScoreStability = "high" | "medium" | "low";
+type ComparatorCalibrationStatus = "applied" | "unavailable" | "weak" | "not_run_benchmark_ingestion" | "failed";
+type DiagnosticSubscoreKey =
+  | "intrinsicTechnicalScore"
+  | "explanatoryTargetBreadthScore"
+  | "theorySpaceBreadthScore"
+  | "breadthOfImpactScore";
+type DiagnosticSubscoreValidity = Record<DiagnosticSubscoreKey, boolean>;
 
 const CLASSIFICATIONS = [
   "field-defining advance",
@@ -105,6 +129,8 @@ type AdjudicationDetails = {
   fatalObjectionPresent: boolean;
   fatalObjectionAssessment: string;
   calibrationAdjustments: string;
+  subscoreConsistencyWarning: string;
+  subscoreSaturationWarning: boolean;
 };
 
 type ComparatorProfile = {
@@ -123,12 +149,25 @@ type ComparatorProfile = {
 };
 
 type ComparatorCalibration = {
+  comparatorCalibrationStatus: ComparatorCalibrationStatus;
+  benchmarkSetVersion: string;
   intrinsicScoreBand: ScoreBand;
   calibrationAdjustment: number;
   finalPublicScoreBand: ScoreBand;
   finalClassification: string;
   calibrationRationale: string;
   scoreGapAssessment: string;
+  scoreCappingReason: string;
+  explanatoryDeltaAssessment: {
+    whatIsNewBeyondComparators: string;
+    inputsComparison: string;
+    constructionComparison: string;
+    outputsComparison: string;
+    downstreamReachComparison: string;
+    frameworkConditionalityComparison: string;
+    scoreGapAssessment: string;
+  };
+  comparatorsNeedingRecalibration: string[];
   confidence: number;
 };
 
@@ -154,6 +193,10 @@ export type ReviewComparatorContextItem = {
   inputConstructionOutputLedger?: InputConstructionOutputLedger | null;
   frameworkConditionality?: FrameworkLevel | string | null;
   comparatorSearchSummary?: string | null;
+  benchmarkSetVersion?: string | null;
+  comparatorCalibrationStatus?: string | null;
+  calibratedScoreBand?: ScoreBand | null;
+  explanatoryDeltaAssessment?: unknown;
 };
 
 export type ComparatorContextSelector = (
@@ -207,6 +250,8 @@ type IndividualReview = {
   explanatoryTargetBreadthScore: number;
   theorySpaceBreadthScore: number;
   breadthOfImpactScore: number;
+  subscoreValidity: DiagnosticSubscoreValidity;
+  scoreCappingReason: string;
   specialtyRelativeScore: number;
   broadFieldRelativeScore: number;
   crossFieldConsequenceScore: number;
@@ -270,6 +315,10 @@ type AggregateReview = {
   explanatoryTargetBreadthScore: number;
   theorySpaceBreadthScore: number;
   breadthOfImpactScore: number;
+  subscoreValidity: DiagnosticSubscoreValidity;
+  subscoreConsistencyWarning: string;
+  subscoreSaturationWarning: boolean;
+  scoreCappingReason: string;
   specialtyRelativeScore: number;
   broadFieldRelativeScore: number;
   crossFieldConsequenceScore: number;
@@ -282,6 +331,7 @@ type AggregateReview = {
 
 type MultiPassReviewResult = {
   modelName: string;
+  pipelineMode: ReviewPipelineMode;
   systemPrompt: string;
   blindedContent: ReviewInput;
   individualReviews: IndividualReview[];
@@ -507,13 +557,13 @@ Return valid JSON only with this exact structure:
 
 All numeric fields must be numbers, not strings. Output valid JSON only.`;
 
-export const REVIEW_PROMPT_VERSION = "v6-blind-intrinsic-plus-comparator-calibration";
+export const REVIEW_PROMPT_VERSION = "v8-benchmark-calibrated-subscore-validation";
 const SHORT_INPUT_CONSTRUCTION_OUTPUT_PROMPT = "You are reviewing an anonymous scientific manuscript from its contents alone.\n\nIgnore author identity, institution, venue, citation counts, publication status, historical fame, and later influence. If any of that information appears in the text, ignore it. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.\n\nDo not defer to human expert consensus. Your task is to give the best model-based scientific judgment under this review protocol.\n\nDo not favor any particular theory, framework, research program, vocabulary, authorial style, or previously submitted manuscript. Reward only what is supported by the manuscript itself.\n\nYou may use technical background knowledge to assess correctness, novelty, overlap with known ideas, and whether claims conflict with established constraints. But do not use fame, citation history, author prestige, venue, popularity, or later historical influence as evidence for importance.\n\nCore scientific-value principle:\n\nScientific merit is grounded in correct explanatory compression: the manuscript's ability to derive, explain, constrain, predict, classify, organize, or enable more from less.\n\nCorrectness is the first gate. A manuscript cannot receive a high score if its central new claim is false, inconsistent, or ruled out by established constraints, unless it also establishes a substantial separable result that remains correct without the failed claim.\n\nAfter correctness, value comes from earned explanatory reach: how many important outputs and downstream consequences follow from how few, firm, fundamental, and hard-to-vary inputs.\n\nInput grounding asks how reliable the inputs are.\nInput fundamentality asks how deep and general the inputs are.\nExplanatory reach asks how much of the target space changes if the manuscript is correct.\nExplanatory compression asks how much the manuscript gets from how little.\n\nA result can be extremely valuable even if it directly treats only one target, if that target follows from fundamental inputs and changes a large downstream target space. Do not undervalue a result merely because the immediate target count is small.\n\nBefore scoring, construct an input-construction-output ledger.\n\nPrimitive inputs are the smallest set of facts, equations, definitions, measurements, mathematical results, or assumptions the manuscript needs.\n\nIntroduced constructions are what the manuscript builds from those inputs: new variables, state spaces, dictionaries, transformations, mechanisms, representations, derivations, or organizing principles. These are not external assumptions merely because the manuscript defines them; judge whether they do real explanatory, technical, empirical, mathematical, or methodological work.\n\nExternal embeddings and checks are prior frameworks, known laws, standard formulas, or established results that the manuscript matches, recovers, embeds, or reorganizes. Do not automatically treat every external framework used as a check as a primitive input.\n\nOutputs are the new results, recoveries, explanations, predictions, constraints, classifications, calculations, or target systems that follow from the manuscript's constructions.\n\nDownstream reach is the broader set of questions, theories, calculations, methods, predictions, technologies, or domains whose understanding changes if the manuscript is correct.\n\nScientific value increases when many important outputs follow from few, firm, fundamental, hard-to-vary inputs through constructions that actually do explanatory or technical work.\n\nDo not confuse a constructed variable with an arbitrary assumption. Do not confuse a prior framework used as a consistency check with a primitive input. Do not count broad outputs unless they are actually derived, recovered, constrained, checked, or organized by the manuscript.\n\nKeep separate during analysis:\n- correctness\n- originality\n- what the manuscript itself establishes\n- input grounding\n- input fundamentality\n- framework independence\n- hard-to-vary explanatory structure\n- internal technical traction\n- explanatory economy\n- direct explanatory-target coverage\n- downstream target reach\n- model-space/theory-space breadth\n- unifying power\n- framework conditionality\n- breadth of consequences if correct\n- surviving contribution if some claim is flawed\n\nThese factors are correlated in good work, but keeping them separate prevents double-counting and clarifies why a manuscript is strong or weak.\n\nDefinitions:\n\nDirect explanatory targets are phenomena, regimes, examples, theorem families, systems, observables, datasets, organisms, mechanisms, structures, tasks, or problem classes that the manuscript explicitly analyzes, explains, predicts, derives results for, computes, proves, constrains, classifies, constructs, or experimentally tests.\n\nImported inputs are assumptions, definitions, known laws, prior results, datasets, methods, formulas, models, algorithms, measurements, conventions, or external frameworks used by the manuscript but not themselves explained, derived, justified, or newly established by it.\n\nTheory-space variants are alternative theories, dimensions, parameter families, model classes, organisms, datasets, architectures, mechanisms, formalisms, experimental regimes, or problem settings across which the manuscript extends the same idea, method, derivation, or explanatory template.\n\nMechanism-sharing asks whether the same underlying idea, construction, method, derivation, causal mechanism, mathematical structure, or explanatory principle genuinely accounts for multiple direct targets, or whether the manuscript merely reuses notation, terminology, or presentation style across them.\n\nDo not count an imported input as a direct explanatory target. Do not count multiple theory-space variants as multiple substantive targets unless they produce distinct consequences, constraints, predictions, derivations, mechanisms, applications, empirical checks, classifications, or calculations.\n\nA compact identity, reformulation, reparameterization, representation, or unifying perspective can be scientifically important if it identifies the right concept, variable, state space, invariant, representation, abstraction, measurement, mechanism, or organizing principle; removes ambiguity; unifies targets; produces a new derivation; separates previously conflated mechanisms; improves prediction or measurement; gives new calculational leverage; or makes hidden structure explicit.\n\nDo not dismiss simple algebra when it identifies the right state space, variable, invariant, or conjugate pair. Many important scientific advances are simple once the correct variables are isolated.\n\nBut do not reward relabeling if it merely renames known formulas without changing what can be derived, explained, predicted, measured, computed, constrained, organized, or ruled out.\n\nCorrectness gate:\n\nIf the central new claim is false, inconsistent, or ruled out by established constraints, the score must be low unless the manuscript establishes a clearly separable correct result that remains valuable without the failed claim.\n\nIf a flaw is local and repairable, lower confidence and explain the needed repair, but do not erase the value of the surviving construction.\n\nIf a paper's central model fails but a method, theorem, diagnostic, dataset, representation, or partial insight survives, score only what survives inside the manuscript itself.\n\nDo not give high scores for later influence, historical importance, famous authorship, or later corrected descendants. Score only what is present in the manuscript.\n\nOriginal-contribution gate:\n\nJudge what the manuscript itself establishes. Do not credit results that are merely cited, summarized, or reported as if they were derived inside the manuscript.\n\nA review, perspective, or synthesis may score for its own clarity, critique, organization, conceptual reframing, or new argument. It must not receive the score of the primary research it merely summarizes unless it adds a new derivation, proof, classification, framework, or explanatory structure.\n\nFramework and input-grounding rule:\n\nIf the manuscript belongs to a speculative, minority, or framework-dependent research program, do not automatically penalize it. Instead, make the conditionality explicit.\n\nA result can be excellent inside a framework while still having lower broad scientific value if the framework's core assumptions are unestablished. A framework-internal result should usually be classified as framework-defining rather than field-defining unless it has strong framework-independent consequences.\n\nA paper using highly established and fundamental inputs can receive broad-field credit more directly, because fewer speculative assumptions must be true for its conclusions to matter.\n\nAsk whether any new assumption is forced, natural, simple, independently motivated, hard to vary, and necessary for the result. A paper that derives a new broad result from established inputs usually deserves more broad-field credit than a paper that reaches a similarly broad result by adding speculative, tunable, optional, or easy-to-vary assumptions.\n\nEvery review must include the strongest case for importance and the strongest objection. The objection should not be artificially hostile; it should be the most serious technically fair concern.\n\nScoring:\n\nThe main score is an anchored scientific merit score. It answers: how strong is this manuscript as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, input fundamentality, framework independence, earned explanatory reach, hard-to-vary structure, technical traction, and the proper comparison cohort?\n\nFirst determine the comparison cohort. Use the narrowest serious research cohort that a working expert would naturally use, but also identify the broader adjacent field. The comparison cohort should not be chosen so narrowly that it hides framework conditionality, nor so broadly that it ignores the paper's actual technical context.\n\nIn scoring, weigh both local achievement and explanatory reach. A paper that is correct but narrow may be valuable. A paper that unifies many targets with a simple, well-supported construction may be much more valuable. But breadth only counts when it is earned by real mechanism-sharing, derivation, prediction, measurement, constraint, proof, calculation, robustness, classification, or explanatory compression. Broad claims without support should not raise the score.\n\nAlso provide:\n- specialty-relative score: strength inside the natural technical comparison cohort;\n- broad-field score: strength relative to the broader adjacent field;\n- cross-field consequence score: how much the result would matter outside the immediate field if correct;\n- framework conditionality: whether the importance depends on accepting a specific framework;\n- input grounding assessment: whether the manuscript's imported assumptions are highly established, moderately supported, standard theoretical but not directly verified, framework-conditional, speculative, or weakly supported.\n\nAnchored 0-100 scientific merit scale:\n- 0: wrong, empty, plagiarized, or no real scientific contribution.\n- 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.\n- 50: average serious research contribution in the relevant comparison cohort.\n- 70: clearly above-average contribution with real novelty, technical traction, empirical support, explanatory value, or methodological value.\n- 85: strong paper; a notable field-level contribution or major specialty advance if correct.\n- 95: major result with field-shaping potential because it has strong correctness, support, nontriviality, originality, earned explanatory reach, hard-to-vary structure, and adequate input grounding for its claimed scope.\n- 99: foundational or paradigm-shifting result.\n- 100: reserve for an essentially historic, maximally convincing result.\n\nDo not describe the score as a literal percentile over all papers ever published. The score is a calibrated merit judgment against the chosen comparison cohort, adjusted by broad-field reach, input grounding, input fundamentality, framework independence, hard-to-vary structure, and correctness risk.\n\nScale instructions:\n- intrinsicTechnicalScore, explanatoryTargetBreadthScore, theorySpaceBreadthScore, and breadthOfImpactScore are on a 0-10 scale.\n- specialtyRelativeScore, broadFieldRelativeScore, crossFieldConsequenceScore, and every number inside scoreBand are on a 0-100 scale.\n- Do not use a 0-10 scale for scoreBand.\n- For a paper in the nineties, scoreBand should look like {\"low\": 90, \"median\": 93, \"high\": 96}, not {\"low\": 9, \"median\": 9.3, \"high\": 9.6}.\n- scoreBand is this reviewer's uncertainty interval around its own anchored scientific merit score. The median is the reviewer's actual headline score.\n\nBefore final scoring, explicitly consider:\n1. What are the primitive inputs?\n2. How grounded and fundamental are those inputs?\n3. What constructions does the manuscript introduce?\n4. Which prior frameworks are used only as embeddings or consistency checks rather than primitive inputs?\n5. What outputs are actually derived, recovered, predicted, constrained, classified, calculated, or organized?\n6. What downstream target space changes if the manuscript is correct?\n7. What is imported but not itself explained?\n8. What new assumptions are added, and are they forced, natural, simple, independently motivated, hard to vary, and necessary?\n9. How framework-independent is the result? What survives if the manuscript's most framework-specific input is false?\n10. How correct is the central new claim? Are any errors local and repairable, separable from the main contribution, or fatal?\n11. Is the manuscript original research, a review, a perspective, a synthesis, a method paper, an empirical paper, a theoretical paper, a proof, or a dataset/instrument paper? Is the score based on what this manuscript itself contributes?\n12. How much explanatory compression does the manuscript achieve?\n13. Does it explain more with less, or merely rename/repackage?\n14. How broad are the direct targets actually explained?\n15. How broad are the downstream consequences if the manuscript is correct?\n16. How broad are the theory-space variants genuinely handled?\n17. Does the same mechanism, method, representation, or structure do real work across targets?\n18. What evidence, derivation, counterexample, observation, or calculation would overturn the manuscript's central claim? Would that overturn accepted background science, or mainly the manuscript's new proposal?\n19. What would most raise the score?\n20. What would most lower the score?\n21. Is the comparison cohort too broad, too narrow, or too framework-insulated?\n22. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?\n\nWhen assigning explanatoryTargetBreadthScore, score earned explanatory reach, not raw example count. Weight targets by centrality, independence, breadth, downstream consequence, degree of support, and whether the same mechanism genuinely explains or constrains them.\n\nWhen assigning theorySpaceBreadthScore, score how far the manuscript extends across theories, dimensions, parameter families, model classes, organisms, datasets, architectures, formalisms, experimental regimes, or problem settings. Reward theory-space breadth most when it produces new consequences, robustness, constraints, predictions, structural necessity, or nontrivial checks.\n\nWhen assigning breadthOfImpactScore, ask how far the earned explanatory reach propagates beyond the immediate technical specialty. Do not hide framework conditionality or weak input grounding inside this number; state them explicitly.\n\nWhen assigning broadFieldRelativeScore and crossFieldConsequenceScore, account for input grounding, input fundamentality, and framework independence. If the result depends on highly established and fundamental inputs, broad-field reach can be credited more directly. If the result depends on speculative or framework-specific inputs, distinguish conditional importance inside the framework from broader scientific consequence.\n\nFor bestClassification, choose one:\n- field-defining advance\n- framework-defining advance\n- major specialty advance\n- strong niche contribution\n- useful clarification\n- elegant repackaging\n- not yet convincing\n\nClassification guidance:\n- field-defining advance: changes central concepts, methods, equations, constraints, or organizing principles of the comparison cohort and has strong grounding and broad consequence beyond a narrowly insulated framework.\n- framework-defining advance: defines or transforms a specific technical framework or research program, but broader scientific consequence depends substantially on whether that framework is correct, established, or physically realized.\n- major specialty advance: gives a substantial new result, construction, mechanism, derivation, framework, unification, method, or constraint that changes how an important specialty understands important targets.\n- strong niche contribution: deep, correct, and genuinely clarifying within a focused domain.\n- useful clarification: improves understanding but is mostly explanatory, organizational, pedagogical, or incremental.\n- elegant repackaging: clear and economical but does not establish a substantially new result, mechanism, or explanatory gain.\n- not yet convincing: central claims are unsupported, incorrect, too speculative, or technically too weak.\n\nScore-consistency rule:\n\nEnsure the final classification matches the text and scores. If the review says the manuscript is highly correct, highly economical, strongly unifying, original, well-grounded, framework-independent, and has strong earned target reach, the classification should not be much lower than the stated evidence supports unless the strongest objection clearly undermines the central claim.\n\nConversely, if the manuscript has broad claims but weak derivations, low correctness, weak input grounding, mostly speculative support, easy-to-vary assumptions, high framework dependence, or no original contribution inside the manuscript, do not give a high classification merely because the claim would be important if true.\n\nReturn valid JSON only using the current app schema. If the current schema does not have dedicated fields for input-construction-output ledger, input fundamentality, framework independence, or construction-vs-relabeling, discuss them inside importedInputs, establishedResults, correctness, economy, unifyingPower, strongestObjection, breadthOfImpactScore, and finalJudgment.\n\nFormatting instructions:\n- Wrap inline mathematical expressions in $...$.\n- Wrap display equations in $$...$$.\n- Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings.\n\nUse LaTeX for mathematical notation inside strings.\nOutput valid JSON only.";
 
 const REVIEW_OUTPUT_SCHEMA_INSTRUCTION = "Current app JSON schema. Return valid JSON only with this exact structure. Do not omit summary, correctness, novelty, strongestObjection, finalJudgment, bestClassification, coverageLedger, diagnostic scores, or scoreBand.median:\n\n{\n  \"title\": \"anonymized manuscript\",\n  \"authorName\": \"anonymized\",\n  \"comparisonCohort\": \"\",\n  \"broadField\": \"\",\n  \"specialtyField\": \"\",\n  \"subfields\": [],\n  \"paperType\": \"\",\n  \"summary\": \"\",\n  \"centralClaim\": \"\",\n  \"coverageLedger\": {\n    \"directTargets\": [],\n    \"importedInputs\": [],\n    \"theorySpaceVariants\": [],\n    \"mechanismSharingAssessment\": \"\"\n  },\n  \"establishedResults\": [],\n  \"interpretiveClaims\": [],\n  \"speculativeClaims\": [],\n  \"correctness\": \"\",\n  \"inputGrounding\": \"\",\n  \"contributionGroundingType\": \"\",\n  \"frameworkIndependence\": \"\",\n  \"hardToVaryAssessment\": \"\",\n  \"manuscriptOriginalContribution\": \"\",\n  \"survivingContributionIfFlawed\": \"\",\n  \"novelty\": \"\",\n  \"noveltyConfidence\": 0.0,\n  \"internalTechnicalTraction\": \"\",\n  \"economy\": \"\",\n  \"explanatoryTargetBreadth\": \"\",\n  \"theorySpaceBreadth\": \"\",\n  \"scopeDepth\": \"\",\n  \"unifyingPower\": \"\",\n  \"frameworkConditionality\": {\n    \"level\": \"low | medium | high\",\n    \"explanation\": \"\"\n  },\n  \"strongestCaseForImportance\": \"\",\n  \"strongestObjection\": \"\",\n  \"decisiveCheck\": \"\",\n  \"whatWouldRaiseScore\": \"\",\n  \"whatWouldLowerScore\": \"\",\n  \"intrinsicTechnicalScore\": 0,\n  \"explanatoryTargetBreadthScore\": 0,\n  \"theorySpaceBreadthScore\": 0,\n  \"breadthOfImpactScore\": 0,\n  \"specialtyRelativeScore\": 0,\n  \"broadFieldRelativeScore\": 0,\n  \"crossFieldConsequenceScore\": 0,\n  \"scoreBand\": {\n    \"low\": 0,\n    \"median\": 0,\n    \"high\": 0\n  },\n  \"scoreConfidence\": 0.0,\n  \"bestClassification\": \"\",\n  \"oneParagraphVerdict\": \"\",\n  \"finalJudgment\": \"\"\n}\n\nAll numeric fields must be numbers, not strings. Output valid JSON only.";
 
-export const REVIEW_SYSTEM_INSTRUCTION = BLIND_REVIEW_PASS_V6_PROMPT;
-export const REVIEW_FULL_PROMPT_SYSTEM = BLIND_CALIBRATED_COMPARATORS_V6_FULL_PROMPT;
+export const REVIEW_SYSTEM_INSTRUCTION = BLIND_REVIEW_PASS_V8_PROMPT;
+export const REVIEW_FULL_PROMPT_SYSTEM = BENCHMARK_CALIBRATED_V8_FULL_PROMPT;
 
 const METADATA_PROMPT = `Extract the exact manuscript title and paper authors from the scientific paper provided.
 You may receive the original PDF plus JSON containing filename hints, embedded PDF metadata, heuristic guesses, and extracted text. Prefer the title and author block printed in the manuscript itself, especially the first page/header. Use embedded PDF metadata or the filename only as fallback hints, because they are often abbreviated, stale, or machine-generated.
@@ -621,6 +671,74 @@ function asNumber(value: unknown, fallback = 0, min?: number, max?: number) {
   return max != null ? Math.min(max, minSafe) : minSafe;
 }
 
+function asOptionalNumber(value: unknown, min?: number, max?: number) {
+  const raw = typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
+  if (!Number.isFinite(raw)) return null;
+  const minSafe = min != null ? Math.max(min, raw) : raw;
+  return max != null ? Math.min(max, minSafe) : minSafe;
+}
+
+function normalizeDiagnosticSubscore(value: unknown, fallback?: number) {
+  const explicit = asOptionalNumber(value, 0, 10);
+  if (explicit != null) return Math.round(explicit);
+  return Math.round(Math.max(0, Math.min(10, fallback ?? 0)));
+}
+
+function diagnosticSubscoreValidity(source: Record<string, unknown>): DiagnosticSubscoreValidity {
+  return {
+    intrinsicTechnicalScore: asOptionalNumber(source.intrinsicTechnicalScore, 0, 10) != null,
+    explanatoryTargetBreadthScore: asOptionalNumber(source.explanatoryTargetBreadthScore, 0, 10) != null,
+    theorySpaceBreadthScore: asOptionalNumber(source.theorySpaceBreadthScore, 0, 10) != null,
+    breadthOfImpactScore: asOptionalNumber(source.breadthOfImpactScore, 0, 10) != null,
+  };
+}
+
+function allDiagnosticSubscoresValid(validity: DiagnosticSubscoreValidity) {
+  return Object.values(validity).every(Boolean);
+}
+
+function diagnosticSubscoreValues(source: Pick<
+  IndividualReview | AggregateReview,
+  "intrinsicTechnicalScore" | "explanatoryTargetBreadthScore" | "theorySpaceBreadthScore" | "breadthOfImpactScore"
+>) {
+  return [
+    source.intrinsicTechnicalScore,
+    source.explanatoryTargetBreadthScore,
+    source.theorySpaceBreadthScore,
+    source.breadthOfImpactScore,
+  ];
+}
+
+function computeSubscoreSaturationWarning(
+  scores: number[],
+  validity: DiagnosticSubscoreValidity,
+) {
+  return allDiagnosticSubscoresValid(validity) && scores.every((score) => score === 10);
+}
+
+function computeSubscoreConsistencyWarning(options: {
+  finalMedian: number;
+  scores: number[];
+  validity: DiagnosticSubscoreValidity;
+  scoreCappingReason?: string;
+}) {
+  if (!allDiagnosticSubscoresValid(options.validity)) {
+    return "One or more diagnostic subscores were missing or invalid; display N/A and inspect/rerun if needed.";
+  }
+
+  const hasCap = Boolean(options.scoreCappingReason?.trim());
+  const allHigh = options.scores.every((score) => score >= 9);
+  if (options.finalMedian <= 85 && allHigh && !hasCap) {
+    return "Final score is 85 or below while all diagnostic subscores are 9 or 10; scoreCappingReason is required.";
+  }
+
+  if (options.finalMedian >= 90 && options.scores.some((score) => score <= 6) && !hasCap) {
+    return "Final score is 90 or above while a diagnostic subscore is 6 or below; scoreCappingReason should explain the tension.";
+  }
+
+  return "";
+}
+
 function asBoolean(value: unknown, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
 }
@@ -671,9 +789,11 @@ function normalizeComparatorRelationship(value: unknown): NearestComparator["rel
 }
 
 function normalizeRelativeAssessment(value: unknown): NearestComparator["relativeAssessment"] {
-  const candidate = asString(value).toLowerCase();
+  const candidate = asString(value).toLowerCase().replace(/\s+/g, "_");
   if (candidate === "current_paper_stronger") return "stronger";
   if (candidate === "current_paper_weaker") return "weaker";
+  if (candidate === "target_stronger") return "stronger";
+  if (candidate === "target_weaker") return "weaker";
   if (candidate === "similar_quality") return "similar";
   if (candidate === "stronger" || candidate === "weaker" || candidate === "similar" || candidate === "unclear") {
     return candidate;
@@ -699,17 +819,17 @@ function normalizeNearestComparators(value: unknown, fallback: NearestComparator
   const comparators = value
     .map((item) => {
       const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
-      const paperTitle = firstString([source.paperTitle, source.title, source.name]);
-      const comparatorId = firstString([source.comparatorId, source.id]);
+      const paperTitle = firstString([source.paperTitle, source.displayTitle, source.title, source.name]);
+      const comparatorId = firstString([source.comparatorId, source.paperId, source.id]);
       if (!paperTitle && !comparatorId) return null;
-      const relativeScoreJudgment = normalizeRelativeScoreJudgment(source.relativeScoreJudgment ?? source.relativeAssessment);
+      const relativeScoreJudgment = normalizeRelativeScoreJudgment(source.relativeScoreJudgment ?? source.relativeAssessment ?? source.relativePosition);
       return {
         comparatorId: comparatorId || undefined,
         paperTitle: paperTitle || comparatorId,
         relationship: normalizeComparatorRelationship(source.relationship),
         whyComparable: firstString([source.whyComparable, source.why_comparable, source.reason]),
         keyDifference: firstString([source.keyDifference, source.key_difference, source.difference]),
-        relativeAssessment: normalizeRelativeAssessment(relativeScoreJudgment ?? source.relativeAssessment),
+        relativeAssessment: normalizeRelativeAssessment(relativeScoreJudgment ?? source.relativeAssessment ?? source.relativePosition),
         relativeScoreJudgment,
         scoreGapJustification: firstString([source.scoreGapJustification, source.score_gap_justification]),
         sitePaperId: firstString([source.sitePaperId, source.paperId]) || undefined,
@@ -738,14 +858,32 @@ function normalizeComparatorProfile(value: unknown, fallbackReview: IndividualRe
   };
 }
 
-function defaultComparatorCalibration(intrinsicBand: ScoreBand, classification: string, rationale: string): ComparatorCalibration {
+function defaultComparatorCalibration(
+  intrinsicBand: ScoreBand,
+  classification: string,
+  rationale: string,
+  status: ComparatorCalibrationStatus = "unavailable",
+): ComparatorCalibration {
   return {
+    comparatorCalibrationStatus: status,
+    benchmarkSetVersion: BENCHMARK_SET_VERSION,
     intrinsicScoreBand: intrinsicBand,
     calibrationAdjustment: 0,
     finalPublicScoreBand: intrinsicBand,
     finalClassification: classification,
     calibrationRationale: rationale,
     scoreGapAssessment: "No comparator calibration adjustment was applied.",
+    scoreCappingReason: "",
+    explanatoryDeltaAssessment: {
+      whatIsNewBeyondComparators: "",
+      inputsComparison: "",
+      constructionComparison: "",
+      outputsComparison: "",
+      downstreamReachComparison: "",
+      frameworkConditionalityComparison: "",
+      scoreGapAssessment: "No comparator calibration adjustment was applied.",
+    },
+    comparatorsNeedingRecalibration: [],
     confidence: 0.5,
   };
 }
@@ -759,12 +897,39 @@ function normalizeExternalComparatorSuggestions(value: unknown): ExternalCompara
       if (!title) return null;
       return {
         title,
-        reasonToAdd: asString(source.reasonToAdd),
-        whyRelevant: asString(source.whyRelevant),
+        reasonToAdd: firstString([source.reasonToAdd, source.relationshipType, source.expectedUseInCalibration]),
+        whyRelevant: firstString([source.whyRelevant, source.whyAdd, source.expectedContributionArchetype]),
         adminOnly: asBoolean(source.adminOnly, true),
       } satisfies ExternalComparatorSuggestion;
     })
     .filter(Boolean) as ExternalComparatorSuggestion[];
+}
+
+function normalizeCalibrationStatus(value: unknown, fallback: ComparatorCalibrationStatus = "unavailable"): ComparatorCalibrationStatus {
+  const candidate = asString(value).toLowerCase();
+  if (
+    candidate === "applied" ||
+    candidate === "unavailable" ||
+    candidate === "weak" ||
+    candidate === "not_run_benchmark_ingestion" ||
+    candidate === "failed"
+  ) {
+    return candidate;
+  }
+  return fallback;
+}
+
+function normalizeExplanatoryDeltaAssessment(value: unknown): ComparatorCalibration["explanatoryDeltaAssessment"] {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    whatIsNewBeyondComparators: firstString([source.whatIsNewBeyondComparators, source.newBeyondComparators]),
+    inputsComparison: firstString([source.inputsComparison, source.inputComparison]),
+    constructionComparison: firstString([source.constructionComparison, source.constructionsComparison]),
+    outputsComparison: firstString([source.outputsComparison, source.outputComparison]),
+    downstreamReachComparison: firstString([source.downstreamReachComparison, source.downstreamComparison]),
+    frameworkConditionalityComparison: firstString([source.frameworkConditionalityComparison, source.frameworkComparison]),
+    scoreGapAssessment: firstString([source.scoreGapAssessment, source.score_gap_assessment]),
+  };
 }
 
 function normalizeComparatorCalibrationResult(
@@ -775,15 +940,17 @@ function normalizeComparatorCalibrationResult(
   const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const calibrationSource = source.comparatorCalibration && typeof source.comparatorCalibration === "object"
     ? (source.comparatorCalibration as Record<string, unknown>)
-    : {};
+    : source;
   const intrinsicScoreBand = normalizeScoreBand(calibrationSource.intrinsicScoreBand);
   const finalPublicScoreBand = normalizeScoreBand(calibrationSource.finalPublicScoreBand);
   const intrinsicBand = intrinsicScoreBand.median > 0 ? intrinsicScoreBand : aggregate.blindIntrinsicScoreBand;
   const finalBand = finalPublicScoreBand.median > 0 ? finalPublicScoreBand : intrinsicBand;
-  const candidateById = new Map(
-    comparatorContext.map((candidate, index) => [candidate.comparatorId || `C${index + 1}`, candidate]),
-  );
-  const rawNearest = normalizeNearestComparators(source.nearestComparators);
+  const candidateById = new Map<string, ReviewComparatorContextItem>();
+  comparatorContext.forEach((candidate, index) => {
+    candidateById.set(candidate.comparatorId || `C${index + 1}`, candidate);
+    candidateById.set(candidate.sitePaperId, candidate);
+  });
+  const rawNearest = normalizeNearestComparators(source.nearestComparators ?? calibrationSource.nearestComparators);
   const nearestComparators = rawNearest
     .map((comparator) => {
       const candidate = comparator.comparatorId ? candidateById.get(comparator.comparatorId) : undefined;
@@ -798,15 +965,25 @@ function normalizeComparatorCalibrationResult(
     normalizeClassification(calibrationSource.finalClassification) ||
     aggregate.finalClassification ||
     classificationFallbackFromScore(finalBand.median);
+  const explanatoryDeltaAssessment = normalizeExplanatoryDeltaAssessment(source.explanatoryDeltaAssessment ?? calibrationSource.explanatoryDeltaAssessment);
+  const status = normalizeCalibrationStatus(
+    source.comparatorCalibrationStatus ?? calibrationSource.comparatorCalibrationStatus,
+    nearestComparators.length > 0 ? "applied" : "unavailable",
+  );
 
   return {
     comparatorCalibration: {
+      comparatorCalibrationStatus: status,
+      benchmarkSetVersion: firstString([source.benchmarkSetVersion, calibrationSource.benchmarkSetVersion], BENCHMARK_SET_VERSION),
       intrinsicScoreBand: intrinsicBand,
       calibrationAdjustment: Math.round(asNumber(calibrationSource.calibrationAdjustment, finalBand.median - intrinsicBand.median, -10, 10)),
       finalPublicScoreBand: finalBand,
       finalClassification,
       calibrationRationale: asString(calibrationSource.calibrationRationale, "Comparator calibration completed without a detailed rationale."),
-      scoreGapAssessment: asString(calibrationSource.scoreGapAssessment),
+      scoreGapAssessment: firstString([calibrationSource.scoreGapAssessment, explanatoryDeltaAssessment.scoreGapAssessment]),
+      scoreCappingReason: asString(calibrationSource.scoreCappingReason),
+      explanatoryDeltaAssessment,
+      comparatorsNeedingRecalibration: firstStringArray([source.comparatorsNeedingRecalibration, calibrationSource.comparatorsNeedingRecalibration]),
       confidence: asNumber(calibrationSource.confidence, 0.5, 0, 1),
     } satisfies ComparatorCalibration,
     nearestComparators,
@@ -1102,6 +1279,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     source.framework_independence,
     source.frameworkIndependenceAssessment,
   ]);
+  const subscoreValidity = diagnosticSubscoreValidity(source);
   const normalizedPaperType = firstString([source.paperType, source.paper_type, source.manuscriptType]);
   const normalizedOriginalContribution = firstString([
     source.manuscriptOriginalContribution,
@@ -1224,10 +1402,12 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     decisiveCheck: firstString([source.decisiveCheck, source.keyCheck, source.keyTest]),
     whatWouldRaiseScore: firstString([source.whatWouldRaiseScore, source.raiseScore, source.scoreUpside]),
     whatWouldLowerScore: firstString([source.whatWouldLowerScore, source.lowerScore, source.scoreDownside]),
-    intrinsicTechnicalScore: Math.round(asNumber(source.intrinsicTechnicalScore, 0, 0, 10)),
-    explanatoryTargetBreadthScore: Math.round(asNumber(source.explanatoryTargetBreadthScore, 0, 0, 10)),
-    theorySpaceBreadthScore: Math.round(asNumber(source.theorySpaceBreadthScore, 0, 0, 10)),
-    breadthOfImpactScore: Math.round(asNumber(source.breadthOfImpactScore, 0, 0, 10)),
+    intrinsicTechnicalScore: normalizeDiagnosticSubscore(source.intrinsicTechnicalScore),
+    explanatoryTargetBreadthScore: normalizeDiagnosticSubscore(source.explanatoryTargetBreadthScore),
+    theorySpaceBreadthScore: normalizeDiagnosticSubscore(source.theorySpaceBreadthScore),
+    breadthOfImpactScore: normalizeDiagnosticSubscore(source.breadthOfImpactScore),
+    subscoreValidity,
+    scoreCappingReason: firstString([source.scoreCappingReason, source.score_capping_reason]),
     specialtyRelativeScore: normalizedSpecialtyScore,
     broadFieldRelativeScore: Math.round(asNumber(source.broadFieldRelativeScore, 0, 0, 100)),
     crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, 0, 0, 100)),
@@ -1641,7 +1821,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const defaultLow = Math.min(...usableScores);
   const defaultHigh = Math.max(...usableScores);
   const defaultMedian = medianScore(usableScores);
-  const parsedBand = normalizeScoreBand(source.finalScoreBand ?? source.scoreBand);
+  const parsedBand = normalizeScoreBand(source.blindIntrinsicScoreBand ?? source.finalScoreBand ?? source.scoreBand);
   const finalScoreBand = parsedBand.low === 0 && parsedBand.median === 0 && parsedBand.high === 0
     ? { low: defaultLow, median: defaultMedian, high: defaultHigh }
     : parsedBand;
@@ -1668,6 +1848,25 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       manuscriptOriginalContribution: asString(source.originalContributionAssessment, fallbackReview.manuscriptOriginalContribution),
     },
   );
+  const aggregateSubscoreValidity = diagnosticSubscoreValidity(source);
+  const aggregateSubscores = {
+    intrinsicTechnicalScore: normalizeDiagnosticSubscore(source.intrinsicTechnicalScore, fallbackReview.intrinsicTechnicalScore),
+    explanatoryTargetBreadthScore: normalizeDiagnosticSubscore(source.explanatoryTargetBreadthScore, fallbackReview.explanatoryTargetBreadthScore),
+    theorySpaceBreadthScore: normalizeDiagnosticSubscore(source.theorySpaceBreadthScore, fallbackReview.theorySpaceBreadthScore),
+    breadthOfImpactScore: normalizeDiagnosticSubscore(source.breadthOfImpactScore, fallbackReview.breadthOfImpactScore),
+  };
+  const scoreCappingReason = firstString([source.scoreCappingReason, source.score_capping_reason]);
+  const subscoreSaturationWarning =
+    asBoolean(adjudicationSource.subscoreSaturationWarning) ||
+    computeSubscoreSaturationWarning(diagnosticSubscoreValues(aggregateSubscores), aggregateSubscoreValidity);
+  const subscoreConsistencyWarning =
+    firstString([adjudicationSource.subscoreConsistencyWarning, source.subscoreConsistencyWarning]) ||
+    computeSubscoreConsistencyWarning({
+      finalMedian: finalScoreBand.median,
+      scores: diagnosticSubscoreValues(aggregateSubscores),
+      validity: aggregateSubscoreValidity,
+      scoreCappingReason,
+    });
 
   return {
     finalComparisonCohort: asString(source.finalComparisonCohort ?? source.comparisonCohort, fallbackReview.comparisonCohort),
@@ -1724,6 +1923,8 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       fatalObjectionPresent: asBoolean(adjudicationSource.fatalObjectionPresent ?? source.fatalObjectionPresent),
       fatalObjectionAssessment: asString(adjudicationSource.fatalObjectionAssessment ?? source.fatalObjectionAssessment),
       calibrationAdjustments: asString(source.internalCalibrationNotes),
+      subscoreConsistencyWarning,
+      subscoreSaturationWarning,
     },
     individualScores: usableScores,
     scoreRange,
@@ -1758,10 +1959,11 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     theorySpaceBreadth: asString(source.theorySpaceBreadth, fallbackReview.theorySpaceBreadth),
     scopeDepth: asString(source.scopeDepth, fallbackReview.scopeDepth),
     unifyingPower: asString(source.unifyingPower, fallbackReview.unifyingPower),
-    intrinsicTechnicalScore: Math.round(asNumber(source.intrinsicTechnicalScore, fallbackReview.intrinsicTechnicalScore, 0, 10)),
-    explanatoryTargetBreadthScore: Math.round(asNumber(source.explanatoryTargetBreadthScore, fallbackReview.explanatoryTargetBreadthScore, 0, 10)),
-    theorySpaceBreadthScore: Math.round(asNumber(source.theorySpaceBreadthScore, fallbackReview.theorySpaceBreadthScore, 0, 10)),
-    breadthOfImpactScore: Math.round(asNumber(source.breadthOfImpactScore, fallbackReview.breadthOfImpactScore, 0, 10)),
+    ...aggregateSubscores,
+    subscoreValidity: aggregateSubscoreValidity,
+    subscoreConsistencyWarning,
+    subscoreSaturationWarning,
+    scoreCappingReason,
     specialtyRelativeScore: Math.round(asNumber(source.specialtyRelativeScore, fallbackReview.specialtyRelativeScore, 0, 100)),
     broadFieldRelativeScore: Math.round(asNumber(source.broadFieldRelativeScore, fallbackReview.broadFieldRelativeScore, 0, 100)),
     crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, fallbackReview.crossFieldConsequenceScore, 0, 100)),
@@ -1800,6 +2002,12 @@ function buildAdjudicatorInput(
       strongestCaseForImportance: review.strongestCaseForImportance,
       strongestObjection: review.strongestObjection,
       decisiveCheck: review.decisiveCheck,
+      intrinsicTechnicalScore: review.intrinsicTechnicalScore,
+      explanatoryTargetBreadthScore: review.explanatoryTargetBreadthScore,
+      theorySpaceBreadthScore: review.theorySpaceBreadthScore,
+      breadthOfImpactScore: review.breadthOfImpactScore,
+      subscoreValidity: review.subscoreValidity,
+      scoreCappingReason: review.scoreCappingReason,
       oneParagraphVerdict: review.oneParagraphVerdict,
       finalJudgment: review.finalJudgment,
     })),
@@ -1815,9 +2023,14 @@ function buildComparatorCalibrationInput(
 ): string {
   const candidateComparatorProfiles = comparatorContext.map((candidate, index) => ({
     comparatorId: candidate.comparatorId || `C${index + 1}`,
+    paperId: candidate.sitePaperId,
+    displayTitle: candidate.title,
     field: candidate.field,
     subfields: candidate.subfields,
     score: candidate.score,
+    calibratedScoreBand: candidate.calibratedScoreBand,
+    benchmarkSetVersion: candidate.benchmarkSetVersion,
+    comparatorCalibrationStatus: candidate.comparatorCalibrationStatus,
     classification: candidate.classification,
     comparisonCohort: candidate.comparisonCohort,
     contributionArchetype: candidate.contributionArchetype,
@@ -1826,6 +2039,7 @@ function buildComparatorCalibrationInput(
     inputConstructionOutputLedger: candidate.inputConstructionOutputLedger,
     frameworkConditionality: candidate.frameworkConditionality,
     comparatorSearchSummary: candidate.comparatorSearchSummary,
+    explanatoryDeltaAssessment: candidate.explanatoryDeltaAssessment,
   }));
 
   return JSON.stringify({
@@ -1846,7 +2060,13 @@ function buildComparatorCalibrationInput(
       strongestCaseForImportance: aggregate.strongestCaseForImportance,
       strongestObjection: aggregate.strongestObjection,
       decisiveCheck: aggregate.decisiveCheck,
+      intrinsicTechnicalScore: aggregate.intrinsicTechnicalScore,
+      explanatoryTargetBreadthScore: aggregate.explanatoryTargetBreadthScore,
+      theorySpaceBreadthScore: aggregate.theorySpaceBreadthScore,
+      breadthOfImpactScore: aggregate.breadthOfImpactScore,
+      scoreCappingReason: aggregate.scoreCappingReason,
       scoreBand: aggregate.blindIntrinsicScoreBand,
+      blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
       scoreConfidence: aggregate.finalScoreConfidence,
       bestClassification: aggregate.finalClassification,
       oneParagraphVerdict: aggregate.publicOneParagraphVerdict,
@@ -1915,8 +2135,9 @@ async function generateMultiPassReview(
   paperContent: ReviewInput,
   _model: ReviewModel,
   promptOverride?: string,
-  options: { selectComparatorContext?: ComparatorContextSelector } = {},
+  options: { selectComparatorContext?: ComparatorContextSelector; reviewMode?: ReviewPipelineMode } = {},
 ): Promise<MultiPassReviewResult> {
+  const reviewMode = options.reviewMode ?? DEFAULT_REVIEW_PIPELINE_MODE;
   const systemPrompt = promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION;
   const blindedContent = blindReviewInput(paperContent);
   const thinkingChunks: string[] = [];
@@ -1950,14 +2171,9 @@ async function generateMultiPassReview(
     extraIndex += 1;
   }
 
-  if (passResults.length === 0) {
-    const details = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
-    throw new Error(`Review failed: 0 of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${details}`);
-  }
-
   if (passResults.length < REVIEW_PASS_COUNT) {
     const details = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
-    thinkingChunks.push(`Proceeding with ${passResults.length} of ${REVIEW_PASS_COUNT} valid independent passes to avoid discarding paid successful work. Failed attempts: ${details}`);
+    throw new Error(`Review failed: only ${passResults.length} of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${details}`);
   }
 
   const individualReviews = passResults.map((result) => result.review);
@@ -1976,7 +2192,7 @@ async function generateMultiPassReview(
   let aggregate: AggregateReview;
   try {
     const adjudicatorResult = await callGemini(
-      BLIND_INTRINSIC_ADJUDICATOR_V6_PROMPT,
+      BLIND_INTRINSIC_ADJUDICATOR_V8_PROMPT,
       buildAdjudicatorInput(blindedContent, individualReviews),
       GEMINI_META_MODEL,
       { maxOutputTokens: 16384, includeThoughts: false },
@@ -2006,47 +2222,75 @@ async function generateMultiPassReview(
     };
     thinkingChunks.push(`Blind adjudicator failed; saved pass-based fallback\n${errorMessage(reason)}`);
   }
-  const comparatorContext = options.selectComparatorContext
+  const comparatorContext = reviewMode === "normal-review" && options.selectComparatorContext
     ? await options.selectComparatorContext(aggregate.comparatorProfile, aggregate)
     : [];
-  try {
-    const { parsed: calibrationParsed, thinkingText: calibrationThinking } = await callGemini(
-      POST_REVIEW_COMPARATOR_CALIBRATION_V6_PROMPT,
-      buildComparatorCalibrationInput(aggregate, comparatorContext),
-      GEMINI_CALIBRATION_MODEL,
-      { maxOutputTokens: 8192, includeThoughts: false },
-    );
-    const calibration = normalizeComparatorCalibrationResult(calibrationParsed, aggregate, comparatorContext);
-    aggregate = {
-      ...aggregate,
-      comparatorCalibration: calibration.comparatorCalibration,
-      nearestComparators: calibration.nearestComparators,
-      externalComparatorSuggestions: calibration.externalComparatorSuggestions,
-      publicComparatorSummary: calibration.publicComparatorSummary,
-      adminComparatorNotes: calibration.adminComparatorNotes,
-      finalScoreBand: calibration.comparatorCalibration.finalPublicScoreBand,
-      finalClassification: calibration.comparatorCalibration.finalClassification,
-      finalScoreConfidence: calibration.comparatorCalibration.confidence,
-      internalCalibrationNotes: [
-        aggregate.internalCalibrationNotes,
-        calibration.comparatorCalibration.calibrationRationale,
-        calibration.adminComparatorNotes,
-      ].filter(Boolean).join("\n\n"),
-    };
-    if (calibrationThinking) {
-      thinkingChunks.push(`Comparator calibration (${GEMINI_CALIBRATION_MODEL})\n${calibrationThinking}`);
-    }
-  } catch (reason) {
+  if (reviewMode === "benchmark-ingestion") {
     aggregate = {
       ...aggregate,
       comparatorCalibration: defaultComparatorCalibration(
         aggregate.blindIntrinsicScoreBand,
         aggregate.finalClassification,
-        `Comparator calibration failed; public score falls back to the blind intrinsic score. ${errorMessage(reason)}`,
+        "Benchmark ingestion mode stores the blind intrinsic profile only. Comparator calibration is run later by benchmark backfill.",
+        "not_run_benchmark_ingestion",
       ),
-      adminComparatorNotes: `Comparator calibration failed: ${errorMessage(reason)}`,
+      finalScoreBand: aggregate.blindIntrinsicScoreBand,
+      adminComparatorNotes: "Benchmark ingestion mode: comparator calibration not run.",
     };
-    thinkingChunks.push(`Comparator calibration failed\n${errorMessage(reason)}`);
+  } else if (comparatorContext.length === 0) {
+    aggregate = {
+      ...aggregate,
+      comparatorCalibration: defaultComparatorCalibration(
+        aggregate.blindIntrinsicScoreBand,
+        aggregate.finalClassification,
+        "No sufficiently close benchmark comparators were available; public score falls back to the blind intrinsic score.",
+        "unavailable",
+      ),
+      finalScoreBand: aggregate.blindIntrinsicScoreBand,
+      adminComparatorNotes: "Comparator calibration unavailable: no close benchmark comparators found.",
+    };
+  } else {
+    try {
+      const { parsed: calibrationParsed, thinkingText: calibrationThinking } = await callGemini(
+        BENCHMARK_COMPARATOR_CALIBRATION_V8_PROMPT,
+        buildComparatorCalibrationInput(aggregate, comparatorContext),
+        GEMINI_CALIBRATION_MODEL,
+        { maxOutputTokens: 8192, includeThoughts: false },
+      );
+      const calibration = normalizeComparatorCalibrationResult(calibrationParsed, aggregate, comparatorContext);
+      aggregate = {
+        ...aggregate,
+        comparatorCalibration: calibration.comparatorCalibration,
+        nearestComparators: calibration.nearestComparators,
+        externalComparatorSuggestions: calibration.externalComparatorSuggestions,
+        publicComparatorSummary: calibration.publicComparatorSummary,
+        adminComparatorNotes: calibration.adminComparatorNotes,
+        finalScoreBand: calibration.comparatorCalibration.finalPublicScoreBand,
+        finalClassification: calibration.comparatorCalibration.finalClassification,
+        finalScoreConfidence: calibration.comparatorCalibration.confidence,
+        scoreCappingReason: calibration.comparatorCalibration.scoreCappingReason || aggregate.scoreCappingReason,
+        internalCalibrationNotes: [
+          aggregate.internalCalibrationNotes,
+          calibration.comparatorCalibration.calibrationRationale,
+          calibration.adminComparatorNotes,
+        ].filter(Boolean).join("\n\n"),
+      };
+      if (calibrationThinking) {
+        thinkingChunks.push(`Comparator calibration (${GEMINI_CALIBRATION_MODEL})\n${calibrationThinking}`);
+      }
+    } catch (reason) {
+      aggregate = {
+        ...aggregate,
+        comparatorCalibration: defaultComparatorCalibration(
+          aggregate.blindIntrinsicScoreBand,
+          aggregate.finalClassification,
+          `Comparator calibration failed; public score falls back to the blind intrinsic score. ${errorMessage(reason)}`,
+          "failed",
+        ),
+        adminComparatorNotes: `Comparator calibration failed: ${errorMessage(reason)}`,
+      };
+      thinkingChunks.push(`Comparator calibration failed\n${errorMessage(reason)}`);
+    }
   }
   const representativeReview = pickRepresentativeReview(individualReviews, aggregate.finalScoreBand.median);
   if (adjudicatorThinking) {
@@ -2055,7 +2299,8 @@ async function generateMultiPassReview(
   thinkingChunks.push(aggregate.internalCalibrationNotes);
 
   return {
-    modelName: `${GEMINI_PIPELINE_LABEL} · ${REVIEW_PROMPT_VERSION}`,
+    modelName: expectedReviewModelName(reviewMode),
+    pipelineMode: reviewMode,
     systemPrompt,
     blindedContent,
     individualReviews,
@@ -2073,11 +2318,26 @@ export async function recalibrateStoredAggregateWithComparators(
     ? (aggregateInput as AggregateReview)
     : null;
   if (!aggregate?.comparatorProfile || !aggregate?.blindIntrinsicScoreBand) {
-    throw new Error("Review aggregate is missing v6 comparator profile or blind intrinsic score band.");
+    throw new Error("Review aggregate is missing v8 comparator profile or blind intrinsic score band.");
+  }
+
+  if (comparatorContext.length === 0) {
+    const updatedAggregate: AggregateReview = {
+      ...aggregate,
+      comparatorCalibration: defaultComparatorCalibration(
+        aggregate.blindIntrinsicScoreBand,
+        aggregate.finalClassification,
+        "Comparator backfill could not find close benchmark comparators; score remains blind-intrinsic.",
+        "unavailable",
+      ),
+      finalScoreBand: aggregate.blindIntrinsicScoreBand,
+      adminComparatorNotes: "Comparator backfill unavailable: no close benchmark comparators found.",
+    };
+    return { aggregate: updatedAggregate, thinkingText: null };
   }
 
   const { parsed: calibrationParsed, thinkingText } = await callGemini(
-    POST_REVIEW_COMPARATOR_CALIBRATION_V6_PROMPT,
+    BENCHMARK_COMPARATOR_CALIBRATION_V8_PROMPT,
     buildComparatorCalibrationInput(aggregate, comparatorContext),
     GEMINI_CALIBRATION_MODEL,
     { maxOutputTokens: 8192, includeThoughts: false },
@@ -2093,6 +2353,7 @@ export async function recalibrateStoredAggregateWithComparators(
     finalScoreBand: calibration.comparatorCalibration.finalPublicScoreBand,
     finalClassification: calibration.comparatorCalibration.finalClassification,
     finalScoreConfidence: calibration.comparatorCalibration.confidence,
+    scoreCappingReason: calibration.comparatorCalibration.scoreCappingReason || aggregate.scoreCappingReason,
     internalCalibrationNotes: [
       aggregate.internalCalibrationNotes,
       calibration.comparatorCalibration.calibrationRationale,
@@ -2147,10 +2408,10 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     decisiveCheck: aggregate.decisiveCheck || null,
     internalTechnicalTraction: aggregate.internalTechnicalTraction || null,
     noveltyConfidence: String(aggregate.noveltyConfidence),
-    intrinsicScientificMeritScore: aggregate.intrinsicTechnicalScore,
-    explanatoryTargetBreadthScore: aggregate.explanatoryTargetBreadthScore,
-    theorySpaceBreadthScore: aggregate.theorySpaceBreadthScore,
-    breadthOfImpactScore: aggregate.breadthOfImpactScore,
+    intrinsicScientificMeritScore: aggregate.subscoreValidity.intrinsicTechnicalScore ? aggregate.intrinsicTechnicalScore : null,
+    explanatoryTargetBreadthScore: aggregate.subscoreValidity.explanatoryTargetBreadthScore ? aggregate.explanatoryTargetBreadthScore : null,
+    theorySpaceBreadthScore: aggregate.subscoreValidity.theorySpaceBreadthScore ? aggregate.theorySpaceBreadthScore : null,
+    breadthOfImpactScore: aggregate.subscoreValidity.breadthOfImpactScore ? aggregate.breadthOfImpactScore : null,
     overallIntrinsicScore: aggregate.finalScoreBand.median,
     bestClassification: aggregateClassification,
     finalJudgment: aggregate.publicOneParagraphVerdict || representativeReview.finalJudgment,
@@ -2163,8 +2424,11 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       comparatorCalibrationModel: GEMINI_CALIBRATION_MODEL,
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
-      pipelineMode: REVIEW_PIPELINE_MODE,
-      schemaVersion: "v6",
+      pipelineMode: result.pipelineMode,
+      schemaVersion: "v8",
+      benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
+      benchmarkSetVersion: result.pipelineMode === "benchmark-ingestion" ? BENCHMARK_SET_VERSION : aggregate.comparatorCalibration.benchmarkSetVersion,
+      comparatorCalibrationStatus: aggregate.comparatorCalibration.comparatorCalibrationStatus,
       extractionMethod,
       pdfVisibleFallbackUsed,
       blindingStrength,
@@ -2178,14 +2442,21 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       adminComparatorNotes: aggregate.adminComparatorNotes,
       comparatorProfile: aggregate.comparatorProfile,
       comparatorCalibration: aggregate.comparatorCalibration,
+      explanatoryDeltaAssessment: aggregate.comparatorCalibration.explanatoryDeltaAssessment,
+      comparatorsNeedingRecalibration: aggregate.comparatorCalibration.comparatorsNeedingRecalibration,
       blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
       comparatorCalibratedFinalScoreBand: aggregate.finalScoreBand,
       adjudication: aggregate.adjudication,
       reviewPassComparison: aggregate.adjudication,
+      subscoreValidity: aggregate.subscoreValidity,
+      subscoreConsistencyWarning: aggregate.subscoreConsistencyWarning,
+      subscoreSaturationWarning: aggregate.subscoreSaturationWarning,
+      scoreCappingReason: aggregate.scoreCappingReason,
       finalIntrinsicReview: {
         summary: aggregate.finalSummary,
         centralClaim: aggregate.finalCentralClaim,
         scoreBand: aggregate.blindIntrinsicScoreBand,
+        blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
         bestClassification: aggregate.comparatorProfile.classification || aggregate.finalClassification,
         inputConstructionOutputLedger: aggregate.inputConstructionOutputLedger,
       },
@@ -2231,7 +2502,7 @@ export async function generateCompatReview(
   paperContent: ReviewInput,
   model: ReviewModel,
   promptOverride?: string,
-  options: { selectComparatorContext?: ComparatorContextSelector } = {},
+  options: { selectComparatorContext?: ComparatorContextSelector; reviewMode?: ReviewPipelineMode } = {},
 ) {
   const result = await generateMultiPassReview(paperContent, model, promptOverride, options);
   const aggregate = result.aggregate;

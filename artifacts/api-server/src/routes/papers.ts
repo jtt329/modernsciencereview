@@ -6,16 +6,19 @@ import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
 import {
+  BENCHMARK_SET_VERSION,
   GEMINI_META_MODEL,
-  GEMINI_PIPELINE_LABEL,
   REVIEW_FULL_PROMPT_SYSTEM,
   REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   buildPdfFallbackText,
+  expectedReviewModelName,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
+  normalizeReviewPipelineMode,
   recalibrateStoredAggregateWithComparators,
   type ComparatorContextSelector,
+  type ReviewPipelineMode,
   type ReviewComparatorContextItem,
   type ReviewInput,
   type ReviewModel,
@@ -197,6 +200,7 @@ function compactLedger(value: any) {
 function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
   const parsed = review ? parseJsonObject(review.coverageLedgerJson) : null;
   const aggregate = parsed?.aggregate && typeof parsed.aggregate === "object" ? parsed.aggregate : null;
+  const comparatorCalibration = parsed?.comparatorCalibration ?? aggregate?.comparatorCalibration ?? null;
   const contributionArchetype = parsed?.contributionArchetype ?? aggregate?.contributionArchetype ?? null;
   const inputConstructionOutputLedger =
     compactLedger(parsed?.inputConstructionOutputLedger ?? aggregate?.inputConstructionOutputLedger);
@@ -208,9 +212,14 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
     summary: review?.summary || aggregate?.finalSummary || null,
     classification: review?.bestClassification || aggregate?.finalClassification || null,
     comparisonCohort: parsed?.finalComparisonCohort || aggregate?.finalComparisonCohort || null,
-    score: review?.overallIntrinsicScore ?? review?.score ?? null,
+    score: comparatorCalibration?.finalPublicScoreBand?.median ?? review?.overallIntrinsicScore ?? review?.score ?? null,
     frameworkConditionality: parsed?.frameworkConditionalityLevel || parsed?.aggregate?.comparatorProfile?.frameworkConditionality || null,
     comparatorSearchSummary: parsed?.comparatorProfile?.comparatorSearchSummary || aggregate?.comparatorProfile?.comparatorSearchSummary || null,
+    benchmarkSetCandidate: Boolean(parsed?.benchmarkSetCandidate),
+    benchmarkSetVersion: parsed?.benchmarkSetVersion || comparatorCalibration?.benchmarkSetVersion || null,
+    comparatorCalibrationStatus: parsed?.comparatorCalibrationStatus || comparatorCalibration?.comparatorCalibrationStatus || null,
+    calibratedScoreBand: comparatorCalibration?.finalPublicScoreBand ?? aggregate?.finalScoreBand ?? null,
+    explanatoryDeltaAssessment: parsed?.explanatoryDeltaAssessment || comparatorCalibration?.explanatoryDeltaAssessment || null,
   };
 }
 
@@ -269,6 +278,7 @@ async function selectComparatorContextForProfile(
 
       return {
         rankScore: overlap,
+        isBenchmarkCandidate: metadata.benchmarkSetCandidate,
         item: {
           comparatorId: "",
           sitePaperId: paper.id,
@@ -284,14 +294,23 @@ async function selectComparatorContextForProfile(
           inputConstructionOutputLedger: metadata.inputConstructionOutputLedger,
           frameworkConditionality: metadata.frameworkConditionality,
           comparatorSearchSummary: metadata.comparatorSearchSummary,
+          benchmarkSetVersion: metadata.benchmarkSetVersion,
+          comparatorCalibrationStatus: metadata.comparatorCalibrationStatus,
+          calibratedScoreBand: metadata.calibratedScoreBand,
+          explanatoryDeltaAssessment: metadata.explanatoryDeltaAssessment,
         } satisfies ReviewComparatorContextItem,
       };
     })
-    .filter(Boolean) as { rankScore: number; item: ReviewComparatorContextItem }[];
+    .filter(Boolean) as { rankScore: number; isBenchmarkCandidate: boolean; item: ReviewComparatorContextItem }[];
 
-  return candidates
+  const benchmarkCandidates = candidates.filter(
+    (candidate) => candidate.isBenchmarkCandidate && candidate.item.benchmarkSetVersion === BENCHMARK_SET_VERSION,
+  );
+  const candidatePool = benchmarkCandidates.length > 0 ? benchmarkCandidates : [];
+
+  return candidatePool
     .sort((a, b) => b.rankScore - a.rankScore)
-    .slice(0, 18)
+    .slice(0, 8)
     .map((candidate, index) => ({
       ...candidate.item,
       comparatorId: `C${index + 1}`,
@@ -306,6 +325,8 @@ router.get("/papers/system-prompt", (_req, res) => {
     prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION,
     fullPromptSystem: REVIEW_FULL_PROMPT_SYSTEM,
     promptVersion: REVIEW_PROMPT_VERSION,
+    defaultReviewMode: "benchmark-ingestion",
+    benchmarkSetVersion: BENCHMARK_SET_VERSION,
   });
 });
 
@@ -313,6 +334,11 @@ router.get("/papers/system-prompt", (_req, res) => {
 router.post("/papers/comparator-backfill", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
+    const includeAll = req.body?.includeAll === true;
+    const benchmarkSetVersion =
+      typeof req.body?.benchmarkSetVersion === "string" && req.body.benchmarkSetVersion.trim()
+        ? req.body.benchmarkSetVersion.trim()
+        : BENCHMARK_SET_VERSION;
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map((review) => [review.paperId, review]));
@@ -328,7 +354,8 @@ router.post("/papers/comparator-backfill", async (req, res) => {
       const aggregateMeta = parseJsonObject((review as any).aggregateMetaJson ?? null);
       const aggregate = aggregateMeta ?? coverageLedger?.aggregate ?? null;
       const promptVersion = coverageLedger?.promptVersion ?? "";
-      if (promptVersion !== REVIEW_PROMPT_VERSION || !aggregate?.comparatorProfile) {
+      const benchmarkSetCandidate = Boolean(coverageLedger?.benchmarkSetCandidate);
+      if (promptVersion !== REVIEW_PROMPT_VERSION || !aggregate?.comparatorProfile || (!includeAll && !benchmarkSetCandidate)) {
         skipped += 1;
         continue;
       }
@@ -339,28 +366,40 @@ router.post("/papers/comparator-backfill", async (req, res) => {
           aggregate,
           comparatorContext,
         );
+        const versionedAggregate = {
+          ...updatedAggregate,
+          comparatorCalibration: {
+            ...updatedAggregate.comparatorCalibration,
+            benchmarkSetVersion,
+          },
+        };
         const updatedCoverageLedger = {
           ...coverageLedger,
-          nearestComparators: updatedAggregate.nearestComparators,
-          externalComparatorSuggestions: updatedAggregate.externalComparatorSuggestions,
-          publicComparatorSummary: updatedAggregate.publicComparatorSummary,
-          adminComparatorNotes: updatedAggregate.adminComparatorNotes,
-          comparatorProfile: updatedAggregate.comparatorProfile,
-          comparatorCalibration: updatedAggregate.comparatorCalibration,
-          blindIntrinsicScoreBand: updatedAggregate.blindIntrinsicScoreBand,
-          comparatorCalibratedFinalScoreBand: updatedAggregate.finalScoreBand,
-          aggregate: updatedAggregate,
-          finalComparisonCohort: updatedAggregate.finalComparisonCohort,
-          scoreStability: updatedAggregate.scoreStability,
+          nearestComparators: versionedAggregate.nearestComparators,
+          externalComparatorSuggestions: versionedAggregate.externalComparatorSuggestions,
+          publicComparatorSummary: versionedAggregate.publicComparatorSummary,
+          adminComparatorNotes: versionedAggregate.adminComparatorNotes,
+          comparatorProfile: versionedAggregate.comparatorProfile,
+          comparatorCalibration: versionedAggregate.comparatorCalibration,
+          comparatorCalibrationStatus: versionedAggregate.comparatorCalibration.comparatorCalibrationStatus,
+          explanatoryDeltaAssessment: versionedAggregate.comparatorCalibration.explanatoryDeltaAssessment,
+          comparatorsNeedingRecalibration: versionedAggregate.comparatorCalibration.comparatorsNeedingRecalibration,
+          blindIntrinsicScoreBand: versionedAggregate.blindIntrinsicScoreBand,
+          comparatorCalibratedFinalScoreBand: versionedAggregate.finalScoreBand,
+          aggregate: versionedAggregate,
+          finalComparisonCohort: versionedAggregate.finalComparisonCohort,
+          scoreStability: versionedAggregate.scoreStability,
+          benchmarkSetCandidate: true,
+          benchmarkSetVersion,
           backfilledAt: new Date().toISOString(),
         };
-        const finalScore = updatedAggregate.finalScoreBand.median;
+        const finalScore = versionedAggregate.finalScoreBand.median;
         await db.update(reviewsTable)
           .set({
             score: finalScore,
             overallIntrinsicScore: finalScore,
-            bestClassification: updatedAggregate.finalClassification,
-            finalJudgment: updatedAggregate.publicOneParagraphVerdict,
+            bestClassification: versionedAggregate.finalClassification,
+            finalJudgment: versionedAggregate.publicOneParagraphVerdict,
             coverageLedgerJson: JSON.stringify(updatedCoverageLedger),
             thinkingText: [review.thinkingText, thinkingText].filter(Boolean).join("\n\n---\n\n") || review.thinkingText,
           })
@@ -403,6 +442,10 @@ router.get("/papers/export", async (_req, res) => {
         },
         review: r ? {
           promptVersion: coverageLedger?.promptVersion ?? REVIEW_PROMPT_VERSION,
+          pipelineMode: coverageLedger?.pipelineMode ?? null,
+          benchmarkSetCandidate: coverageLedger?.benchmarkSetCandidate ?? false,
+          benchmarkSetVersion: coverageLedger?.benchmarkSetVersion ?? null,
+          comparatorCalibrationStatus: coverageLedger?.comparatorCalibrationStatus ?? coverageLedger?.comparatorCalibration?.comparatorCalibrationStatus ?? null,
           systemPrompt: r.systemPrompt,
           modelName: r.modelName,
           overallIntrinsicScore: r.overallIntrinsicScore,
@@ -436,6 +479,8 @@ router.get("/papers/export", async (_req, res) => {
           nearestComparators: coverageLedger?.nearestComparators ?? coverageLedger?.aggregate?.nearestComparators ?? [],
           blindIntrinsicScoreBand: coverageLedger?.blindIntrinsicScoreBand ?? coverageLedger?.aggregate?.blindIntrinsicScoreBand ?? null,
           comparatorCalibration: coverageLedger?.comparatorCalibration ?? coverageLedger?.aggregate?.comparatorCalibration ?? null,
+          explanatoryDeltaAssessment: coverageLedger?.explanatoryDeltaAssessment ?? coverageLedger?.comparatorCalibration?.explanatoryDeltaAssessment ?? null,
+          comparatorsNeedingRecalibration: coverageLedger?.comparatorsNeedingRecalibration ?? coverageLedger?.comparatorCalibration?.comparatorsNeedingRecalibration ?? [],
           comparatorCalibratedFinalScoreBand: coverageLedger?.comparatorCalibratedFinalScoreBand ?? coverageLedger?.aggregate?.finalScoreBand ?? null,
           comparatorProfile: coverageLedger?.comparatorProfile ?? coverageLedger?.aggregate?.comparatorProfile ?? null,
           externalComparatorSuggestions: coverageLedger?.externalComparatorSuggestions ?? coverageLedger?.aggregate?.externalComparatorSuggestions ?? [],
@@ -551,8 +596,9 @@ router.post("/papers", async (req, res) => {
   try {
     const { source } = req.body;
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
+    const reviewMode: ReviewPipelineMode = normalizeReviewPipelineMode(source.reviewMode);
     const sourceHash = sourceHashFor(source);
-    const expectedModelName = `${GEMINI_PIPELINE_LABEL} · ${REVIEW_PROMPT_VERSION}`;
+    const expectedModelName = expectedReviewModelName(reviewMode);
     submissionKey = sourceHash ? `${req.user.id}:${expectedModelName}:${sourceHash}` : null;
     if (submissionKey && recentSubmissions.has(submissionKey)) {
       res.json(await recentSubmissions.get(submissionKey));
@@ -670,7 +716,7 @@ router.post("/papers", async (req, res) => {
       reviewInput ?? paperContent,
       selectedModel,
       undefined,
-      { selectComparatorContext },
+      { selectComparatorContext, reviewMode },
     );
     addSubmissionCostControls(reviewValues, sourceHash);
 

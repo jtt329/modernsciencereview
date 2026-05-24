@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, X, BookOpen, Loader2, FileText, CheckCircle2, AlertCircle, RotateCcw, Cpu } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { ReviewSource, ReviewModel } from '../services/reviewService';
+import { ReviewSource, ReviewModel, ReviewMode } from '../services/reviewService';
 
 interface BulkFile {
   id: string;
@@ -43,6 +43,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
   const [files, setFiles] = useState<BulkFile[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [model, setModel] = useState<ReviewModel>('gemini');
+  const [reviewMode, setReviewMode] = useState<ReviewMode>('benchmark-ingestion');
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     const newFiles: BulkFile[] = acceptedFiles
@@ -79,7 +80,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
           reader.onerror = reject;
           reader.readAsDataURL(bulkFile.file);
         });
-        await onSubmit({ type: 'pdf', data: base64, model, fileName: bulkFile.file.name }, true);
+        await onSubmit({ type: 'pdf', data: base64, model, reviewMode, fileName: bulkFile.file.name }, true);
         setFiles(prev => updateFile(prev, bulkFile.id, { status: 'done', error: undefined, attempts: 0 }));
       } catch (err: any) {
         const message = err?.message || String(err);
@@ -132,6 +133,28 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
               <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Admin — Process Multiple PDFs</p>
             </div>
           </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Review Mode</label>
+            {([
+              { id: 'benchmark-ingestion', label: 'Benchmark ingestion' },
+              { id: 'normal-review', label: 'Normal calibrated' },
+            ] as const).map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => setReviewMode(mode.id)}
+                disabled={isSubmitting}
+                className={`px-4 py-2 rounded-xl font-bold text-sm transition-all border ${
+                  reviewMode === mode.id
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-100'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
           <button onClick={onClose} disabled={isSubmitting} className="p-2 hover:bg-white/10 rounded-full transition-colors disabled:opacity-50">
             <X className="w-6 h-6" />
           </button>
@@ -171,7 +194,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
             <FileText className="w-10 h-10 text-slate-400 mx-auto mb-3" />
             <p className="font-bold text-slate-600">Drop multiple PDFs here, or click to select</p>
             <p className="text-sm text-slate-400 mt-1">
-              Each PDF will be reviewed sequentially by Gemini Pro x2 + blind adjudicator + calibration
+              Each PDF will be reviewed sequentially by Gemini Pro x2 + blind adjudicator{reviewMode === 'normal-review' ? ' + calibration' : ''}
             </p>
           </div>
 
@@ -209,7 +232,7 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
                       )}
                       {f.status === 'processing' && (
                         <p className="text-xs text-indigo-600 mt-0.5">
-                          Reviewing with Gemini Pro x2 + calibration...
+                          Reviewing with Gemini Pro x2 + blind adjudicator{reviewMode === 'normal-review' ? ' + calibration' : ''}...
                         </p>
                       )}
                     </div>

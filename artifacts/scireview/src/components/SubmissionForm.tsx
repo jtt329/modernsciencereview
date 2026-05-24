@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle, Cpu, Trash2, Link, Monitor } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
-import { ReviewSource, ReviewModel } from '../services/reviewService';
+import { ReviewSource, ReviewModel, ReviewMode } from '../services/reviewService';
 
 interface SubmissionFormProps {
   onSubmit: (source: ReviewSource, skipSelect?: boolean) => Promise<void>;
@@ -19,6 +19,21 @@ interface QueuedFile {
 const MAX_QUEUED_PDFS = 50;
 const BATCH_CONCURRENCY = 2;
 const SUBMISSION_RETRY_DELAYS_MS: number[] = [];
+
+const reviewModeCopy: Record<ReviewMode, { label: string; shortLabel: string; description: string; processing: string }> = {
+  'benchmark-ingestion': {
+    label: 'Benchmark ingestion',
+    shortLabel: 'Gemini Pro x2 + blind adjudicator',
+    description: 'Blind intrinsic review only. Use this for building the benchmark suite before calibration backfill.',
+    processing: 'Reviewing with Gemini Pro x2 + blind adjudicator...',
+  },
+  'normal-review': {
+    label: 'Normal calibrated review',
+    shortLabel: 'Gemini Pro x2 + blind adjudicator + calibration',
+    description: 'Blind review first, then calibrate against nearby benchmark papers if available.',
+    processing: 'Reviewing with Gemini Pro x2 + blind adjudicator + calibration...',
+  },
+};
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -66,6 +81,7 @@ function isValidUrl(value: string) {
 export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProps) {
   const [submissionType, setSubmissionType] = useState<'pdf' | 'text'>('pdf');
   const [model, setModel] = useState<ReviewModel>('gemini');
+  const [reviewMode, setReviewMode] = useState<ReviewMode>('benchmark-ingestion');
   const [text, setText] = useState('');
   const [files, setFiles] = useState<QueuedFile[]>([]);
   const [providePdfLink, setProvidePdfLink] = useState(false);
@@ -168,7 +184,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
     try {
       if (submissionType === 'text') {
         if (!text.trim()) return;
-        await onSubmit({ type: 'text', data: text.trim(), model });
+        await onSubmit({ type: 'text', data: text.trim(), model, reviewMode });
         onClose();
         return;
       }
@@ -191,7 +207,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
           const base64 = await readFileAsBase64(qf.file);
           await submitWithRetries(
             qf,
-            { type: 'pdf', data: base64, model, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl },
+            { type: 'pdf', data: base64, model, reviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl },
             skipSelectAfterSubmit,
           );
           done++;
@@ -255,7 +271,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             <div>
               <h2 className="text-xl font-black tracking-tight">Submit Scientific Paper</h2>
               <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">
-                Blind AI Review · Gemini Pro x2 + Blind Adjudicator + Calibration
+                Blind AI Review · {reviewModeCopy[reviewMode].shortLabel}
                 {isBatch && ` · ${files.length} papers queued`}
               </p>
             </div>
@@ -320,6 +336,30 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             </div>
           </div>
 
+          <div className="space-y-3">
+            <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Review Mode</label>
+            <div className="grid sm:grid-cols-2 gap-3">
+              {(['benchmark-ingestion', 'normal-review'] as ReviewMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setReviewMode(mode)}
+                  disabled={isSubmitting}
+                  className={`text-left p-4 rounded-2xl border transition-all ${
+                    reviewMode === mode
+                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg shadow-indigo-100'
+                      : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <p className="text-sm font-black">{reviewModeCopy[mode].label}</p>
+                  <p className={`text-xs mt-1 ${reviewMode === mode ? 'text-indigo-100' : 'text-slate-500'}`}>
+                    {reviewModeCopy[mode].description}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* PDF section */}
           {submissionType === 'pdf' && (
             <div className="space-y-5">
@@ -365,7 +405,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
                         {qf.status === 'processing' && (
-                          <p className="text-xs text-indigo-500 truncate">{qf.error || 'Reviewing with Gemini Pro x2 + calibration…'}</p>
+                          <p className="text-xs text-indigo-500 truncate">{qf.error || reviewModeCopy[reviewMode].processing}</p>
                         )}
                         {qf.status === 'error' && <p className="text-xs text-rose-600 truncate">{qf.error}</p>}
                       </div>
@@ -494,7 +534,9 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
                 <p className="text-indigo-500 text-xs mt-1">
                   {isBatch
                     ? `Up to ${BATCH_CONCURRENCY} papers are reviewed at once. Each completed paper is saved immediately, and failed papers do not block the rest of the queue.`
-                    : 'This runs metadata extraction, two independent blind Gemini Pro review passes, a blind Gemini Pro adjudicator, then comparator calibration. Please keep this window open.'}
+                    : reviewMode === 'benchmark-ingestion'
+                      ? 'This runs metadata extraction, two independent blind Gemini Pro review passes, and a blind Gemini Pro adjudicator. Comparator calibration is skipped for benchmark ingestion.'
+                      : 'This runs metadata extraction, two independent blind Gemini Pro review passes, a blind Gemini Pro adjudicator, then benchmark comparator calibration. Please keep this window open.'}
                 </p>
               </div>
             </div>
@@ -516,7 +558,7 @@ export default function SubmissionForm({ onSubmit, onClose }: SubmissionFormProp
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                {isBatch ? `${doneCount}/${files.length} done…` : 'Reviewing with Gemini Pro x2 + calibration…'}
+                {isBatch ? `${doneCount}/${files.length} done…` : reviewModeCopy[reviewMode].processing}
               </>
             ) : (
               <>
