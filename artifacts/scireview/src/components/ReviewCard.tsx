@@ -55,6 +55,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const [showPrompt, setShowPrompt] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<'combined' | number>('combined');
+  const [scoreDetail, setScoreDetail] = useState<'final' | 'adjudicator' | 'comparator' | number>('final');
 
   const normalizeDisplayedBand = (
     low: number | null | undefined,
@@ -148,6 +149,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     parsedCoverage?.comparatorCalibrationStatus ??
     comparatorCalibration?.comparatorCalibrationStatus ??
     (calibrationAdjustment != null ? 'applied' : 'unavailable');
+  const comparatorCalibrationApplied =
+    comparatorCalibrationStatus === 'applied' ||
+    comparatorCalibrationStatus === 'weak';
   const explanatoryDeltaAssessment =
     parsedCoverage?.explanatoryDeltaAssessment ??
     comparatorCalibration?.explanatoryDeltaAssessment ??
@@ -171,7 +175,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
-  const scoreStability = aggregateAdjudication?.scoreStability || storedAggregate?.scoreStability || (review as any).scoreStability || parsedCoverage?.scoreStability || null;
+  const storedScoreStability = aggregateAdjudication?.scoreStability || storedAggregate?.scoreStability || (review as any).scoreStability || parsedCoverage?.scoreStability || null;
   const aggregateScoreRange = aggregateAdjudication?.scoreRange ?? storedAggregate?.scoreRange ?? parsedCoverage?.scoreRange ?? null;
   const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
   const passScoreBands = storedIndividualReviews.map((pass: any) =>
@@ -182,7 +186,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       pass.bestClassification,
     )
   );
-  const passMedianScores = passScoreBands.map((band: { median: number }) => band.median);
+  const passMedianScoresByIndex = storedIndividualReviews
+    .map((pass: any, index: number) => {
+      const rawMedian = Number(pass?.scoreBand?.median);
+      return Number.isFinite(rawMedian) ? passScoreBands[index]?.median : null;
+    });
+  const passMedianScores = passMedianScoresByIndex
+    .filter((score: number | null): score is number => typeof score === 'number' && Number.isFinite(score));
   const combinedBand = normalizeDisplayedBand(
     comparatorCalibratedFinalScoreBand?.low ?? review.scoreBandLow ?? review.overallIntrinsicScore ?? review.score,
     comparatorCalibratedFinalScoreBand?.median ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score,
@@ -207,6 +217,35 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     : combinedBand;
   const displayScore = activeBand.median;
   const scorePillLabel = `${displayScore}/100`;
+  const adjudicatorRating = blindBand?.median ?? combinedBand.median;
+  const finalScore = combinedBand.median;
+  const computedPassDisagreement = passMedianScores.length >= 2
+    ? Math.max(...passMedianScores) - Math.min(...passMedianScores)
+    : null;
+  const computedStability = computedPassDisagreement == null
+    ? 'insufficient data'
+    : computedPassDisagreement <= 5
+      ? 'high'
+      : computedPassDisagreement <= 12
+        ? 'medium'
+        : 'low';
+  const scoreStability = selectedPass ? storedScoreStability : computedStability;
+  const adjustmentLabel = comparatorCalibrationApplied
+    ? `${(calibrationAdjustment ?? 0) > 0 ? '+' : ''}${calibrationAdjustment ?? 0}`
+    : 'not applied';
+  const comparatorNotAppliedMessage =
+    'Comparator calibration has not been applied yet. In benchmark ingestion mode, this paper stores its blind intrinsic profile for later benchmark backfill.';
+  const scorePathCaption = comparatorCalibrationApplied
+    ? 'Final score after comparator calibration.'
+    : 'Comparator calibration not applied yet. This review is in benchmark ingestion mode and stores the blind intrinsic profile for later benchmark backfill.';
+  const scoreCappingReason =
+    parsedCoverage?.scoreCappingReason ??
+    storedAggregate?.scoreCappingReason ??
+    comparatorCalibration?.scoreCappingReason ??
+    '';
+  const promptVersion = parsedCoverage?.promptVersion ?? storedAggregate?.promptVersion ?? '';
+  const benchmarkSetVersion = parsedCoverage?.benchmarkSetVersion ?? comparatorCalibration?.benchmarkSetVersion ?? '';
+  const extractionMethod = parsedCoverage?.extractionMethod ?? '';
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
   const currentComparisonCohort = selectedPass?.comparisonCohort || selectedPass?.broadField || comparisonCohort;
   const currentVerdict = selectedPass?.oneParagraphVerdict || selectedPass?.finalJudgment || aggregateVerdict;
@@ -269,7 +308,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     currentWhatWouldLowerScore,
   ].some(hasText) || (
     isAdmin && (
-      !selectedPass && storedIndividualReviews.length > 0 ||
       (Array.isArray(externalComparatorSuggestions) && externalComparatorSuggestions.length > 0) ||
       hasText(adminComparatorNotes)
     )
@@ -294,13 +332,23 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     selectedPass?.breadthOfImpactScore ?? review.breadthOfImpactScore,
     selectedSubscoreValidity.breadthOfImpactScore !== false,
   );
-  const passDisagreement = !selectedPass && passMedianScores.length > 1
-    ? Math.max(...passMedianScores) - Math.min(...passMedianScores)
-    : aggregateScoreRange;
+  const passDisagreement = !selectedPass ? computedPassDisagreement : aggregateScoreRange;
 
   const scoreColor = displayScore >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' :
     displayScore >= 60 ? 'text-amber-600 bg-amber-50 border-amber-200' :
     'text-rose-600 bg-rose-50 border-rose-200';
+  const technicalAssessmentBoxes = [
+    { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
+    { label: 'Input Grounding', value: currentInputGrounding, color: 'text-cyan-400', icon: <Shield className="w-4 h-4" /> },
+    { label: 'Input Fundamentality', value: currentInputFundamentality, color: 'text-violet-400', icon: <BrainCircuit className="w-4 h-4" /> },
+    { label: 'Framework Independence', value: currentFrameworkIndependence, color: 'text-sky-300', icon: <GitBranch className="w-4 h-4" /> },
+    { label: 'Framework Conditionality', value: currentFrameworkConditionality, color: 'text-amber-400', icon: <GitBranch className="w-4 h-4" /> },
+    { label: 'Hard-to-Vary Assessment', value: currentHardToVaryAssessment, color: 'text-orange-300', icon: <Shield className="w-4 h-4" /> },
+    { label: 'Manuscript Original Contribution', value: currentOriginalContribution, color: 'text-indigo-300', icon: <Microscope className="w-4 h-4" /> },
+    { label: 'Strongest Case', value: currentStrongestCase, color: 'text-green-400', icon: <TrendingUp className="w-4 h-4" /> },
+    { label: 'Strongest Objection', value: currentStrongestObjection, color: 'text-rose-400', icon: <AlertTriangle className="w-4 h-4" /> },
+    { label: 'Decisive Check', value: currentDecisiveCheck, color: 'text-yellow-400', icon: <Microscope className="w-4 h-4" /> },
+  ];
 
   return (
     <>
@@ -331,116 +379,162 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
                 {selectedPass
                   ? 'This is the anchored scientific merit score assigned by this individual independent review pass.'
-                  : 'This is the final comparator-calibrated anchored scientific merit score. The paper is first scored blind, then a separate calibration pass checks nearby in-site comparators where available.'}
+                  : comparatorCalibrationApplied
+                    ? 'This is the final anchored scientific merit score after comparator calibration.'
+                    : 'This is the blind intrinsic score. Comparator calibration has not been applied yet.'}
               </div>
             </div>
           </div>
 
-          <div className="grid md:grid-cols-4 gap-3">
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
-              <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+            <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Score Path</p>
+            <div className="flex flex-wrap items-center gap-2 text-sm font-black text-white">
+              <span className="text-slate-300">Blind Passes (</span>
+              {passMedianScores.length > 0 ? (
+                <>
+                  {passMedianScoresByIndex.map((score: number | null | undefined, index: number) => score == null ? null : (
+                    <React.Fragment key={index}>
+                      {index > 0 && <span className="text-slate-500">,</span>}
+                      <button
+                        onClick={() => {
+                          setActiveTab(index);
+                          setScoreDetail(index);
+                        }}
+                        className="rounded-lg bg-fuchsia-400/10 px-2 py-1 text-fuchsia-100 hover:bg-fuchsia-400/20 transition-colors"
+                      >
+                        {score}
+                      </button>
+                    </React.Fragment>
+                  ))}
+                  {passMedianScores.length === 1 && <span className="text-slate-400">; only 1 valid pass</span>}
+                </>
+              ) : (
+                <span className="text-slate-400">not stored</span>
+              )}
+              <span className="text-slate-300">)</span>
+              <span className="text-slate-500">-&gt;</span>
+              <button
+                onClick={() => {
+                  setActiveTab('combined');
+                  setScoreDetail('adjudicator');
+                }}
+                className="rounded-lg bg-sky-400/10 px-2 py-1 text-sky-100 hover:bg-sky-400/20 transition-colors"
+              >
+                Adjudicator Rating {adjudicatorRating}
+              </button>
+              <span className="text-slate-500">-&gt;</span>
+              <button
+                onClick={() => {
+                  setActiveTab('combined');
+                  setScoreDetail('comparator');
+                }}
+                className="rounded-lg bg-cyan-400/10 px-2 py-1 text-cyan-100 hover:bg-cyan-400/20 transition-colors"
+              >
+                Adjustment {adjustmentLabel}
+              </button>
+              <span className="text-slate-500">-&gt;</span>
+              <button
+                onClick={() => {
+                  setActiveTab('combined');
+                  setScoreDetail('final');
+                }}
+                className="rounded-lg bg-emerald-400/10 px-2 py-1 text-emerald-100 hover:bg-emerald-400/20 transition-colors"
+              >
+                Final Score {finalScore}
+              </button>
             </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">{selectedPass ? 'Pass Score Band' : 'Final Score Band'}</p>
-              <p className="text-sm font-bold text-white mt-1">{activeBand.low}-{activeBand.median}-{activeBand.high}</p>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
-              <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-              <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparator Status</p>
-              <p className="text-sm font-bold text-white mt-1 capitalize">{String(comparatorCalibrationStatus).replace(/_/g, ' ')}</p>
-            </div>
-          </div>
+            <p className="text-xs text-slate-400">{scorePathCaption}</p>
 
-          {!selectedPass && (
-            <div className="grid md:grid-cols-5 gap-3">
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
-                <p className="text-sm font-bold text-white mt-1">{passMedianScores.length > 0 ? passMedianScores.join(', ') : 'Not stored'}</p>
+            <div className="grid md:grid-cols-4 gap-3 border-t border-white/10 pt-4">
+              <div>
+                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
+                <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
               </div>
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Pass Disagreement</p>
-                <p className="text-sm font-bold text-white mt-1">{passDisagreement ?? 'Not stored'}</p>
+              <div>
+                <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
+                <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
               </div>
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
+              <div>
                 <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Stability</p>
-                <p className="text-sm font-bold text-white mt-1 capitalize">{scoreStability || 'Not stored'}</p>
-              </div>
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Blind Intrinsic</p>
-                <p className="text-sm font-bold text-white mt-1">{blindBand ? `${blindBand.low}-${blindBand.median}-${blindBand.high}` : 'Not stored'}</p>
-              </div>
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparator Adjustment</p>
-                <p className="text-sm font-bold text-white mt-1">{calibrationAdjustment != null ? `${calibrationAdjustment > 0 ? '+' : ''}${calibrationAdjustment}` : '+0'}</p>
-              </div>
-            </div>
-          )}
-
-          {!selectedPass && (blindBand || comparatorCalibration || pdfVisibleFallbackUsed) && (
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-3">
-              <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest flex items-center gap-2">
-                <Shield className="w-4 h-4" /> Blind Score + Comparator Calibration
-              </h3>
-              <div className="grid md:grid-cols-3 gap-3">
-                {blindBand && (
-                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Blind Intrinsic Band</p>
-                    <p className="text-sm font-black text-white mt-1">{blindBand.low}-{blindBand.median}-{blindBand.high}</p>
-                  </div>
-                )}
-                {calibrationAdjustment != null && (
-                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Calibration Adjustment</p>
-                    <p className="text-sm font-black text-white mt-1">{calibrationAdjustment > 0 ? '+' : ''}{calibrationAdjustment}</p>
-                  </div>
-                )}
-                {pdfVisibleFallbackUsed && (
-                  <div className="bg-amber-400/10 border border-amber-300/20 rounded-xl p-3">
-                    <p className="text-[10px] font-black text-amber-200 uppercase tracking-widest">Blinding Strength</p>
-                    <p className="text-sm font-black text-white mt-1 capitalize">{String(blindingStrength)}</p>
-                  </div>
-                )}
-              </div>
-              {calibrationRationale && (
-                <div>
-                  <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Calibration Rationale</p>
-                  <Markdown>{calibrationRationale}</Markdown>
-                </div>
-              )}
-              {scoreGapAssessment && (
-                <div>
-                  <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-1">Score Gap Assessment</p>
-                  <Markdown>{scoreGapAssessment}</Markdown>
-                </div>
-              )}
-              {explanatoryDeltaAssessment && typeof explanatoryDeltaAssessment === 'object' && Object.values(explanatoryDeltaAssessment).some(hasText) && (
-                <div>
-                  <p className="text-[10px] font-black text-lime-300 uppercase tracking-widest mb-1">Explanatory Delta</p>
-                  <div className="space-y-2">
-                    {[
-                      explanatoryDeltaAssessment.whatIsNewBeyondComparators,
-                      explanatoryDeltaAssessment.inputsComparison,
-                      explanatoryDeltaAssessment.constructionComparison,
-                      explanatoryDeltaAssessment.outputsComparison,
-                      explanatoryDeltaAssessment.downstreamReachComparison,
-                      explanatoryDeltaAssessment.frameworkConditionalityComparison,
-                    ].filter(hasText).map((item: string, index: number) => (
-                      <Markdown key={index}>{item}</Markdown>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {pdfVisibleFallbackUsed && (
-                <p className="text-xs text-amber-100/80">
-                  Plain text extraction was weak, so Gemini read the PDF directly. The review still ignores identity signals, but this fallback can expose visible author/title information in the source PDF.
+                <p className="text-sm font-bold text-white mt-1 capitalize">
+                  {scoreStability || 'Not stored'}
+                  {passDisagreement != null && !selectedPass ? ` (${passDisagreement} point disagreement)` : ''}
                 </p>
-              )}
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Model / Prompt</p>
+                <p className="text-sm font-bold text-white mt-1">
+                  {review.modelName || 'Model not stored'}{promptVersion ? ` · ${promptVersion}` : ''}
+                </p>
+              </div>
             </div>
-          )}
+          </div>
+
+          <div className="bg-slate-950/30 border border-white/10 rounded-2xl p-5 space-y-3">
+            {typeof scoreDetail === 'number' && (
+              <>
+                <h3 className="text-xs font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass {scoreDetail + 1}</h3>
+                <p className="text-sm text-slate-300">
+                  Showing the rendered details from independent blind review pass {scoreDetail + 1} below.
+                </p>
+              </>
+            )}
+            {scoreDetail === 'adjudicator' && (
+              <>
+                <h3 className="text-xs font-black text-sky-300 uppercase tracking-widest">Adjudicator Rating</h3>
+                <Markdown>{aggregateAdjudication?.mainDisagreements?.length
+                  ? `The adjudicator rating is ${adjudicatorRating}. Main disagreements: ${aggregateAdjudication.mainDisagreements.join('; ')}`
+                  : `The adjudicator rating is ${adjudicatorRating}. This is the blind intrinsic score before comparator calibration.`}</Markdown>
+              </>
+            )}
+            {scoreDetail === 'comparator' && (
+              <>
+                <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest">Comparator Adjustment</h3>
+                {comparatorCalibrationApplied ? (
+                  <div className="space-y-3">
+                    {calibrationRationale && <Markdown>{calibrationRationale}</Markdown>}
+                    {scoreGapAssessment && <Markdown>{scoreGapAssessment}</Markdown>}
+                    {Array.isArray(currentNearestComparators) && currentNearestComparators.length > 0 && (
+                      <div className="grid gap-3">
+                        {currentNearestComparators.map((comparator: any, index: number) => (
+                          <div key={`${comparator.sitePaperId || comparator.paperTitle || comparator.title || index}-${index}`} className="bg-white/5 border border-white/10 rounded-xl p-3">
+                            {comparator.sitePaperId ? (
+                              <a
+                                href={`/papers/${encodeURIComponent(comparator.sitePaperId)}`}
+                                className="text-sm font-black text-white hover:text-cyan-200 transition-colors"
+                              >
+                                {comparator.paperTitle || comparator.displayTitle || comparator.title || 'Comparator'}
+                              </a>
+                            ) : (
+                              <p className="text-sm font-black text-white">{comparator.paperTitle || comparator.displayTitle || comparator.title || 'Comparator'}</p>
+                            )}
+                            {(comparator.whyComparable || comparator.keyDifference || comparator.scoreGapJustification) && (
+                              <div className="mt-2 space-y-2">
+                                {comparator.whyComparable && <Markdown>{comparator.whyComparable}</Markdown>}
+                                {comparator.keyDifference && <Markdown>{comparator.keyDifference}</Markdown>}
+                                {comparator.scoreGapJustification && <Markdown>{comparator.scoreGapJustification}</Markdown>}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {!calibrationRationale && !scoreGapAssessment && (
+                      <p className="text-sm text-slate-300">Comparator calibration ran and produced adjustment {adjustmentLabel}.</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-300">{comparatorNotAppliedMessage}</p>
+                )}
+              </>
+            )}
+            {scoreDetail === 'final' && (
+              <>
+                <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest">Final Score</h3>
+                <Markdown>{currentVerdict || `Final score: ${finalScore}.`}</Markdown>
+              </>
+            )}
+          </div>
 
           {isAdmin && !selectedPass && (subscoreConsistencyWarning || subscoreSaturationWarning) && (
             <div className="bg-amber-400/10 border border-amber-300/20 rounded-2xl p-4">
@@ -450,33 +544,20 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
           )}
 
-          {isAdmin && storedIndividualReviews.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setActiveTab('combined')}
-                className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
-                  activeTab === 'combined'
-                    ? 'bg-indigo-500 text-white'
-                    : 'bg-white/10 text-slate-200 hover:bg-white/20'
-                }`}
-              >
-                Final · {combinedBand.median}
-              </button>
-              {storedIndividualReviews.map((_: any, index: number) => (
-                <button
-                  key={index}
-                  onClick={() => setActiveTab(index)}
-                  className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
-                    activeTab === index
-                      ? 'bg-fuchsia-500 text-white'
-                      : 'bg-white/10 text-slate-200 hover:bg-white/20'
-                  }`}
-                >
-                  Pass {index + 1} · {Number.isFinite(passMedianScores[index]) ? passMedianScores[index] : '—'}
-                </button>
-              ))}
-            </div>
+          {/* Central Claim */}
+          {currentCentralClaim && (
+            <Section icon={<Target className="w-4 h-4" />} label="Central Claim" color="text-sky-400">
+              <Markdown>{currentCentralClaim}</Markdown>
+            </Section>
           )}
+
+          {/* Summary */}
+          <div className="space-y-2">
+            <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+              <BookOpen className="w-4 h-4" /> Review Summary
+            </h3>
+            <Markdown>{currentSummary}</Markdown>
+          </div>
 
           {currentVerdict && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
@@ -490,21 +571,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </p>
               )}
             </div>
-          )}
-
-          {/* Summary */}
-          <div className="space-y-2">
-            <h3 className="text-xs font-black text-indigo-400 uppercase tracking-widest flex items-center gap-2">
-              <BookOpen className="w-4 h-4" /> Review Summary
-            </h3>
-            <Markdown>{currentSummary}</Markdown>
-          </div>
-
-          {/* Central Claim */}
-          {currentCentralClaim && (
-            <Section icon={<Target className="w-4 h-4" />} label="Central Claim" color="text-sky-400">
-              <Markdown>{currentCentralClaim}</Markdown>
-            </Section>
           )}
 
           {currentContributionArchetype?.primary && (
@@ -617,77 +683,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             );
           })()}
 
-          {Array.isArray(currentNearestComparators) && currentNearestComparators.length > 0 && (
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
-              <h3 className="text-xs font-black text-lime-300 uppercase tracking-widest flex items-center gap-2">
-                <GitBranch className="w-4 h-4" /> Nearest Comparators
-              </h3>
-              {publicComparatorSummary && (
-                <Markdown>{publicComparatorSummary}</Markdown>
-              )}
-              <div className="space-y-3">
-                {currentNearestComparators.map((comparator: any, index: number) => (
-                  <div key={`${comparator.sitePaperId || comparator.paperTitle || index}-${index}`} className="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        {comparator.sitePaperId ? (
-                          <a
-                            href={`/papers/${encodeURIComponent(comparator.sitePaperId)}`}
-                            className="text-sm font-black text-white hover:text-lime-200 transition-colors"
-                          >
-                            {comparator.paperTitle || comparator.title || 'Comparator'}
-                          </a>
-                        ) : (
-                          <p className="text-sm font-black text-white">{comparator.paperTitle || comparator.title || 'Comparator'}</p>
-                        )}
-                        {comparator.sitePaperId && (
-                          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500">In-site comparator</p>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {comparator.relationship && (
-                          <span className="rounded-full bg-lime-400/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-lime-200">
-                            {String(comparator.relationship).replace(/_/g, ' ')}
-                          </span>
-                        )}
-                        {comparator.relativeAssessment && (
-                          <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-slate-200">
-                            {comparator.relativeAssessment}
-                          </span>
-                        )}
-                        {comparator.relativeScoreJudgment && (
-                          <span className="rounded-full bg-cyan-400/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-widest text-cyan-200">
-                            {String(comparator.relativeScoreJudgment).replace(/_/g, ' ')}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="grid md:grid-cols-2 gap-3">
-                      {comparator.whyComparable && (
-                        <div>
-                          <p className="text-[10px] font-black text-lime-300 uppercase tracking-widest mb-1">Why Comparable</p>
-                          <Markdown>{comparator.whyComparable}</Markdown>
-                        </div>
-                      )}
-                      {comparator.keyDifference && (
-                        <div>
-                          <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest mb-1">Key Difference</p>
-                          <Markdown>{comparator.keyDifference}</Markdown>
-                        </div>
-                      )}
-                    </div>
-                    {comparator.scoreGapJustification && (
-                      <div>
-                        <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Score Gap Justification</p>
-                        <Markdown>{comparator.scoreGapJustification}</Markdown>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Coverage Ledger (new prompt) */}
           {!hasIcoLedger && (review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {
             const hasContent = currentDirectTargets?.length || currentImportedInputs?.length || currentTheorySpaceVariants?.length || currentMechanismSharingAssessment;
@@ -744,58 +739,145 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <Microscope className="w-4 h-4" /> Technical Assessment
             </h3>
             <div className="grid md:grid-cols-2 gap-4">
-              {currentCorrectness && (
-                <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Correctness" color="text-emerald-400">
-                  <Markdown>{currentCorrectness}</Markdown>
+              {technicalAssessmentBoxes.map((box) => (
+                <div key={box.label} className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-2">
+                  <h3 className={`text-xs font-black uppercase tracking-widest flex items-center gap-2 ${box.color}`}>
+                    {box.icon} {box.label}
+                  </h3>
+                  {hasText(box.value) ? (
+                    <Markdown>{box.value}</Markdown>
+                  ) : (
+                    <p className="text-sm text-slate-500">N/A</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <details className="bg-white/5 border border-white/10 rounded-2xl p-5 group">
+            <summary className="cursor-pointer text-xs font-black text-slate-300 uppercase tracking-widest">
+              Advanced Scoring Details
+            </summary>
+            <div className="mt-4 space-y-4">
+              <div className="grid md:grid-cols-3 gap-3">
+                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
+                  <p className="text-sm font-black text-white mt-1">{passMedianScores.length > 0 ? passMedianScores.join(', ') : 'Not stored'}</p>
+                </div>
+                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Pass Disagreement</p>
+                  <p className="text-sm font-black text-white mt-1">{computedPassDisagreement ?? 'Insufficient data'}</p>
+                </div>
+                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Derived Stability</p>
+                  <p className="text-sm font-black text-white mt-1 capitalize">{computedStability}</p>
+                </div>
+                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Adjudicator Band</p>
+                  <p className="text-sm font-black text-white mt-1">{blindBand ? `${blindBand.low}-${blindBand.median}-${blindBand.high}` : 'Not stored'}</p>
+                </div>
+                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Final Band</p>
+                  <p className="text-sm font-black text-white mt-1">{combinedBand.low}-{combinedBand.median}-{combinedBand.high}</p>
+                </div>
+                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparator Status</p>
+                  <p className="text-sm font-black text-white mt-1 capitalize">{String(comparatorCalibrationStatus).replace(/_/g, ' ')}</p>
+                </div>
+              </div>
+
+              {(calibrationRationale || scoreGapAssessment || publicComparatorSummary || scoreCappingReason) && (
+                <div className="space-y-3">
+                  {scoreCappingReason && (
+                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Score Capping Reason" color="text-amber-300">
+                      <Markdown>{scoreCappingReason}</Markdown>
+                    </Section>
+                  )}
+                  {calibrationRationale && (
+                    <Section icon={<Shield className="w-4 h-4" />} label="Calibration Rationale" color="text-cyan-300">
+                      <Markdown>{calibrationRationale}</Markdown>
+                    </Section>
+                  )}
+                  {scoreGapAssessment && (
+                    <Section icon={<TrendingUp className="w-4 h-4" />} label="Score Gap Assessment" color="text-violet-300">
+                      <Markdown>{scoreGapAssessment}</Markdown>
+                    </Section>
+                  )}
+                  {publicComparatorSummary && (
+                    <Section icon={<GitBranch className="w-4 h-4" />} label="Comparator Summary" color="text-lime-300">
+                      <Markdown>{publicComparatorSummary}</Markdown>
+                    </Section>
+                  )}
+                </div>
+              )}
+
+              {explanatoryDeltaAssessment && typeof explanatoryDeltaAssessment === 'object' && Object.values(explanatoryDeltaAssessment).some(hasText) && (
+                <Section icon={<GitBranch className="w-4 h-4" />} label="Explanatory Delta" color="text-lime-300">
+                  <div className="space-y-2">
+                    {[
+                      explanatoryDeltaAssessment.whatIsNewBeyondComparators,
+                      explanatoryDeltaAssessment.inputsComparison,
+                      explanatoryDeltaAssessment.constructionComparison,
+                      explanatoryDeltaAssessment.outputsComparison,
+                      explanatoryDeltaAssessment.downstreamReachComparison,
+                      explanatoryDeltaAssessment.frameworkConditionalityComparison,
+                    ].filter(hasText).map((item: string, index: number) => (
+                      <Markdown key={index}>{item}</Markdown>
+                    ))}
+                  </div>
                 </Section>
               )}
-              {currentInputGrounding && (
-                <Section icon={<Shield className="w-4 h-4" />} label="Input Grounding" color="text-cyan-400">
-                  <Markdown>{currentInputGrounding}</Markdown>
-                </Section>
-              )}
-              {currentInputFundamentality && (
-                <Section icon={<BrainCircuit className="w-4 h-4" />} label="Input Fundamentality" color="text-violet-400">
-                  <Markdown>{currentInputFundamentality}</Markdown>
-                </Section>
-              )}
-              {currentFrameworkIndependence && (
-                <Section icon={<GitBranch className="w-4 h-4" />} label="Framework Independence" color="text-sky-300">
-                  <Markdown>{currentFrameworkIndependence}</Markdown>
-                </Section>
-              )}
-              {currentFrameworkConditionality && (
-                <Section icon={<GitBranch className="w-4 h-4" />} label="Framework Conditionality" color="text-amber-400">
-                  <Markdown>{currentFrameworkConditionality}</Markdown>
-                </Section>
-              )}
-              {currentHardToVaryAssessment && (
-                <Section icon={<Shield className="w-4 h-4" />} label="Hard-to-Vary Assessment" color="text-orange-300">
-                  <Markdown>{currentHardToVaryAssessment}</Markdown>
-                </Section>
-              )}
-              {currentOriginalContribution && (
-                <Section icon={<Microscope className="w-4 h-4" />} label="Manuscript Original Contribution" color="text-indigo-300">
-                  <Markdown>{currentOriginalContribution}</Markdown>
-                </Section>
-              )}
-              {currentStrongestCase && (
-                <Section icon={<TrendingUp className="w-4 h-4" />} label="Strongest Case" color="text-green-400">
-                  <Markdown>{currentStrongestCase}</Markdown>
-                </Section>
-              )}
-              {currentStrongestObjection && (
-                <Section icon={<AlertTriangle className="w-4 h-4" />} label="Strongest Objection" color="text-rose-400">
-                  <Markdown>{currentStrongestObjection}</Markdown>
+
+              <div className="grid md:grid-cols-2 gap-3">
+                {promptVersion && (
+                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Prompt Version</p>
+                    <p className="text-sm text-white mt-1 break-words">{promptVersion}</p>
+                  </div>
+                )}
+                {benchmarkSetVersion && (
+                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Benchmark Set</p>
+                    <p className="text-sm text-white mt-1 break-words">{benchmarkSetVersion}</p>
+                  </div>
+                )}
+                {extractionMethod && (
+                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Extraction Method</p>
+                    <p className="text-sm text-white mt-1 break-words">{extractionMethod}</p>
+                  </div>
+                )}
+                {pdfVisibleFallbackUsed && (
+                  <div className="bg-amber-400/10 border border-amber-300/20 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-amber-200 uppercase tracking-widest">PDF Fallback</p>
+                    <p className="text-sm text-amber-50 mt-1">
+                      Plain text extraction was weak, so Gemini read the PDF directly. The review still ignores identity signals, but visible author/title information may be present in the source PDF.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {isAdmin && !selectedPass && storedIndividualReviews.length > 0 && (
+                <Section icon={<ListChecks className="w-4 h-4" />} label="Individual Pass Details" color="text-violet-300">
+                  <div className="space-y-3">
+                    {storedIndividualReviews.map((pass: any, index: number) => {
+                      const band = passScoreBands[index];
+                      return (
+                        <div key={index} className="bg-white/5 border border-white/10 rounded-xl p-3">
+                          <p className="text-xs font-black text-white">Pass {index + 1} · {band?.median ?? '—'} · {pass.bestClassification || 'unclassified'}</p>
+                          {(pass.oneParagraphVerdict || pass.finalJudgment || pass.summary) && (
+                            <div className="mt-2">
+                              <Markdown>{pass.oneParagraphVerdict || pass.finalJudgment || pass.summary}</Markdown>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </Section>
               )}
             </div>
-            {currentDecisiveCheck && (
-              <Section icon={<Microscope className="w-4 h-4" />} label="Decisive Check" color="text-yellow-400">
-              <Markdown>{currentDecisiveCheck}</Markdown>
-            </Section>
-          )}
-          </div>
+          </details>
 
           {hasOptionalDetails && (
             <details className="bg-white/5 border border-white/10 rounded-2xl p-5 group">
@@ -850,25 +932,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 {isAdmin && adminComparatorNotes && (
                   <Section icon={<BrainCircuit className="w-4 h-4" />} label="Comparator Admin Notes" color="text-violet-300">
                     <Markdown>{adminComparatorNotes}</Markdown>
-                  </Section>
-                )}
-                {isAdmin && !selectedPass && storedIndividualReviews.length > 0 && (
-                  <Section icon={<ListChecks className="w-4 h-4" />} label="Individual Pass Details" color="text-violet-300">
-                    <div className="space-y-3">
-                      {storedIndividualReviews.map((pass: any, index: number) => {
-                        const band = passScoreBands[index];
-                        return (
-                          <div key={index} className="bg-white/5 border border-white/10 rounded-xl p-3">
-                            <p className="text-xs font-black text-white">Pass {index + 1} · {band?.median ?? '—'} · {pass.bestClassification || 'unclassified'}</p>
-                            {(pass.oneParagraphVerdict || pass.finalJudgment || pass.summary) && (
-                              <div className="mt-2">
-                                <Markdown>{pass.oneParagraphVerdict || pass.finalJudgment || pass.summary}</Markdown>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
                   </Section>
                 )}
               </div>
