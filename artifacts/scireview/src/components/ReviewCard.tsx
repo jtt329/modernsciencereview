@@ -485,7 +485,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
             <p className="text-xs text-slate-400">{scorePathCaption}</p>
 
-            <div className="grid md:grid-cols-4 gap-3 border-t border-white/10 pt-4">
+            <div className="grid md:grid-cols-3 gap-3 border-t border-white/10 pt-4">
               <div>
                 <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
                 <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
@@ -499,12 +499,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <p className="text-sm font-bold text-white mt-1 capitalize">
                   {scoreStability || 'Not stored'}
                   {passDisagreement != null && !selectedPass ? ` (${passDisagreement} point disagreement)` : ''}
-                </p>
-              </div>
-              <div>
-                <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Model / Prompt</p>
-                <p className="text-sm font-bold text-white mt-1">
-                  {review.modelName || 'Model not stored'}{promptVersion ? ` · ${promptVersion}` : ''}
                 </p>
               </div>
             </div>
