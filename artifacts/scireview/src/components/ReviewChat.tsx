@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { AIReview } from '../types';
+import { normalizeMathMarkdown } from '../lib/mathMarkdown';
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, '') || '';
 
@@ -153,7 +154,7 @@ export default function ReviewChat({ review }: ReviewChatProps) {
                       {msg.role === 'assistant' ? (
                         <div className="prose prose-sm max-w-none text-slate-700 leading-relaxed">
                           <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                            {msg.content}
+                            {normalizeMathMarkdown(msg.content)}
                           </ReactMarkdown>
                         </div>
                       ) : (

@@ -596,7 +596,9 @@ router.post("/papers", async (req, res) => {
   try {
     const { source } = req.body;
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
-    const reviewMode: ReviewPipelineMode = normalizeReviewPipelineMode(source.reviewMode);
+    const isAdmin = Boolean(ADMIN_EMAIL && req.user.email === ADMIN_EMAIL);
+    const requestedReviewMode: ReviewPipelineMode = normalizeReviewPipelineMode(source.reviewMode);
+    const reviewMode: ReviewPipelineMode = isAdmin ? requestedReviewMode : "normal-review";
     const sourceHash = sourceHashFor(source);
     const expectedModelName = expectedReviewModelName(reviewMode);
     submissionKey = sourceHash ? `${req.user.id}:${expectedModelName}:${sourceHash}` : null;

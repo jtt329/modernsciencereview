@@ -767,6 +767,7 @@ export default function App() {
           <SubmissionForm
             onSubmit={handleSubmitPaper}
             onClose={() => setIsSubmitting(false)}
+            isAdmin={isAdmin}
           />
         )}
       </AnimatePresence>

@@ -1,5 +1,6 @@
 import React, { useMemo } from 'react';
 import katex from 'katex';
+import { normalizeMathMarkdown } from '../lib/mathMarkdown';
 
 function escapeHtml(text: string): string {
   return text
@@ -10,9 +11,7 @@ function escapeHtml(text: string): string {
 
 function renderLatex(text: string): string {
   if (!text) return '';
-  text = String(text)
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math) => `$$${math}$$`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, math) => `$${math}$`);
+  text = normalizeMathMarkdown(String(text));
   let result = '';
   let remaining = text;
 

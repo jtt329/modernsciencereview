@@ -7,18 +7,13 @@ import rehypeKatex from 'rehype-katex';
 import { format } from 'date-fns';
 import { AIReview } from '../types';
 import ReviewChat from './ReviewChat';
+import { normalizeMathMarkdown } from '../lib/mathMarkdown';
 
 interface ReviewCardProps {
   review: AIReview;
   onLike: (id: string, e: React.MouseEvent) => void;
   isLiked: boolean;
   isAdmin?: boolean;
-}
-
-function normalizeMathMarkdown(text: string) {
-  return String(text ?? "")
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math) => `$$${math}$$`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, math) => `$${math}$`);
 }
 
 const Markdown = ({ children }: { children: string }) => (
