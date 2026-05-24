@@ -348,21 +348,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     { label: 'Strongest Objection', value: currentStrongestObjection, color: 'text-rose-400', icon: <AlertTriangle className="w-4 h-4" /> },
     { label: 'Decisive Check', value: currentDecisiveCheck, color: 'text-yellow-400', icon: <Microscope className="w-4 h-4" /> },
   ];
-  const selectedViewLabel = typeof scoreDetail === 'number'
-    ? `Blind Pass ${scoreDetail + 1}`
-    : scoreDetail === 'adjudicator'
-      ? 'Adjudicator Rating'
-      : scoreDetail === 'comparator'
-        ? 'Comparator Adjustment'
-        : 'Final Score';
-  const selectedViewDescription = typeof scoreDetail === 'number'
-    ? `Showing the rendered details from independent blind review pass ${scoreDetail + 1}.`
-    : scoreDetail === 'adjudicator'
-      ? 'Showing the blind adjudicator reasoning before comparator calibration.'
-      : scoreDetail === 'comparator'
-        ? 'Showing comparator calibration details and nearest comparable papers.'
-        : 'Showing the final public review below.';
-
   return (
     <>
       <motion.div
@@ -399,93 +384,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
           </div>
 
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Score Path</p>
-              <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Select a segment to change the view below</p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2 text-sm font-black text-white" role="tablist" aria-label="Score path review views">
-              <span className="text-slate-300">Blind Passes (</span>
-              {passMedianScores.length > 0 ? (
-                <>
-                  {passMedianScoresByIndex.map((score: number | null | undefined, index: number) => score == null ? null : (
-                    <React.Fragment key={index}>
-                      {index > 0 && <span className="text-slate-500">,</span>}
-                      <button
-                        role="tab"
-                        aria-selected={scoreDetail === index}
-                        onClick={() => {
-                          setActiveTab(index);
-                          setScoreDetail(index);
-                        }}
-                        className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
-                          scoreDetail === index
-                            ? 'border-white bg-fuchsia-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
-                            : 'border-white/20 bg-fuchsia-400/10 text-fuchsia-100 hover:border-white/60 hover:bg-fuchsia-400/20'
-                        }`}
-                      >
-                        {score}
-                      </button>
-                    </React.Fragment>
-                  ))}
-                  {passMedianScores.length === 1 && <span className="text-slate-400">; only 1 valid pass</span>}
-                </>
-              ) : (
-                <span className="text-slate-400">not stored</span>
-              )}
-              <span className="text-slate-300">)</span>
-              <span className="text-white">-&gt;</span>
-              <button
-                role="tab"
-                aria-selected={scoreDetail === 'adjudicator'}
-                onClick={() => {
-                  setActiveTab('combined');
-                  setScoreDetail('adjudicator');
-                }}
-                className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
-                  scoreDetail === 'adjudicator'
-                    ? 'border-white bg-sky-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
-                    : 'border-white/20 bg-sky-400/10 text-sky-100 hover:border-white/60 hover:bg-sky-400/20'
-                }`}
-              >
-                Adjudicator Rating {adjudicatorRating}
-              </button>
-              <span className="text-white">-&gt;</span>
-              <button
-                role="tab"
-                aria-selected={scoreDetail === 'comparator'}
-                onClick={() => {
-                  setActiveTab('combined');
-                  setScoreDetail('comparator');
-                }}
-                className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
-                  scoreDetail === 'comparator'
-                    ? 'border-white bg-cyan-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
-                    : 'border-white/20 bg-cyan-400/10 text-cyan-100 hover:border-white/60 hover:bg-cyan-400/20'
-                }`}
-              >
-                Adjustment {adjustmentLabel}
-              </button>
-              <span className="text-white">-&gt;</span>
-              <button
-                role="tab"
-                aria-selected={scoreDetail === 'final'}
-                onClick={() => {
-                  setActiveTab('combined');
-                  setScoreDetail('final');
-                }}
-                className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
-                  scoreDetail === 'final'
-                    ? 'border-white bg-emerald-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
-                    : 'border-white/20 bg-emerald-400/10 text-emerald-100 hover:border-white/60 hover:bg-emerald-400/20'
-                }`}
-              >
-                Final Score {finalScore}
-              </button>
-            </div>
-            <p className="text-xs text-slate-400">{scorePathCaption}</p>
-
-            <div className="grid md:grid-cols-3 gap-3 border-t border-white/10 pt-4">
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-5">
+            <div className="grid md:grid-cols-3 gap-3">
               <div>
                 <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
                 <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
@@ -502,22 +402,99 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </p>
               </div>
             </div>
+
+            <div className="border-t border-white/10 pt-4 space-y-3">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Score Path</p>
+                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Select a segment to change the review below</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-sm font-black text-white" role="tablist" aria-label="Score path review views">
+                <span className="text-slate-300">Blind Passes (</span>
+                {passMedianScores.length > 0 ? (
+                  <>
+                    {passMedianScoresByIndex.map((score: number | null | undefined, index: number) => score == null ? null : (
+                      <React.Fragment key={index}>
+                        {index > 0 && <span className="text-slate-500">,</span>}
+                        <button
+                          role="tab"
+                          aria-selected={scoreDetail === index}
+                          onClick={() => {
+                            setActiveTab(index);
+                            setScoreDetail(index);
+                          }}
+                          className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
+                            scoreDetail === index
+                              ? 'border-white bg-fuchsia-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
+                              : 'border-white/20 bg-fuchsia-400/10 text-fuchsia-100 hover:border-white/60 hover:bg-fuchsia-400/20'
+                          }`}
+                        >
+                          {score}
+                        </button>
+                      </React.Fragment>
+                    ))}
+                    {passMedianScores.length === 1 && <span className="text-slate-400">; only 1 valid pass</span>}
+                  </>
+                ) : (
+                  <span className="text-slate-400">not stored</span>
+                )}
+                <span className="text-slate-300">)</span>
+                <span className="text-white">-&gt;</span>
+                <button
+                  role="tab"
+                  aria-selected={scoreDetail === 'adjudicator'}
+                  onClick={() => {
+                    setActiveTab('combined');
+                    setScoreDetail('adjudicator');
+                  }}
+                  className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
+                    scoreDetail === 'adjudicator'
+                      ? 'border-white bg-sky-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
+                      : 'border-white/20 bg-sky-400/10 text-sky-100 hover:border-white/60 hover:bg-sky-400/20'
+                  }`}
+                >
+                  Adjudicator Rating {adjudicatorRating}
+                </button>
+                <span className="text-white">-&gt;</span>
+                <button
+                  role="tab"
+                  aria-selected={scoreDetail === 'comparator'}
+                  onClick={() => {
+                    setActiveTab('combined');
+                    setScoreDetail('comparator');
+                  }}
+                  className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
+                    scoreDetail === 'comparator'
+                      ? 'border-white bg-cyan-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
+                      : 'border-white/20 bg-cyan-400/10 text-cyan-100 hover:border-white/60 hover:bg-cyan-400/20'
+                  }`}
+                >
+                  Adjustment {adjustmentLabel}
+                </button>
+                <span className="text-white">-&gt;</span>
+                <button
+                  role="tab"
+                  aria-selected={scoreDetail === 'final'}
+                  onClick={() => {
+                    setActiveTab('combined');
+                    setScoreDetail('final');
+                  }}
+                  className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
+                    scoreDetail === 'final'
+                      ? 'border-white bg-emerald-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
+                      : 'border-white/20 bg-emerald-400/10 text-emerald-100 hover:border-white/60 hover:bg-emerald-400/20'
+                  }`}
+                >
+                  Final Score {finalScore}
+                </button>
+              </div>
+              <p className="text-xs text-slate-400">{scorePathCaption}</p>
+            </div>
           </div>
 
-          <div className="mx-auto -my-5 h-5 w-px bg-white/50" aria-hidden="true" />
-
           <div
-            className="relative rounded-3xl border border-white/35 bg-white/[0.03] p-4 space-y-8 shadow-[0_20px_70px_rgba(15,23,42,0.35)]"
+            className="relative rounded-3xl border border-white/45 bg-white/[0.03] p-4 space-y-8 shadow-[0_20px_70px_rgba(15,23,42,0.35)]"
             role="tabpanel"
           >
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-4">
-              <div>
-                <p className="text-[10px] font-black text-white uppercase tracking-widest">Selected View</p>
-                <p className="text-sm font-black text-white mt-1">{selectedViewLabel}</p>
-              </div>
-              <p className="text-xs font-semibold text-slate-300 max-w-xl">{selectedViewDescription}</p>
-            </div>
-
           {scoreDetail !== 'final' && (
             <div className="bg-slate-950/30 border border-white/10 rounded-2xl p-5 space-y-3">
               {typeof scoreDetail === 'number' && (
