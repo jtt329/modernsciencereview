@@ -661,7 +661,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest flex items-center gap-2">
                   <BrainCircuit className="w-4 h-4" /> Input-Construction-Output Ledger
                 </h3>
-                <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-4">
                   {currentPrimitiveInputs.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Primitive Inputs</p>
@@ -682,22 +682,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </ul>
                     </div>
                   )}
-                  {currentExternalEmbeddingsAndChecks.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">External Embeddings/Checks</p>
-                      <ul className="space-y-1">
-                        {currentExternalEmbeddingsAndChecks.map((item: string, i: number) => (
-                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                   {currentDirectOutputs.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Direct Outputs</p>
                       <ul className="space-y-1">
                         {currentDirectOutputs.map((item: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {currentExternalEmbeddingsAndChecks.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">External Embeddings / Checks</p>
+                      <ul className="space-y-1">
+                        {currentExternalEmbeddingsAndChecks.map((item: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
