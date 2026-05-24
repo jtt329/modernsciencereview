@@ -18,7 +18,7 @@ interface ReviewChatProps {
   review: AIReview;
 }
 
-const GREETING = `I'm the model that reviewed this manuscript. Ask me anything about the analysis — why I scored specific dimensions the way I did, what the strongest or weakest parts of the paper are, how confident I am in any of my assessments, or what it would take for a paper like this to rank higher.`;
+const GREETING = `I'm the model that reviewed this manuscript. Ask me anything about the paper or analysis.`;
 
 export default function ReviewChat({ review }: ReviewChatProps) {
   const [isOpen, setIsOpen] = useState(false);
