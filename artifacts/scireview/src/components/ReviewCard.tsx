@@ -176,7 +176,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
   const storedScoreStability = aggregateAdjudication?.scoreStability || storedAggregate?.scoreStability || (review as any).scoreStability || parsedCoverage?.scoreStability || null;
-  const aggregateScoreRange = aggregateAdjudication?.scoreRange ?? storedAggregate?.scoreRange ?? parsedCoverage?.scoreRange ?? null;
   const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
   const passScoreBands = storedIndividualReviews.map((pass: any) =>
     normalizeDisplayedBand(
@@ -207,16 +206,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
         aggregateClassification ?? review.bestClassification,
       )
     : null;
-  const activeBand = selectedPass
-    ? normalizeDisplayedBand(
-        selectedPass.scoreBand?.low,
-        selectedPass.scoreBand?.median,
-        selectedPass.scoreBand?.high,
-        selectedPass.bestClassification,
-      )
-    : combinedBand;
-  const displayScore = activeBand.median;
-  const scorePillLabel = `${displayScore}/100`;
   const adjudicatorRating = blindBand?.median ?? combinedBand.median;
   const finalScore = combinedBand.median;
   const computedPassDisagreement = passMedianScores.length >= 2
@@ -234,10 +223,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ? `${(calibrationAdjustment ?? 0) > 0 ? '+' : ''}${calibrationAdjustment ?? 0}`
     : 'not applied';
   const comparatorNotAppliedMessage =
-    'Comparator calibration has not been applied yet. In benchmark ingestion mode, this paper stores its blind intrinsic profile for later benchmark backfill.';
+    'Benchmark ingestion mode: comparator calibration will be run later during benchmark backfill.';
   const scorePathCaption = comparatorCalibrationApplied
-    ? 'Final score after comparator calibration.'
-    : 'Comparator calibration not applied yet. This review is in benchmark ingestion mode and stores the blind intrinsic profile for later benchmark backfill.';
+    ? 'Comparator-calibrated anchored scientific merit score.'
+    : 'Blind intrinsic score; comparator calibration not yet applied. Benchmark ingestion mode: comparator calibration will be run later during benchmark backfill.';
   const scoreCappingReason =
     parsedCoverage?.scoreCappingReason ??
     storedAggregate?.scoreCappingReason ??
@@ -248,6 +237,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const extractionMethod = parsedCoverage?.extractionMethod ?? '';
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
   const currentComparisonCohort = selectedPass?.comparisonCohort || selectedPass?.broadField || comparisonCohort;
+  const currentSummary = selectedPass?.summary || storedAggregate?.finalSummary || review.summary;
   const currentVerdict = selectedPass?.oneParagraphVerdict || selectedPass?.finalJudgment || aggregateVerdict;
   const currentCentralClaim = selectedPass?.centralClaim || review.centralClaim;
   const currentDirectTargets = selectedPass?.coverageLedger?.directTargets ?? directTargets;
@@ -331,11 +321,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     selectedPass?.breadthOfImpactScore ?? review.breadthOfImpactScore,
     selectedSubscoreValidity.breadthOfImpactScore !== false,
   );
-  const passDisagreement = !selectedPass ? computedPassDisagreement : aggregateScoreRange;
-
-  const scoreColor = displayScore >= 80 ? 'text-emerald-600 bg-emerald-50 border-emerald-200' :
-    displayScore >= 60 ? 'text-amber-600 bg-amber-50 border-amber-200' :
-    'text-rose-600 bg-rose-50 border-rose-200';
+  const passDisagreement = computedPassDisagreement;
+  const modelPipeline = parsedCoverage?.modelName ?? review.modelName;
+  const passBandLabels = passScoreBands
+    .filter(Boolean)
+    .map((band: { low: number; median: number; high: number }, index: number) => `P${index + 1}: ${band.low}-${band.median}-${band.high}`)
+    .join('; ');
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     { label: 'Input Grounding', value: currentInputGrounding, color: 'text-cyan-400', icon: <Shield className="w-4 h-4" /> },
@@ -365,45 +356,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               </div>
               <div>
                 <h2 className="text-xl font-black tracking-tight">AI Scientific Review</h2>
-                {review.modelName && (
-                  <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">{review.modelName}</p>
-                )}
-              </div>
-            </div>
-            <div className="relative group">
-              <div className={`px-5 py-3 rounded-2xl font-black text-2xl border cursor-default ${scoreColor}`}>
-                {scorePillLabel}
-              </div>
-              <div className="absolute bottom-full right-0 mb-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
-                {selectedPass
-                  ? 'This is the anchored scientific merit score assigned by this individual independent review pass.'
-                  : comparatorCalibrationApplied
-                    ? 'This is the final anchored scientific merit score after comparator calibration.'
-                    : 'This is the blind intrinsic score. Comparator calibration has not been applied yet.'}
               </div>
             </div>
           </div>
 
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-5">
-            <div className="grid md:grid-cols-3 gap-3">
-              <div>
-                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
-                <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
-                <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Stability</p>
-                <p className="text-sm font-bold text-white mt-1 capitalize">
-                  {scoreStability || 'Not stored'}
-                  {passDisagreement != null && !selectedPass ? ` (${passDisagreement} point disagreement)` : ''}
-                </p>
-              </div>
-            </div>
-
-            <div className="border-t border-white/10 pt-4 space-y-3">
+            <div className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-2">
                 <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Score Path</p>
                 <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Select a segment to change the review below</p>
@@ -414,7 +372,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <>
                     {passMedianScoresByIndex.map((score: number | null | undefined, index: number) => score == null ? null : (
                       <React.Fragment key={index}>
-                        {index > 0 && <span className="text-slate-500">,</span>}
+                        {index > 0 && <span className="text-slate-300">,</span>}
                         <button
                           role="tab"
                           aria-selected={scoreDetail === index}
@@ -432,10 +390,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         </button>
                       </React.Fragment>
                     ))}
-                    {passMedianScores.length === 1 && <span className="text-slate-400">; only 1 valid pass</span>}
+                    {passMedianScores.length === 1 && <span className="text-slate-300">; only 1 valid pass</span>}
                   </>
                 ) : (
-                  <span className="text-slate-400">not stored</span>
+                  <span className="text-slate-300">not stored</span>
                 )}
                 <span className="text-slate-300">)</span>
                 <span className="text-white">-&gt;</span>
@@ -488,6 +446,33 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </button>
               </div>
               <p className="text-xs text-slate-400">{scorePathCaption}</p>
+            </div>
+
+            <div className="border-t border-white/10 pt-4">
+              <div className={`grid gap-3 ${isAdmin ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+              <div>
+                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
+                <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
+                <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Stability</p>
+                <p className="text-sm font-bold text-white mt-1 capitalize">
+                  {scoreStability || 'Not stored'}
+                  {passDisagreement != null && !selectedPass ? ` (${passDisagreement} point disagreement)` : ''}
+                </p>
+              </div>
+              {isAdmin && (
+                <div>
+                  <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Model / Prompt</p>
+                  <p className="text-sm font-bold text-white mt-1">{modelPipeline || 'Not stored'}</p>
+                  {promptVersion && <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{promptVersion}</p>}
+                </div>
+              )}
+              </div>
             </div>
           </div>
 
@@ -569,6 +554,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
           {currentCentralClaim && (
             <Section icon={<Target className="w-4 h-4" />} label="Central Claim" color="text-sky-400">
               <Markdown>{currentCentralClaim}</Markdown>
+            </Section>
+          )}
+
+          {currentSummary && (
+            <Section icon={<BookOpen className="w-4 h-4" />} label="Review Summary" color="text-indigo-300">
+              <Markdown>{currentSummary}</Markdown>
             </Section>
           )}
 
@@ -659,22 +650,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </ul>
                     </div>
                   )}
-                  {currentDirectOutputs.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Direct Outputs</p>
-                      <ul className="space-y-1">
-                        {currentDirectOutputs.map((item: string, i: number) => (
-                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                   {currentExternalEmbeddingsAndChecks.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">External Embeddings / Checks</p>
                       <ul className="space-y-1">
                         {currentExternalEmbeddingsAndChecks.map((item: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {currentDirectOutputs.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Direct Outputs</p>
+                      <ul className="space-y-1">
+                        {currentDirectOutputs.map((item: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
@@ -776,6 +767,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
                   <p className="text-sm font-black text-white mt-1">{passMedianScores.length > 0 ? passMedianScores.join(', ') : 'Not stored'}</p>
+                  {passBandLabels && <p className="text-[10px] font-bold text-slate-400 mt-1">{passBandLabels}</p>}
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Pass Disagreement</p>
@@ -790,7 +782,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <p className="text-sm font-black text-white mt-1">{blindBand ? `${blindBand.low}-${blindBand.median}-${blindBand.high}` : 'Not stored'}</p>
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Final Band</p>
+                  <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">{comparatorCalibrationApplied ? 'Final Calibrated Band' : 'Final Blind Intrinsic Band'}</p>
                   <p className="text-sm font-black text-white mt-1">{combinedBand.low}-{combinedBand.median}-{combinedBand.high}</p>
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">

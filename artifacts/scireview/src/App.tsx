@@ -489,7 +489,7 @@ export default function App() {
                   Submit your research, get an instant AI assessment, and timestamp your work on the public record.
                 </p>
                 <p className="text-xs font-bold text-indigo-500 uppercase tracking-widest pt-1">
-                  Powered by Gemini Pro x2 + Blind Adjudicator + Benchmark Calibration
+                  Powered by Gemini Pro x2 + Blind Adjudicator
                 </p>
               </div>
 
@@ -848,7 +848,7 @@ export default function App() {
             <span className="text-lg font-bold text-slate-900">Modern Science Review</span>
           </div>
           <p className="text-slate-500 text-sm font-medium">Empowering researchers with AI-driven insights and public timestamping.</p>
-          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-8">2026 Modern Science Review — Powered by Gemini Pro x2 + Blind Adjudicator + Benchmark Calibration</div>
+          <div className="text-[10px] font-bold text-slate-400 uppercase tracking-widest pt-8">2026 Modern Science Review — Powered by Gemini Pro x2 + Blind Adjudicator</div>
         </div>
       </footer>
     </div>

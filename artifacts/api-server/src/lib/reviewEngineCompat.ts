@@ -1484,6 +1484,14 @@ function validateIndividualReview(review: IndividualReview) {
     throw new Error("Generated review was blank or missing substantive reasoning.");
   }
 
+  if (!review.summary.trim()) {
+    throw new Error("Generated review was missing a review summary.");
+  }
+
+  if (!review.centralClaim.trim()) {
+    throw new Error("Generated review was missing a central claim.");
+  }
+
   if (score === 0 && reasoningText.length < 180) {
     throw new Error("Generated review returned score 0 without enough reasoning; treating as failed generation.");
   }
@@ -1839,7 +1847,10 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const finalScoreBand = parsedBand.low === 0 && parsedBand.median === 0 && parsedBand.high === 0
     ? { low: defaultLow, median: defaultMedian, high: defaultHigh }
     : parsedBand;
-  const scoreRange = Math.round(asNumber(adjudicationSource.scoreRange ?? source.scoreRange, finalScoreBand.high - finalScoreBand.low, 0, 100));
+  const validPassDisagreement = fallbackScores.length >= 2
+    ? Math.max(...fallbackScores) - Math.min(...fallbackScores)
+    : null;
+  const scoreRange = validPassDisagreement ?? Math.round(asNumber(adjudicationSource.scoreRange ?? source.scoreRange, finalScoreBand.high - finalScoreBand.low, 0, 100));
   const scoreStabilityCandidate = asString(adjudicationSource.scoreStability ?? source.scoreStability).toLowerCase();
   const scoreStability: ScoreStability =
     scoreStabilityCandidate === "high" || scoreStabilityCandidate === "medium" || scoreStabilityCandidate === "low"
