@@ -243,6 +243,18 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     storedAggregate?.scoreCappingReason ??
     comparatorCalibration?.scoreCappingReason ??
     '';
+  const failedClaimsExcludedFromScore = parsedCoverage?.failedClaimsExcludedFromScore
+    ?? aggregateAdjudication?.failedClaimsExcludedFromScore
+    ?? storedAggregate?.failedClaimsExcludedFromScore
+    ?? [];
+  const survivingHighValueContributions = parsedCoverage?.survivingHighValueContributions
+    ?? aggregateAdjudication?.survivingHighValueContributions
+    ?? storedAggregate?.survivingHighValueContributions
+    ?? [];
+  const survivingContributionScoreBasis = parsedCoverage?.survivingContributionScoreBasis
+    ?? aggregateAdjudication?.survivingContributionScoreBasis
+    ?? storedAggregate?.survivingContributionScoreBasis
+    ?? '';
   const promptVersion = parsedCoverage?.promptVersion ?? storedAggregate?.promptVersion ?? '';
   const benchmarkSetVersion = parsedCoverage?.benchmarkSetVersion ?? comparatorCalibration?.benchmarkSetVersion ?? '';
   const extractionMethod = parsedCoverage?.extractionMethod ?? '';
@@ -808,8 +820,23 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </div>
               </div>
 
-              {(calibrationRationale || scoreGapAssessment || publicComparatorSummary || scoreCappingReason) && (
+              {(calibrationRationale || scoreGapAssessment || publicComparatorSummary || scoreCappingReason || asArray(failedClaimsExcludedFromScore).length > 0 || asArray(survivingHighValueContributions).length > 0 || hasText(survivingContributionScoreBasis)) && (
                 <div className="space-y-3">
+                  {asArray(failedClaimsExcludedFromScore).length > 0 && (
+                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Claim(s) Excluded From Score" color="text-rose-300">
+                      <Markdown>{listMarkdown(failedClaimsExcludedFromScore)}</Markdown>
+                    </Section>
+                  )}
+                  {asArray(survivingHighValueContributions).length > 0 && (
+                    <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Surviving High-Value Contribution(s)" color="text-emerald-300">
+                      <Markdown>{listMarkdown(survivingHighValueContributions)}</Markdown>
+                    </Section>
+                  )}
+                  {hasText(survivingContributionScoreBasis) && (
+                    <Section icon={<Shield className="w-4 h-4" />} label="Surviving Contribution Score Basis" color="text-cyan-300">
+                      <Markdown>{survivingContributionScoreBasis}</Markdown>
+                    </Section>
+                  )}
                   {scoreCappingReason && (
                     <Section icon={<AlertTriangle className="w-4 h-4" />} label="Score Capping Reason" color="text-amber-300">
                       <Markdown>{scoreCappingReason}</Markdown>

@@ -666,6 +666,12 @@ router.get("/papers/export", async (_req, res) => {
           subscoreRationale: coverageLedger?.subscoreRationale ?? aggregate?.subscoreRationale ?? null,
           fatalObjectionPresent: adjudication?.fatalObjectionPresent ?? aggregate?.fatalObjectionPresent ?? false,
           fatalObjectionAssessment: adjudication?.fatalObjectionAssessment ?? aggregate?.fatalObjectionAssessment ?? null,
+          fatalToSpecificClaimOnly: adjudication?.fatalToSpecificClaimOnly ?? aggregate?.fatalToSpecificClaimOnly ?? false,
+          paperFatalError: adjudication?.paperFatalError ?? aggregate?.paperFatalError ?? false,
+          contributionInventory: coverageLedger?.contributionInventory ?? adjudication?.contributionInventory ?? aggregate?.contributionInventory ?? [],
+          survivingHighValueContributions: coverageLedger?.survivingHighValueContributions ?? adjudication?.survivingHighValueContributions ?? aggregate?.survivingHighValueContributions ?? [],
+          failedClaimsExcludedFromScore: coverageLedger?.failedClaimsExcludedFromScore ?? adjudication?.failedClaimsExcludedFromScore ?? aggregate?.failedClaimsExcludedFromScore ?? [],
+          survivingContributionScoreBasis: coverageLedger?.survivingContributionScoreBasis ?? adjudication?.survivingContributionScoreBasis ?? aggregate?.survivingContributionScoreBasis ?? null,
           scoreCappingReason: coverageLedger?.scoreCappingReason ?? aggregate?.scoreCappingReason ?? comparatorCalibration?.scoreCappingReason ?? null,
           validationWarnings: {
             subscoreConsistencyWarning: coverageLedger?.subscoreConsistencyWarning ?? aggregate?.subscoreConsistencyWarning ?? adjudication?.subscoreConsistencyWarning ?? null,

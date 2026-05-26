@@ -127,6 +127,15 @@ type NearestComparator = {
   sitePaperId?: string;
 };
 
+type ContributionInventoryItem = {
+  claimOrContribution: string;
+  status: "correct" | "likely_correct" | "uncertain" | "flawed" | "false";
+  contributionWeight: "low" | "medium" | "high" | "field_shaping";
+  separability: "inseparable" | "separable" | "independent";
+  survivalStatus: "survives" | "partially_survives" | "fails";
+  notes: string;
+};
+
 type AdjudicationDetails = {
   individualScores: number[];
   scoreRange: number;
@@ -135,6 +144,12 @@ type AdjudicationDetails = {
   mainDisagreements: string[];
   fatalObjectionPresent: boolean;
   fatalObjectionAssessment: string;
+  fatalToSpecificClaimOnly: boolean;
+  paperFatalError: boolean;
+  contributionInventory: ContributionInventoryItem[];
+  survivingHighValueContributions: string[];
+  failedClaimsExcludedFromScore: string[];
+  survivingContributionScoreBasis: string;
   calibrationAdjustments: string;
   subscoreConsistencyWarning: string;
   subscoreSaturationWarning: boolean;
@@ -306,6 +321,12 @@ type AggregateReview = {
   mainDisagreements: string[];
   fatalObjectionPresent: boolean;
   fatalObjectionAssessment: string;
+  fatalToSpecificClaimOnly: boolean;
+  paperFatalError: boolean;
+  contributionInventory: ContributionInventoryItem[];
+  survivingHighValueContributions: string[];
+  failedClaimsExcludedFromScore: string[];
+  survivingContributionScoreBasis: string;
   inputGroundingAssessment: string;
   inputFundamentalityAssessment: string;
   contributionGroundingType: string;
@@ -583,7 +604,7 @@ Return valid JSON only with this exact structure:
 
 All numeric fields must be numbers, not strings. Output valid JSON only.`;
 
-export const REVIEW_PROMPT_VERSION = "v9-organic-clusters-ico-scores";
+export const REVIEW_PROMPT_VERSION = "v10-fatal-error-surviving-contribution";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -600,9 +621,37 @@ const SHORT_INPUT_CONSTRUCTION_OUTPUT_PROMPT = "You are reviewing an anonymous s
 
 const REVIEW_OUTPUT_SCHEMA_INSTRUCTION = "Current app JSON schema. Return valid JSON only with this exact structure. Do not omit summary, correctness, novelty, strongestObjection, finalJudgment, bestClassification, coverageLedger, diagnostic scores, or scoreBand.median:\n\n{\n  \"title\": \"anonymized manuscript\",\n  \"authorName\": \"anonymized\",\n  \"comparisonCohort\": \"\",\n  \"broadField\": \"\",\n  \"specialtyField\": \"\",\n  \"subfields\": [],\n  \"paperType\": \"\",\n  \"summary\": \"\",\n  \"centralClaim\": \"\",\n  \"coverageLedger\": {\n    \"directTargets\": [],\n    \"importedInputs\": [],\n    \"theorySpaceVariants\": [],\n    \"mechanismSharingAssessment\": \"\"\n  },\n  \"establishedResults\": [],\n  \"interpretiveClaims\": [],\n  \"speculativeClaims\": [],\n  \"correctness\": \"\",\n  \"inputGrounding\": \"\",\n  \"contributionGroundingType\": \"\",\n  \"frameworkIndependence\": \"\",\n  \"hardToVaryAssessment\": \"\",\n  \"manuscriptOriginalContribution\": \"\",\n  \"survivingContributionIfFlawed\": \"\",\n  \"novelty\": \"\",\n  \"noveltyConfidence\": 0.0,\n  \"internalTechnicalTraction\": \"\",\n  \"economy\": \"\",\n  \"explanatoryTargetBreadth\": \"\",\n  \"theorySpaceBreadth\": \"\",\n  \"scopeDepth\": \"\",\n  \"unifyingPower\": \"\",\n  \"frameworkConditionality\": {\n    \"level\": \"low | medium | high\",\n    \"explanation\": \"\"\n  },\n  \"strongestCaseForImportance\": \"\",\n  \"strongestObjection\": \"\",\n  \"decisiveCheck\": \"\",\n  \"whatWouldRaiseScore\": \"\",\n  \"whatWouldLowerScore\": \"\",\n  \"intrinsicTechnicalScore\": 0,\n  \"explanatoryTargetBreadthScore\": 0,\n  \"theorySpaceBreadthScore\": 0,\n  \"breadthOfImpactScore\": 0,\n  \"specialtyRelativeScore\": 0,\n  \"broadFieldRelativeScore\": 0,\n  \"crossFieldConsequenceScore\": 0,\n  \"scoreBand\": {\n    \"low\": 0,\n    \"median\": 0,\n    \"high\": 0\n  },\n  \"scoreConfidence\": 0.0,\n  \"bestClassification\": \"\",\n  \"oneParagraphVerdict\": \"\",\n  \"finalJudgment\": \"\"\n}\n\nAll numeric fields must be numbers, not strings. Output valid JSON only.";
 
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V9_PROMPT);
-export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V9_FULL_PROMPT);
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(BLIND_INTRINSIC_ADJUDICATOR_V9_PROMPT);
+const FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION = `Fatal-error clarification:
+A fatal error is paper-fatal only when it destroys all or nearly all substantial original scientific value in the manuscript. If a paper contains multiple separable contributions, and one contribution fails while another substantial contribution remains correct and valuable, do not treat the paper as fatally flawed. Exclude or penalize the failed claim and score the surviving contribution. A paper may still receive a high score if its surviving contributions are correct, original, well-grounded, and high-value. Fatal-error caps apply only when no substantial separable contribution survives.`;
+
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(`${BLIND_REVIEW_PASS_V9_PROMPT}\n\n${FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION}`);
+export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(`${BENCHMARK_CALIBRATED_V9_FULL_PROMPT}\n\n${FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION}`);
+const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(`${BLIND_INTRINSIC_ADJUDICATOR_V9_PROMPT}
+
+${FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION}
+
+Before deciding fatalObjectionPresent, create a contribution inventory. A claim-level or section-level failure is not paper-fatal when a high-value separable contribution survives.
+
+Return these additional fields at the top level when applicable:
+{
+  "fatalToSpecificClaimOnly": false,
+  "paperFatalError": false,
+  "contributionInventory": [
+    {
+      "claimOrContribution": "",
+      "status": "correct | likely_correct | uncertain | flawed | false",
+      "contributionWeight": "low | medium | high | field_shaping",
+      "separability": "inseparable | separable | independent",
+      "survivalStatus": "survives | partially_survives | fails",
+      "notes": ""
+    }
+  ],
+  "survivingHighValueContributions": [],
+  "failedClaimsExcludedFromScore": [],
+  "survivingContributionScoreBasis": ""
+}
+
+Do not put fatal-error cap language in scoreCappingReason unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`);
 const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V9_PROMPT);
 
 const METADATA_PROMPT = `Extract the exact manuscript title and paper authors from the scientific paper provided.
@@ -629,6 +678,7 @@ function positiveIntEnv(name: string, fallback: number) {
 const MODEL_CALL_ATTEMPTS = positiveIntEnv("SCIREVIEW_MODEL_CALL_ATTEMPTS", 2);
 const PASS_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_PASS_GENERATION_ATTEMPTS", 1);
 const REPLACEMENT_PASS_ATTEMPTS = positiveIntEnv("SCIREVIEW_REPLACEMENT_PASS_ATTEMPTS", 1);
+const ADJUDICATOR_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_ADJUDICATOR_GENERATION_ATTEMPTS", 2);
 
 function stripControlChars(text: string) {
   return text.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
@@ -870,6 +920,73 @@ function normalizeRelativeScoreJudgment(value: unknown): NearestComparator["rela
     return candidate;
   }
   return undefined;
+}
+
+function normalizeContributionInventory(value: unknown): ContributionInventoryItem[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const claimOrContribution = firstString([source.claimOrContribution, source.claim, source.contribution, source.description]);
+      if (!claimOrContribution) return null;
+      const rawStatus = asString(source.status).toLowerCase().replace(/[\s-]+/g, "_");
+      const status: ContributionInventoryItem["status"] =
+        rawStatus === "correct" ||
+        rawStatus === "likely_correct" ||
+        rawStatus === "uncertain" ||
+        rawStatus === "flawed" ||
+        rawStatus === "false"
+          ? rawStatus
+          : "uncertain";
+      const rawWeight = asString(source.contributionWeight ?? source.weight).toLowerCase().replace(/[\s-]+/g, "_");
+      const contributionWeight: ContributionInventoryItem["contributionWeight"] =
+        rawWeight === "low" ||
+        rawWeight === "medium" ||
+        rawWeight === "high" ||
+        rawWeight === "field_shaping"
+          ? rawWeight
+          : "medium";
+      const rawSeparability = asString(source.separability).toLowerCase();
+      const separability: ContributionInventoryItem["separability"] =
+        rawSeparability === "inseparable" ||
+        rawSeparability === "separable" ||
+        rawSeparability === "independent"
+          ? rawSeparability
+          : "separable";
+      const rawSurvival = asString(source.survivalStatus ?? source.survival).toLowerCase().replace(/[\s-]+/g, "_");
+      const survivalStatus: ContributionInventoryItem["survivalStatus"] =
+        rawSurvival === "survives" ||
+        rawSurvival === "partially_survives" ||
+        rawSurvival === "fails"
+          ? rawSurvival
+          : "partially_survives";
+      return {
+        claimOrContribution,
+        status,
+        contributionWeight,
+        separability,
+        survivalStatus,
+        notes: firstString([source.notes, source.explanation, source.rationale]),
+      } satisfies ContributionInventoryItem;
+    })
+    .filter(Boolean) as ContributionInventoryItem[];
+}
+
+function survivingInventoryContributions(inventory: ContributionInventoryItem[]) {
+  return inventory.filter((item) =>
+    (item.contributionWeight === "high" || item.contributionWeight === "field_shaping") &&
+    (item.separability === "separable" || item.separability === "independent") &&
+    (item.survivalStatus === "survives" || item.survivalStatus === "partially_survives") &&
+    (item.status === "correct" || item.status === "likely_correct" || item.status === "uncertain"),
+  );
+}
+
+function scoreCappingFatalLanguage(text: string) {
+  return /\b(fatal central objection|fatal[- ]error|paper[- ]fatal|no substantial separable contribution|no substantial contribution surviving|no separable contribution surviving|no high[- ]value contribution survives)\b/i.test(text);
+}
+
+function saysObjectionNotPaperFatal(text: string) {
+  return /\b(not fatal|not paper[- ]fatal|not fatal to the paper|not fatal to the manuscript|does not destroy|survives|surviving|separable contribution|independent contribution)\b/i.test(text);
 }
 
 function normalizeNearestComparators(value: unknown, fallback: NearestComparator[] = []): NearestComparator[] {
@@ -2004,6 +2121,25 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   };
   const aggregateSubscoreRationale = normalizeSubscoreRationale(source.subscoreRationale ?? root.subscoreRationale);
   let scoreCappingReason = firstString([root.scoreCappingReason, source.scoreCappingReason, source.score_capping_reason]);
+  const contributionInventory = normalizeContributionInventory(
+    root.contributionInventory ?? source.contributionInventory ?? adjudicationSource.contributionInventory,
+  );
+  const survivingHighValueContributions = firstStringArray([
+    root.survivingHighValueContributions,
+    source.survivingHighValueContributions,
+    adjudicationSource.survivingHighValueContributions,
+  ]);
+  const inventorySurvivors = survivingInventoryContributions(contributionInventory).map((item) => item.claimOrContribution);
+  const failedClaimsExcludedFromScore = firstStringArray([
+    root.failedClaimsExcludedFromScore,
+    source.failedClaimsExcludedFromScore,
+    adjudicationSource.failedClaimsExcludedFromScore,
+  ]);
+  const survivingContributionScoreBasis = firstString([
+    root.survivingContributionScoreBasis,
+    source.survivingContributionScoreBasis,
+    adjudicationSource.survivingContributionScoreBasis,
+  ]);
   const subscoreSaturationWarning =
     asBoolean(adjudicationSource.subscoreSaturationWarning) ||
     computeSubscoreSaturationWarning(diagnosticSubscoreValues(aggregateSubscores), aggregateSubscoreValidity);
@@ -2018,28 +2154,58 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const fatalObjectionPresent = asBoolean(
     adjudicationSource.fatalObjectionPresent ?? root.fatalObjectionPresent ?? source.fatalObjectionPresent,
   );
+  const fatalToSpecificClaimOnly = asBoolean(
+    adjudicationSource.fatalToSpecificClaimOnly ?? root.fatalToSpecificClaimOnly ?? source.fatalToSpecificClaimOnly,
+  );
+  const paperFatalError = asBoolean(
+    adjudicationSource.paperFatalError ?? root.paperFatalError ?? source.paperFatalError,
+  );
   const fatalObjectionAssessment = asString(
     adjudicationSource.fatalObjectionAssessment ?? root.fatalObjectionAssessment ?? source.fatalObjectionAssessment,
   );
-  const fatalLanguage = /\b(fatal|central claim.*false|false central claim|ruled out|inconsistent|no real scientific contribution|no scientific merit)\b/i.test(
-    [
-      fatalObjectionAssessment,
-      source.correctness,
-      source.strongestObjection,
-      source.finalJudgment,
-      source.oneParagraphVerdict,
-    ].map((item) => asString(item)).join("\n"),
-  );
   const survivingContribution = asString(source.survivingContributionIfFlawed, fallbackReview.survivingContributionIfFlawed);
+  const allSurvivingHighValueContributions = [...survivingHighValueContributions, ...inventorySurvivors]
+    .filter((item, index, array) => item && array.indexOf(item) === index);
+  const hasSubstantialSurvivingContribution =
+    allSurvivingHighValueContributions.length > 0 ||
+    describesSubstantialSurvivingContribution(survivingContribution) ||
+    describesSubstantialSurvivingContribution(survivingContributionScoreBasis);
+
+  const fatalCapText = scoreCappingFatalLanguage(scoreCappingReason);
+  const diagnosticAverage =
+    diagnosticSubscoreValues(aggregateSubscores).reduce((sum, value) => sum + value, 0) /
+    diagnosticSubscoreValues(aggregateSubscores).length;
+
+  if (!fatalObjectionPresent && fatalCapText) {
+    throw new Error("Contradictory adjudication: scoreCappingReason contains fatal-error cap language while fatalObjectionPresent is false.");
+  }
+
+  if (saysObjectionNotPaperFatal(fatalObjectionAssessment) && finalScoreBand.median < 30 && fatalCapText) {
+    throw new Error("Contradictory adjudication: fatalObjectionAssessment says the issue is not paper-fatal but the score is capped below 30 for fatal reasons.");
+  }
+
+  if (usableScores.length >= 2 && usableScores.every((score) => score > 90) && diagnosticAverage > 9 && !fatalObjectionPresent && finalScoreBand.median < 50) {
+    throw new Error("Contradictory adjudication: high blind pass scores and high diagnostics were collapsed below 50 without a fatal objection.");
+  }
+
+  if (hasSubstantialSurvivingContribution && fatalCapText) {
+    throw new Error("Contradictory adjudication: surviving high-value contributions exist but scoreCappingReason says no substantial separable contribution survives.");
+  }
+
+  if (paperFatalError && hasSubstantialSurvivingContribution) {
+    throw new Error("Contradictory adjudication: paperFatalError is true even though high-value separable contributions survive.");
+  }
+
   let adjustedFinalClassification = finalClassification;
-  if ((fatalObjectionPresent || fatalLanguage) && !describesSubstantialSurvivingContribution(survivingContribution) && finalScoreBand.median > 15) {
+  const fatalCapAllowed = paperFatalError || (fatalObjectionPresent && !hasSubstantialSurvivingContribution);
+  if (fatalCapAllowed && finalScoreBand.median > 15) {
     finalScoreBand = {
       low: Math.min(finalScoreBand.low, 15),
       median: Math.min(finalScoreBand.median, 15),
       high: Math.min(finalScoreBand.high, 15),
     };
     adjustedFinalClassification = "not yet convincing";
-    scoreCappingReason = scoreCappingReason || `Fatal central objection with no substantial separable contribution surviving. ${fatalObjectionAssessment}`.trim();
+    scoreCappingReason = scoreCappingReason || `Paper-fatal error with no substantial separable contribution surviving. ${fatalObjectionAssessment}`.trim();
   }
 
   return {
@@ -2100,6 +2266,12 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       mainDisagreements: firstStringArray([adjudicationSource.mainDisagreements, source.mainDisagreements]),
       fatalObjectionPresent,
       fatalObjectionAssessment,
+      fatalToSpecificClaimOnly,
+      paperFatalError,
+      contributionInventory,
+      survivingHighValueContributions: allSurvivingHighValueContributions,
+      failedClaimsExcludedFromScore,
+      survivingContributionScoreBasis,
       calibrationAdjustments: asString(source.internalCalibrationNotes),
       subscoreConsistencyWarning,
       subscoreSaturationWarning,
@@ -2111,6 +2283,12 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     mainDisagreements: firstStringArray([adjudicationSource.mainDisagreements, source.mainDisagreements]),
     fatalObjectionPresent,
     fatalObjectionAssessment,
+    fatalToSpecificClaimOnly,
+    paperFatalError,
+    contributionInventory,
+    survivingHighValueContributions: allSurvivingHighValueContributions,
+    failedClaimsExcludedFromScore,
+    survivingContributionScoreBasis,
     inputGroundingAssessment: asString(source.inputGroundingAssessment ?? source.inputGrounding, fallbackReview.inputGrounding),
     inputFundamentalityAssessment: asString(source.inputFundamentalityAssessment ?? source.inputFundamentality, fallbackReview.inputFundamentality),
     contributionGroundingType: asString(source.contributionGroundingType, fallbackReview.contributionGroundingType),
@@ -2180,6 +2358,8 @@ function buildAdjudicatorInput(
       inputFundamentality: review.inputFundamentality,
       frameworkConditionality: review.frameworkConditionality,
       frameworkIndependence: review.frameworkIndependence,
+      manuscriptOriginalContribution: review.manuscriptOriginalContribution,
+      survivingContributionIfFlawed: review.survivingContributionIfFlawed,
       strongestCaseForImportance: review.strongestCaseForImportance,
       strongestObjection: review.strongestObjection,
       decisiveCheck: review.decisiveCheck,
@@ -2244,6 +2424,11 @@ function buildComparatorCalibrationInput(
       frameworkIndependence: aggregate.frameworkIndependenceAssessment,
       hardToVaryAssessment: aggregate.hardToVaryAssessment,
       frameworkConditionality: aggregate.frameworkConditionalityAssessment,
+      manuscriptOriginalContribution: aggregate.originalContributionAssessment,
+      survivingContributionIfFlawed: aggregate.survivingContributionIfFlawed,
+      survivingHighValueContributions: aggregate.survivingHighValueContributions,
+      failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
+      survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
       strongestCaseForImportance: aggregate.strongestCaseForImportance,
       strongestObjection: aggregate.strongestObjection,
       decisiveCheck: aggregate.decisiveCheck,
@@ -2381,16 +2566,31 @@ async function generateMultiPassReview(
   const fallbackScores = individualReviews.map((review) => review.scoreBand.median);
   const fallbackRepresentativeReview = pickRepresentativeReview(individualReviews, medianScore(fallbackScores));
   let adjudicatorThinking: string | null = null;
-  let aggregate: AggregateReview;
+  let aggregate: AggregateReview | null = null;
+  let adjudicatorFailure: unknown = null;
   try {
-    const adjudicatorResult = await callGemini(
-      BLIND_INTRINSIC_ADJUDICATOR_PROMPT,
-      buildAdjudicatorInput(blindedContent, individualReviews),
-      GEMINI_META_MODEL,
-      { maxOutputTokens: 16384, includeThoughts: false },
-    );
-    adjudicatorThinking = adjudicatorResult.thinkingText;
-    aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
+    for (let attempt = 0; attempt < ADJUDICATOR_GENERATION_ATTEMPTS; attempt += 1) {
+      try {
+        const retryInstruction = attempt === 0
+          ? ""
+          : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a self-consistent adjudication. Do not apply a paper-fatal cap unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`;
+        const adjudicatorResult = await callGemini(
+          `${BLIND_INTRINSIC_ADJUDICATOR_PROMPT}${retryInstruction}`,
+          buildAdjudicatorInput(blindedContent, individualReviews),
+          GEMINI_META_MODEL,
+          { maxOutputTokens: 16384, includeThoughts: false },
+        );
+        adjudicatorThinking = adjudicatorResult.thinkingText;
+        aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
+        break;
+      } catch (reason) {
+        adjudicatorFailure = reason;
+        if (attempt < ADJUDICATOR_GENERATION_ATTEMPTS - 1) {
+          await sleep(passAttemptDelayMs(attempt, reason));
+        }
+      }
+    }
+    if (!aggregate) throw adjudicatorFailure ?? new Error("Blind adjudicator failed validation.");
   } catch (reason) {
     aggregate = normalizeAggregateReview({
       finalIntrinsicReview: fallbackRepresentativeReview,
@@ -2413,6 +2613,9 @@ async function generateMultiPassReview(
       ].filter(Boolean).join("\n\n"),
     };
     thinkingChunks.push(`Blind adjudicator failed; saved pass-based fallback\n${errorMessage(reason)}`);
+  }
+  if (!aggregate) {
+    throw new Error("Review failed: no aggregate adjudication could be produced.");
   }
   const comparatorContext = reviewMode === "normal-review" && options.selectComparatorContext
     ? await options.selectComparatorContext(aggregate.comparatorProfile, aggregate)
@@ -2617,7 +2820,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
-      schemaVersion: "v9",
+      schemaVersion: "v10",
       clusterVersion: "v9-organic-profile",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
@@ -2643,6 +2846,12 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       comparatorCalibratedFinalScoreBand: aggregate.finalScoreBand,
       adjudication: aggregate.adjudication,
       reviewPassComparison: aggregate.adjudication,
+      fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
+      paperFatalError: aggregate.paperFatalError,
+      contributionInventory: aggregate.contributionInventory,
+      survivingHighValueContributions: aggregate.survivingHighValueContributions,
+      failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
+      survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
       subscoreValidity: aggregate.subscoreValidity,
       inputStrengthScore: aggregate.inputStrengthScore,
       constructionStrengthScore: aggregate.constructionStrengthScore,
@@ -2660,6 +2869,10 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
         blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
         bestClassification: aggregate.comparatorProfile.classification || aggregate.finalClassification,
         inputConstructionOutputLedger: aggregate.inputConstructionOutputLedger,
+        contributionInventory: aggregate.contributionInventory,
+        survivingHighValueContributions: aggregate.survivingHighValueContributions,
+        failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
+        survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
         inputStrengthScore: aggregate.inputStrengthScore,
         constructionStrengthScore: aggregate.constructionStrengthScore,
         outputReachScore: aggregate.outputReachScore,
