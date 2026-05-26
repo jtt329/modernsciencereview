@@ -69,9 +69,16 @@ async function apiFetch(path: string, options?: RequestInit) {
   const res = await fetch(path, { credentials: 'include', ...options });
   if (!res.ok) {
     const data = await res.json().catch(() => ({ error: res.statusText }));
-    const error = new Error(data.error || res.statusText) as Error & { status?: number; transient?: boolean };
+    const error = new Error(data.error || res.statusText) as Error & {
+      status?: number;
+      transient?: boolean;
+      quotaExhausted?: boolean;
+      retryAfterText?: string | null;
+    };
     error.status = res.status;
-    error.transient = Boolean(data.transient) || [429, 500, 502, 503, 504].includes(res.status);
+    error.quotaExhausted = Boolean(data.quotaExhausted);
+    error.retryAfterText = data.retryAfterText || null;
+    error.transient = !error.quotaExhausted && (Boolean(data.transient) || [500, 502, 503, 504].includes(res.status));
     throw error;
   }
   return res.json();

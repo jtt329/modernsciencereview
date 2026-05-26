@@ -54,7 +54,22 @@ function isConnectionLoss(message: string) {
   return /failed to fetch|load failed|networkerror|network request failed|connection|timed out|aborted/i.test(message);
 }
 
+function isDailyQuotaError(err: unknown) {
+  const message = errorMessage(err);
+  return Boolean((err as any)?.quotaExhausted) ||
+    /daily request quota reached|generate_requests_per_model_per_day|per_model_per_day|please retry in|exceeded your current quota/i.test(message);
+}
+
+function friendlySubmissionError(err: unknown) {
+  const message = errorMessage(err);
+  if (!isDailyQuotaError(err)) return message;
+  const retryText = (err as any)?.retryAfterText || message.match(/retry in\s*([^.;]+)/i)?.[1]?.trim();
+  const retrySuffix = retryText ? ` Google says to retry in ${retryText}.` : '';
+  return `Gemini Pro daily request quota reached.${retrySuffix} Completed papers were saved; retry the pending papers after the quota resets or raise the Gemini Pro daily request quota.`;
+}
+
 function isRetryableSubmissionError(err: unknown) {
+  if (isDailyQuotaError(err)) return false;
   const status = typeof (err as any)?.status === 'number' ? (err as any).status : 0;
   if ((err as any)?.transient || [429, 500, 502, 503, 504].includes(status)) return true;
   return /failed to fetch|load failed|networkerror|network request failed|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(errorMessage(err));
@@ -202,8 +217,11 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       const skipSelectAfterSubmit = files.length > 1;
       setDoneCount(done);
       let nextIndex = 0;
+      let batchHalted = false;
+      let haltMessage: string | null = null;
 
       const processOne = async (qf: QueuedFile) => {
+        if (batchHalted) return;
         setFileStatus(qf.id, { status: 'processing', error: undefined });
         try {
           const base64 = await readFileAsBase64(qf.file);
@@ -217,7 +235,11 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
           setFileStatus(qf.id, { status: 'done', error: undefined });
         } catch (err: any) {
           failures++;
-          const message = err?.message ?? String(err);
+          const message = friendlySubmissionError(err);
+          if (isDailyQuotaError(err)) {
+            batchHalted = true;
+            haltMessage = message;
+          }
           setFileStatus(qf.id, { status: 'error', error: message });
         }
       };
@@ -225,7 +247,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       const workers = Array.from(
         { length: Math.min(BATCH_CONCURRENCY, filesToProcess.length) },
         async () => {
-          while (nextIndex < filesToProcess.length) {
+          while (!batchHalted && nextIndex < filesToProcess.length) {
             const qf = filesToProcess[nextIndex++];
             await processOne(qf);
           }
@@ -235,7 +257,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       await Promise.all(workers);
 
       if (failures > 0) {
-        setError(`${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);
+        setError(haltMessage || `${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);
       } else {
         onClose();
       }

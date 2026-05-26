@@ -914,11 +914,28 @@ function errorMessage(error: unknown) {
 }
 
 function isTransientModelError(error: unknown) {
+  if (isDailyModelQuotaError(error)) return false;
   const message = errorMessage(error).toLowerCase();
   return (
     /\b(429|500|502|503|504)\b/.test(message) ||
     /resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|deadline|internal/.test(message)
   );
+}
+
+function isDailyModelQuotaError(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+  return (
+    /resource[_ ]exhausted|quota|rate limit/.test(message) &&
+    /generate_requests_per_model_per_day|per_model_per_day|please retry in|exceeded your current quota/.test(message)
+  );
+}
+
+function dailyQuotaErrorMessage(error: unknown) {
+  const message = errorMessage(error);
+  const retryMatch = message.match(/please retry in\s*([^.;]+)/i);
+  const retryText = retryMatch?.[1]?.trim();
+  const retrySuffix = retryText ? ` Google says to retry in ${retryText}.` : "";
+  return `Gemini Pro daily request quota reached.${retrySuffix} No more papers were processed because every additional Pro request would fail until the quota resets or is raised.`;
 }
 
 function isSchemaRejectedError(error: unknown) {
@@ -947,6 +964,9 @@ async function withModelRetries<T>(label: string, fn: () => Promise<T>): Promise
       return await fn();
     } catch (error) {
       lastError = error;
+      if (isDailyModelQuotaError(error)) {
+        throw new Error(dailyQuotaErrorMessage(error));
+      }
       if (attempt === MODEL_CALL_ATTEMPTS) break;
       await sleep(retryDelayMs(attempt, error));
     }
@@ -2781,6 +2801,10 @@ async function generateMultiPassReview(
       passFailures.push({ reason: result.reason, index });
     }
   }
+  const initialQuotaFailure = passFailures.find(({ reason }) => isDailyModelQuotaError(reason));
+  if (initialQuotaFailure && passResults.length < REVIEW_PASS_COUNT) {
+    throw new Error(dailyQuotaErrorMessage(initialQuotaFailure.reason));
+  }
 
   let extraIndex = REVIEW_PASS_COUNT;
   const maxPassAttempts = REVIEW_PASS_COUNT + REPLACEMENT_PASS_ATTEMPTS;
@@ -2789,6 +2813,9 @@ async function generateMultiPassReview(
       passResults.push(await runPassWithGenerationRetries(buildReplacementPassPrompt(systemPrompt, passFailures), blindedContent, extraIndex));
     } catch (reason) {
       passFailures.push({ reason, index: extraIndex });
+      if (isDailyModelQuotaError(reason)) {
+        throw new Error(dailyQuotaErrorMessage(reason));
+      }
     }
     extraIndex += 1;
   }
@@ -2863,6 +2890,9 @@ async function generateMultiPassReview(
           break;
         } catch (reason) {
           adjudicatorFailure = reason;
+          if (isDailyModelQuotaError(reason)) {
+            throw new Error(dailyQuotaErrorMessage(reason));
+          }
           if (attempt < ADJUDICATOR_GENERATION_ATTEMPTS - 1) {
             await sleep(passAttemptDelayMs(attempt, reason));
           }
@@ -2870,6 +2900,9 @@ async function generateMultiPassReview(
       }
       if (!aggregate) throw adjudicatorFailure ?? new Error("Blind adjudicator failed validation.");
     } catch (reason) {
+      if (isDailyModelQuotaError(reason)) {
+        throw new Error(dailyQuotaErrorMessage(reason));
+      }
       aggregate = normalizeAggregateReview({
         finalIntrinsicReview: fallbackRepresentativeReview,
         reviewPassComparison: {

@@ -29,6 +29,10 @@ function isTransientReviewError(message: string) {
   return /transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
 }
 
+function isDailyQuotaError(message: string) {
+  return /daily request quota reached|generate_requests_per_model_per_day|per_model_per_day|please retry in|exceeded your current quota/i.test(message);
+}
+
 function updateFile(prev: BulkFile[], id: string, patch: Partial<BulkFile>, moveToEnd = false) {
   const index = prev.findIndex((file) => file.id === id);
   if (index === -1) return prev;
@@ -85,6 +89,10 @@ export default function BulkSubmissionForm({ onSubmit, onClose }: BulkSubmission
       } catch (err: any) {
         const message = err?.message || String(err);
         const nextAttempts = attempts + 1;
+        if (isDailyQuotaError(message)) {
+          setFiles(prev => updateFile(prev, bulkFile.id, { status: 'error', error: message, attempts: nextAttempts }));
+          break;
+        }
         if (isTransientReviewError(message) && nextAttempts <= MAX_AUTO_RETRIES) {
           setFiles(prev => updateFile(
             prev,

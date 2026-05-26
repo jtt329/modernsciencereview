@@ -991,9 +991,18 @@ router.post("/papers", async (req, res) => {
     }
     logger.error({ err }, "Error creating paper");
     const message = err instanceof Error ? err.message : String(err);
+    const quotaExhausted =
+      /daily request quota reached|generate_requests_per_model_per_day|per_model_per_day|please retry in|exceeded your current quota/i.test(message);
     const transient =
+      !quotaExhausted &&
       /transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
-    res.status(transient ? 503 : 500).json({ error: message, transient });
+    const retryAfterText = message.match(/retry in\s*([^.;]+)/i)?.[1]?.trim() ?? null;
+    res.status(quotaExhausted ? 429 : transient ? 503 : 500).json({
+      error: message,
+      transient,
+      quotaExhausted,
+      retryAfterText,
+    });
   }
 });
 
