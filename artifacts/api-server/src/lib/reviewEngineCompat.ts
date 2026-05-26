@@ -886,6 +886,13 @@ export function reviewRuntimeInfo() {
       adjudicatorGenerationAttempts: ADJUDICATOR_GENERATION_ATTEMPTS,
       saveFallbackWhenAtLeastOnePassSucceeds: true,
     },
+    quotaHandling: {
+      dailyModelQuota: "fail-fast",
+      stopsBatchQueue: true,
+    },
+    build: {
+      railwayGitCommitSha: process.env.RAILWAY_GIT_COMMIT_SHA || null,
+    },
   };
 }
 
