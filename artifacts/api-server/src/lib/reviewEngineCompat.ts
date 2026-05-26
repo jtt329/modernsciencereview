@@ -670,6 +670,193 @@ Return a JSON object with exactly two fields:
 - authors: string
 Output valid JSON only.`;
 
+const jsonString = { type: "string" };
+const jsonNumber = { type: "number" };
+const jsonBoolean = { type: "boolean" };
+const jsonStringArray = { type: "array", items: jsonString };
+const scoreBandJsonSchema = {
+  type: "object",
+  required: ["low", "median", "high"],
+  properties: {
+    low: jsonNumber,
+    median: jsonNumber,
+    high: jsonNumber,
+  },
+};
+const frameworkConditionalityJsonSchema = {
+  type: "object",
+  properties: {
+    level: jsonString,
+    explanation: jsonString,
+  },
+};
+const contributionArchetypeJsonSchema = {
+  type: "object",
+  properties: {
+    primary: jsonString,
+    secondary: jsonString,
+  },
+};
+const inputConstructionOutputLedgerJsonSchema = {
+  type: "object",
+  properties: {
+    primitiveInputs: jsonStringArray,
+    introducedConstructions: jsonStringArray,
+    externalEmbeddingsAndChecks: jsonStringArray,
+    directOutputs: jsonStringArray,
+    downstreamReach: jsonString,
+    assessment: jsonString,
+  },
+};
+const comparatorProfileJsonSchema = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    localCohort: jsonString,
+    adjacentBroadCohort: jsonString,
+    contributionArchetype: contributionArchetypeJsonSchema,
+    primitiveInputs: jsonStringArray,
+    introducedConstructions: jsonStringArray,
+    externalEmbeddingsAndChecks: jsonStringArray,
+    directOutputs: jsonStringArray,
+    downstreamReach: jsonString,
+    frameworkConditionality: jsonString,
+    clusterFeatureTags: jsonStringArray,
+    comparatorSearchSummary: jsonString,
+  },
+};
+const individualReviewJsonSchema = {
+  type: "object",
+  required: ["summary", "centralClaim", "correctness", "scoreBand", "bestClassification"],
+  additionalProperties: true,
+  properties: {
+    title: jsonString,
+    authorName: jsonString,
+    comparisonCohort: jsonString,
+    localCohort: jsonString,
+    broadField: jsonString,
+    specialtyField: jsonString,
+    subfields: jsonStringArray,
+    paperType: jsonString,
+    summary: jsonString,
+    centralClaim: jsonString,
+    contributionArchetype: contributionArchetypeJsonSchema,
+    inputConstructionOutputLedger: inputConstructionOutputLedgerJsonSchema,
+    comparatorProfile: comparatorProfileJsonSchema,
+    establishedResults: jsonStringArray,
+    interpretiveClaims: jsonStringArray,
+    speculativeClaims: jsonStringArray,
+    correctness: jsonString,
+    inputGrounding: jsonString,
+    inputFundamentality: jsonString,
+    frameworkIndependence: jsonString,
+    hardToVaryAssessment: jsonString,
+    manuscriptOriginalContribution: jsonString,
+    survivingContributionIfFlawed: jsonString,
+    novelty: jsonString,
+    noveltyConfidence: jsonNumber,
+    internalTechnicalTraction: jsonString,
+    economy: jsonString,
+    scopeDepth: jsonString,
+    unifyingPower: jsonString,
+    frameworkConditionality: frameworkConditionalityJsonSchema,
+    strongestCaseForImportance: jsonString,
+    strongestObjection: jsonString,
+    decisiveCheck: jsonString,
+    whatWouldRaiseScore: jsonString,
+    whatWouldLowerScore: jsonString,
+    inputStrengthScore: jsonNumber,
+    constructionStrengthScore: jsonNumber,
+    outputReachScore: jsonNumber,
+    generalizationBreadthScore: jsonNumber,
+    subscoreRationale: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        inputStrengthScore: jsonString,
+        constructionStrengthScore: jsonString,
+        outputReachScore: jsonString,
+        generalizationBreadthScore: jsonString,
+      },
+    },
+    specialtyRelativeScore: jsonNumber,
+    broadFieldRelativeScore: jsonNumber,
+    crossFieldConsequenceScore: jsonNumber,
+    scoreBand: scoreBandJsonSchema,
+    scoreConfidence: jsonNumber,
+    scoreCappingReason: jsonString,
+    bestClassification: jsonString,
+    oneParagraphVerdict: jsonString,
+    finalJudgment: jsonString,
+  },
+};
+const adjudicatorJsonSchema = {
+  type: "object",
+  required: ["individualScores", "scoreStability", "adjudicatorRating", "finalIntrinsicReview"],
+  additionalProperties: true,
+  properties: {
+    individualScores: { type: "array", items: jsonNumber },
+    passDisagreement: jsonNumber,
+    scoreRange: jsonNumber,
+    scoreStability: jsonString,
+    fatalObjectionPresent: jsonBoolean,
+    fatalObjectionAssessment: jsonString,
+    adjudicatorRating: jsonNumber,
+    intrinsicScoreBand: scoreBandJsonSchema,
+    finalScoreBand: scoreBandJsonSchema,
+    finalIntrinsicReview: individualReviewJsonSchema,
+    comparatorProfile: comparatorProfileJsonSchema,
+    inputStrengthScore: jsonNumber,
+    constructionStrengthScore: jsonNumber,
+    outputReachScore: jsonNumber,
+    generalizationBreadthScore: jsonNumber,
+    subscoreRationale: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        inputStrengthScore: jsonString,
+        constructionStrengthScore: jsonString,
+        outputReachScore: jsonString,
+        generalizationBreadthScore: jsonString,
+      },
+    },
+    subscoreConsistencyWarning: jsonString,
+    subscoreSaturationWarning: jsonBoolean,
+    scoreCappingReason: jsonString,
+    bestClassification: jsonString,
+    publicOneParagraphVerdict: jsonString,
+    internalCalibrationNotes: jsonString,
+    fatalToSpecificClaimOnly: jsonBoolean,
+    paperFatalError: jsonBoolean,
+    contributionInventory: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: true,
+        properties: {
+          claimOrContribution: jsonString,
+          status: jsonString,
+          contributionWeight: jsonString,
+          separability: jsonString,
+          survivalStatus: jsonString,
+          notes: jsonString,
+        },
+      },
+    },
+    survivingHighValueContributions: jsonStringArray,
+    failedClaimsExcludedFromScore: jsonStringArray,
+    survivingContributionScoreBasis: jsonString,
+  },
+};
+const metadataJsonSchema = {
+  type: "object",
+  required: ["title", "authors"],
+  properties: {
+    title: jsonString,
+    authors: jsonString,
+  },
+};
+
 function positiveIntEnv(name: string, fallback: number) {
   const value = Number(process.env[name]);
   return Number.isInteger(value) && value > 0 ? value : fallback;
@@ -710,6 +897,10 @@ function isTransientModelError(error: unknown) {
     /\b(429|500|502|503|504)\b/.test(message) ||
     /resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|deadline|internal/.test(message)
   );
+}
+
+function isSchemaRejectedError(error: unknown) {
+  return /response[_ ]?(json[_ ]?)?schema|schema.*unsupported|unsupported.*schema|invalid.*schema|unknown name.*schema/i.test(errorMessage(error));
 }
 
 function retryDelayMs(attempt: number, error: unknown) {
@@ -1680,10 +1871,6 @@ function validateIndividualReview(review: IndividualReview) {
     throw new Error("Generated review was missing a central claim.");
   }
 
-  if (!allDiagnosticSubscoresValid(review.subscoreValidity)) {
-    throw new Error("Generated review was missing one or more v9 diagnostic subscores.");
-  }
-
   if (score === 0 && reasoningText.length < 180) {
     throw new Error("Generated review returned score 0 without enough reasoning; treating as failed generation.");
   }
@@ -1920,16 +2107,18 @@ async function callGemini(
   prompt: string,
   input: ReviewInput,
   geminiModel = GEMINI_META_MODEL,
-  options?: { maxOutputTokens?: number; includeThoughts?: boolean },
+  options?: { maxOutputTokens?: number; includeThoughts?: boolean; responseJsonSchema?: unknown; temperature?: number },
 ) {
   const includeThoughts = options?.includeThoughts ?? false;
-  return withModelRetries(geminiModel, async () => {
+  const request = async (useResponseSchema: boolean) => {
     const response = await geminiAI.models.generateContent({
       model: geminiModel,
       contents: [{ role: "user", parts: reviewInputParts(input) }],
       config: {
         systemInstruction: prompt,
         responseMimeType: "application/json",
+        ...(useResponseSchema && options?.responseJsonSchema ? { responseJsonSchema: options.responseJsonSchema } : {}),
+        temperature: options?.temperature ?? 0.2,
         maxOutputTokens: options?.maxOutputTokens ?? 32768,
         ...(includeThoughts ? { thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" } } : {}),
       } as any,
@@ -1943,7 +2132,16 @@ async function callGemini(
     const content = response.text;
     if (!content) throw new Error("No response from Gemini model.");
     return { parsed: extractJson(content), thinkingText };
-  });
+  };
+
+  try {
+    return await withModelRetries(geminiModel, () => request(true));
+  } catch (error) {
+    if (options?.responseJsonSchema && isSchemaRejectedError(error)) {
+      return withModelRetries(`${geminiModel} without response schema`, () => request(false));
+    }
+    throw error;
+  }
 }
 
 async function runModel(prompt: string, input: ReviewInput, model: ReviewModel, geminiModel = GEMINI_META_MODEL) {
@@ -1960,7 +2158,12 @@ async function runIndividualPass(
     prompt,
     input,
     GEMINI_PASS_MODEL,
-    { maxOutputTokens: 16384, includeThoughts: false },
+    {
+      maxOutputTokens: 16384,
+      includeThoughts: false,
+      responseJsonSchema: individualReviewJsonSchema,
+      temperature: 0.15,
+    },
   );
   const review = normalizeIndividualReview(parsed);
   validateIndividualReview(review);
@@ -2492,7 +2695,12 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       METADATA_PROMPT,
       metadataReviewInput,
       GEMINI_METADATA_MODEL,
-      { maxOutputTokens: 768, includeThoughts: false },
+      {
+        maxOutputTokens: 768,
+        includeThoughts: false,
+        responseJsonSchema: metadataJsonSchema,
+        temperature: 0,
+      },
     );
     const parsedMetadata = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
     const title = asString(parsedMetadata.title, fallback.title);
@@ -2548,9 +2756,9 @@ async function generateMultiPassReview(
     extraIndex += 1;
   }
 
-  if (passResults.length < REVIEW_PASS_COUNT) {
-    const details = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
-    throw new Error(`Review failed: only ${passResults.length} of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${details}`);
+  const passFailureDetails = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
+  if (passResults.length === 0) {
+    throw new Error(`Review failed: 0 of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${passFailureDetails}`);
   }
 
   const individualReviews = passResults.map((result) => result.review);
@@ -2568,39 +2776,19 @@ async function generateMultiPassReview(
   let adjudicatorThinking: string | null = null;
   let aggregate: AggregateReview | null = null;
   let adjudicatorFailure: unknown = null;
-  try {
-    for (let attempt = 0; attempt < ADJUDICATOR_GENERATION_ATTEMPTS; attempt += 1) {
-      try {
-        const retryInstruction = attempt === 0
-          ? ""
-          : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a self-consistent adjudication. Do not apply a paper-fatal cap unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`;
-        const adjudicatorResult = await callGemini(
-          `${BLIND_INTRINSIC_ADJUDICATOR_PROMPT}${retryInstruction}`,
-          buildAdjudicatorInput(blindedContent, individualReviews),
-          GEMINI_META_MODEL,
-          { maxOutputTokens: 16384, includeThoughts: false },
-        );
-        adjudicatorThinking = adjudicatorResult.thinkingText;
-        aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
-        break;
-      } catch (reason) {
-        adjudicatorFailure = reason;
-        if (attempt < ADJUDICATOR_GENERATION_ATTEMPTS - 1) {
-          await sleep(passAttemptDelayMs(attempt, reason));
-        }
-      }
-    }
-    if (!aggregate) throw adjudicatorFailure ?? new Error("Blind adjudicator failed validation.");
-  } catch (reason) {
+  if (passResults.length < REVIEW_PASS_COUNT) {
     aggregate = normalizeAggregateReview({
       finalIntrinsicReview: fallbackRepresentativeReview,
       reviewPassComparison: {
         validPassCount: passResults.length,
+        expectedPassCount: REVIEW_PASS_COUNT,
         individualScores: fallbackScores,
-        scoreRange: Math.max(...fallbackScores) - Math.min(...fallbackScores),
-        scoreStability: rangeToStability(Math.max(...fallbackScores) - Math.min(...fallbackScores)),
+        scoreRange: 0,
+        scoreStability: "low",
         mainAgreements: [],
-        mainDisagreements: [],
+        mainDisagreements: [
+          `Only ${passResults.length} of ${REVIEW_PASS_COUNT} required blind passes completed; saved the valid paid pass instead of discarding the paper.`,
+        ],
         fatalObjectionPresent: false,
         fatalObjectionAssessment: "",
       },
@@ -2609,10 +2797,64 @@ async function generateMultiPassReview(
       ...aggregate,
       internalCalibrationNotes: [
         aggregate.internalCalibrationNotes,
-        `Blind adjudicator failed; saved fallback from ${passResults.length} valid pass(es) instead of discarding paid work. ${errorMessage(reason)}`,
+        `Incomplete blind-pass set: saved ${passResults.length}/${REVIEW_PASS_COUNT} valid pass(es) instead of throwing away paid work. Failed attempts: ${passFailureDetails}`,
       ].filter(Boolean).join("\n\n"),
     };
-    thinkingChunks.push(`Blind adjudicator failed; saved pass-based fallback\n${errorMessage(reason)}`);
+    thinkingChunks.push(`Incomplete blind-pass set; saved pass-based fallback\n${passFailureDetails}`);
+  }
+
+  if (!aggregate) {
+    try {
+      for (let attempt = 0; attempt < ADJUDICATOR_GENERATION_ATTEMPTS; attempt += 1) {
+        try {
+          const retryInstruction = attempt === 0
+            ? ""
+            : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a self-consistent adjudication. Do not apply a paper-fatal cap unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`;
+          const adjudicatorResult = await callGemini(
+            `${BLIND_INTRINSIC_ADJUDICATOR_PROMPT}${retryInstruction}`,
+            buildAdjudicatorInput(blindedContent, individualReviews),
+            GEMINI_META_MODEL,
+            {
+              maxOutputTokens: 16384,
+              includeThoughts: false,
+              responseJsonSchema: adjudicatorJsonSchema,
+              temperature: 0.15,
+            },
+          );
+          adjudicatorThinking = adjudicatorResult.thinkingText;
+          aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
+          break;
+        } catch (reason) {
+          adjudicatorFailure = reason;
+          if (attempt < ADJUDICATOR_GENERATION_ATTEMPTS - 1) {
+            await sleep(passAttemptDelayMs(attempt, reason));
+          }
+        }
+      }
+      if (!aggregate) throw adjudicatorFailure ?? new Error("Blind adjudicator failed validation.");
+    } catch (reason) {
+      aggregate = normalizeAggregateReview({
+        finalIntrinsicReview: fallbackRepresentativeReview,
+        reviewPassComparison: {
+          validPassCount: passResults.length,
+          individualScores: fallbackScores,
+          scoreRange: Math.max(...fallbackScores) - Math.min(...fallbackScores),
+          scoreStability: rangeToStability(Math.max(...fallbackScores) - Math.min(...fallbackScores)),
+          mainAgreements: [],
+          mainDisagreements: [],
+          fatalObjectionPresent: false,
+          fatalObjectionAssessment: "",
+        },
+      }, fallbackScores, fallbackRepresentativeReview);
+      aggregate = {
+        ...aggregate,
+        internalCalibrationNotes: [
+          aggregate.internalCalibrationNotes,
+          `Blind adjudicator failed; saved fallback from ${passResults.length} valid pass(es) instead of discarding paid work. ${errorMessage(reason)}`,
+        ].filter(Boolean).join("\n\n"),
+      };
+      thinkingChunks.push(`Blind adjudicator failed; saved pass-based fallback\n${errorMessage(reason)}`);
+    }
   }
   if (!aggregate) {
     throw new Error("Review failed: no aggregate adjudication could be produced.");

@@ -409,9 +409,9 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
                       <div className="flex-1 min-w-0">
                         <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
                         {qf.status === 'processing' && (
-                          <p className="text-xs text-indigo-500 truncate">{qf.error || reviewModeCopy[effectiveReviewMode].processing}</p>
+                          <p className="text-xs text-indigo-500 break-words">{qf.error || reviewModeCopy[effectiveReviewMode].processing}</p>
                         )}
-                        {qf.status === 'error' && <p className="text-xs text-rose-600 truncate">{qf.error}</p>}
+                        {qf.status === 'error' && <p className="text-xs text-rose-600 break-words">{qf.error}</p>}
                       </div>
                       <span className="text-[10px] text-slate-400 font-bold shrink-0">
                         {(qf.file.size / 1024 / 1024).toFixed(1)} MB
