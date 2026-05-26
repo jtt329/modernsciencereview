@@ -101,6 +101,14 @@ function dedupePapers<T extends typeof papersTable.$inferSelect>(papers: T[]): T
   });
 }
 
+function splitAuthorNamesForMetadata(value: string) {
+  return value
+    .split(/\s*(?:;|\band\b|,(?=\s*[A-Z][A-Za-z.'-]+(?:\s|$)))\s*/i)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 30);
+}
+
 function requireAdmin(req: any, res: any): boolean {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return false; }
   if (!ADMIN_EMAIL || req.user.email !== ADMIN_EMAIL) { res.status(403).json({ error: "Forbidden" }); return false; }
@@ -366,9 +374,9 @@ async function selectComparatorContextForProfile(
           contributionArchetype: metadata.contributionArchetype ?? undefined,
           centralClaim: metadata.centralClaim ? String(metadata.centralClaim).slice(0, 900) : null,
           summary: metadata.summary ? String(metadata.summary).slice(0, 900) : null,
-          inputConstructionOutputLedger: metadata.inputConstructionOutputLedger,
-          centralOutputDependency: metadata.centralOutputDependency,
-          outputValidityAssessment: metadata.outputValidityAssessment,
+          inputConstructionOutputLedger: metadata.inputConstructionOutputLedger as any,
+          centralOutputDependency: metadata.centralOutputDependency as any,
+          outputValidityAssessment: metadata.outputValidityAssessment as any,
           frameworkConditionality: metadata.frameworkConditionality,
           comparatorSearchSummary: metadata.comparatorSearchSummary,
           benchmarkSetVersion: metadata.benchmarkSetVersion,
@@ -699,6 +707,7 @@ router.get("/papers/export", async (_req, res) => {
           id: p.id,
           title: p.title,
           paperAuthors: p.paperAuthors,
+          dateMetadata: p.dateMetadata,
           field: p.field,
           subfields: p.subfields,
           createdAt: p.createdAt,
@@ -865,10 +874,22 @@ router.patch("/papers/:id", async (req, res) => {
     if (title.length > 500) { res.status(400).json({ error: "Title is too long" }); return; }
     if (paperAuthors.length > 1000) { res.status(400).json({ error: "Authors field is too long" }); return; }
 
+    const existingDateMetadata =
+      paper.dateMetadata && typeof paper.dateMetadata === "object"
+        ? paper.dateMetadata
+        : null;
+
     const [updated] = await db.update(papersTable)
       .set({
         title,
         paperAuthors: paperAuthors || null,
+        dateMetadata: existingDateMetadata
+          ? {
+              ...existingDateMetadata,
+              displayedTitle: title,
+              displayedAuthors: splitAuthorNamesForMetadata(paperAuthors),
+            }
+          : null,
       })
       .where(eq(papersTable.id, req.params.id))
       .returning();
@@ -1026,6 +1047,7 @@ router.post("/papers", async (req, res) => {
         authorId: req.user.id,
         authorName: submitterName,
         paperAuthors: metadata.authors,
+        dateMetadata: metadata.dateMetadata,
         field: reviewMetadata.field,
         subfields: reviewMetadata.subfields,
         score: reviewValues.score,

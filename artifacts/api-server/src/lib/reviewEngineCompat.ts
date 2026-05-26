@@ -1,11 +1,12 @@
 import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import {
-  BENCHMARK_CALIBRATED_V11_FULL_PROMPT,
-  BENCHMARK_COMPARATOR_CALIBRATION_V11_PROMPT,
-  BLIND_INTRINSIC_ADJUDICATOR_V11_PROMPT,
-  BLIND_REVIEW_PASS_V11_PROMPT,
-} from "./prompts/benchmarkCalibratedV11";
+  BENCHMARK_CALIBRATED_V12_1_FULL_PROMPT,
+  BENCHMARK_COMPARATOR_CALIBRATION_V12_1_PROMPT,
+  BLIND_INTRINSIC_ADJUDICATOR_V12_1_PROMPT,
+  BLIND_REVIEW_PASS_V12_1_PROMPT,
+  DATE_METADATA_EXTRACTION_V12_1_PROMPT,
+} from "./prompts/benchmarkCalibratedV12_1";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -108,6 +109,12 @@ type InputConstructionOutputLedger = {
 
 type CentralOutputDependency = {
   centralOutput: string;
+  requiredPrimitiveInputs: string[];
+  requiredIntroducedConstructions: string[];
+  dependencyAssessment: string;
+  constructionFragility: string;
+  outputValidity: string;
+  // v11 compatibility aliases for existing saved reviews.
   dependsOnPrimitiveInputs: string[];
   dependsOnIntroducedConstructions: string[];
   weakestDependency: string;
@@ -180,6 +187,8 @@ type ComparatorProfile = {
   primitiveInputs: string[];
   introducedConstructions: string[];
   externalEmbeddingsAndChecks: string[];
+  centralOutputDependency: CentralOutputDependency;
+  outputValidityAssessment: OutputValidityAssessment;
   directOutputs: string[];
   downstreamReach: string;
   frameworkConditionality: FrameworkLevel;
@@ -205,6 +214,7 @@ type ComparatorCalibration = {
     constructionComparison: string;
     outputsComparison: string;
     generalizationComparison: string;
+    outputValidityComparison: string;
     downstreamReachComparison: string;
     frameworkConditionalityComparison: string;
     scoreGapAssessment: string;
@@ -275,6 +285,7 @@ type IndividualReview = {
   correctness: string;
   inputGrounding: string;
   inputFundamentality: string;
+  constructionAssessment: string;
   contributionGroundingType: string;
   frameworkIndependence: string;
   hardToVaryAssessment: string;
@@ -352,6 +363,7 @@ type AggregateReview = {
   survivingContributionScoreBasis: string;
   inputGroundingAssessment: string;
   inputFundamentalityAssessment: string;
+  constructionAssessment: string;
   contributionGroundingType: string;
   frameworkIndependenceAssessment: string;
   hardToVaryAssessment: string;
@@ -627,7 +639,7 @@ Return valid JSON only with this exact structure:
 
 All numeric fields must be numbers, not strings. Output valid JSON only.`;
 
-export const REVIEW_PROMPT_VERSION = "v11-central-output-dependency";
+export const REVIEW_PROMPT_VERSION = "v12.1-central-output-dependency-date-metadata";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -647,9 +659,9 @@ const REVIEW_OUTPUT_SCHEMA_INSTRUCTION = "Current app JSON schema. Return valid 
 const FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION = `Fatal-error clarification:
 A fatal error is paper-fatal only when it destroys all or nearly all substantial original scientific value in the manuscript. If a paper contains multiple separable contributions, and one contribution fails while another substantial contribution remains correct and valuable, do not treat the paper as fatally flawed. Exclude or penalize the failed claim and score the surviving contribution. A paper may still receive a high score if its surviving contributions are correct, original, well-grounded, and high-value. Fatal-error caps apply only when no substantial separable contribution survives.`;
 
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V11_PROMPT);
-export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V11_FULL_PROMPT);
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(`${BLIND_INTRINSIC_ADJUDICATOR_V11_PROMPT}
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V12_1_PROMPT);
+export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V12_1_FULL_PROMPT);
+const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(`${BLIND_INTRINSIC_ADJUDICATOR_V12_1_PROMPT}
 
 ${FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION}
 
@@ -674,6 +686,11 @@ Return these additional fields at the top level when applicable:
   "survivingContributionScoreBasis": "",
   "centralOutputDependency": {
     "centralOutput": "",
+    "requiredPrimitiveInputs": [],
+    "requiredIntroducedConstructions": [],
+    "dependencyAssessment": "",
+    "constructionFragility": "",
+    "outputValidity": "",
     "dependsOnPrimitiveInputs": [],
     "dependsOnIntroducedConstructions": [],
     "weakestDependency": "",
@@ -689,9 +706,11 @@ Return these additional fields at the top level when applicable:
 
 Return centralOutputDependency and outputValidityAssessment inside finalIntrinsicReview and at top level when available.
 Do not put fatal-error cap language in scoreCappingReason unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`);
-const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V11_PROMPT);
+const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V12_1_PROMPT);
 
-const METADATA_PROMPT = `Extract the exact manuscript title and paper authors from the scientific paper provided.
+const METADATA_PROMPT = `${DATE_METADATA_EXTRACTION_V12_1_PROMPT}
+
+Extract the exact manuscript title and paper authors from the scientific paper provided.
 You may receive the original PDF plus JSON containing filename hints, embedded PDF metadata, heuristic guesses, and extracted text. Prefer the title and author block printed in the manuscript itself, especially the first page/header. Use embedded PDF metadata or the filename only as fallback hints, because they are often abbreviated, stale, or machine-generated.
 
 Rules:
@@ -702,9 +721,19 @@ Rules:
 - Do not invent authors that are not visible in the manuscript. If only some names are visible, return the visible names.
 - If title or authors are genuinely not recoverable, use "Unknown Title" or "Unknown Authors".
 
-Return a JSON object with exactly two fields:
-- title: string
-- authors: string
+Return a JSON object with exactly these fields:
+- displayedTitle: string
+- displayedAuthors: string[]
+- arxivId: string
+- doi: string
+- journalName: string
+- journalPublicationDate: string
+- arxivFirstSubmissionDate: string
+- manuscriptDatePrintedOnPdf: string
+- originalPublicationDateBestGuess: string
+- dateSource: string
+- dateConfidence: number
+- dateNotes: string
 Output valid JSON only.`;
 
 const jsonString = { type: "string" };
@@ -750,28 +779,26 @@ const centralOutputDependencyJsonSchema = {
   type: "object",
   required: [
     "centralOutput",
-    "dependsOnPrimitiveInputs",
-    "dependsOnIntroducedConstructions",
-    "assessment",
+    "requiredPrimitiveInputs",
+    "requiredIntroducedConstructions",
+    "dependencyAssessment",
+    "constructionFragility",
+    "outputValidity",
   ],
   properties: {
     centralOutput: jsonString,
+    requiredPrimitiveInputs: jsonStringArray,
+    requiredIntroducedConstructions: jsonStringArray,
+    dependencyAssessment: jsonString,
+    constructionFragility: jsonString,
+    outputValidity: jsonString,
     dependsOnPrimitiveInputs: jsonStringArray,
     dependsOnIntroducedConstructions: jsonStringArray,
     weakestDependency: jsonString,
     assessment: jsonString,
   },
 };
-const outputValidityAssessmentJsonSchema = {
-  type: "object",
-  required: ["assessment"],
-  properties: {
-    knownResultRecoveries: jsonStringArray,
-    novelPredictionsOrConstraints: jsonStringArray,
-    failedOutputsOrConstraints: jsonStringArray,
-    assessment: jsonString,
-  },
-};
+const outputValidityAssessmentJsonSchema = jsonString;
 const comparatorProfileJsonSchema = {
   type: "object",
   additionalProperties: true,
@@ -826,6 +853,7 @@ const individualReviewJsonSchema = {
     correctness: jsonString,
     inputGrounding: jsonString,
     inputFundamentality: jsonString,
+    constructionAssessment: jsonString,
     frameworkIndependence: jsonString,
     hardToVaryAssessment: jsonString,
     manuscriptOriginalContribution: jsonString,
@@ -929,10 +957,33 @@ const adjudicatorJsonSchema = {
 };
 const metadataJsonSchema = {
   type: "object",
-  required: ["title", "authors"],
+  required: [
+    "displayedTitle",
+    "displayedAuthors",
+    "arxivId",
+    "doi",
+    "journalName",
+    "journalPublicationDate",
+    "arxivFirstSubmissionDate",
+    "manuscriptDatePrintedOnPdf",
+    "originalPublicationDateBestGuess",
+    "dateSource",
+    "dateConfidence",
+    "dateNotes",
+  ],
   properties: {
-    title: jsonString,
-    authors: jsonString,
+    displayedTitle: jsonString,
+    displayedAuthors: jsonStringArray,
+    arxivId: jsonString,
+    doi: jsonString,
+    journalName: jsonString,
+    journalPublicationDate: jsonString,
+    arxivFirstSubmissionDate: jsonString,
+    manuscriptDatePrintedOnPdf: jsonString,
+    originalPublicationDateBestGuess: jsonString,
+    dateSource: jsonString,
+    dateConfidence: jsonNumber,
+    dateNotes: jsonString,
   },
 };
 
@@ -1199,26 +1250,60 @@ function normalizeContributionArchetype(value: unknown, fallback?: ContributionA
 
 function normalizeCentralOutputDependency(value: unknown, fallback?: CentralOutputDependency): CentralOutputDependency {
   const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const requiredPrimitiveInputs = firstStringArray([
+    source.requiredPrimitiveInputs,
+    source.dependsOnPrimitiveInputs,
+    source.primitiveInputDependencies,
+    source.primitiveInputs,
+    fallback?.requiredPrimitiveInputs,
+    fallback?.dependsOnPrimitiveInputs,
+  ]);
+  const requiredIntroducedConstructions = firstStringArray([
+    source.requiredIntroducedConstructions,
+    source.dependsOnIntroducedConstructions,
+    source.introducedConstructionDependencies,
+    source.introducedConstructions,
+    fallback?.requiredIntroducedConstructions,
+    fallback?.dependsOnIntroducedConstructions,
+  ]);
+  const dependencyAssessment = firstString([
+    source.dependencyAssessment,
+    source.assessment,
+    source.centralOutputDependencyAssessment,
+  ], fallback?.dependencyAssessment || fallback?.assessment || "");
+  const constructionFragility = firstString([
+    source.constructionFragility,
+    source.weakestDependency,
+    source.weakestLink,
+    source.fragileDependency,
+  ], fallback?.constructionFragility || fallback?.weakestDependency || "");
   return {
     centralOutput: firstString([source.centralOutput, source.output, source.mainOutput], fallback?.centralOutput ?? ""),
-    dependsOnPrimitiveInputs: firstStringArray([
-      source.dependsOnPrimitiveInputs,
-      source.primitiveInputDependencies,
-      source.primitiveInputs,
-      fallback?.dependsOnPrimitiveInputs,
-    ]),
-    dependsOnIntroducedConstructions: firstStringArray([
-      source.dependsOnIntroducedConstructions,
-      source.introducedConstructionDependencies,
-      source.introducedConstructions,
-      fallback?.dependsOnIntroducedConstructions,
-    ]),
-    weakestDependency: firstString([source.weakestDependency, source.weakestLink, source.fragileDependency], fallback?.weakestDependency ?? ""),
-    assessment: firstString([source.assessment, source.dependencyAssessment, source.centralOutputDependencyAssessment], fallback?.assessment ?? ""),
+    requiredPrimitiveInputs,
+    requiredIntroducedConstructions,
+    dependencyAssessment,
+    constructionFragility,
+    outputValidity: firstString([
+      source.outputValidity,
+      source.outputValidityAssessment,
+      source.outputValiditySummary,
+    ], fallback?.outputValidity ?? ""),
+    dependsOnPrimitiveInputs: requiredPrimitiveInputs,
+    dependsOnIntroducedConstructions: requiredIntroducedConstructions,
+    weakestDependency: constructionFragility,
+    assessment: dependencyAssessment,
   };
 }
 
 function normalizeOutputValidityAssessment(value: unknown, fallback?: OutputValidityAssessment): OutputValidityAssessment {
+  if (typeof value === "string") {
+    return {
+      knownResultRecoveries: fallback?.knownResultRecoveries ?? [],
+      novelPredictionsOrConstraints: fallback?.novelPredictionsOrConstraints ?? [],
+      failedOutputsOrConstraints: fallback?.failedOutputsOrConstraints ?? [],
+      assessment: value.trim() || fallback?.assessment || "",
+    };
+  }
   const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   return {
     knownResultRecoveries: firstStringArray([
@@ -1427,6 +1512,7 @@ function defaultComparatorCalibration(
       constructionComparison: "",
       outputsComparison: "",
       generalizationComparison: "",
+      outputValidityComparison: "",
       downstreamReachComparison: "",
       frameworkConditionalityComparison: "",
       scoreGapAssessment: "No comparator calibration adjustment was applied.",
@@ -1476,6 +1562,7 @@ function normalizeExplanatoryDeltaAssessment(value: unknown): ComparatorCalibrat
     constructionComparison: firstString([source.constructionComparison, source.constructionsComparison]),
     outputsComparison: firstString([source.outputsComparison, source.outputComparison]),
     generalizationComparison: firstString([source.generalizationComparison, source.generalizationBreadthComparison]),
+    outputValidityComparison: firstString([source.outputValidityComparison, source.validityComparison]),
     downstreamReachComparison: firstString([source.downstreamReachComparison, source.downstreamComparison]),
     frameworkConditionalityComparison: firstString([source.frameworkConditionalityComparison, source.frameworkComparison]),
     scoreGapAssessment: firstString([source.scoreGapAssessment, source.score_gap_assessment]),
@@ -1903,6 +1990,8 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
         source.inputConstructionOutputAssessment,
         source.input_construction_output_assessment,
       ]),
+      centralOutputDependency: normalizedCentralOutputDependency,
+      outputValidityAssessment: normalizedOutputValidityAssessment,
     },
     centralOutputDependency: normalizedCentralOutputDependency,
     outputValidityAssessment: normalizedOutputValidityAssessment,
@@ -1936,6 +2025,11 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
       source.inputFundamentality,
       source.input_fundamentality,
       source.inputFundamentalityAssessment,
+    ]),
+    constructionAssessment: firstString([
+      source.constructionAssessment,
+      source.construction_assessment,
+      source.constructionStrengthAssessment,
     ]),
     contributionGroundingType: firstString([
       source.contributionGroundingType,
@@ -2020,11 +2114,15 @@ function individualReviewReasoningText(review: IndividualReview) {
     review.inputConstructionOutputLedger.assessment,
     review.inputConstructionOutputLedger.downstreamReach,
     review.centralOutputDependency.centralOutput,
+    review.centralOutputDependency.dependencyAssessment,
+    review.centralOutputDependency.constructionFragility,
+    review.centralOutputDependency.outputValidity,
     review.centralOutputDependency.assessment,
     review.outputValidityAssessment.assessment,
     review.correctness,
     review.inputGrounding,
     review.inputFundamentality,
+    review.constructionAssessment,
     review.novelty,
     review.strongestCaseForImportance,
     review.strongestObjection,
@@ -2066,7 +2164,9 @@ function validateIndividualReview(review: IndividualReview) {
   }
 
   if (!review.outputValidityAssessment.assessment.trim()) {
-    throw new Error("Generated review was missing output-validity assessment.");
+    if (!review.centralOutputDependency.outputValidity.trim()) {
+      throw new Error("Generated review was missing output-validity assessment.");
+    }
   }
 
   if (score === 0 && reasoningText.length < 180) {
@@ -2118,12 +2218,41 @@ type MetadataHints = {
   mimeType?: string;
 };
 
+export type PaperDateMetadata = {
+  displayedTitle: string;
+  displayedAuthors: string[];
+  arxivId: string;
+  doi: string;
+  journalName: string;
+  journalPublicationDate: string;
+  arxivFirstSubmissionDate: string;
+  manuscriptDatePrintedOnPdf: string;
+  originalPublicationDateBestGuess: string;
+  dateSource: string;
+  dateConfidence: number;
+  dateNotes: string;
+};
+
+export type ExtractedPaperMetadata = {
+  title: string;
+  authors: string;
+  dateMetadata: PaperDateMetadata;
+};
+
 function cleanMetadataText(value?: string) {
   return stripControlChars(value || "")
     .replace(/\.[Pp][Dd][Ff]$/, "")
     .replace(/[_-]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function splitAuthorNames(value: string) {
+  return cleanMetadataText(value)
+    .split(/\s*(?:;|\band\b|,(?=\s*[A-Z][A-Za-z.'-]+(?:\s|$)))\s*/i)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .slice(0, 30);
 }
 
 function isUsefulTitleHint(value?: string) {
@@ -2674,6 +2803,8 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
         source.inputConstructionOutputAssessment,
         fallbackReview.inputConstructionOutputLedger.assessment,
       ]),
+      centralOutputDependency: aggregateCentralOutputDependency,
+      outputValidityAssessment: aggregateOutputValidityAssessment,
     },
     centralOutputDependency: aggregateCentralOutputDependency,
     outputValidityAssessment: aggregateOutputValidityAssessment,
@@ -2717,6 +2848,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     survivingContributionScoreBasis,
     inputGroundingAssessment: asString(source.inputGroundingAssessment ?? source.inputGrounding, fallbackReview.inputGrounding),
     inputFundamentalityAssessment: asString(source.inputFundamentalityAssessment ?? source.inputFundamentality, fallbackReview.inputFundamentality),
+    constructionAssessment: asString(source.constructionAssessment, fallbackReview.constructionAssessment),
     contributionGroundingType: asString(source.contributionGroundingType, fallbackReview.contributionGroundingType),
     frameworkIndependenceAssessment: asString(source.frameworkIndependenceAssessment ?? source.frameworkIndependence, fallbackReview.frameworkIndependence),
     hardToVaryAssessment: asString(source.hardToVaryAssessment, fallbackReview.hardToVaryAssessment),
@@ -2770,7 +2902,9 @@ function validateAggregateReview(review: AggregateReview) {
   }
 
   if (!review.outputValidityAssessment.assessment.trim()) {
-    throw new Error("Adjudication was missing output-validity assessment.");
+    if (!review.centralOutputDependency.outputValidity.trim()) {
+      throw new Error("Adjudication was missing output-validity assessment.");
+    }
   }
 
   if (!allDiagnosticSubscoresValid(review.subscoreValidity)) {
@@ -2807,6 +2941,7 @@ function buildAdjudicatorInput(
       correctness: review.correctness,
       inputGrounding: review.inputGrounding,
       inputFundamentality: review.inputFundamentality,
+      constructionAssessment: review.constructionAssessment,
       frameworkConditionality: review.frameworkConditionality,
       frameworkIndependence: review.frameworkIndependence,
       manuscriptOriginalContribution: review.manuscriptOriginalContribution,
@@ -2876,6 +3011,7 @@ function buildComparatorCalibrationInput(
       correctness: aggregate.correctnessAssessment,
       inputGrounding: aggregate.inputGroundingAssessment,
       inputFundamentality: aggregate.inputFundamentalityAssessment,
+      constructionAssessment: aggregate.constructionAssessment,
       frameworkIndependence: aggregate.frameworkIndependenceAssessment,
       hardToVaryAssessment: aggregate.hardToVaryAssessment,
       frameworkConditionality: aggregate.frameworkConditionalityAssessment,
@@ -2909,7 +3045,45 @@ function buildComparatorCalibrationInput(
   }, null, 2);
 }
 
-export async function extractMetadata(paperContent: string, hints: MetadataHints = {}): Promise<{ title: string; authors: string }> {
+function defaultDateMetadata(displayedTitle: string, displayedAuthors: string[]): PaperDateMetadata {
+  return {
+    displayedTitle,
+    displayedAuthors,
+    arxivId: "",
+    doi: "",
+    journalName: "",
+    journalPublicationDate: "",
+    arxivFirstSubmissionDate: "",
+    manuscriptDatePrintedOnPdf: "",
+    originalPublicationDateBestGuess: "",
+    dateSource: "unknown",
+    dateConfidence: 0,
+    dateNotes: "Date metadata was not confidently extracted.",
+  };
+}
+
+function normalizeExtractedDateMetadata(
+  source: Record<string, unknown>,
+  display: { displayedTitle: string; displayedAuthors: string[] },
+): PaperDateMetadata {
+  const metadata = defaultDateMetadata(display.displayedTitle, display.displayedAuthors);
+  return {
+    displayedTitle: asString(source.displayedTitle, metadata.displayedTitle) || metadata.displayedTitle,
+    displayedAuthors: firstStringArray([source.displayedAuthors, metadata.displayedAuthors]),
+    arxivId: asString(source.arxivId, metadata.arxivId),
+    doi: asString(source.doi, metadata.doi),
+    journalName: asString(source.journalName, metadata.journalName),
+    journalPublicationDate: asString(source.journalPublicationDate, metadata.journalPublicationDate),
+    arxivFirstSubmissionDate: asString(source.arxivFirstSubmissionDate, metadata.arxivFirstSubmissionDate),
+    manuscriptDatePrintedOnPdf: asString(source.manuscriptDatePrintedOnPdf, metadata.manuscriptDatePrintedOnPdf),
+    originalPublicationDateBestGuess: asString(source.originalPublicationDateBestGuess, metadata.originalPublicationDateBestGuess),
+    dateSource: asString(source.dateSource, metadata.dateSource) || metadata.dateSource,
+    dateConfidence: asNumber(source.dateConfidence, metadata.dateConfidence, 0, 1),
+    dateNotes: asString(source.dateNotes, metadata.dateNotes),
+  };
+}
+
+export async function extractMetadata(paperContent: string, hints: MetadataHints = {}): Promise<ExtractedPaperMetadata> {
   const fallback = heuristicMetadata(paperContent, hints);
   const headerText = manuscriptHeaderText(paperContent).join("\n");
   const metadataInput = JSON.stringify({
@@ -2955,16 +3129,31 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       },
     );
     const parsedMetadata = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-    const title = asString(parsedMetadata.title, fallback.title);
-    const authors = asString(parsedMetadata.authors, fallback.authors);
+    const title = firstString([parsedMetadata.displayedTitle, parsedMetadata.title], fallback.title);
+    const displayedAuthors = firstStringArray([parsedMetadata.displayedAuthors]);
+    const authors = displayedAuthors.length > 0
+      ? displayedAuthors.join(", ")
+      : asString(parsedMetadata.authors, fallback.authors);
     const bestTitle = isSuspiciousTitle(title) ? fallback.title : title;
     const bestAuthors = isSuspiciousAuthors(authors) ? fallback.authors : authors;
+    const bestAuthorList = isSuspiciousAuthors(authors)
+      ? splitAuthorNames(fallback.authors)
+      : displayedAuthors.length > 0
+        ? displayedAuthors
+        : splitAuthorNames(bestAuthors);
     return {
       title: bestTitle,
       authors: bestAuthors,
+      dateMetadata: normalizeExtractedDateMetadata(parsedMetadata, {
+        displayedTitle: bestTitle,
+        displayedAuthors: bestAuthorList.length > 0 ? bestAuthorList : splitAuthorNames(bestAuthors),
+      }),
     };
   } catch {
-    return fallback;
+    return {
+      ...fallback,
+      dateMetadata: defaultDateMetadata(fallback.title, splitAuthorNames(fallback.authors)),
+    };
   }
 }
 
@@ -3328,8 +3517,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
-      schemaVersion: "v11",
-      clusterVersion: "v9-organic-profile",
+      schemaVersion: "v12.1",
+      clusterVersion: "v12.1-organic-profile",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
       benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
@@ -3381,6 +3570,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
         inputConstructionOutputLedger: aggregate.inputConstructionOutputLedger,
         centralOutputDependency: aggregate.centralOutputDependency,
         outputValidityAssessment: aggregate.outputValidityAssessment,
+        constructionAssessment: aggregate.constructionAssessment,
         contributionInventory: aggregate.contributionInventory,
         survivingHighValueContributions: aggregate.survivingHighValueContributions,
         failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
@@ -3394,6 +3584,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       coverageLedger: representativeReview.coverageLedger,
       inputGrounding: aggregate.inputGroundingAssessment || representativeReview.inputGrounding,
       inputFundamentality: aggregate.inputFundamentalityAssessment || representativeReview.inputFundamentality,
+      constructionAssessment: aggregate.constructionAssessment || representativeReview.constructionAssessment,
       contributionGroundingType: aggregate.contributionGroundingType || representativeReview.contributionGroundingType,
       frameworkIndependence: aggregate.frameworkIndependenceAssessment || representativeReview.frameworkIndependence,
       hardToVaryAssessment: aggregate.hardToVaryAssessment || representativeReview.hardToVaryAssessment,

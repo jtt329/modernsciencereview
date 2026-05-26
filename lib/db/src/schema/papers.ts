@@ -2,6 +2,21 @@ import { sql } from "drizzle-orm";
 import { integer, jsonb, numeric, pgTable, text, timestamp, unique, varchar } from "drizzle-orm/pg-core";
 import { usersTable } from "./auth";
 
+export type PaperDateMetadata = {
+  displayedTitle: string;
+  displayedAuthors: string[];
+  arxivId: string;
+  doi: string;
+  journalName: string;
+  journalPublicationDate: string;
+  arxivFirstSubmissionDate: string;
+  manuscriptDatePrintedOnPdf: string;
+  originalPublicationDateBestGuess: string;
+  dateSource: string;
+  dateConfidence: number;
+  dateNotes: string;
+};
+
 export const papersTable = pgTable("papers", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   title: text("title").notNull(),
@@ -9,6 +24,7 @@ export const papersTable = pgTable("papers", {
   authorId: varchar("author_id").notNull().references(() => usersTable.id),
   authorName: varchar("author_name").notNull(),   // submitter's display name
   paperAuthors: text("paper_authors"),             // actual authors extracted from the paper
+  dateMetadata: jsonb("date_metadata").$type<PaperDateMetadata | null>(),
   field: varchar("field").notNull().default("Unknown"),
   subfields: jsonb("subfields").$type<string[]>().default([]),
   score: integer("score"),

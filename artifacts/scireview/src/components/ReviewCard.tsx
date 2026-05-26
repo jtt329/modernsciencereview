@@ -44,6 +44,9 @@ const listMarkdown = (items: unknown): string =>
 const hasText = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
+const asObject = (value: unknown): Record<string, any> | null =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : null;
+
 const validSubscore = (value: unknown, isValid = true): number | null => {
   const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
   if (!isValid || !Number.isFinite(numeric) || numeric < 0 || numeric > 10) return null;
@@ -284,15 +287,32 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const currentInputConstructionOutputAssessment = currentInputConstructionOutputLedger?.assessment ?? '';
   const currentCentralOutputDependency = selectedPass?.centralOutputDependency ?? centralOutputDependency;
   const currentCentralOutput = currentCentralOutputDependency?.centralOutput ?? '';
-  const currentCentralOutputPrimitiveDependencies = asArray(currentCentralOutputDependency?.dependsOnPrimitiveInputs);
-  const currentCentralOutputConstructionDependencies = asArray(currentCentralOutputDependency?.dependsOnIntroducedConstructions);
-  const currentWeakestDependency = currentCentralOutputDependency?.weakestDependency ?? '';
-  const currentCentralOutputDependencyAssessment = currentCentralOutputDependency?.assessment ?? '';
+  const currentCentralOutputPrimitiveDependencies = asArray(
+    currentCentralOutputDependency?.requiredPrimitiveInputs ??
+    currentCentralOutputDependency?.dependsOnPrimitiveInputs
+  );
+  const currentCentralOutputConstructionDependencies = asArray(
+    currentCentralOutputDependency?.requiredIntroducedConstructions ??
+    currentCentralOutputDependency?.dependsOnIntroducedConstructions
+  );
+  const currentWeakestDependency =
+    currentCentralOutputDependency?.constructionFragility ??
+    currentCentralOutputDependency?.weakestDependency ??
+    '';
+  const currentCentralOutputDependencyAssessment =
+    currentCentralOutputDependency?.dependencyAssessment ??
+    currentCentralOutputDependency?.assessment ??
+    '';
+  const currentCentralOutputValidity = currentCentralOutputDependency?.outputValidity ?? '';
   const currentOutputValidityAssessment = selectedPass?.outputValidityAssessment ?? outputValidityAssessment;
-  const currentKnownResultRecoveries = asArray(currentOutputValidityAssessment?.knownResultRecoveries);
-  const currentNovelPredictionsOrConstraints = asArray(currentOutputValidityAssessment?.novelPredictionsOrConstraints);
-  const currentFailedOutputsOrConstraints = asArray(currentOutputValidityAssessment?.failedOutputsOrConstraints);
-  const currentOutputValidityText = currentOutputValidityAssessment?.assessment ?? '';
+  const currentOutputValidityObject = asObject(currentOutputValidityAssessment);
+  const currentKnownResultRecoveries = asArray(currentOutputValidityObject?.knownResultRecoveries);
+  const currentNovelPredictionsOrConstraints = asArray(currentOutputValidityObject?.novelPredictionsOrConstraints);
+  const currentFailedOutputsOrConstraints = asArray(currentOutputValidityObject?.failedOutputsOrConstraints);
+  const currentOutputValidityText =
+    typeof currentOutputValidityAssessment === 'string'
+      ? currentOutputValidityAssessment
+      : currentOutputValidityObject?.assessment ?? currentCentralOutputValidity;
   const hasIcoLedger = Boolean(
     currentPrimitiveInputs.length ||
     currentIntroducedConstructions.length ||
@@ -303,6 +323,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   );
   const currentInputGrounding = selectedPass?.inputGrounding || inputGrounding;
   const currentInputFundamentality = selectedPass?.inputFundamentality || inputFundamentality;
+  const currentConstructionAssessment = selectedPass?.constructionAssessment
+    || parsedCoverage?.constructionAssessment
+    || storedAggregate?.constructionAssessment
+    || '';
   const currentCorrectness = selectedPass?.correctness || review.correctness;
   const currentStrongestCase = selectedPass?.strongestCaseForImportance || review.strongestCaseForImportance;
   const currentStrongestObjection = selectedPass?.strongestObjection || review.strongestObjection;
@@ -372,7 +396,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     : /gemini-3\.5-flash/i.test(rawModelPipeline)
       ? 'Gemini 3.5 Flash'
       : rawModelPipeline;
-  const shortPromptVersion = promptVersion ? String(promptVersion).match(/^v\d+/)?.[0] ?? String(promptVersion) : '';
+  const shortPromptVersion = promptVersion ? String(promptVersion).match(/^v\d+(?:\.\d+)?/)?.[0] ?? String(promptVersion) : '';
   const pipelineModeLabel = parsedCoverage?.pipelineMode === 'benchmark-ingestion'
     ? 'benchmark ingestion'
     : parsedCoverage?.pipelineMode === 'normal-review'
@@ -387,10 +411,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     { label: 'Input Grounding', value: currentInputGrounding, color: 'text-cyan-400', icon: <Shield className="w-4 h-4" /> },
     { label: 'Input Fundamentality', value: currentInputFundamentality, color: 'text-violet-400', icon: <BrainCircuit className="w-4 h-4" /> },
+    { label: 'Construction Assessment', value: currentConstructionAssessment, color: 'text-indigo-300', icon: <GitBranch className="w-4 h-4" /> },
+    { label: 'Output Validity', value: currentOutputValidityText, color: 'text-emerald-300', icon: <CheckCircle2 className="w-4 h-4" /> },
     { label: 'Framework Independence', value: currentFrameworkIndependence, color: 'text-sky-300', icon: <GitBranch className="w-4 h-4" /> },
     { label: 'Framework Conditionality', value: currentFrameworkConditionality, color: 'text-amber-400', icon: <GitBranch className="w-4 h-4" /> },
     { label: 'Hard-to-Vary Assessment', value: currentHardToVaryAssessment, color: 'text-orange-300', icon: <Shield className="w-4 h-4" /> },
-    { label: 'Manuscript Original Contribution', value: currentOriginalContribution, color: 'text-indigo-300', icon: <Microscope className="w-4 h-4" /> },
     { label: 'Strongest Case', value: currentStrongestCase, color: 'text-green-400', icon: <TrendingUp className="w-4 h-4" /> },
     { label: 'Strongest Objection', value: currentStrongestObjection, color: 'text-rose-400', icon: <AlertTriangle className="w-4 h-4" /> },
     { label: 'Decisive Check', value: currentDecisiveCheck, color: 'text-yellow-400', icon: <Microscope className="w-4 h-4" /> },
@@ -746,7 +771,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             );
           })()}
 
-          {(currentCentralOutput || currentCentralOutputPrimitiveDependencies.length || currentCentralOutputConstructionDependencies.length || currentWeakestDependency || currentCentralOutputDependencyAssessment) && (
+          {(currentCentralOutput || currentCentralOutputPrimitiveDependencies.length || currentCentralOutputConstructionDependencies.length || currentWeakestDependency || currentCentralOutputDependencyAssessment || currentCentralOutputValidity) && (
             <Section icon={<Target className="w-4 h-4" />} label="Central Output Dependency" color="text-sky-300">
               <div className="space-y-4">
                 {currentCentralOutput && (
@@ -757,20 +782,26 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 )}
                 {currentCentralOutputPrimitiveDependencies.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Depends On Primitive Inputs</p>
+                    <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Required Primitive Inputs</p>
                     <Markdown>{listMarkdown(currentCentralOutputPrimitiveDependencies)}</Markdown>
                   </div>
                 )}
                 {currentCentralOutputConstructionDependencies.length > 0 && (
                   <div>
-                    <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Depends On Introduced Constructions</p>
+                    <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Required Introduced Constructions</p>
                     <Markdown>{listMarkdown(currentCentralOutputConstructionDependencies)}</Markdown>
                   </div>
                 )}
                 {currentWeakestDependency && (
                   <div>
-                    <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest mb-1">Weakest Dependency</p>
+                    <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest mb-1">Construction Fragility</p>
                     <Markdown>{currentWeakestDependency}</Markdown>
+                  </div>
+                )}
+                {currentCentralOutputValidity && (
+                  <div>
+                    <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest mb-1">Output Validity</p>
+                    <Markdown>{currentCentralOutputValidity}</Markdown>
                   </div>
                 )}
                 {currentCentralOutputDependencyAssessment && (
@@ -967,6 +998,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       explanatoryDeltaAssessment.constructionComparison,
                       explanatoryDeltaAssessment.outputsComparison,
                       explanatoryDeltaAssessment.generalizationComparison,
+                      explanatoryDeltaAssessment.outputValidityComparison,
                       explanatoryDeltaAssessment.downstreamReachComparison,
                       explanatoryDeltaAssessment.frameworkConditionalityComparison,
                     ].filter(hasText).map((item: string, index: number) => (

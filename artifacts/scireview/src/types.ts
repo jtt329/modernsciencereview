@@ -1,3 +1,18 @@
+export interface PaperDateMetadata {
+  displayedTitle?: string;
+  displayedAuthors?: string[];
+  arxivId?: string;
+  doi?: string;
+  journalName?: string;
+  journalPublicationDate?: string;
+  arxivFirstSubmissionDate?: string;
+  manuscriptDatePrintedOnPdf?: string;
+  originalPublicationDateBestGuess?: string;
+  dateSource?: string;
+  dateConfidence?: number;
+  dateNotes?: string;
+}
+
 export interface Paper {
   id: string;
   title: string;
@@ -5,6 +20,7 @@ export interface Paper {
   authorId: string;
   authorName: string;       // submitter's display name
   paperAuthors?: string;    // actual authors extracted from the paper
+  dateMetadata?: PaperDateMetadata | null;
   createdAt: number;
   status: 'draft' | 'published';
   aiReviewId?: string;
@@ -55,17 +71,23 @@ export interface AIReview {
   generalizationBreadthScore?: number;
   centralOutputDependency?: {
     centralOutput?: string;
+    requiredPrimitiveInputs?: string[];
+    requiredIntroducedConstructions?: string[];
+    dependencyAssessment?: string;
+    constructionFragility?: string;
+    outputValidity?: string;
     dependsOnPrimitiveInputs?: string[];
     dependsOnIntroducedConstructions?: string[];
     weakestDependency?: string;
     assessment?: string;
   };
-  outputValidityAssessment?: {
+  outputValidityAssessment?: string | {
     knownResultRecoveries?: string[];
     novelPredictionsOrConstraints?: string[];
     failedOutputsOrConstraints?: string[];
     assessment?: string;
   };
+  constructionAssessment?: string;
   overallIntrinsicScore?: number;
   bestClassification?: string;
   finalJudgment?: string;

@@ -19,6 +19,21 @@ const FIELDS = ['All Fields', 'Physics', 'Mathematics', 'Computer Science', 'Bio
 const RANKINGS = ['Top Rated', 'Most Viewed', 'Most Discussed', 'Newest'];
 const TIMEFRAMES = ['All Time', 'Past Year', 'Past Month', 'Past Week'];
 
+interface PaperDateMetadata {
+  displayedTitle?: string;
+  displayedAuthors?: string[];
+  arxivId?: string;
+  doi?: string;
+  journalName?: string;
+  journalPublicationDate?: string;
+  arxivFirstSubmissionDate?: string;
+  manuscriptDatePrintedOnPdf?: string;
+  originalPublicationDateBestGuess?: string;
+  dateSource?: string;
+  dateConfidence?: number;
+  dateNotes?: string;
+}
+
 interface Paper {
   id: string;
   title: string;
@@ -26,6 +41,7 @@ interface Paper {
   authorId: string;
   authorName: string;      // submitter
   paperAuthors?: string;   // actual paper authors
+  dateMetadata?: PaperDateMetadata | null;
   field: string;
   subfields: string[] | null;
   score: number | null;
@@ -39,6 +55,47 @@ interface Paper {
   reviewSummary?: string | null;
   reviewCentralClaim?: string | null;
   reviewFinalJudgment?: string | null;
+}
+
+function dateMetaText(value?: string | null) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text || null;
+}
+
+function dateConfidenceLabel(confidence?: number) {
+  if (typeof confidence !== 'number' || !Number.isFinite(confidence)) return 'unknown confidence';
+  if (confidence >= 0.8) return 'high confidence';
+  if (confidence >= 0.5) return 'medium confidence';
+  if (confidence > 0) return 'low confidence';
+  return 'unknown confidence';
+}
+
+function PaperDateMetadataBadges({ metadata }: { metadata?: PaperDateMetadata | null }) {
+  const firstSubmitted = dateMetaText(metadata?.arxivFirstSubmissionDate);
+  const published = dateMetaText(metadata?.journalPublicationDate);
+  const bestDate = dateMetaText(metadata?.originalPublicationDateBestGuess);
+  if (!firstSubmitted && !published && !bestDate) return null;
+  const tooltip = [
+    metadata?.dateSource ? `Source: ${metadata.dateSource}` : '',
+    `Confidence: ${dateConfidenceLabel(metadata?.dateConfidence)}`,
+    metadata?.dateNotes ? `Notes: ${metadata.dateNotes}` : '',
+  ].filter(Boolean).join('\n');
+  const badges = [
+    firstSubmitted ? ['First submitted', firstSubmitted] : null,
+    published ? ['Published', published] : null,
+    bestDate ? ['Best date', bestDate] : null,
+  ].filter(Boolean) as [string, string][];
+
+  return (
+    <div className="flex flex-wrap gap-2" title={tooltip || undefined}>
+      {badges.map(([label, value]) => (
+        <div key={`${label}-${value}`} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-500 shadow-sm">
+          <span className="text-slate-400">{label}</span>
+          <span className="ml-1 text-slate-700">{value}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 interface AIReview {
@@ -589,7 +646,14 @@ export default function App() {
                 ) : filteredPapers.map(paper => (
                   <PaperCard
                     key={paper.id}
-                    paper={{ ...paper, subfields: paper.subfields ?? [], createdAt: new Date(paper.createdAt).getTime() }}
+                    paper={{
+                      ...paper,
+                      status: 'published',
+                      score: paper.score ?? undefined,
+                      modelName: paper.modelName ?? undefined,
+                      subfields: paper.subfields ?? [],
+                      createdAt: new Date(paper.createdAt).getTime(),
+                    }}
                     onClick={handleSelectPaper}
                     onLike={handleLikePaper}
                     isLiked={userLikes.has(paper.id)}
@@ -657,6 +721,7 @@ export default function App() {
                       </div>
                     </div>
                     <h1 className="text-4xl md:text-6xl font-black text-slate-900 leading-tight"><LatexText>{selectedPaper.title}</LatexText></h1>
+                    <PaperDateMetadataBadges metadata={selectedPaper.dateMetadata} />
                     <div className="flex items-center justify-between py-6 border-y border-slate-100">
                       <div className="flex items-center gap-3">
                         <div className="w-12 h-12 rounded-full bg-indigo-50 flex items-center justify-center border border-indigo-100">
@@ -758,7 +823,7 @@ export default function App() {
                   )}
 
                   <CommentSection
-                    comments={comments.map(c => ({ ...c, createdAt: new Date(c.createdAt).getTime() }))}
+                    comments={comments.map(c => ({ ...c, targetId: c.paperId, createdAt: new Date(c.createdAt).getTime() }))}
                     onAddComment={handleAddComment}
                     user={user ? { displayName: displayName(user), photoURL: user.profileImageUrl } : null}
                   />
