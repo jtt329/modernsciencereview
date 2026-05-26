@@ -173,6 +173,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const blindingStrength = parsedCoverage?.blindingStrength ?? (pdfVisibleFallbackUsed ? 'weaker' : 'strong');
   const publicVerdict = review.publicVerdict || storedAggregate?.publicOneParagraphVerdict || parsedCoverage?.publicVerdict || review.finalJudgment || review.overallEvaluation;
   const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
+  const localCohort =
+    parsedCoverage?.finalLocalCohort ||
+    parsedCoverage?.localCohort ||
+    storedAggregate?.finalLocalCohort ||
+    storedAggregate?.comparatorProfile?.localCohort ||
+    comparisonCohort;
+  const canonicalClusterLabel =
+    parsedCoverage?.canonicalClusterLabel ||
+    parsedCoverage?.benchmarkCluster?.canonicalClusterLabel ||
+    storedAggregate?.canonicalClusterLabel ||
+    '';
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
   const storedScoreStability = aggregateAdjudication?.scoreStability || storedAggregate?.scoreStability || (review as any).scoreStability || parsedCoverage?.scoreStability || null;
@@ -226,7 +237,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     'Benchmark ingestion mode: comparator calibration will be run later during benchmark backfill.';
   const scorePathCaption = comparatorCalibrationApplied
     ? 'Comparator-calibrated anchored scientific merit score.'
-    : 'Blind intrinsic score; comparator calibration not yet applied. Benchmark ingestion mode: comparator calibration will be run later during benchmark backfill.';
+    : 'Comparator calibration not applied yet. This review stores the blind intrinsic profile for later benchmark backfill.';
   const scoreCappingReason =
     parsedCoverage?.scoreCappingReason ??
     storedAggregate?.scoreCappingReason ??
@@ -236,7 +247,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const benchmarkSetVersion = parsedCoverage?.benchmarkSetVersion ?? comparatorCalibration?.benchmarkSetVersion ?? '';
   const extractionMethod = parsedCoverage?.extractionMethod ?? '';
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
-  const currentComparisonCohort = selectedPass?.comparisonCohort || selectedPass?.broadField || comparisonCohort;
+  const currentLocalCohort = selectedPass?.localCohort || selectedPass?.comparisonCohort || selectedPass?.broadField || localCohort;
   const currentSummary = selectedPass?.summary || storedAggregate?.finalSummary || review.summary;
   const currentVerdict = selectedPass?.oneParagraphVerdict || selectedPass?.finalJudgment || aggregateVerdict;
   const currentCentralClaim = selectedPass?.centralClaim || review.centralClaim;
@@ -305,24 +316,27 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ? format(new Date(review.createdAt), 'MMM d, yyyy h:mm:ss a')
     : null;
   const selectedSubscoreValidity = selectedPass?.subscoreValidity ?? subscoreValidity;
-  const currentIntrinsicScore = validSubscore(
-    selectedPass?.intrinsicTechnicalScore ?? review.intrinsicScientificMeritScore,
-    selectedSubscoreValidity.intrinsicTechnicalScore !== false,
+  const subscoreIsValid = (key: string, legacyKey: string) =>
+    (selectedSubscoreValidity as any)?.[key] ?? (selectedSubscoreValidity as any)?.[legacyKey] ?? true;
+  const currentInputStrengthScore = validSubscore(
+    selectedPass?.inputStrengthScore ?? storedAggregate?.inputStrengthScore ?? parsedCoverage?.inputStrengthScore ?? review.inputStrengthScore ?? review.intrinsicScientificMeritScore,
+    subscoreIsValid('inputStrengthScore', 'intrinsicTechnicalScore') !== false,
   );
-  const currentTargetBreadthScore = validSubscore(
-    selectedPass?.explanatoryTargetBreadthScore ?? review.explanatoryTargetBreadthScore,
-    selectedSubscoreValidity.explanatoryTargetBreadthScore !== false,
+  const currentConstructionStrengthScore = validSubscore(
+    selectedPass?.constructionStrengthScore ?? storedAggregate?.constructionStrengthScore ?? parsedCoverage?.constructionStrengthScore ?? review.constructionStrengthScore ?? review.explanatoryTargetBreadthScore,
+    subscoreIsValid('constructionStrengthScore', 'explanatoryTargetBreadthScore') !== false,
   );
-  const currentTheoryBreadthScore = validSubscore(
-    selectedPass?.theorySpaceBreadthScore ?? review.theorySpaceBreadthScore,
-    selectedSubscoreValidity.theorySpaceBreadthScore !== false,
+  const currentOutputReachScore = validSubscore(
+    selectedPass?.outputReachScore ?? storedAggregate?.outputReachScore ?? parsedCoverage?.outputReachScore ?? review.outputReachScore ?? review.theorySpaceBreadthScore,
+    subscoreIsValid('outputReachScore', 'theorySpaceBreadthScore') !== false,
   );
-  const currentImpactScore = validSubscore(
-    selectedPass?.breadthOfImpactScore ?? review.breadthOfImpactScore,
-    selectedSubscoreValidity.breadthOfImpactScore !== false,
+  const currentGeneralizationBreadthScore = validSubscore(
+    selectedPass?.generalizationBreadthScore ?? storedAggregate?.generalizationBreadthScore ?? parsedCoverage?.generalizationBreadthScore ?? review.generalizationBreadthScore ?? review.breadthOfImpactScore,
+    subscoreIsValid('generalizationBreadthScore', 'breadthOfImpactScore') !== false,
   );
   const passDisagreement = computedPassDisagreement;
   const modelPipeline = parsedCoverage?.modelName ?? review.modelName;
+  const modelPromptLine = [modelPipeline, promptVersion].filter(Boolean).join(' · ');
   const passBandLabels = passScoreBands
     .filter(Boolean)
     .map((band: { low: number; median: number; high: number }, index: number) => `P${index + 1}: ${band.low}-${band.median}-${band.high}`)
@@ -356,6 +370,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               </div>
               <div>
                 <h2 className="text-xl font-black tracking-tight">AI Scientific Review</h2>
+                {modelPromptLine && (
+                  <p className="text-[10px] font-black text-indigo-200 uppercase tracking-widest mt-1 break-words">
+                    {modelPromptLine}
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -449,14 +468,19 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
 
             <div className="border-t border-white/10 pt-4">
-              <div className={`grid gap-3 ${isAdmin ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+              <div className="grid gap-3 md:grid-cols-3">
               <div>
                 <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
                 <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
               </div>
               <div>
-                <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
-                <p className="text-sm font-bold text-white mt-1">{currentComparisonCohort || 'Not specified'}</p>
+                <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Local Cohort</p>
+                <p className="text-sm font-bold text-white mt-1">{currentLocalCohort || 'Not specified'}</p>
+                {canonicalClusterLabel && (
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                    Cluster: {canonicalClusterLabel}
+                  </p>
+                )}
               </div>
               <div>
                 <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Stability</p>
@@ -465,13 +489,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {passDisagreement != null && !selectedPass ? ` (${passDisagreement} point disagreement)` : ''}
                 </p>
               </div>
-              {isAdmin && (
-                <div>
-                  <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Model / Prompt</p>
-                  <p className="text-sm font-bold text-white mt-1">{modelPipeline || 'Not stored'}</p>
-                  {promptVersion && <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{promptVersion}</p>}
-                </div>
-              )}
               </div>
             </div>
           </div>
@@ -598,10 +615,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
           {isNewFormat && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               {[
-                { label: 'Intrinsic Merit', value: currentIntrinsicScore, color: 'text-indigo-300', subColor: 'text-indigo-400' },
-                { label: 'Explanatory Reach', value: currentTargetBreadthScore, color: 'text-sky-300', subColor: 'text-sky-400' },
-                { label: 'Theory Breadth', value: currentTheoryBreadthScore, color: 'text-violet-300', subColor: 'text-violet-400' },
-                { label: 'Impact Breadth', value: currentImpactScore, color: 'text-purple-300', subColor: 'text-purple-400' },
+                { label: 'Input Strength', value: currentInputStrengthScore, color: 'text-indigo-300', subColor: 'text-indigo-400' },
+                { label: 'Construction Strength', value: currentConstructionStrengthScore, color: 'text-sky-300', subColor: 'text-sky-400' },
+                { label: 'Output Reach', value: currentOutputReachScore, color: 'text-violet-300', subColor: 'text-violet-400' },
+                { label: 'Generalization Breadth', value: currentGeneralizationBreadthScore, color: 'text-purple-300', subColor: 'text-purple-400' },
               ].map((item) => (
                 <div key={item.label} className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
                   <div className={`text-3xl font-black ${item.color}`}>
@@ -650,22 +667,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </ul>
                     </div>
                   )}
-                  {currentExternalEmbeddingsAndChecks.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">External Embeddings / Checks</p>
-                      <ul className="space-y-1">
-                        {currentExternalEmbeddingsAndChecks.map((item: string, i: number) => (
-                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                   {currentDirectOutputs.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Direct Outputs</p>
                       <ul className="space-y-1">
                         {currentDirectOutputs.map((item: string, i: number) => (
                           <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-emerald-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {currentExternalEmbeddingsAndChecks.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">External Embeddings / Checks</p>
+                      <ul className="space-y-1">
+                        {currentExternalEmbeddingsAndChecks.map((item: string, i: number) => (
+                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-amber-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
                         ))}
                       </ul>
                     </div>
@@ -687,7 +704,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             );
           })()}
 
-          {/* Coverage Ledger (new prompt) */}
+          {/* Legacy Coverage Ledger */}
           {!hasIcoLedger && (review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {
             const hasContent = currentDirectTargets?.length || currentImportedInputs?.length || currentTheorySpaceVariants?.length || currentMechanismSharingAssessment;
             if (!hasContent) return null;
@@ -824,6 +841,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       explanatoryDeltaAssessment.inputsComparison,
                       explanatoryDeltaAssessment.constructionComparison,
                       explanatoryDeltaAssessment.outputsComparison,
+                      explanatoryDeltaAssessment.generalizationComparison,
                       explanatoryDeltaAssessment.downstreamReachComparison,
                       explanatoryDeltaAssessment.frameworkConditionalityComparison,
                     ].filter(hasText).map((item: string, index: number) => (

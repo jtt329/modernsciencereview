@@ -49,6 +49,10 @@ export interface AIReview {
   explanatoryTargetBreadthScore?: number;
   theorySpaceBreadthScore?: number;
   breadthOfImpactScore?: number;
+  inputStrengthScore?: number;
+  constructionStrengthScore?: number;
+  outputReachScore?: number;
+  generalizationBreadthScore?: number;
   overallIntrinsicScore?: number;
   bestClassification?: string;
   finalJudgment?: string;

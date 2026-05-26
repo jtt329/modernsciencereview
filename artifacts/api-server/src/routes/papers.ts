@@ -23,6 +23,7 @@ import {
   type ReviewInput,
   type ReviewModel,
 } from "../lib/reviewEngineCompat";
+import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
 
 let openai: OpenAI | null = null;
 function getOpenAI() {
@@ -48,6 +49,23 @@ function parseJsonObject(value: string | null): Record<string, any> | null {
   } catch {
     return null;
   }
+}
+
+function extractJsonValue(text: string): any {
+  try {
+    return JSON.parse(text);
+  } catch {}
+  const objectStart = text.indexOf("{");
+  const objectEnd = text.lastIndexOf("}");
+  if (objectStart >= 0 && objectEnd > objectStart) {
+    return JSON.parse(text.slice(objectStart, objectEnd + 1));
+  }
+  const arrayStart = text.indexOf("[");
+  const arrayEnd = text.lastIndexOf("]");
+  if (arrayStart >= 0 && arrayEnd > arrayStart) {
+    return JSON.parse(text.slice(arrayStart, arrayEnd + 1));
+  }
+  throw new Error("Model response did not contain valid JSON.");
 }
 
 function sourceHashFor(source: any): string | null {
@@ -202,6 +220,7 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
   const aggregate = parsed?.aggregate && typeof parsed.aggregate === "object" ? parsed.aggregate : null;
   const comparatorCalibration = parsed?.comparatorCalibration ?? aggregate?.comparatorCalibration ?? null;
   const contributionArchetype = parsed?.contributionArchetype ?? aggregate?.contributionArchetype ?? null;
+  const comparatorProfile = parsed?.comparatorProfile ?? aggregate?.comparatorProfile ?? null;
   const inputConstructionOutputLedger =
     compactLedger(parsed?.inputConstructionOutputLedger ?? aggregate?.inputConstructionOutputLedger);
 
@@ -211,10 +230,14 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
     centralClaim: review?.centralClaim || aggregate?.finalCentralClaim || null,
     summary: review?.summary || aggregate?.finalSummary || null,
     classification: review?.bestClassification || aggregate?.finalClassification || null,
+    localCohort: parsed?.finalLocalCohort || parsed?.localCohort || aggregate?.finalLocalCohort || comparatorProfile?.localCohort || null,
     comparisonCohort: parsed?.finalComparisonCohort || aggregate?.finalComparisonCohort || null,
     score: comparatorCalibration?.finalPublicScoreBand?.median ?? review?.overallIntrinsicScore ?? review?.score ?? null,
-    frameworkConditionality: parsed?.frameworkConditionalityLevel || parsed?.aggregate?.comparatorProfile?.frameworkConditionality || null,
-    comparatorSearchSummary: parsed?.comparatorProfile?.comparatorSearchSummary || aggregate?.comparatorProfile?.comparatorSearchSummary || null,
+    frameworkConditionality: parsed?.frameworkConditionalityLevel || comparatorProfile?.frameworkConditionality || null,
+    comparatorSearchSummary: comparatorProfile?.comparatorSearchSummary || null,
+    canonicalClusterLabel: parsed?.canonicalClusterLabel || parsed?.benchmarkCluster?.canonicalClusterLabel || aggregate?.canonicalClusterLabel || null,
+    clusterVersion: parsed?.clusterVersion || aggregate?.clusterVersion || null,
+    clusterFeatureTags: safeStringArray(comparatorProfile?.clusterFeatureTags),
     benchmarkSetCandidate: Boolean(parsed?.benchmarkSetCandidate),
     benchmarkSetVersion: parsed?.benchmarkSetVersion || comparatorCalibration?.benchmarkSetVersion || null,
     comparatorCalibrationStatus: parsed?.comparatorCalibrationStatus || comparatorCalibration?.comparatorCalibrationStatus || null,
@@ -228,6 +251,7 @@ async function selectComparatorContextForProfile(
   excludePaperId?: string,
 ) {
   const sourceText = [
+    profile.localCohort,
     profile.primaryCohort,
     profile.adjacentBroadCohort,
     profile.contributionArchetype?.primary,
@@ -236,6 +260,7 @@ async function selectComparatorContextForProfile(
     ...(Array.isArray(profile.introducedConstructions) ? profile.introducedConstructions : []),
     ...(Array.isArray(profile.externalEmbeddingsAndChecks) ? profile.externalEmbeddingsAndChecks : []),
     ...(Array.isArray(profile.directOutputs) ? profile.directOutputs : []),
+    ...(Array.isArray(profile.clusterFeatureTags) ? profile.clusterFeatureTags : []),
     profile.downstreamReach,
     profile.classification,
     profile.comparatorSearchSummary,
@@ -267,6 +292,9 @@ async function selectComparatorContextForProfile(
         metadata.classification,
         metadata.centralClaim,
         metadata.summary,
+        metadata.localCohort,
+        metadata.canonicalClusterLabel,
+        metadata.clusterFeatureTags.join(" "),
         metadata.inputConstructionOutputLedger?.primitiveInputs.join(" "),
         metadata.inputConstructionOutputLedger?.introducedConstructions.join(" "),
         metadata.inputConstructionOutputLedger?.directOutputs.join(" "),
@@ -287,7 +315,11 @@ async function selectComparatorContextForProfile(
           subfields,
           score: typeof metadata.score === "number" ? metadata.score : null,
           classification: metadata.classification,
+          localCohort: metadata.localCohort,
           comparisonCohort: metadata.comparisonCohort,
+          canonicalClusterLabel: metadata.canonicalClusterLabel,
+          clusterVersion: metadata.clusterVersion,
+          clusterFeatureTags: metadata.clusterFeatureTags,
           contributionArchetype: metadata.contributionArchetype ?? undefined,
           centralClaim: metadata.centralClaim ? String(metadata.centralClaim).slice(0, 900) : null,
           summary: metadata.summary ? String(metadata.summary).slice(0, 900) : null,
@@ -319,6 +351,33 @@ async function selectComparatorContextForProfile(
 
 const selectComparatorContext: ComparatorContextSelector = async (profile) => selectComparatorContextForProfile(profile);
 
+function benchmarkProfileForClustering(
+  paper: typeof papersTable.$inferSelect,
+  review: typeof reviewsTable.$inferSelect,
+  coverageLedger: Record<string, any>,
+) {
+  const aggregate = coverageLedger.aggregate && typeof coverageLedger.aggregate === "object"
+    ? coverageLedger.aggregate
+    : null;
+  const comparatorProfile = coverageLedger.comparatorProfile ?? aggregate?.comparatorProfile ?? null;
+  const ico = compactLedger(coverageLedger.inputConstructionOutputLedger ?? aggregate?.inputConstructionOutputLedger);
+  return {
+    paperId: paper.id,
+    title: paper.title,
+    localCohort: coverageLedger.finalLocalCohort ?? coverageLedger.localCohort ?? aggregate?.finalLocalCohort ?? comparatorProfile?.localCohort ?? "",
+    broadField: paper.field ?? coverageLedger.broadField ?? "",
+    subfields: safeStringArray(paper.subfields),
+    contributionArchetype: coverageLedger.contributionArchetype ?? aggregate?.contributionArchetype ?? comparatorProfile?.contributionArchetype ?? null,
+    inputConstructionOutputLedger: ico,
+    frameworkConditionality: comparatorProfile?.frameworkConditionality ?? coverageLedger.frameworkConditionalityLevel ?? null,
+    score: review.overallIntrinsicScore ?? review.score ?? null,
+    classification: review.bestClassification ?? aggregate?.finalClassification ?? null,
+    strongestObjection: review.strongestObjection ?? aggregate?.strongestObjection ?? "",
+    comparatorSearchSummary: comparatorProfile?.comparatorSearchSummary ?? "",
+    clusterFeatureTags: safeStringArray(comparatorProfile?.clusterFeatureTags),
+  };
+}
+
 // GET /api/papers/system-prompt — return the review system prompt
 router.get("/papers/system-prompt", (_req, res) => {
   res.json({
@@ -328,6 +387,116 @@ router.get("/papers/system-prompt", (_req, res) => {
     defaultReviewMode: "benchmark-ingestion",
     benchmarkSetVersion: BENCHMARK_SET_VERSION,
   });
+});
+
+// POST /api/papers/benchmark-clusters — admin-only organic clustering before comparator backfill
+router.post("/papers/benchmark-clusters", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const includeAll = req.body?.includeAll === true;
+    const benchmarkSetVersion =
+      typeof req.body?.benchmarkSetVersion === "string" && req.body.benchmarkSetVersion.trim()
+        ? req.body.benchmarkSetVersion.trim()
+        : BENCHMARK_SET_VERSION;
+    const clusterVersion =
+      typeof req.body?.clusterVersion === "string" && req.body.clusterVersion.trim()
+        ? req.body.clusterVersion.trim()
+        : `v9-organic-profile-${benchmarkSetVersion}`;
+
+    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+    const reviews = await db.select().from(reviewsTable);
+    const reviewMap = new Map(reviews.map((review) => [review.paperId, review]));
+    const profiles: ReturnType<typeof benchmarkProfileForClustering>[] = [];
+
+    for (const paper of papers) {
+      const review = reviewMap.get(paper.id);
+      if (!review) continue;
+      const coverageLedger = parseJsonObject(review.coverageLedgerJson);
+      if (!coverageLedger) continue;
+      if (coverageLedger.promptVersion !== REVIEW_PROMPT_VERSION) continue;
+      if (!includeAll && !coverageLedger.benchmarkSetCandidate) continue;
+      profiles.push(benchmarkProfileForClustering(paper, review, coverageLedger));
+    }
+
+    if (profiles.length < 2) {
+      res.status(400).json({ error: "Need at least two v9 benchmark profiles to cluster.", profileCount: profiles.length });
+      return;
+    }
+
+    const response = await (geminiAI.models.generateContent as any)({
+      model: GEMINI_META_MODEL,
+      contents: [{
+        role: "user",
+        parts: [{ text: JSON.stringify({ benchmarkSetVersion, clusterVersion, profiles }, null, 2) }],
+      }],
+      config: {
+        systemInstruction: BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT,
+        responseMimeType: "application/json",
+        maxOutputTokens: 32768,
+      },
+    });
+    const parsed = extractJsonValue(response.text ?? "");
+    const clusters = Array.isArray(parsed?.clusters) ? parsed.clusters : [];
+    const clusterByPaperId = new Map<string, any>();
+
+    clusters.forEach((cluster: any, index: number) => {
+      const clusterId = cluster.benchmarkClusterId || cluster.clusterId || `cluster-${index + 1}`;
+      const includedIds = Array.isArray(cluster.includedPaperIds) ? cluster.includedPaperIds : [];
+      for (const paperId of includedIds) {
+        if (typeof paperId === "string") {
+          clusterByPaperId.set(paperId, { ...cluster, benchmarkClusterId: clusterId });
+        }
+      }
+    });
+
+    let updated = 0;
+    for (const paper of papers) {
+      const cluster = clusterByPaperId.get(paper.id);
+      if (!cluster) continue;
+      const review = reviewMap.get(paper.id);
+      if (!review) continue;
+      const coverageLedger = parseJsonObject(review.coverageLedgerJson);
+      if (!coverageLedger) continue;
+      const updatedLedger = {
+        ...coverageLedger,
+        benchmarkSetCandidate: true,
+        benchmarkSetVersion,
+        clusterVersion,
+        benchmarkClusterId: cluster.benchmarkClusterId,
+        canonicalClusterLabel: cluster.canonicalClusterLabel ?? null,
+        localCohortAliases: cluster.localCohortAliases ?? [],
+        benchmarkCluster: {
+          benchmarkClusterId: cluster.benchmarkClusterId,
+          canonicalClusterLabel: cluster.canonicalClusterLabel ?? null,
+          clusterDescription: cluster.clusterDescription ?? "",
+          localCohortAliases: cluster.localCohortAliases ?? [],
+          centralComparatorPapers: cluster.centralComparatorPapers ?? [],
+          boundaryCases: cluster.boundaryCases ?? [],
+          nearbyClusters: cluster.nearbyClusters ?? [],
+          rationale: cluster.whyTheseBelongTogether ?? cluster.rationale ?? "",
+        },
+        clusteredAt: new Date().toISOString(),
+      };
+      await db.update(reviewsTable)
+        .set({ coverageLedgerJson: JSON.stringify(updatedLedger) })
+        .where(eq(reviewsTable.id, review.id));
+      updated += 1;
+    }
+
+    res.json({
+      benchmarkSetVersion,
+      clusterVersion,
+      profileCount: profiles.length,
+      clusterCount: clusters.length,
+      updated,
+      clusters,
+      singletonOrOutlierPapers: parsed?.singletonOrOutlierPapers ?? [],
+      globalNotes: parsed?.globalNotes ?? "",
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Benchmark clustering failed");
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/papers/comparator-backfill — admin-only recalibration after a batch has populated the database
@@ -361,7 +530,15 @@ router.post("/papers/comparator-backfill", async (req, res) => {
       }
 
       try {
-        const comparatorContext = await selectComparatorContextForProfile(aggregate.comparatorProfile, paper.id);
+        const profileForSelection = {
+          ...aggregate.comparatorProfile,
+          localCohort: coverageLedger?.finalLocalCohort || coverageLedger?.localCohort || aggregate.comparatorProfile.localCohort,
+          clusterFeatureTags: [
+            ...safeStringArray(aggregate.comparatorProfile.clusterFeatureTags),
+            coverageLedger?.canonicalClusterLabel,
+          ].filter(Boolean),
+        };
+        const comparatorContext = await selectComparatorContextForProfile(profileForSelection, paper.id);
         const { aggregate: updatedAggregate, thinkingText } = await recalibrateStoredAggregateWithComparators(
           aggregate,
           comparatorContext,
@@ -430,6 +607,30 @@ router.get("/papers/export", async (_req, res) => {
     const exported = papers.map(p => {
       const r = reviewMap.get(p.id);
       const coverageLedger = r ? parseJsonObject(r.coverageLedgerJson) : null;
+      const aggregate = coverageLedger?.aggregate && typeof coverageLedger.aggregate === "object"
+        ? coverageLedger.aggregate
+        : null;
+      const comparatorCalibration =
+        coverageLedger?.comparatorCalibration ??
+        aggregate?.comparatorCalibration ??
+        null;
+      const adjudication =
+        coverageLedger?.adjudication ??
+        aggregate?.adjudication ??
+        coverageLedger?.reviewPassComparison ??
+        null;
+      const comparatorProfile =
+        coverageLedger?.comparatorProfile ??
+        aggregate?.comparatorProfile ??
+        null;
+      const finalScoreBand =
+        coverageLedger?.comparatorCalibratedFinalScoreBand ??
+        aggregate?.finalScoreBand ??
+        null;
+      const inputConstructionOutputLedger =
+        coverageLedger?.inputConstructionOutputLedger ??
+        aggregate?.inputConstructionOutputLedger ??
+        null;
       return {
         paper: {
           id: p.id,
@@ -445,7 +646,31 @@ router.get("/papers/export", async (_req, res) => {
           pipelineMode: coverageLedger?.pipelineMode ?? null,
           benchmarkSetCandidate: coverageLedger?.benchmarkSetCandidate ?? false,
           benchmarkSetVersion: coverageLedger?.benchmarkSetVersion ?? null,
-          comparatorCalibrationStatus: coverageLedger?.comparatorCalibrationStatus ?? coverageLedger?.comparatorCalibration?.comparatorCalibrationStatus ?? null,
+          clusterVersion: coverageLedger?.clusterVersion ?? aggregate?.clusterVersion ?? null,
+          canonicalClusterLabel: coverageLedger?.canonicalClusterLabel ?? coverageLedger?.benchmarkCluster?.canonicalClusterLabel ?? aggregate?.canonicalClusterLabel ?? null,
+          extractionMethod: coverageLedger?.extractionMethod ?? null,
+          pdfVisibleFallbackUsed: coverageLedger?.pdfVisibleFallbackUsed ?? false,
+          blindingStrength: coverageLedger?.blindingStrength ?? "strong",
+          blindPassScores: adjudication?.individualScores ?? aggregate?.individualScores ?? [],
+          passDisagreement: adjudication?.passDisagreement ?? adjudication?.scoreRange ?? aggregate?.passDisagreement ?? null,
+          scoreStability: adjudication?.scoreStability ?? aggregate?.scoreStability ?? coverageLedger?.scoreStability ?? null,
+          adjudicatorRating: aggregate?.adjudicatorRating ?? coverageLedger?.adjudicatorRating ?? coverageLedger?.blindIntrinsicScoreBand?.median ?? null,
+          comparatorCalibrationStatus: coverageLedger?.comparatorCalibrationStatus ?? comparatorCalibration?.comparatorCalibrationStatus ?? null,
+          calibrationAdjustment: comparatorCalibration?.calibrationAdjustment ?? null,
+          finalCalibratedScore: finalScoreBand?.median ?? r.overallIntrinsicScore ?? r.score ?? null,
+          localCohort: coverageLedger?.finalLocalCohort ?? coverageLedger?.localCohort ?? aggregate?.finalLocalCohort ?? comparatorProfile?.localCohort ?? null,
+          inputStrengthScore: coverageLedger?.inputStrengthScore ?? aggregate?.inputStrengthScore ?? null,
+          constructionStrengthScore: coverageLedger?.constructionStrengthScore ?? aggregate?.constructionStrengthScore ?? null,
+          outputReachScore: coverageLedger?.outputReachScore ?? aggregate?.outputReachScore ?? null,
+          generalizationBreadthScore: coverageLedger?.generalizationBreadthScore ?? aggregate?.generalizationBreadthScore ?? null,
+          subscoreRationale: coverageLedger?.subscoreRationale ?? aggregate?.subscoreRationale ?? null,
+          fatalObjectionPresent: adjudication?.fatalObjectionPresent ?? aggregate?.fatalObjectionPresent ?? false,
+          fatalObjectionAssessment: adjudication?.fatalObjectionAssessment ?? aggregate?.fatalObjectionAssessment ?? null,
+          scoreCappingReason: coverageLedger?.scoreCappingReason ?? aggregate?.scoreCappingReason ?? comparatorCalibration?.scoreCappingReason ?? null,
+          validationWarnings: {
+            subscoreConsistencyWarning: coverageLedger?.subscoreConsistencyWarning ?? aggregate?.subscoreConsistencyWarning ?? adjudication?.subscoreConsistencyWarning ?? null,
+            subscoreSaturationWarning: coverageLedger?.subscoreSaturationWarning ?? aggregate?.subscoreSaturationWarning ?? adjudication?.subscoreSaturationWarning ?? false,
+          },
           systemPrompt: r.systemPrompt,
           modelName: r.modelName,
           overallIntrinsicScore: r.overallIntrinsicScore,
@@ -474,30 +699,28 @@ router.get("/papers/export", async (_req, res) => {
           finalJudgment: r.finalJudgment,
           relatedWork: r.relatedWork,
           coverageLedger,
-          contributionArchetype: coverageLedger?.contributionArchetype ?? coverageLedger?.aggregate?.contributionArchetype ?? null,
-          inputConstructionOutputLedger: coverageLedger?.inputConstructionOutputLedger ?? coverageLedger?.aggregate?.inputConstructionOutputLedger ?? null,
-          nearestComparators: coverageLedger?.nearestComparators ?? coverageLedger?.aggregate?.nearestComparators ?? [],
+          contributionArchetype: coverageLedger?.contributionArchetype ?? aggregate?.contributionArchetype ?? null,
+          inputConstructionOutputLedger,
+          nearestComparators: coverageLedger?.nearestComparators ?? aggregate?.nearestComparators ?? [],
           blindIntrinsicScoreBand: coverageLedger?.blindIntrinsicScoreBand ?? coverageLedger?.aggregate?.blindIntrinsicScoreBand ?? null,
-          comparatorCalibration: coverageLedger?.comparatorCalibration ?? coverageLedger?.aggregate?.comparatorCalibration ?? null,
-          explanatoryDeltaAssessment: coverageLedger?.explanatoryDeltaAssessment ?? coverageLedger?.comparatorCalibration?.explanatoryDeltaAssessment ?? null,
-          comparatorsNeedingRecalibration: coverageLedger?.comparatorsNeedingRecalibration ?? coverageLedger?.comparatorCalibration?.comparatorsNeedingRecalibration ?? [],
-          comparatorCalibratedFinalScoreBand: coverageLedger?.comparatorCalibratedFinalScoreBand ?? coverageLedger?.aggregate?.finalScoreBand ?? null,
-          comparatorProfile: coverageLedger?.comparatorProfile ?? coverageLedger?.aggregate?.comparatorProfile ?? null,
-          externalComparatorSuggestions: coverageLedger?.externalComparatorSuggestions ?? coverageLedger?.aggregate?.externalComparatorSuggestions ?? [],
-          publicComparatorSummary: coverageLedger?.publicComparatorSummary ?? coverageLedger?.aggregate?.publicComparatorSummary ?? null,
-          adminComparatorNotes: coverageLedger?.adminComparatorNotes ?? coverageLedger?.aggregate?.adminComparatorNotes ?? null,
-          pdfVisibleFallbackUsed: coverageLedger?.pdfVisibleFallbackUsed ?? false,
-          blindingStrength: coverageLedger?.blindingStrength ?? "strong",
-          reviewPassComparison: coverageLedger?.reviewPassComparison ?? coverageLedger?.adjudication ?? coverageLedger?.aggregate?.adjudication ?? null,
+          comparatorCalibration,
+          explanatoryDeltaAssessment: coverageLedger?.explanatoryDeltaAssessment ?? comparatorCalibration?.explanatoryDeltaAssessment ?? null,
+          comparatorsNeedingRecalibration: coverageLedger?.comparatorsNeedingRecalibration ?? comparatorCalibration?.comparatorsNeedingRecalibration ?? [],
+          comparatorCalibratedFinalScoreBand: finalScoreBand,
+          comparatorProfile,
+          externalComparatorSuggestions: coverageLedger?.externalComparatorSuggestions ?? aggregate?.externalComparatorSuggestions ?? [],
+          publicComparatorSummary: coverageLedger?.publicComparatorSummary ?? aggregate?.publicComparatorSummary ?? null,
+          adminComparatorNotes: coverageLedger?.adminComparatorNotes ?? aggregate?.adminComparatorNotes ?? null,
+          reviewPassComparison: adjudication,
           finalIntrinsicReview: coverageLedger?.finalIntrinsicReview ?? null,
-          adjudication: coverageLedger?.adjudication ?? coverageLedger?.aggregate?.adjudication ?? null,
-          inputGrounding: coverageLedger?.inputGrounding ?? coverageLedger?.aggregate?.inputGroundingAssessment ?? null,
-          inputFundamentality: coverageLedger?.inputFundamentality ?? coverageLedger?.aggregate?.inputFundamentalityAssessment ?? null,
-          frameworkIndependence: coverageLedger?.frameworkIndependence ?? coverageLedger?.aggregate?.frameworkIndependenceAssessment ?? null,
-          hardToVaryAssessment: coverageLedger?.hardToVaryAssessment ?? coverageLedger?.aggregate?.hardToVaryAssessment ?? null,
-          manuscriptOriginalContribution: coverageLedger?.manuscriptOriginalContribution ?? coverageLedger?.aggregate?.originalContributionAssessment ?? null,
-          whatWouldRaiseScore: coverageLedger?.whatWouldRaiseScore ?? coverageLedger?.aggregate?.whatWouldRaiseScore ?? null,
-          whatWouldLowerScore: coverageLedger?.whatWouldLowerScore ?? coverageLedger?.aggregate?.whatWouldLowerScore ?? null,
+          adjudication,
+          inputGrounding: coverageLedger?.inputGrounding ?? aggregate?.inputGroundingAssessment ?? null,
+          inputFundamentality: coverageLedger?.inputFundamentality ?? aggregate?.inputFundamentalityAssessment ?? null,
+          frameworkIndependence: coverageLedger?.frameworkIndependence ?? aggregate?.frameworkIndependenceAssessment ?? null,
+          hardToVaryAssessment: coverageLedger?.hardToVaryAssessment ?? aggregate?.hardToVaryAssessment ?? null,
+          manuscriptOriginalContribution: coverageLedger?.manuscriptOriginalContribution ?? aggregate?.originalContributionAssessment ?? null,
+          whatWouldRaiseScore: coverageLedger?.whatWouldRaiseScore ?? aggregate?.whatWouldRaiseScore ?? null,
+          whatWouldLowerScore: coverageLedger?.whatWouldLowerScore ?? aggregate?.whatWouldLowerScore ?? null,
           createdAt: r.createdAt,
         } : null,
       };

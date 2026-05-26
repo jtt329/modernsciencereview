@@ -24,6 +24,12 @@ interface StoredReview {
   explanatoryTargetBreadthScore?: number;
   theorySpaceBreadthScore?: number;
   breadthOfImpactScore?: number;
+  inputStrengthScore?: number;
+  constructionStrengthScore?: number;
+  outputReachScore?: number;
+  generalizationBreadthScore?: number;
+  coverageLedgerJson?: string;
+  aggregateMetaJson?: string;
   modelName?: string;
   summary?: string;
   overallEvaluation?: string;
@@ -41,6 +47,10 @@ interface SessionPaper {
   explanatoryTargetBreadthScore?: number;
   theorySpaceBreadthScore?: number;
   breadthOfImpactScore?: number;
+  inputStrengthScore?: number;
+  constructionStrengthScore?: number;
+  outputReachScore?: number;
+  generalizationBreadthScore?: number;
   reviewJson?: string | null;
 }
 
@@ -142,13 +152,25 @@ const REVIEW_SECTIONS: { key: keyof StoredReview; label: string }[] = [
 function ReviewPanel({ reviewJson }: { reviewJson: string }) {
   let rv: StoredReview = {};
   try { rv = JSON.parse(reviewJson); } catch { return <p className="text-xs text-slate-400 italic">Could not parse review.</p>; }
+  let coverage: any = null;
+  let aggregate: any = null;
+  try {
+    coverage = rv.coverageLedgerJson ? JSON.parse(rv.coverageLedgerJson) : null;
+  } catch {
+    coverage = null;
+  }
+  try {
+    aggregate = rv.aggregateMetaJson ? JSON.parse(rv.aggregateMetaJson) : coverage?.aggregate ?? null;
+  } catch {
+    aggregate = coverage?.aggregate ?? null;
+  }
 
   const scores = [
-    { label: 'Overall', value: rv.overallIntrinsicScore, max: 100 },
-    { label: 'Merit', value: rv.intrinsicScientificMeritScore, max: 10 },
-    { label: 'Target', value: rv.explanatoryTargetBreadthScore, max: 10 },
-    { label: 'Theory', value: rv.theorySpaceBreadthScore, max: 10 },
-    { label: 'Impact', value: rv.breadthOfImpactScore, max: 10 },
+    { label: 'Overall', value: rv.overallIntrinsicScore ?? aggregate?.finalScoreBand?.median, max: 100 },
+    { label: 'Input', value: rv.inputStrengthScore ?? aggregate?.inputStrengthScore ?? coverage?.inputStrengthScore ?? rv.intrinsicScientificMeritScore, max: 10 },
+    { label: 'Construction', value: rv.constructionStrengthScore ?? aggregate?.constructionStrengthScore ?? coverage?.constructionStrengthScore ?? rv.explanatoryTargetBreadthScore, max: 10 },
+    { label: 'Output', value: rv.outputReachScore ?? aggregate?.outputReachScore ?? coverage?.outputReachScore ?? rv.theorySpaceBreadthScore, max: 10 },
+    { label: 'Generalization', value: rv.generalizationBreadthScore ?? aggregate?.generalizationBreadthScore ?? coverage?.generalizationBreadthScore ?? rv.breadthOfImpactScore, max: 10 },
   ].filter(s => s.value != null);
 
   return (
@@ -217,6 +239,10 @@ function ReviewPanel({ reviewJson }: { reviewJson: string }) {
 function PaperRow({ paper, comparison }: { paper: SessionPaper; comparison?: ScoreComparison }) {
   const [expanded, setExpanded] = useState(false);
   const hasReview = !!paper.reviewJson;
+  const inputScore = paper.inputStrengthScore ?? paper.intrinsicMeritScore;
+  const constructionScore = paper.constructionStrengthScore ?? paper.explanatoryTargetBreadthScore;
+  const outputScore = paper.outputReachScore ?? paper.theorySpaceBreadthScore;
+  const generalizationScore = paper.generalizationBreadthScore ?? paper.breadthOfImpactScore;
   const deltaColor = comparison
     ? comparison.delta > 0.5 ? 'text-emerald-700'
     : comparison.delta < -0.5 ? 'text-rose-700'
@@ -256,10 +282,10 @@ function PaperRow({ paper, comparison }: { paper: SessionPaper; comparison?: Sco
         <td className={`py-2 pr-3 text-right font-black text-xs ${deltaColor}`}>
           {comparison ? formatDelta(comparison.delta) : '—'}
         </td>
-        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.intrinsicMeritScore ?? '—'}</td>
-        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.explanatoryTargetBreadthScore ?? '—'}</td>
-        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{paper.theorySpaceBreadthScore ?? '—'}</td>
-        <td className="py-2 text-right text-slate-600 text-xs">{paper.breadthOfImpactScore ?? '—'}</td>
+        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{inputScore ?? '—'}</td>
+        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{constructionScore ?? '—'}</td>
+        <td className="py-2 pr-3 text-right text-slate-600 text-xs">{outputScore ?? '—'}</td>
+        <td className="py-2 text-right text-slate-600 text-xs">{generalizationScore ?? '—'}</td>
       </tr>
       <AnimatePresence>
         {expanded && paper.reviewJson && (
@@ -466,10 +492,10 @@ function SessionCard({ session, sessions }: { session: Session; sessions: Sessio
                             <th className="text-right font-black text-slate-500 pb-2 pr-3">Overall</th>
                             <th className="text-right font-black text-slate-500 pb-2 pr-3">Other Avg</th>
                             <th className="text-right font-black text-slate-500 pb-2 pr-3">Δ</th>
-                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Merit</th>
-                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Target</th>
-                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Theory</th>
-                            <th className="text-right font-black text-slate-500 pb-2">Impact</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Input</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Construction</th>
+                            <th className="text-right font-black text-slate-500 pb-2 pr-3">Output</th>
+                            <th className="text-right font-black text-slate-500 pb-2">Generalization</th>
                           </tr>
                         </thead>
                         <tbody>
