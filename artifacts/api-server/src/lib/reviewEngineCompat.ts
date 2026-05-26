@@ -867,6 +867,28 @@ const PASS_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_PASS_GENERATION_ATTEM
 const REPLACEMENT_PASS_ATTEMPTS = positiveIntEnv("SCIREVIEW_REPLACEMENT_PASS_ATTEMPTS", 1);
 const ADJUDICATOR_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_ADJUDICATOR_GENERATION_ATTEMPTS", 2);
 
+export function reviewRuntimeInfo() {
+  return {
+    promptVersion: REVIEW_PROMPT_VERSION,
+    defaultReviewMode: DEFAULT_REVIEW_PIPELINE_MODE,
+    benchmarkSetVersion: BENCHMARK_SET_VERSION,
+    pipelineLabel: reviewPipelineLabel(),
+    models: {
+      metadata: GEMINI_METADATA_MODEL,
+      reviewPass: GEMINI_PASS_MODEL,
+      adjudicator: GEMINI_META_MODEL,
+      calibration: GEMINI_CALIBRATION_MODEL,
+    },
+    retryPolicy: {
+      modelCallAttempts: MODEL_CALL_ATTEMPTS,
+      passGenerationAttempts: PASS_GENERATION_ATTEMPTS,
+      replacementPassAttempts: REPLACEMENT_PASS_ATTEMPTS,
+      adjudicatorGenerationAttempts: ADJUDICATOR_GENERATION_ATTEMPTS,
+      saveFallbackWhenAtLeastOnePassSucceeds: true,
+    },
+  };
+}
+
 function stripControlChars(text: string) {
   return text.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
 }
@@ -2194,6 +2216,21 @@ async function runPassWithGenerationRetries(
   throw new Error(`pass ${index + 1} failed after ${PASS_GENERATION_ATTEMPTS} generation attempts: ${errorMessage(lastError)}`);
 }
 
+function buildReplacementPassPrompt(basePrompt: string, failures: { reason: unknown; index: number }[]) {
+  const recentFailures = failures
+    .slice(-4)
+    .map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`)
+    .join("\n");
+
+  return `${basePrompt}
+
+RECOVERY INSTRUCTION FOR THIS REPLACEMENT PASS:
+Earlier independent pass attempts for this same manuscript failed validation or API parsing and were discarded:
+${recentFailures || "No detailed failure message was available."}
+
+Return only one valid JSON object matching the requested schema. Keep the review concise enough to fit in the response budget, but include the required scientific reasoning fields. Do not emit Markdown fences, prose outside JSON, trailing commentary, blank fields for the main review, or a score of 0 unless the reasoning explicitly establishes a paper-fatal failure with no substantial separable contribution surviving.`;
+}
+
 function pickRepresentativeReview(reviews: IndividualReview[], medianScore: number) {
   return [...reviews].sort((a, b) => {
     const aDelta = Math.abs(a.scoreBand.median - medianScore);
@@ -2749,7 +2786,7 @@ async function generateMultiPassReview(
   const maxPassAttempts = REVIEW_PASS_COUNT + REPLACEMENT_PASS_ATTEMPTS;
   while (passResults.length < REVIEW_PASS_COUNT && extraIndex < maxPassAttempts) {
     try {
-      passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex));
+      passResults.push(await runPassWithGenerationRetries(buildReplacementPassPrompt(systemPrompt, passFailures), blindedContent, extraIndex));
     } catch (reason) {
       passFailures.push({ reason, index: extraIndex });
     }
