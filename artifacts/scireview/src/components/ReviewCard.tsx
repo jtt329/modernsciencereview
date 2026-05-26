@@ -120,6 +120,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const theorySpaceVariants = parsedCoverage?.theorySpaceVariants ?? coverageLedger?.theorySpaceVariants ?? [];
   const mechanismSharingAssessment = parsedCoverage?.mechanismSharingAssessment ?? coverageLedger?.mechanismSharingAssessment ?? '';
   const inputConstructionOutputLedger = parsedCoverage?.inputConstructionOutputLedger ?? storedAggregate?.inputConstructionOutputLedger ?? null;
+  const centralOutputDependency = parsedCoverage?.centralOutputDependency
+    ?? storedAggregate?.centralOutputDependency
+    ?? storedAggregate?.comparatorProfile?.centralOutputDependency
+    ?? null;
+  const outputValidityAssessment = parsedCoverage?.outputValidityAssessment
+    ?? storedAggregate?.outputValidityAssessment
+    ?? storedAggregate?.comparatorProfile?.outputValidityAssessment
+    ?? null;
   const inputGrounding = parsedCoverage?.inputGrounding ?? storedAggregate?.inputGroundingAssessment ?? '';
   const inputFundamentality = parsedCoverage?.inputFundamentality ?? storedAggregate?.inputFundamentalityAssessment ?? '';
   const aggregateAdjudication = parsedCoverage?.adjudication ?? storedAggregate?.adjudication ?? null;
@@ -274,6 +282,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const currentDirectOutputs = currentInputConstructionOutputLedger?.directOutputs ?? [];
   const currentDownstreamReach = currentInputConstructionOutputLedger?.downstreamReach ?? '';
   const currentInputConstructionOutputAssessment = currentInputConstructionOutputLedger?.assessment ?? '';
+  const currentCentralOutputDependency = selectedPass?.centralOutputDependency ?? centralOutputDependency;
+  const currentCentralOutput = currentCentralOutputDependency?.centralOutput ?? '';
+  const currentCentralOutputPrimitiveDependencies = asArray(currentCentralOutputDependency?.dependsOnPrimitiveInputs);
+  const currentCentralOutputConstructionDependencies = asArray(currentCentralOutputDependency?.dependsOnIntroducedConstructions);
+  const currentWeakestDependency = currentCentralOutputDependency?.weakestDependency ?? '';
+  const currentCentralOutputDependencyAssessment = currentCentralOutputDependency?.assessment ?? '';
+  const currentOutputValidityAssessment = selectedPass?.outputValidityAssessment ?? outputValidityAssessment;
+  const currentKnownResultRecoveries = asArray(currentOutputValidityAssessment?.knownResultRecoveries);
+  const currentNovelPredictionsOrConstraints = asArray(currentOutputValidityAssessment?.novelPredictionsOrConstraints);
+  const currentFailedOutputsOrConstraints = asArray(currentOutputValidityAssessment?.failedOutputsOrConstraints);
+  const currentOutputValidityText = currentOutputValidityAssessment?.assessment ?? '';
   const hasIcoLedger = Boolean(
     currentPrimitiveInputs.length ||
     currentIntroducedConstructions.length ||
@@ -347,8 +366,19 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     subscoreIsValid('generalizationBreadthScore', 'breadthOfImpactScore') !== false,
   );
   const passDisagreement = computedPassDisagreement;
-  const modelPipeline = parsedCoverage?.modelName ?? review.modelName;
-  const modelPromptLine = [modelPipeline, promptVersion].filter(Boolean).join(' · ');
+  const rawModelPipeline = String(parsedCoverage?.modelName ?? review.modelName ?? '');
+  const modelBase = /gemini-3\.1-pro/i.test(rawModelPipeline)
+    ? 'Gemini 3.1 Pro Preview'
+    : /gemini-3\.5-flash/i.test(rawModelPipeline)
+      ? 'Gemini 3.5 Flash'
+      : rawModelPipeline;
+  const shortPromptVersion = promptVersion ? String(promptVersion).match(/^v\d+/)?.[0] ?? String(promptVersion) : '';
+  const pipelineModeLabel = parsedCoverage?.pipelineMode === 'benchmark-ingestion'
+    ? 'benchmark ingestion'
+    : parsedCoverage?.pipelineMode === 'normal-review'
+      ? 'normal review'
+      : '';
+  const modelPromptLine = [modelBase, shortPromptVersion, pipelineModeLabel].filter(Boolean).join(' · ');
   const passBandLabels = passScoreBands
     .filter(Boolean)
     .map((band: { low: number; median: number; high: number }, index: number) => `P${index + 1}: ${band.low}-${band.median}-${band.high}`)
@@ -715,6 +745,74 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               </div>
             );
           })()}
+
+          {(currentCentralOutput || currentCentralOutputPrimitiveDependencies.length || currentCentralOutputConstructionDependencies.length || currentWeakestDependency || currentCentralOutputDependencyAssessment) && (
+            <Section icon={<Target className="w-4 h-4" />} label="Central Output Dependency" color="text-sky-300">
+              <div className="space-y-4">
+                {currentCentralOutput && (
+                  <div>
+                    <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest mb-1">Central Output</p>
+                    <Markdown>{currentCentralOutput}</Markdown>
+                  </div>
+                )}
+                {currentCentralOutputPrimitiveDependencies.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Depends On Primitive Inputs</p>
+                    <Markdown>{listMarkdown(currentCentralOutputPrimitiveDependencies)}</Markdown>
+                  </div>
+                )}
+                {currentCentralOutputConstructionDependencies.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Depends On Introduced Constructions</p>
+                    <Markdown>{listMarkdown(currentCentralOutputConstructionDependencies)}</Markdown>
+                  </div>
+                )}
+                {currentWeakestDependency && (
+                  <div>
+                    <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest mb-1">Weakest Dependency</p>
+                    <Markdown>{currentWeakestDependency}</Markdown>
+                  </div>
+                )}
+                {currentCentralOutputDependencyAssessment && (
+                  <div className="border-t border-white/10 pt-3">
+                    <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-1">Assessment</p>
+                    <Markdown>{currentCentralOutputDependencyAssessment}</Markdown>
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
+
+          {(currentKnownResultRecoveries.length || currentNovelPredictionsOrConstraints.length || currentFailedOutputsOrConstraints.length || currentOutputValidityText) && (
+            <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Output Validity Assessment" color="text-emerald-300">
+              <div className="space-y-4">
+                {currentKnownResultRecoveries.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest mb-1">Known Result Recoveries</p>
+                    <Markdown>{listMarkdown(currentKnownResultRecoveries)}</Markdown>
+                  </div>
+                )}
+                {currentNovelPredictionsOrConstraints.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Novel Predictions / Constraints</p>
+                    <Markdown>{listMarkdown(currentNovelPredictionsOrConstraints)}</Markdown>
+                  </div>
+                )}
+                {currentFailedOutputsOrConstraints.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-black text-rose-300 uppercase tracking-widest mb-1">Failed Outputs / Constraints</p>
+                    <Markdown>{listMarkdown(currentFailedOutputsOrConstraints)}</Markdown>
+                  </div>
+                )}
+                {currentOutputValidityText && (
+                  <div className="border-t border-white/10 pt-3">
+                    <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-1">Assessment</p>
+                    <Markdown>{currentOutputValidityText}</Markdown>
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
 
           {/* Legacy Coverage Ledger */}
           {!hasIcoLedger && (review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {

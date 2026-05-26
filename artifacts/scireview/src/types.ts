@@ -53,6 +53,19 @@ export interface AIReview {
   constructionStrengthScore?: number;
   outputReachScore?: number;
   generalizationBreadthScore?: number;
+  centralOutputDependency?: {
+    centralOutput?: string;
+    dependsOnPrimitiveInputs?: string[];
+    dependsOnIntroducedConstructions?: string[];
+    weakestDependency?: string;
+    assessment?: string;
+  };
+  outputValidityAssessment?: {
+    knownResultRecoveries?: string[];
+    novelPredictionsOrConstraints?: string[];
+    failedOutputsOrConstraints?: string[];
+    assessment?: string;
+  };
   overallIntrinsicScore?: number;
   bestClassification?: string;
   finalJudgment?: string;

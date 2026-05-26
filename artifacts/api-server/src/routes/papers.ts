@@ -215,6 +215,27 @@ function compactLedger(value: any) {
   };
 }
 
+function compactCentralOutputDependency(value: any) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    centralOutput: typeof value.centralOutput === "string" ? value.centralOutput.slice(0, 700) : "",
+    dependsOnPrimitiveInputs: safeStringArray(value.dependsOnPrimitiveInputs).slice(0, 6),
+    dependsOnIntroducedConstructions: safeStringArray(value.dependsOnIntroducedConstructions).slice(0, 6),
+    weakestDependency: typeof value.weakestDependency === "string" ? value.weakestDependency.slice(0, 500) : "",
+    assessment: typeof value.assessment === "string" ? value.assessment.slice(0, 700) : "",
+  };
+}
+
+function compactOutputValidityAssessment(value: any) {
+  if (!value || typeof value !== "object") return null;
+  return {
+    knownResultRecoveries: safeStringArray(value.knownResultRecoveries).slice(0, 6),
+    novelPredictionsOrConstraints: safeStringArray(value.novelPredictionsOrConstraints).slice(0, 6),
+    failedOutputsOrConstraints: safeStringArray(value.failedOutputsOrConstraints).slice(0, 6),
+    assessment: typeof value.assessment === "string" ? value.assessment.slice(0, 700) : "",
+  };
+}
+
 function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
   const parsed = review ? parseJsonObject(review.coverageLedgerJson) : null;
   const aggregate = parsed?.aggregate && typeof parsed.aggregate === "object" ? parsed.aggregate : null;
@@ -223,10 +244,16 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
   const comparatorProfile = parsed?.comparatorProfile ?? aggregate?.comparatorProfile ?? null;
   const inputConstructionOutputLedger =
     compactLedger(parsed?.inputConstructionOutputLedger ?? aggregate?.inputConstructionOutputLedger);
+  const centralOutputDependency =
+    compactCentralOutputDependency(parsed?.centralOutputDependency ?? aggregate?.centralOutputDependency ?? comparatorProfile?.centralOutputDependency);
+  const outputValidityAssessment =
+    compactOutputValidityAssessment(parsed?.outputValidityAssessment ?? aggregate?.outputValidityAssessment ?? comparatorProfile?.outputValidityAssessment);
 
   return {
     contributionArchetype,
     inputConstructionOutputLedger,
+    centralOutputDependency,
+    outputValidityAssessment,
     centralClaim: review?.centralClaim || aggregate?.finalCentralClaim || null,
     summary: review?.summary || aggregate?.finalSummary || null,
     classification: review?.bestClassification || aggregate?.finalClassification || null,
@@ -259,6 +286,14 @@ async function selectComparatorContextForProfile(
     ...(Array.isArray(profile.primitiveInputs) ? profile.primitiveInputs : []),
     ...(Array.isArray(profile.introducedConstructions) ? profile.introducedConstructions : []),
     ...(Array.isArray(profile.externalEmbeddingsAndChecks) ? profile.externalEmbeddingsAndChecks : []),
+    profile.centralOutputDependency?.centralOutput,
+    ...(Array.isArray(profile.centralOutputDependency?.dependsOnPrimitiveInputs) ? profile.centralOutputDependency.dependsOnPrimitiveInputs : []),
+    ...(Array.isArray(profile.centralOutputDependency?.dependsOnIntroducedConstructions) ? profile.centralOutputDependency.dependsOnIntroducedConstructions : []),
+    profile.centralOutputDependency?.assessment,
+    ...(Array.isArray(profile.outputValidityAssessment?.knownResultRecoveries) ? profile.outputValidityAssessment.knownResultRecoveries : []),
+    ...(Array.isArray(profile.outputValidityAssessment?.novelPredictionsOrConstraints) ? profile.outputValidityAssessment.novelPredictionsOrConstraints : []),
+    ...(Array.isArray(profile.outputValidityAssessment?.failedOutputsOrConstraints) ? profile.outputValidityAssessment.failedOutputsOrConstraints : []),
+    profile.outputValidityAssessment?.assessment,
     ...(Array.isArray(profile.directOutputs) ? profile.directOutputs : []),
     ...(Array.isArray(profile.clusterFeatureTags) ? profile.clusterFeatureTags : []),
     profile.downstreamReach,
@@ -298,6 +333,14 @@ async function selectComparatorContextForProfile(
         metadata.inputConstructionOutputLedger?.primitiveInputs.join(" "),
         metadata.inputConstructionOutputLedger?.introducedConstructions.join(" "),
         metadata.inputConstructionOutputLedger?.directOutputs.join(" "),
+        metadata.centralOutputDependency?.centralOutput,
+        metadata.centralOutputDependency?.dependsOnPrimitiveInputs.join(" "),
+        metadata.centralOutputDependency?.dependsOnIntroducedConstructions.join(" "),
+        metadata.centralOutputDependency?.assessment,
+        metadata.outputValidityAssessment?.knownResultRecoveries.join(" "),
+        metadata.outputValidityAssessment?.novelPredictionsOrConstraints.join(" "),
+        metadata.outputValidityAssessment?.failedOutputsOrConstraints.join(" "),
+        metadata.outputValidityAssessment?.assessment,
       ].filter(Boolean).join("\n");
 
       const overlap = tokenOverlapScore(sourceTokens, candidateText);
@@ -324,6 +367,8 @@ async function selectComparatorContextForProfile(
           centralClaim: metadata.centralClaim ? String(metadata.centralClaim).slice(0, 900) : null,
           summary: metadata.summary ? String(metadata.summary).slice(0, 900) : null,
           inputConstructionOutputLedger: metadata.inputConstructionOutputLedger,
+          centralOutputDependency: metadata.centralOutputDependency,
+          outputValidityAssessment: metadata.outputValidityAssessment,
           frameworkConditionality: metadata.frameworkConditionality,
           comparatorSearchSummary: metadata.comparatorSearchSummary,
           benchmarkSetVersion: metadata.benchmarkSetVersion,
@@ -361,6 +406,12 @@ function benchmarkProfileForClustering(
     : null;
   const comparatorProfile = coverageLedger.comparatorProfile ?? aggregate?.comparatorProfile ?? null;
   const ico = compactLedger(coverageLedger.inputConstructionOutputLedger ?? aggregate?.inputConstructionOutputLedger);
+  const centralOutputDependency = compactCentralOutputDependency(
+    coverageLedger.centralOutputDependency ?? aggregate?.centralOutputDependency ?? comparatorProfile?.centralOutputDependency,
+  );
+  const outputValidityAssessment = compactOutputValidityAssessment(
+    coverageLedger.outputValidityAssessment ?? aggregate?.outputValidityAssessment ?? comparatorProfile?.outputValidityAssessment,
+  );
   return {
     paperId: paper.id,
     title: paper.title,
@@ -369,6 +420,8 @@ function benchmarkProfileForClustering(
     subfields: safeStringArray(paper.subfields),
     contributionArchetype: coverageLedger.contributionArchetype ?? aggregate?.contributionArchetype ?? comparatorProfile?.contributionArchetype ?? null,
     inputConstructionOutputLedger: ico,
+    centralOutputDependency,
+    outputValidityAssessment,
     frameworkConditionality: comparatorProfile?.frameworkConditionality ?? coverageLedger.frameworkConditionalityLevel ?? null,
     score: review.overallIntrinsicScore ?? review.score ?? null,
     classification: review.bestClassification ?? aggregate?.finalClassification ?? null,
@@ -401,7 +454,7 @@ router.post("/papers/benchmark-clusters", async (req, res) => {
     const clusterVersion =
       typeof req.body?.clusterVersion === "string" && req.body.clusterVersion.trim()
         ? req.body.clusterVersion.trim()
-        : `v9-organic-profile-${benchmarkSetVersion}`;
+        : `v11-central-output-profile-${benchmarkSetVersion}`;
 
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
@@ -419,7 +472,7 @@ router.post("/papers/benchmark-clusters", async (req, res) => {
     }
 
     if (profiles.length < 2) {
-      res.status(400).json({ error: "Need at least two v9 benchmark profiles to cluster.", profileCount: profiles.length });
+      res.status(400).json({ error: "Need at least two v11 benchmark profiles to cluster.", profileCount: profiles.length });
       return;
     }
 
@@ -631,6 +684,16 @@ router.get("/papers/export", async (_req, res) => {
         coverageLedger?.inputConstructionOutputLedger ??
         aggregate?.inputConstructionOutputLedger ??
         null;
+      const centralOutputDependency =
+        coverageLedger?.centralOutputDependency ??
+        aggregate?.centralOutputDependency ??
+        comparatorProfile?.centralOutputDependency ??
+        null;
+      const outputValidityAssessment =
+        coverageLedger?.outputValidityAssessment ??
+        aggregate?.outputValidityAssessment ??
+        comparatorProfile?.outputValidityAssessment ??
+        null;
       return {
         paper: {
           id: p.id,
@@ -707,6 +770,8 @@ router.get("/papers/export", async (_req, res) => {
           coverageLedger,
           contributionArchetype: coverageLedger?.contributionArchetype ?? aggregate?.contributionArchetype ?? null,
           inputConstructionOutputLedger,
+          centralOutputDependency,
+          outputValidityAssessment,
           nearestComparators: coverageLedger?.nearestComparators ?? aggregate?.nearestComparators ?? [],
           blindIntrinsicScoreBand: coverageLedger?.blindIntrinsicScoreBand ?? coverageLedger?.aggregate?.blindIntrinsicScoreBand ?? null,
           comparatorCalibration,
@@ -1090,7 +1155,7 @@ function buildReviewContext(review: any, paper: any): string {
   if (review.intrinsicScientificMeritScore != null) scores.push(`  Intrinsic Scientific Merit: ${review.intrinsicScientificMeritScore}/100`);
   if (review.explanatoryTargetBreadthScore != null) scores.push(`  Explanatory Target Breadth: ${review.explanatoryTargetBreadthScore}/100`);
   if (review.theorySpaceBreadthScore != null) scores.push(`  Theory Space Breadth: ${review.theorySpaceBreadthScore}/100`);
-  if (review.breadthOfImpactScore != null) scores.push(`  Breadth of Impact: ${review.breadthOfImpactScore}/100`);
+  if (review.breadthOfImpactScore != null) scores.push(`  Generalization Breadth: ${review.breadthOfImpactScore}/100`);
   if (review.overallIntrinsicScore != null) scores.push(`  OVERALL INTRINSIC SCORE: ${review.overallIntrinsicScore}/100`);
   if (scores.length > 0) parts.push(`SCORES:\n${scores.join('\n')}`);
   // Legacy fields
