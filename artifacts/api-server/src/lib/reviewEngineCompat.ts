@@ -7,6 +7,7 @@ import {
   BLIND_REVIEW_PASS_V15_PROMPT,
   DATE_METADATA_EXTRACTION_V15_PROMPT,
 } from "./prompts/benchmarkCalibratedV15";
+import { logger } from "./logger";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -64,6 +65,7 @@ export type ReviewInput =
 
 type FrameworkLevel = "low" | "medium" | "high";
 type ScoreStability = "high" | "medium" | "low";
+type AdjudicatorStatus = "success" | "failed_fallback" | "not_run";
 type ComparatorCalibrationStatus =
   | "applied"
   | "unavailable"
@@ -175,6 +177,7 @@ type ContributionInventoryItem = {
 };
 
 type AdjudicationDetails = {
+  adjudicatorStatus: AdjudicatorStatus;
   individualScores: number[];
   scoreRange: number;
   scoreStability: ScoreStability;
@@ -191,6 +194,10 @@ type AdjudicationDetails = {
   calibrationAdjustments: string;
   subscoreConsistencyWarning: string;
   subscoreSaturationWarning: boolean;
+  diagnosticBaselineScore: number;
+  diagnosticBaselineDelta: number;
+  scoreAdjustmentReason: string;
+  scoringAnomaly: string;
 };
 
 type ComparatorProfile = {
@@ -367,6 +374,7 @@ type AggregateReview = {
   comparatorCalibration: ComparatorCalibration;
   blindIntrinsicScoreBand: ScoreBand;
   adjudication: AdjudicationDetails;
+  adjudicatorStatus: AdjudicatorStatus;
   individualScores: number[];
   scoreRange: number;
   scoreStability: ScoreStability;
@@ -423,6 +431,10 @@ type AggregateReview = {
   subscoreConsistencyWarning: string;
   subscoreSaturationWarning: boolean;
   scoreCappingReason: string;
+  scoreAdjustmentReason: string;
+  diagnosticBaselineScore: number;
+  diagnosticBaselineDelta: number;
+  scoringAnomaly: string;
   specialtyRelativeScore: number;
   broadFieldRelativeScore: number;
   crossFieldConsequenceScore: number;
@@ -681,11 +693,28 @@ const REVIEW_OUTPUT_SCHEMA_INSTRUCTION = "Current app JSON schema. Return valid 
 const FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION = `Fatal-error clarification:
 A fatal error is paper-fatal only when it destroys all or nearly all substantial original scientific value in the manuscript. If a paper contains multiple separable contributions, and one contribution fails while another substantial contribution remains correct and valuable, do not treat the paper as fatally flawed. Exclude or penalize the failed claim and score the surviving contribution. A paper may still receive a high score if its surviving contributions are correct, original, well-grounded, and high-value. Fatal-error caps apply only when no substantial separable contribution survives.`;
 
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V15_PROMPT);
+const V15_DIAGNOSTIC_SCORING_CONTRACT = `V15 diagnostic scoring contract:
+The only diagnostic subscores are inputStrengthScore, constructionStrengthScore, and outputStrengthScore. They are real anchors, not decoration.
+
+Compute your implicit diagnostic baseline as 10 x the average of those three subscores. The final 0-100 score may move above or below this baseline, but if it differs by more than 8 points, include a concrete scoreCappingReason or scoreAdjustmentReason explaining the deviation from durable content in the manuscript.
+
+If it differs by more than 12 points, the justification must be especially explicit and manuscript-internal.
+
+If a high-centrality output is invalid, unsupported, contradicted, or dependent on a failed construction, outputStrengthScore should normally be 7 or below.
+
+If constructionStrengthScore is 6 or below and outputStrengthScore is 7 or below, the final score should normally not exceed 75 unless a substantial surviving-contribution rationale justifies the higher score.
+
+Do not use later field influence, citation history, "opened a field", fame, or historical importance to raise the intrinsic score. Credit only durable content actually present in the manuscript.`;
+
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(`${BLIND_REVIEW_PASS_V15_PROMPT}
+
+${V15_DIAGNOSTIC_SCORING_CONTRACT}`);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V15_FULL_PROMPT);
 const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(`${BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT}
 
 ${FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION}
+
+${V15_DIAGNOSTIC_SCORING_CONTRACT}
 
 Before deciding fatalObjectionPresent, create a contribution inventory. A claim-level or section-level failure is not paper-fatal when a high-value separable contribution survives.
 
@@ -788,10 +817,6 @@ const inputConstructionOutputLedgerJsonSchema = {
     introducedConstructions: jsonStringArray,
     outputs: { type: "array", items: ledgerOutputItemJsonSchema },
     whyOutputsMatter: jsonString,
-    // Legacy fields accepted for old reviews and model drift.
-    externalEmbeddingsAndChecks: jsonStringArray,
-    directOutputs: jsonStringArray,
-    downstreamReach: jsonString,
     assessment: jsonString,
   },
 };
@@ -829,12 +854,6 @@ const comparatorProfileJsonSchema = {
     primitiveInputs: jsonStringArray,
     introducedConstructions: jsonStringArray,
     outputs: jsonStringArray,
-    // Legacy fields accepted for old reviews and model drift.
-    externalEmbeddingsAndChecks: jsonStringArray,
-    centralOutputDependency: centralOutputDependencyJsonSchema,
-    outputValidityAssessment: outputValidityAssessmentJsonSchema,
-    directOutputs: jsonStringArray,
-    downstreamReach: jsonString,
     frameworkConditionality: jsonString,
     clusterFeatureTags: jsonStringArray,
     comparatorSearchSummary: jsonString,
@@ -869,8 +888,6 @@ const individualReviewJsonSchema = {
     centralClaim: jsonString,
     contributionArchetype: contributionArchetypeJsonSchema,
     inputConstructionOutputLedger: inputConstructionOutputLedgerJsonSchema,
-    centralOutputDependency: centralOutputDependencyJsonSchema,
-    outputValidityAssessment: outputValidityAssessmentJsonSchema,
     outputValidity: jsonString,
     comparatorProfile: comparatorProfileJsonSchema,
     establishedResults: jsonStringArray,
@@ -899,8 +916,6 @@ const individualReviewJsonSchema = {
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
     outputStrengthScore: jsonNumber,
-    outputReachScore: jsonNumber,
-    generalizationBreadthScore: jsonNumber,
     subscoreRationale: {
       type: "object",
       additionalProperties: true,
@@ -908,8 +923,6 @@ const individualReviewJsonSchema = {
         inputStrengthScore: jsonString,
         constructionStrengthScore: jsonString,
         outputStrengthScore: jsonString,
-        outputReachScore: jsonString,
-        generalizationBreadthScore: jsonString,
       },
     },
     specialtyRelativeScore: jsonNumber,
@@ -918,6 +931,7 @@ const individualReviewJsonSchema = {
     scoreBand: scoreBandJsonSchema,
     scoreConfidence: jsonNumber,
     scoreCappingReason: jsonString,
+    scoreAdjustmentReason: jsonString,
     bestClassification: jsonString,
     oneParagraphVerdict: jsonString,
     finalJudgment: jsonString,
@@ -939,15 +953,11 @@ const adjudicatorJsonSchema = {
     finalScoreBand: scoreBandJsonSchema,
     finalIntrinsicReview: individualReviewJsonSchema,
     comparatorProfile: comparatorProfileJsonSchema,
-    centralOutputDependency: centralOutputDependencyJsonSchema,
-    outputValidityAssessment: outputValidityAssessmentJsonSchema,
     outputValidity: jsonString,
     assessmentSensitivity: jsonString,
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
     outputStrengthScore: jsonNumber,
-    outputReachScore: jsonNumber,
-    generalizationBreadthScore: jsonNumber,
     subscoreRationale: {
       type: "object",
       additionalProperties: true,
@@ -955,13 +965,15 @@ const adjudicatorJsonSchema = {
         inputStrengthScore: jsonString,
         constructionStrengthScore: jsonString,
         outputStrengthScore: jsonString,
-        outputReachScore: jsonString,
-        generalizationBreadthScore: jsonString,
       },
     },
     subscoreConsistencyWarning: jsonString,
     subscoreSaturationWarning: jsonBoolean,
     scoreCappingReason: jsonString,
+    scoreAdjustmentReason: jsonString,
+    diagnosticBaselineScore: jsonNumber,
+    diagnosticBaselineDelta: jsonNumber,
+    scoringAnomaly: jsonString,
     bestClassification: jsonString,
     publicOneParagraphVerdict: jsonString,
     internalCalibrationNotes: jsonString,
@@ -1082,6 +1094,23 @@ function errorMessage(error: unknown) {
   return raw;
 }
 
+function errorDetailsForLog(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: (error as Error & { cause?: unknown }).cause,
+      raw: Object.getOwnPropertyNames(error).reduce<Record<string, unknown>>((details, key) => {
+        details[key] = (error as unknown as Record<string, unknown>)[key];
+        return details;
+      }, {}),
+    };
+  }
+  if (error && typeof error === "object") return error;
+  return { message: String(error) };
+}
+
 function isTransientModelError(error: unknown) {
   if (isDailyModelQuotaError(error)) return false;
   const message = errorMessage(error).toLowerCase();
@@ -1108,7 +1137,7 @@ function dailyQuotaErrorMessage(error: unknown) {
 }
 
 function isSchemaRejectedError(error: unknown) {
-  return /response[_ ]?(json[_ ]?)?schema|schema.*unsupported|unsupported.*schema|invalid.*schema|unknown name.*schema/i.test(errorMessage(error));
+  return /response[_ ]?(json[_ ]?)?schema|schema.*unsupported|unsupported.*schema|invalid.*schema|unknown name.*schema|invalid_argument/i.test(errorMessage(error));
 }
 
 function retryDelayMs(attempt: number, error: unknown) {
@@ -1187,29 +1216,17 @@ function firstNumberField(source: Record<string, unknown>, keys: string[]) {
 function normalizeSubscoreRationale(value: unknown): DiagnosticSubscoreRationale {
   const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
   return {
-    inputStrengthScore: firstString([source.inputStrengthScore, source.intrinsicTechnicalScore]),
-    constructionStrengthScore: firstString([source.constructionStrengthScore, source.explanatoryTargetBreadthScore]),
-    outputStrengthScore: firstString([
-      source.outputStrengthScore,
-      source.outputReachScore,
-      source.theorySpaceBreadthScore,
-      source.generalizationBreadthScore,
-      source.breadthOfImpactScore,
-    ]),
+    inputStrengthScore: firstString([source.inputStrengthScore]),
+    constructionStrengthScore: firstString([source.constructionStrengthScore]),
+    outputStrengthScore: firstString([source.outputStrengthScore]),
   };
 }
 
 function diagnosticSubscoreValidity(source: Record<string, unknown>): DiagnosticSubscoreValidity {
   return {
-    inputStrengthScore: firstNumberField(source, ["inputStrengthScore", "intrinsicTechnicalScore"]) != null,
-    constructionStrengthScore: firstNumberField(source, ["constructionStrengthScore", "explanatoryTargetBreadthScore"]) != null,
-    outputStrengthScore: firstNumberField(source, [
-      "outputStrengthScore",
-      "outputReachScore",
-      "theorySpaceBreadthScore",
-      "generalizationBreadthScore",
-      "breadthOfImpactScore",
-    ]) != null,
+    inputStrengthScore: firstNumberField(source, ["inputStrengthScore"]) != null,
+    constructionStrengthScore: firstNumberField(source, ["constructionStrengthScore"]) != null,
+    outputStrengthScore: firstNumberField(source, ["outputStrengthScore"]) != null,
   };
 }
 
@@ -1235,17 +1252,77 @@ function computeSubscoreSaturationWarning(
   return allDiagnosticSubscoresValid(validity) && scores.every((score) => score === 10);
 }
 
+function diagnosticBaselineScore(scores: number[]) {
+  if (scores.length === 0) return 0;
+  const average = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+  return Math.round(Math.max(0, Math.min(100, average * 10)));
+}
+
+function hasExplicitScoreAdjustmentReason(text: string) {
+  if (!text.trim()) return false;
+  if (/\b(later influence|field influence|opened a field|opened the field|historically influential|citation|famous|later work|subsequent work|became important)\b/i.test(text)) {
+    return false;
+  }
+  return text.trim().length >= 40;
+}
+
+function ledgerValidityTextIndicatesInvalid(text: string) {
+  const value = text.toLowerCase();
+  if (!value.trim()) return false;
+  if (/\b(not|no|without|does not|doesn't|isn't|not clearly)\b.{0,24}\b(invalid|false|wrong|fails|contradicted|ruled out|unviable)\b/.test(value)) {
+    return false;
+  }
+  return /\b(invalid|false|wrong|fails|failed|unsupported|contradicted|ruled out|unviable|not viable|does not follow|doesn't follow)\b/.test(value);
+}
+
+function hasInvalidHighCentralityOutput(outputs: LedgerOutputItem[]) {
+  return outputs.some((output) =>
+    output.centrality === "high" &&
+    ledgerValidityTextIndicatesInvalid(`${output.validity}\n${output.support}`),
+  );
+}
+
 function computeSubscoreConsistencyWarning(options: {
   finalMedian: number;
   scores: number[];
   validity: DiagnosticSubscoreValidity;
   scoreCappingReason?: string;
+  scoreAdjustmentReason?: string;
+  ledgerOutputs?: LedgerOutputItem[];
 }) {
   if (!allDiagnosticSubscoresValid(options.validity)) {
     return "One or more diagnostic subscores were missing or invalid; display N/A and inspect/rerun if needed.";
   }
 
-  const hasCap = Boolean(options.scoreCappingReason?.trim());
+  const adjustmentText = firstString([
+    options.scoreCappingReason,
+    options.scoreAdjustmentReason,
+  ]);
+  const hasCap = hasExplicitScoreAdjustmentReason(adjustmentText);
+  const baseline = diagnosticBaselineScore(options.scores);
+  const delta = Math.round(options.finalMedian - baseline);
+
+  if (Math.abs(delta) > 8 && !hasCap) {
+    return `Final score ${options.finalMedian} differs from diagnostic baseline ${baseline} by ${delta > 0 ? "+" : ""}${delta} without an explicit scoreCappingReason or scoreAdjustmentReason.`;
+  }
+
+  if (
+    options.ledgerOutputs &&
+    hasInvalidHighCentralityOutput(options.ledgerOutputs) &&
+    options.scores[2] > 7
+  ) {
+    return "A high-centrality output is marked invalid or unsupported, but outputStrengthScore is above 7.";
+  }
+
+  if (
+    options.scores[1] <= 6 &&
+    options.scores[2] <= 7 &&
+    options.finalMedian > 75 &&
+    !hasCap
+  ) {
+    return "constructionStrengthScore <= 6 and outputStrengthScore <= 7 normally cap the final score at 75 unless a surviving-contribution rationale justifies the higher score.";
+  }
+
   const allHigh = options.scores.every((score) => score >= 9);
   if (options.finalMedian <= 85 && allHigh && !hasCap) {
     return "Final score is 85 or below while all diagnostic subscores are 9 or 10; scoreCappingReason is required.";
@@ -2900,6 +2977,13 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   };
   const aggregateSubscoreRationale = normalizeSubscoreRationale(source.subscoreRationale ?? root.subscoreRationale);
   let scoreCappingReason = firstString([root.scoreCappingReason, source.scoreCappingReason, source.score_capping_reason]);
+  let scoreAdjustmentReason = firstString([
+    root.scoreAdjustmentReason,
+    source.scoreAdjustmentReason,
+    source.score_adjustment_reason,
+    root.scoreAdjustmentRationale,
+    source.scoreAdjustmentRationale,
+  ]);
   const contributionInventory = normalizeContributionInventory(
     root.contributionInventory ?? source.contributionInventory ?? adjudicationSource.contributionInventory,
   );
@@ -2947,6 +3031,8 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const diagnosticAverage =
     diagnosticSubscoreValues(aggregateSubscores).reduce((sum, value) => sum + value, 0) /
     diagnosticSubscoreValues(aggregateSubscores).length;
+  const baselineScore = diagnosticBaselineScore(diagnosticSubscoreValues(aggregateSubscores));
+  const baselineDelta = Math.round(finalScoreBand.median - baselineScore);
 
   if (!fatalObjectionPresent && fatalCapText) {
     if (paperFatalError && !hasSubstantialSurvivingContribution) {
@@ -3005,7 +3091,21 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       scores: diagnosticSubscoreValues(aggregateSubscores),
       validity: aggregateSubscoreValidity,
       scoreCappingReason,
+      scoreAdjustmentReason,
+      ledgerOutputs: aggregateLedgerOutputs,
     });
+  const scoreAdjustmentText = firstString([
+    scoreCappingReason,
+    scoreAdjustmentReason,
+    survivingContributionScoreBasis,
+    asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments),
+  ]);
+  const scoringAnomaly = Math.abs(baselineDelta) > 12 && !hasExplicitScoreAdjustmentReason(scoreAdjustmentText)
+    ? `Final score ${finalScoreBand.median} differs from diagnostic baseline ${baselineScore} by ${baselineDelta > 0 ? "+" : ""}${baselineDelta} without a valid explicit adjustment rationale.`
+    : "";
+  if (!scoreAdjustmentReason && Math.abs(baselineDelta) > 8 && hasExplicitScoreAdjustmentReason(scoreAdjustmentText)) {
+    scoreAdjustmentReason = scoreAdjustmentText;
+  }
 
   return {
     finalComparisonCohort: asString(source.finalComparisonCohort ?? source.comparisonCohort, fallbackReview.comparisonCohort),
@@ -3066,6 +3166,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     comparatorCalibration: defaultComparatorCalibration(finalScoreBand, adjustedFinalClassification, "No comparator calibration pass has run yet."),
     blindIntrinsicScoreBand: finalScoreBand,
     adjudication: {
+      adjudicatorStatus: "success",
       individualScores: usableScores,
       scoreRange,
       scoreStability,
@@ -3082,7 +3183,12 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       calibrationAdjustments: asString(source.internalCalibrationNotes),
       subscoreConsistencyWarning,
       subscoreSaturationWarning,
+      diagnosticBaselineScore: baselineScore,
+      diagnosticBaselineDelta: baselineDelta,
+      scoreAdjustmentReason,
+      scoringAnomaly,
     },
+    adjudicatorStatus: "success",
     individualScores: usableScores,
     scoreRange,
     scoreStability,
@@ -3144,6 +3250,10 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     subscoreConsistencyWarning,
     subscoreSaturationWarning,
     scoreCappingReason,
+    scoreAdjustmentReason,
+    diagnosticBaselineScore: baselineScore,
+    diagnosticBaselineDelta: baselineDelta,
+    scoringAnomaly,
     specialtyRelativeScore: Math.round(asNumber(source.specialtyRelativeScore, fallbackReview.specialtyRelativeScore, 0, 100)),
     broadFieldRelativeScore: Math.round(asNumber(source.broadFieldRelativeScore, fallbackReview.broadFieldRelativeScore, 0, 100)),
     crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, fallbackReview.crossFieldConsequenceScore, 0, 100)),
@@ -3186,6 +3296,245 @@ function validateAggregateReview(review: AggregateReview) {
   if (/scoreCappingReason is required/i.test(review.subscoreConsistencyWarning)) {
     throw new Error("Adjudication had high diagnostic subscores but a low final score without a score-capping reason.");
   }
+
+  if (/diagnostic baseline|constructionStrengthScore <= 6|high-centrality output/i.test(review.subscoreConsistencyWarning)) {
+    throw new Error(review.subscoreConsistencyWarning);
+  }
+
+  if (review.scoringAnomaly.trim()) {
+    throw new Error(review.scoringAnomaly);
+  }
+}
+
+function truncateForAdjudicator(text: string, limit = 50000) {
+  if (text.length <= limit) return text;
+  const head = Math.floor(limit * 0.65);
+  const tail = limit - head;
+  return `${text.slice(0, head)}
+
+[... manuscript text truncated for adjudicator payload; independent passes above contain the full-review ledger and assessment ...]
+
+${text.slice(-tail)}`;
+}
+
+function v15LedgerOnly(ledger: InputConstructionOutputLedger | null | undefined) {
+  return {
+    primitiveInputs: ledger?.primitiveInputs ?? [],
+    introducedConstructions: ledger?.introducedConstructions ?? [],
+    outputs: (ledger?.outputs ?? []).map((item) => ({
+      output: item.output,
+      dependsOnInputs: item.dependsOnInputs,
+      dependsOnConstructions: item.dependsOnConstructions,
+      externalContextIfAny: item.externalContextIfAny,
+      support: item.support,
+      validity: item.validity,
+      centrality: item.centrality,
+    })),
+    whyOutputsMatter: ledger?.whyOutputsMatter ?? "",
+    assessment: ledger?.assessment ?? "",
+  };
+}
+
+function v15ComparatorProfileOnly(profile: ComparatorProfile | null | undefined) {
+  return {
+    localCohort: profile?.localCohort ?? "",
+    adjacentBroadCohort: profile?.adjacentBroadCohort ?? "",
+    contributionArchetype: profile?.contributionArchetype ?? { primary: "", secondary: "" },
+    primitiveInputs: profile?.primitiveInputs ?? [],
+    introducedConstructions: profile?.introducedConstructions ?? [],
+    outputs: profile?.outputs ?? [],
+    frameworkConditionality: profile?.frameworkConditionality ?? "medium",
+    clusterFeatureTags: profile?.clusterFeatureTags ?? [],
+    comparatorSearchSummary: profile?.comparatorSearchSummary ?? "",
+  };
+}
+
+function compactIndividualReviewForAdjudicator(review: IndividualReview, index: number) {
+  return {
+    passNumber: index + 1,
+    score: review.scoreBand.median,
+    scoreBand: review.scoreBand,
+    classification: review.bestClassification,
+    contributionArchetype: review.contributionArchetype,
+    comparisonCohort: review.comparisonCohort,
+    localCohort: review.localCohort,
+    broadField: review.broadField,
+    specialtyField: review.specialtyField,
+    summary: review.summary,
+    centralClaim: review.centralClaim,
+    inputConstructionOutputLedger: v15LedgerOnly(review.inputConstructionOutputLedger),
+    comparatorProfile: v15ComparatorProfileOnly((review as IndividualReview & { comparatorProfile?: ComparatorProfile }).comparatorProfile),
+    correctness: review.correctness,
+    inputGrounding: review.inputGrounding,
+    inputFundamentality: review.inputFundamentality,
+    constructionAssessment: review.constructionAssessment,
+    outputValidity: review.outputValidity,
+    frameworkConditionality: review.frameworkConditionality,
+    frameworkIndependence: review.frameworkIndependence,
+    manuscriptOriginalContribution: review.manuscriptOriginalContribution,
+    survivingContributionIfFlawed: review.survivingContributionIfFlawed,
+    strongestCaseForImportance: review.strongestCaseForImportance,
+    strongestObjection: review.strongestObjection,
+    assessmentSensitivity: review.assessmentSensitivity,
+    inputStrengthScore: review.inputStrengthScore,
+    constructionStrengthScore: review.constructionStrengthScore,
+    outputStrengthScore: review.outputStrengthScore,
+    subscoreRationale: review.subscoreRationale,
+    subscoreValidity: review.subscoreValidity,
+    scoreCappingReason: review.scoreCappingReason,
+    oneParagraphVerdict: review.oneParagraphVerdict,
+    finalJudgment: review.finalJudgment,
+  };
+}
+
+function compactIndividualReviewForStorage(review: IndividualReview, index: number) {
+  return {
+    ...compactIndividualReviewForAdjudicator(review, index),
+    establishedResults: review.establishedResults,
+    interpretiveClaims: review.interpretiveClaims,
+    speculativeClaims: review.speculativeClaims,
+    novelty: review.novelty,
+    noveltyConfidence: review.noveltyConfidence,
+    internalTechnicalTraction: review.internalTechnicalTraction,
+    economy: review.economy,
+    unifyingPower: review.unifyingPower,
+    hardToVaryAssessment: review.hardToVaryAssessment,
+    whatWouldRaiseScore: review.whatWouldRaiseScore,
+    whatWouldLowerScore: review.whatWouldLowerScore,
+    specialtyRelativeScore: review.specialtyRelativeScore,
+    broadFieldRelativeScore: review.broadFieldRelativeScore,
+    crossFieldConsequenceScore: review.crossFieldConsequenceScore,
+    scoreConfidence: review.scoreConfidence,
+  };
+}
+
+function v15ComparatorCalibrationForStorage(calibration: ComparatorCalibration) {
+  return {
+    comparatorCalibrationStatus: calibration.comparatorCalibrationStatus,
+    benchmarkSetVersion: calibration.benchmarkSetVersion,
+    intrinsicScoreBand: calibration.intrinsicScoreBand,
+    calibrationAdjustment: calibration.calibrationAdjustment,
+    finalPublicScoreBand: calibration.finalPublicScoreBand,
+    finalClassification: calibration.finalClassification,
+    calibrationRationale: calibration.calibrationRationale,
+    scoreGapAssessment: calibration.scoreGapAssessment,
+    scoreCappingReason: calibration.scoreCappingReason,
+    explanatoryDeltaAssessment: {
+      whatIsNewBeyondComparators: calibration.explanatoryDeltaAssessment.whatIsNewBeyondComparators,
+      inputsComparison: calibration.explanatoryDeltaAssessment.inputsComparison,
+      constructionComparison: calibration.explanatoryDeltaAssessment.constructionComparison,
+      outputsComparison: calibration.explanatoryDeltaAssessment.outputsComparison,
+      outputValidityComparison: calibration.explanatoryDeltaAssessment.outputValidityComparison,
+      frameworkConditionalityComparison: calibration.explanatoryDeltaAssessment.frameworkConditionalityComparison,
+      scoreGapAssessment: calibration.explanatoryDeltaAssessment.scoreGapAssessment,
+    },
+    comparatorsNeedingRecalibration: calibration.comparatorsNeedingRecalibration,
+    confidence: calibration.confidence,
+  };
+}
+
+function v15AdjudicationForStorage(aggregate: AggregateReview) {
+  return {
+    adjudicatorStatus: aggregate.adjudicatorStatus,
+    individualScores: aggregate.individualScores,
+    scoreRange: aggregate.scoreRange,
+    scoreStability: aggregate.scoreStability,
+    mainAgreements: aggregate.mainAgreements,
+    mainDisagreements: aggregate.mainDisagreements,
+    fatalObjectionPresent: aggregate.fatalObjectionPresent,
+    fatalObjectionAssessment: aggregate.fatalObjectionAssessment,
+    fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
+    paperFatalError: aggregate.paperFatalError,
+    contributionInventory: aggregate.contributionInventory,
+    survivingHighValueContributions: aggregate.survivingHighValueContributions,
+    failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
+    survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
+    calibrationAdjustments: aggregate.adjudication.calibrationAdjustments,
+    subscoreConsistencyWarning: aggregate.subscoreConsistencyWarning,
+    subscoreSaturationWarning: aggregate.subscoreSaturationWarning,
+    diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
+    diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
+    scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
+    scoringAnomaly: aggregate.scoringAnomaly,
+  };
+}
+
+function compactAggregateForStorage(aggregate: AggregateReview) {
+  return {
+    finalComparisonCohort: aggregate.finalComparisonCohort,
+    finalLocalCohort: aggregate.finalLocalCohort,
+    finalBroadField: aggregate.finalBroadField,
+    finalSpecialtyField: aggregate.finalSpecialtyField,
+    finalSummary: aggregate.finalSummary,
+    finalCentralClaim: aggregate.finalCentralClaim,
+    contributionArchetype: aggregate.contributionArchetype,
+    inputConstructionOutputLedger: v15LedgerOnly(aggregate.inputConstructionOutputLedger),
+    nearestComparators: aggregate.nearestComparators,
+    externalComparatorSuggestions: aggregate.externalComparatorSuggestions,
+    publicComparatorSummary: aggregate.publicComparatorSummary,
+    adminComparatorNotes: aggregate.adminComparatorNotes,
+    comparatorProfile: v15ComparatorProfileOnly(aggregate.comparatorProfile),
+    comparatorCalibration: v15ComparatorCalibrationForStorage(aggregate.comparatorCalibration),
+    blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
+    adjudicatorStatus: aggregate.adjudicatorStatus,
+    adjudication: v15AdjudicationForStorage(aggregate),
+    individualScores: aggregate.individualScores,
+    scoreRange: aggregate.scoreRange,
+    scoreStability: aggregate.scoreStability,
+    fatalObjectionPresent: aggregate.fatalObjectionPresent,
+    fatalObjectionAssessment: aggregate.fatalObjectionAssessment,
+    fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
+    paperFatalError: aggregate.paperFatalError,
+    contributionInventory: aggregate.contributionInventory,
+    survivingHighValueContributions: aggregate.survivingHighValueContributions,
+    failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
+    survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
+    inputGroundingAssessment: aggregate.inputGroundingAssessment,
+    inputFundamentalityAssessment: aggregate.inputFundamentalityAssessment,
+    constructionAssessment: aggregate.constructionAssessment,
+    outputValidity: aggregate.outputValidity,
+    contributionGroundingType: aggregate.contributionGroundingType,
+    frameworkIndependenceAssessment: aggregate.frameworkIndependenceAssessment,
+    hardToVaryAssessment: aggregate.hardToVaryAssessment,
+    frameworkConditionalityAssessment: aggregate.frameworkConditionalityAssessment,
+    originalContributionAssessment: aggregate.originalContributionAssessment,
+    survivingContributionIfFlawed: aggregate.survivingContributionIfFlawed,
+    laterInfluenceOrExternalResultRisk: aggregate.laterInfluenceOrExternalResultRisk,
+    correctnessAssessment: aggregate.correctnessAssessment,
+    strongestCaseForImportance: aggregate.strongestCaseForImportance,
+    strongestObjection: aggregate.strongestObjection,
+    assessmentSensitivity: aggregate.assessmentSensitivity,
+    whatWouldRaiseScore: aggregate.whatWouldRaiseScore,
+    whatWouldLowerScore: aggregate.whatWouldLowerScore,
+    establishedResults: aggregate.establishedResults,
+    interpretiveClaims: aggregate.interpretiveClaims,
+    speculativeClaims: aggregate.speculativeClaims,
+    novelty: aggregate.novelty,
+    noveltyConfidence: aggregate.noveltyConfidence,
+    internalTechnicalTraction: aggregate.internalTechnicalTraction,
+    economy: aggregate.economy,
+    unifyingPower: aggregate.unifyingPower,
+    inputStrengthScore: aggregate.inputStrengthScore,
+    constructionStrengthScore: aggregate.constructionStrengthScore,
+    outputStrengthScore: aggregate.outputStrengthScore,
+    subscoreRationale: aggregate.subscoreRationale,
+    subscoreValidity: aggregate.subscoreValidity,
+    subscoreConsistencyWarning: aggregate.subscoreConsistencyWarning,
+    subscoreSaturationWarning: aggregate.subscoreSaturationWarning,
+    scoreCappingReason: aggregate.scoreCappingReason,
+    scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
+    diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
+    diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
+    scoringAnomaly: aggregate.scoringAnomaly,
+    specialtyRelativeScore: aggregate.specialtyRelativeScore,
+    broadFieldRelativeScore: aggregate.broadFieldRelativeScore,
+    crossFieldConsequenceScore: aggregate.crossFieldConsequenceScore,
+    finalClassification: aggregate.finalClassification,
+    finalScoreBand: aggregate.finalScoreBand,
+    finalScoreConfidence: aggregate.finalScoreConfidence,
+    publicOneParagraphVerdict: aggregate.publicOneParagraphVerdict,
+    internalCalibrationNotes: aggregate.internalCalibrationNotes,
+  };
 }
 
 function buildAdjudicatorInput(
@@ -3193,54 +3542,11 @@ function buildAdjudicatorInput(
   reviews: IndividualReview[],
 ): ReviewInput {
   const text = JSON.stringify({
-    blindedManuscript: reviewInputText(blindedContent),
-    independentReviewPasses: reviews.map((review, index) => ({
-      passNumber: index + 1,
-      score: review.scoreBand.median,
-      scoreBand: review.scoreBand,
-      classification: review.bestClassification,
-      contributionArchetype: review.contributionArchetype,
-      comparisonCohort: review.comparisonCohort,
-      localCohort: review.localCohort,
-      broadField: review.broadField,
-      specialtyField: review.specialtyField,
-      centralClaim: review.centralClaim,
-      inputConstructionOutputLedger: review.inputConstructionOutputLedger,
-      centralOutputDependency: review.centralOutputDependency,
-      outputValidityAssessment: review.outputValidityAssessment,
-      nearestComparators: review.nearestComparators,
-      coverageLedger: review.coverageLedger,
-      correctness: review.correctness,
-      inputGrounding: review.inputGrounding,
-      inputFundamentality: review.inputFundamentality,
-      constructionAssessment: review.constructionAssessment,
-      outputValidity: review.outputValidity,
-      frameworkConditionality: review.frameworkConditionality,
-      frameworkIndependence: review.frameworkIndependence,
-      manuscriptOriginalContribution: review.manuscriptOriginalContribution,
-      survivingContributionIfFlawed: review.survivingContributionIfFlawed,
-      strongestCaseForImportance: review.strongestCaseForImportance,
-      strongestObjection: review.strongestObjection,
-      assessmentSensitivity: review.assessmentSensitivity,
-      inputStrengthScore: review.inputStrengthScore,
-      constructionStrengthScore: review.constructionStrengthScore,
-      outputStrengthScore: review.outputStrengthScore,
-      outputReachScore: review.outputReachScore,
-      generalizationBreadthScore: review.generalizationBreadthScore,
-      subscoreRationale: review.subscoreRationale,
-      intrinsicTechnicalScore: review.intrinsicTechnicalScore,
-      explanatoryTargetBreadthScore: review.explanatoryTargetBreadthScore,
-      theorySpaceBreadthScore: review.theorySpaceBreadthScore,
-      breadthOfImpactScore: review.breadthOfImpactScore,
-      subscoreValidity: review.subscoreValidity,
-      scoreCappingReason: review.scoreCappingReason,
-      oneParagraphVerdict: review.oneParagraphVerdict,
-      finalJudgment: review.finalJudgment,
-    })),
+    blindedManuscriptExcerpt: truncateForAdjudicator(reviewInputText(blindedContent)),
+    independentReviewPasses: reviews.map(compactIndividualReviewForAdjudicator),
   }, null, 2);
 
-  if (typeof blindedContent === "string") return text;
-  return { ...blindedContent, text };
+  return text;
 }
 
 function buildComparatorCalibrationInput(
@@ -3262,9 +3568,7 @@ function buildComparatorCalibrationInput(
     contributionArchetype: candidate.contributionArchetype,
     centralClaim: candidate.centralClaim,
     summary: candidate.summary,
-    inputConstructionOutputLedger: candidate.inputConstructionOutputLedger,
-    centralOutputDependency: candidate.centralOutputDependency,
-    outputValidityAssessment: candidate.outputValidityAssessment,
+    inputConstructionOutputLedger: v15LedgerOnly(candidate.inputConstructionOutputLedger),
     frameworkConditionality: candidate.frameworkConditionality,
     comparatorSearchSummary: candidate.comparatorSearchSummary,
     explanatoryDeltaAssessment: candidate.explanatoryDeltaAssessment,
@@ -3279,9 +3583,7 @@ function buildComparatorCalibrationInput(
       summary: aggregate.finalSummary,
       centralClaim: aggregate.finalCentralClaim,
       contributionArchetype: aggregate.contributionArchetype,
-      inputConstructionOutputLedger: aggregate.inputConstructionOutputLedger,
-      centralOutputDependency: aggregate.centralOutputDependency,
-      outputValidityAssessment: aggregate.outputValidityAssessment,
+      inputConstructionOutputLedger: v15LedgerOnly(aggregate.inputConstructionOutputLedger),
       correctness: aggregate.correctnessAssessment,
       inputGrounding: aggregate.inputGroundingAssessment,
       inputFundamentality: aggregate.inputFundamentalityAssessment,
@@ -3301,14 +3603,11 @@ function buildComparatorCalibrationInput(
       inputStrengthScore: aggregate.inputStrengthScore,
       constructionStrengthScore: aggregate.constructionStrengthScore,
       outputStrengthScore: aggregate.outputStrengthScore,
-      outputReachScore: aggregate.outputReachScore,
-      generalizationBreadthScore: aggregate.generalizationBreadthScore,
       subscoreRationale: aggregate.subscoreRationale,
-      intrinsicTechnicalScore: aggregate.intrinsicTechnicalScore,
-      explanatoryTargetBreadthScore: aggregate.explanatoryTargetBreadthScore,
-      theorySpaceBreadthScore: aggregate.theorySpaceBreadthScore,
-      breadthOfImpactScore: aggregate.breadthOfImpactScore,
       scoreCappingReason: aggregate.scoreCappingReason,
+      scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
+      diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
+      diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
       scoreBand: aggregate.blindIntrinsicScoreBand,
       blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
       scoreConfidence: aggregate.finalScoreConfidence,
@@ -3316,7 +3615,7 @@ function buildComparatorCalibrationInput(
       oneParagraphVerdict: aggregate.publicOneParagraphVerdict,
       finalJudgment: aggregate.publicOneParagraphVerdict,
     },
-    comparatorProfile: aggregate.comparatorProfile,
+    comparatorProfile: v15ComparatorProfileOnly(aggregate.comparatorProfile),
     candidateComparatorProfiles,
   }, null, 2);
 }
@@ -3519,6 +3818,11 @@ async function generateMultiPassReview(
     }, fallbackScores, fallbackRepresentativeReview);
     aggregate = {
       ...aggregate,
+      adjudicatorStatus: "not_run",
+      adjudication: {
+        ...aggregate.adjudication,
+        adjudicatorStatus: "not_run",
+      },
       internalCalibrationNotes: [
         aggregate.internalCalibrationNotes,
         `Incomplete blind-pass set: saved ${passResults.length}/${REVIEW_PASS_COUNT} valid pass(es) instead of throwing away paid work. Failed attempts: ${passFailureDetails}`,
@@ -3533,7 +3837,7 @@ async function generateMultiPassReview(
         try {
           const retryInstruction = attempt === 0
             ? ""
-            : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a self-consistent adjudication. Do not apply a paper-fatal cap unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`;
+            : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a self-consistent adjudication. Anchor the final score to 10 x the average of inputStrengthScore, constructionStrengthScore, and outputStrengthScore. If the final score differs from that diagnostic baseline by more than 8 points, include a concrete scoreCappingReason or scoreAdjustmentReason based only on durable content in the manuscript. Do not use later influence, citation history, or "opened a field" language to raise the intrinsic score. Do not apply a paper-fatal cap unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`;
           const adjudicatorResult = await callGemini(
             `${BLIND_INTRINSIC_ADJUDICATOR_PROMPT}${retryInstruction}`,
             buildAdjudicatorInput(blindedContent, individualReviews),
@@ -3541,7 +3845,6 @@ async function generateMultiPassReview(
             {
               maxOutputTokens: 16384,
               includeThoughts: false,
-              responseJsonSchema: adjudicatorJsonSchema,
               temperature: 0.15,
             },
           );
@@ -3551,6 +3854,14 @@ async function generateMultiPassReview(
           break;
         } catch (reason) {
           adjudicatorFailure = reason;
+          logger.warn({
+            err: reason,
+            errorDetails: errorDetailsForLog(reason),
+            errorMessage: errorMessage(reason),
+            attempt: attempt + 1,
+            model: GEMINI_META_MODEL,
+            adjudicatorInputChars: reviewInputText(buildAdjudicatorInput(blindedContent, individualReviews)).length,
+          }, "Blind adjudicator attempt failed");
           if (isDailyModelQuotaError(reason)) {
             throw new Error(dailyQuotaErrorMessage(reason));
           }
@@ -3579,6 +3890,11 @@ async function generateMultiPassReview(
       }, fallbackScores, fallbackRepresentativeReview);
       aggregate = {
         ...aggregate,
+        adjudicatorStatus: "failed_fallback",
+        adjudication: {
+          ...aggregate.adjudication,
+          adjudicatorStatus: "failed_fallback",
+        },
         internalCalibrationNotes: [
           aggregate.internalCalibrationNotes,
           `Blind adjudicator failed; saved fallback from ${passResults.length} valid pass(es) instead of discarding paid work. ${errorMessage(reason)}`,
@@ -3755,6 +4071,10 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     firstComparisonCohort ||
     firstSpecialtyField ||
     firstBroadField;
+  const storedAggregate = compactAggregateForStorage(aggregate);
+  const storedComparatorCalibration = v15ComparatorCalibrationForStorage(aggregate.comparatorCalibration);
+  const storedAdjudication = v15AdjudicationForStorage(aggregate);
+  const storedIndividualReviews = result.individualReviews.map(compactIndividualReviewForStorage);
   return {
     summary: aggregate.finalSummary || representativeReview.summary || representativeReview.oneParagraphVerdict,
     correctness: aggregate.correctnessAssessment || representativeReview.correctness,
@@ -3776,9 +4096,9 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     decisiveCheck: null,
     internalTechnicalTraction: aggregate.internalTechnicalTraction || null,
     noveltyConfidence: String(aggregate.noveltyConfidence),
-    intrinsicScientificMeritScore: aggregate.subscoreValidity.inputStrengthScore ? aggregate.inputStrengthScore : null,
-    explanatoryTargetBreadthScore: aggregate.subscoreValidity.constructionStrengthScore ? aggregate.constructionStrengthScore : null,
-    theorySpaceBreadthScore: aggregate.subscoreValidity.outputStrengthScore ? aggregate.outputStrengthScore : null,
+    intrinsicScientificMeritScore: null,
+    explanatoryTargetBreadthScore: null,
+    theorySpaceBreadthScore: null,
     breadthOfImpactScore: null,
     overallIntrinsicScore: aggregate.finalScoreBand.median,
     bestClassification: aggregateClassification,
@@ -3805,24 +4125,23 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       blindingStrength,
       usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL} ${GEMINI_CALIBRATION_MODEL}`),
       usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL} ${GEMINI_CALIBRATION_MODEL}`),
-      contributionArchetype: aggregate.contributionArchetype,
-      inputConstructionOutputLedger: aggregate.inputConstructionOutputLedger,
-      centralOutputDependency: aggregate.centralOutputDependency,
-      outputValidityAssessment: aggregate.outputValidityAssessment,
+      contributionArchetype: storedAggregate.contributionArchetype,
+      inputConstructionOutputLedger: storedAggregate.inputConstructionOutputLedger,
       outputValidity: aggregate.outputValidity,
       assessmentSensitivity: aggregate.assessmentSensitivity,
       nearestComparators: aggregate.nearestComparators,
       externalComparatorSuggestions: aggregate.externalComparatorSuggestions,
       publicComparatorSummary: aggregate.publicComparatorSummary,
       adminComparatorNotes: aggregate.adminComparatorNotes,
-      comparatorProfile: aggregate.comparatorProfile,
-      comparatorCalibration: aggregate.comparatorCalibration,
-      explanatoryDeltaAssessment: aggregate.comparatorCalibration.explanatoryDeltaAssessment,
+      comparatorProfile: storedAggregate.comparatorProfile,
+      comparatorCalibration: storedComparatorCalibration,
+      explanatoryDeltaAssessment: storedComparatorCalibration.explanatoryDeltaAssessment,
       comparatorsNeedingRecalibration: aggregate.comparatorCalibration.comparatorsNeedingRecalibration,
       blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
       comparatorCalibratedFinalScoreBand: aggregate.finalScoreBand,
-      adjudication: aggregate.adjudication,
-      reviewPassComparison: aggregate.adjudication,
+      adjudicatorStatus: aggregate.adjudicatorStatus,
+      adjudication: storedAdjudication,
+      reviewPassComparison: storedAdjudication,
       fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
       paperFatalError: aggregate.paperFatalError,
       contributionInventory: aggregate.contributionInventory,
@@ -3833,22 +4152,22 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       inputStrengthScore: aggregate.inputStrengthScore,
       constructionStrengthScore: aggregate.constructionStrengthScore,
       outputStrengthScore: aggregate.outputStrengthScore,
-      outputReachScore: aggregate.outputReachScore,
-      generalizationBreadthScore: aggregate.generalizationBreadthScore,
       subscoreRationale: aggregate.subscoreRationale,
       subscoreConsistencyWarning: aggregate.subscoreConsistencyWarning,
       subscoreSaturationWarning: aggregate.subscoreSaturationWarning,
       scoreCappingReason: aggregate.scoreCappingReason,
+      scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
+      diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
+      diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
+      scoringAnomaly: aggregate.scoringAnomaly,
       finalIntrinsicReview: {
         summary: aggregate.finalSummary,
         centralClaim: aggregate.finalCentralClaim,
         localCohort: aggregate.finalLocalCohort,
         scoreBand: aggregate.blindIntrinsicScoreBand,
         blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
-        bestClassification: aggregate.comparatorProfile.classification || aggregate.finalClassification,
-        inputConstructionOutputLedger: aggregate.inputConstructionOutputLedger,
-        centralOutputDependency: aggregate.centralOutputDependency,
-        outputValidityAssessment: aggregate.outputValidityAssessment,
+        bestClassification: aggregate.finalClassification,
+        inputConstructionOutputLedger: storedAggregate.inputConstructionOutputLedger,
         constructionAssessment: aggregate.constructionAssessment,
         outputValidity: aggregate.outputValidity,
         assessmentSensitivity: aggregate.assessmentSensitivity,
@@ -3859,11 +4178,12 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
         inputStrengthScore: aggregate.inputStrengthScore,
         constructionStrengthScore: aggregate.constructionStrengthScore,
         outputStrengthScore: aggregate.outputStrengthScore,
-        outputReachScore: aggregate.outputReachScore,
-        generalizationBreadthScore: aggregate.generalizationBreadthScore,
         subscoreRationale: aggregate.subscoreRationale,
+        scoreCappingReason: aggregate.scoreCappingReason,
+        scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
+        diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
+        diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
       },
-      coverageLedger: representativeReview.coverageLedger,
       inputGrounding: aggregate.inputGroundingAssessment || representativeReview.inputGrounding,
       inputFundamentality: aggregate.inputFundamentalityAssessment || representativeReview.inputFundamentality,
       constructionAssessment: aggregate.constructionAssessment || representativeReview.constructionAssessment,
@@ -3874,8 +4194,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       survivingContributionIfFlawed: aggregate.survivingContributionIfFlawed || representativeReview.survivingContributionIfFlawed,
       whatWouldRaiseScore: aggregate.whatWouldRaiseScore,
       whatWouldLowerScore: aggregate.whatWouldLowerScore,
-      aggregate,
-      individualReviews: result.individualReviews,
+      aggregate: storedAggregate,
+      individualReviews: storedIndividualReviews,
       finalComparisonCohort: comparisonCohort,
       finalLocalCohort: aggregate.finalLocalCohort,
       scoreStability: aggregate.scoreStability,
@@ -3895,8 +4215,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     scoreConfidence: String(aggregate.finalScoreConfidence),
     scoreStability: aggregate.scoreStability,
     publicVerdict: aggregate.publicOneParagraphVerdict || representativeReview.oneParagraphVerdict || null,
-    individualReviewsJson: JSON.stringify(result.individualReviews),
-    aggregateMetaJson: JSON.stringify(aggregate),
+    individualReviewsJson: JSON.stringify(storedIndividualReviews),
+    aggregateMetaJson: JSON.stringify(storedAggregate),
     passCount: REVIEW_PASS_COUNT,
     modelName: result.modelName,
     systemPrompt: result.systemPrompt,

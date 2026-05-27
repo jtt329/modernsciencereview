@@ -221,12 +221,30 @@ function safeStringArray(value: unknown) {
 
 function compactLedger(value: any) {
   if (!value || typeof value !== "object") return null;
+  const outputs = Array.isArray(value.outputs)
+    ? value.outputs
+        .map((item: any) => {
+          if (typeof item === "string") return { output: item.slice(0, 700) };
+          if (!item || typeof item !== "object") return null;
+          return {
+            output: typeof item.output === "string" ? item.output.slice(0, 700) : "",
+            dependsOnInputs: safeStringArray(item.dependsOnInputs).slice(0, 5),
+            dependsOnConstructions: safeStringArray(item.dependsOnConstructions).slice(0, 5),
+            externalContextIfAny: typeof item.externalContextIfAny === "string" ? item.externalContextIfAny.slice(0, 500) : "",
+            support: typeof item.support === "string" ? item.support.slice(0, 500) : "",
+            validity: typeof item.validity === "string" ? item.validity.slice(0, 500) : "",
+            centrality: typeof item.centrality === "string" ? item.centrality : "",
+          };
+        })
+        .filter((item: any) => item?.output)
+        .slice(0, 6)
+    : [];
+  const legacyOutputs = safeStringArray(value.directOutputs).slice(0, 5).map((output) => ({ output }));
   return {
     primitiveInputs: safeStringArray(value.primitiveInputs).slice(0, 5),
     introducedConstructions: safeStringArray(value.introducedConstructions).slice(0, 5),
-    externalEmbeddingsAndChecks: safeStringArray(value.externalEmbeddingsAndChecks).slice(0, 5),
-    directOutputs: safeStringArray(value.directOutputs).slice(0, 5),
-    downstreamReach: typeof value.downstreamReach === "string" ? value.downstreamReach.slice(0, 700) : "",
+    outputs: outputs.length > 0 ? outputs : legacyOutputs,
+    whyOutputsMatter: typeof value.whyOutputsMatter === "string" ? value.whyOutputsMatter.slice(0, 700) : "",
     assessment: typeof value.assessment === "string" ? value.assessment.slice(0, 700) : "",
   };
 }
@@ -301,19 +319,8 @@ async function selectComparatorContextForProfile(
     profile.contributionArchetype?.secondary,
     ...(Array.isArray(profile.primitiveInputs) ? profile.primitiveInputs : []),
     ...(Array.isArray(profile.introducedConstructions) ? profile.introducedConstructions : []),
-    ...(Array.isArray(profile.externalEmbeddingsAndChecks) ? profile.externalEmbeddingsAndChecks : []),
-    profile.centralOutputDependency?.centralOutput,
-    ...(Array.isArray(profile.centralOutputDependency?.dependsOnPrimitiveInputs) ? profile.centralOutputDependency.dependsOnPrimitiveInputs : []),
-    ...(Array.isArray(profile.centralOutputDependency?.dependsOnIntroducedConstructions) ? profile.centralOutputDependency.dependsOnIntroducedConstructions : []),
-    profile.centralOutputDependency?.assessment,
-    ...(Array.isArray(profile.outputValidityAssessment?.knownResultRecoveries) ? profile.outputValidityAssessment.knownResultRecoveries : []),
-    ...(Array.isArray(profile.outputValidityAssessment?.novelPredictionsOrConstraints) ? profile.outputValidityAssessment.novelPredictionsOrConstraints : []),
-    ...(Array.isArray(profile.outputValidityAssessment?.failedOutputsOrConstraints) ? profile.outputValidityAssessment.failedOutputsOrConstraints : []),
-    profile.outputValidityAssessment?.assessment,
-    ...(Array.isArray(profile.directOutputs) ? profile.directOutputs : []),
+    ...(Array.isArray(profile.outputs) ? profile.outputs : []),
     ...(Array.isArray(profile.clusterFeatureTags) ? profile.clusterFeatureTags : []),
-    profile.downstreamReach,
-    profile.classification,
     profile.comparatorSearchSummary,
   ].filter(Boolean).join("\n");
   const sourceTokens = comparatorTokens(sourceText);
@@ -348,15 +355,7 @@ async function selectComparatorContextForProfile(
         metadata.clusterFeatureTags.join(" "),
         metadata.inputConstructionOutputLedger?.primitiveInputs.join(" "),
         metadata.inputConstructionOutputLedger?.introducedConstructions.join(" "),
-        metadata.inputConstructionOutputLedger?.directOutputs.join(" "),
-        metadata.centralOutputDependency?.centralOutput,
-        metadata.centralOutputDependency?.dependsOnPrimitiveInputs.join(" "),
-        metadata.centralOutputDependency?.dependsOnIntroducedConstructions.join(" "),
-        metadata.centralOutputDependency?.assessment,
-        metadata.outputValidityAssessment?.knownResultRecoveries.join(" "),
-        metadata.outputValidityAssessment?.novelPredictionsOrConstraints.join(" "),
-        metadata.outputValidityAssessment?.failedOutputsOrConstraints.join(" "),
-        metadata.outputValidityAssessment?.assessment,
+        metadata.inputConstructionOutputLedger?.outputs.map((item: any) => item.output).join(" "),
       ].filter(Boolean).join("\n");
 
       const overlap = tokenOverlapScore(sourceTokens, candidateText);
@@ -383,8 +382,6 @@ async function selectComparatorContextForProfile(
           centralClaim: metadata.centralClaim ? String(metadata.centralClaim).slice(0, 900) : null,
           summary: metadata.summary ? String(metadata.summary).slice(0, 900) : null,
           inputConstructionOutputLedger: metadata.inputConstructionOutputLedger as any,
-          centralOutputDependency: metadata.centralOutputDependency as any,
-          outputValidityAssessment: metadata.outputValidityAssessment as any,
           frameworkConditionality: metadata.frameworkConditionality,
           comparatorSearchSummary: metadata.comparatorSearchSummary,
           benchmarkSetVersion: metadata.benchmarkSetVersion,
@@ -422,12 +419,6 @@ function benchmarkProfileForClustering(
     : null;
   const comparatorProfile = coverageLedger.comparatorProfile ?? aggregate?.comparatorProfile ?? null;
   const ico = compactLedger(coverageLedger.inputConstructionOutputLedger ?? aggregate?.inputConstructionOutputLedger);
-  const centralOutputDependency = compactCentralOutputDependency(
-    coverageLedger.centralOutputDependency ?? aggregate?.centralOutputDependency ?? comparatorProfile?.centralOutputDependency,
-  );
-  const outputValidityAssessment = compactOutputValidityAssessment(
-    coverageLedger.outputValidityAssessment ?? aggregate?.outputValidityAssessment ?? comparatorProfile?.outputValidityAssessment,
-  );
   return {
     paperId: paper.id,
     title: paper.title,
@@ -436,8 +427,6 @@ function benchmarkProfileForClustering(
     subfields: safeStringArray(paper.subfields),
     contributionArchetype: coverageLedger.contributionArchetype ?? aggregate?.contributionArchetype ?? comparatorProfile?.contributionArchetype ?? null,
     inputConstructionOutputLedger: ico,
-    centralOutputDependency,
-    outputValidityAssessment,
     frameworkConditionality: comparatorProfile?.frameworkConditionality ?? coverageLedger.frameworkConditionalityLevel ?? null,
     score: review.overallIntrinsicScore ?? review.score ?? null,
     classification: review.bestClassification ?? aggregate?.finalClassification ?? null,
@@ -700,16 +689,23 @@ router.get("/papers/export", async (_req, res) => {
         coverageLedger?.inputConstructionOutputLedger ??
         aggregate?.inputConstructionOutputLedger ??
         null;
+      const isV15Review =
+        coverageLedger?.schemaVersion === "v15" ||
+        String(coverageLedger?.promptVersion ?? "").startsWith("v15");
       const centralOutputDependency =
-        coverageLedger?.centralOutputDependency ??
-        aggregate?.centralOutputDependency ??
-        comparatorProfile?.centralOutputDependency ??
-        null;
+        isV15Review
+          ? undefined
+          : coverageLedger?.centralOutputDependency ??
+            aggregate?.centralOutputDependency ??
+            comparatorProfile?.centralOutputDependency ??
+            null;
       const outputValidityAssessment =
-        coverageLedger?.outputValidityAssessment ??
-        aggregate?.outputValidityAssessment ??
-        comparatorProfile?.outputValidityAssessment ??
-        null;
+        isV15Review
+          ? undefined
+          : coverageLedger?.outputValidityAssessment ??
+            aggregate?.outputValidityAssessment ??
+            comparatorProfile?.outputValidityAssessment ??
+            null;
       return {
         paper: {
           id: p.id,
@@ -742,9 +738,14 @@ router.get("/papers/export", async (_req, res) => {
           inputStrengthScore: coverageLedger?.inputStrengthScore ?? aggregate?.inputStrengthScore ?? null,
           constructionStrengthScore: coverageLedger?.constructionStrengthScore ?? aggregate?.constructionStrengthScore ?? null,
           outputStrengthScore: coverageLedger?.outputStrengthScore ?? aggregate?.outputStrengthScore ?? null,
-          outputReachScore: coverageLedger?.outputReachScore ?? aggregate?.outputReachScore ?? null,
-          generalizationBreadthScore: coverageLedger?.generalizationBreadthScore ?? aggregate?.generalizationBreadthScore ?? null,
+          outputReachScore: isV15Review ? undefined : coverageLedger?.outputReachScore ?? aggregate?.outputReachScore ?? null,
+          generalizationBreadthScore: isV15Review ? undefined : coverageLedger?.generalizationBreadthScore ?? aggregate?.generalizationBreadthScore ?? null,
           subscoreRationale: coverageLedger?.subscoreRationale ?? aggregate?.subscoreRationale ?? null,
+          adjudicatorStatus: coverageLedger?.adjudicatorStatus ?? adjudication?.adjudicatorStatus ?? aggregate?.adjudicatorStatus ?? null,
+          diagnosticBaselineScore: coverageLedger?.diagnosticBaselineScore ?? adjudication?.diagnosticBaselineScore ?? aggregate?.diagnosticBaselineScore ?? null,
+          diagnosticBaselineDelta: coverageLedger?.diagnosticBaselineDelta ?? adjudication?.diagnosticBaselineDelta ?? aggregate?.diagnosticBaselineDelta ?? null,
+          scoreAdjustmentReason: coverageLedger?.scoreAdjustmentReason ?? adjudication?.scoreAdjustmentReason ?? aggregate?.scoreAdjustmentReason ?? null,
+          scoringAnomaly: coverageLedger?.scoringAnomaly ?? adjudication?.scoringAnomaly ?? aggregate?.scoringAnomaly ?? null,
           fatalObjectionPresent: adjudication?.fatalObjectionPresent ?? aggregate?.fatalObjectionPresent ?? false,
           fatalObjectionAssessment: adjudication?.fatalObjectionAssessment ?? aggregate?.fatalObjectionAssessment ?? null,
           fatalToSpecificClaimOnly: adjudication?.fatalToSpecificClaimOnly ?? aggregate?.fatalToSpecificClaimOnly ?? false,
@@ -761,10 +762,10 @@ router.get("/papers/export", async (_req, res) => {
           systemPrompt: r.systemPrompt,
           modelName: r.modelName,
           overallIntrinsicScore: r.overallIntrinsicScore,
-          intrinsicScientificMeritScore: r.intrinsicScientificMeritScore,
-          explanatoryTargetBreadthScore: r.explanatoryTargetBreadthScore,
-          theorySpaceBreadthScore: r.theorySpaceBreadthScore,
-          breadthOfImpactScore: r.breadthOfImpactScore,
+          intrinsicScientificMeritScore: isV15Review ? undefined : r.intrinsicScientificMeritScore,
+          explanatoryTargetBreadthScore: isV15Review ? undefined : r.explanatoryTargetBreadthScore,
+          theorySpaceBreadthScore: isV15Review ? undefined : r.theorySpaceBreadthScore,
+          breadthOfImpactScore: isV15Review ? undefined : r.breadthOfImpactScore,
           bestClassification: r.bestClassification,
           centralClaim: r.centralClaim,
           summary: r.summary,
@@ -783,7 +784,7 @@ router.get("/papers/export", async (_req, res) => {
           strongestCaseForImportance: r.strongestCaseForImportance,
           strongestObjection: r.strongestObjection,
           assessmentSensitivity: coverageLedger?.assessmentSensitivity ?? aggregate?.assessmentSensitivity ?? null,
-          legacyDecisiveCheck: r.decisiveCheck,
+          legacyDecisiveCheck: isV15Review ? undefined : r.decisiveCheck,
           finalJudgment: r.finalJudgment,
           relatedWork: r.relatedWork,
           coverageLedger,

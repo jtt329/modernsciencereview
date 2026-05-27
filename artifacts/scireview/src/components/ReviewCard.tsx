@@ -183,6 +183,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const inputGrounding = parsedCoverage?.inputGrounding ?? storedAggregate?.inputGroundingAssessment ?? '';
   const inputFundamentality = parsedCoverage?.inputFundamentality ?? storedAggregate?.inputFundamentalityAssessment ?? '';
   const aggregateAdjudication = parsedCoverage?.adjudication ?? storedAggregate?.adjudication ?? null;
+  const adjudicatorStatus =
+    parsedCoverage?.adjudicatorStatus ??
+    aggregateAdjudication?.adjudicatorStatus ??
+    storedAggregate?.adjudicatorStatus ??
+    'success';
+  const adjudicatorFallbackActive = adjudicatorStatus === 'failed_fallback' || adjudicatorStatus === 'not_run';
   const aggregateContributionArchetype = parsedCoverage?.contributionArchetype ?? storedAggregate?.contributionArchetype ?? null;
   const aggregateNearestComparators = parsedCoverage?.nearestComparators ?? storedAggregate?.nearestComparators ?? [];
   const storedIndividualReviews = storedIndividualReviewsFromField.length > 0
@@ -691,6 +697,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
           )}
 
+          {isAdmin && !selectedPass && adjudicatorFallbackActive && (
+            <div className="bg-rose-500/10 border border-rose-300/25 rounded-2xl p-4">
+              <p className="text-xs font-black text-rose-200 uppercase tracking-widest">Admin Adjudicator Status</p>
+              <p className="text-sm text-rose-50 mt-2">
+                {adjudicatorStatus === 'not_run'
+                  ? 'The blind adjudicator did not run because the required blind passes did not complete. This score is a fallback from the saved pass review(s), not a successful adjudication.'
+                  : 'The blind adjudicator failed validation or API generation. This score is a fallback from the blind pass review(s), not a successful adjudication.'}
+              </p>
+            </div>
+          )}
+
           {isAdmin && !selectedPass && (subscoreConsistencyWarning || subscoreSaturationWarning) && (
             <div className="bg-amber-400/10 border border-amber-300/20 rounded-2xl p-4">
               <p className="text-xs font-black text-amber-200 uppercase tracking-widest">Admin Score Validation</p>
@@ -965,6 +982,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparator Status</p>
                   <p className="text-sm font-black text-white mt-1 capitalize">{String(comparatorCalibrationStatus).replace(/_/g, ' ')}</p>
+                </div>
+                <div className={`bg-slate-950/30 border rounded-xl p-3 ${adjudicatorFallbackActive ? 'border-rose-300/30' : 'border-white/10'}`}>
+                  <p className={`text-[10px] font-black uppercase tracking-widest ${adjudicatorFallbackActive ? 'text-rose-300' : 'text-emerald-300'}`}>Adjudicator Status</p>
+                  <p className="text-sm font-black text-white mt-1 capitalize">{String(adjudicatorStatus).replace(/_/g, ' ')}</p>
                 </div>
               </div>
 
