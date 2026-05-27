@@ -733,6 +733,7 @@ router.get("/papers/export", async (_req, res) => {
           localCohort: coverageLedger?.finalLocalCohort ?? coverageLedger?.localCohort ?? aggregate?.finalLocalCohort ?? comparatorProfile?.localCohort ?? null,
           inputStrengthScore: coverageLedger?.inputStrengthScore ?? aggregate?.inputStrengthScore ?? null,
           constructionStrengthScore: coverageLedger?.constructionStrengthScore ?? aggregate?.constructionStrengthScore ?? null,
+          outputStrengthScore: coverageLedger?.outputStrengthScore ?? aggregate?.outputStrengthScore ?? null,
           outputReachScore: coverageLedger?.outputReachScore ?? aggregate?.outputReachScore ?? null,
           generalizationBreadthScore: coverageLedger?.generalizationBreadthScore ?? aggregate?.generalizationBreadthScore ?? null,
           subscoreRationale: coverageLedger?.subscoreRationale ?? aggregate?.subscoreRationale ?? null,
@@ -773,7 +774,8 @@ router.get("/papers/export", async (_req, res) => {
           speculativeClaims: r.speculativeClaims,
           strongestCaseForImportance: r.strongestCaseForImportance,
           strongestObjection: r.strongestObjection,
-          decisiveCheck: r.decisiveCheck,
+          assessmentSensitivity: coverageLedger?.assessmentSensitivity ?? aggregate?.assessmentSensitivity ?? null,
+          legacyDecisiveCheck: r.decisiveCheck,
           finalJudgment: r.finalJudgment,
           relatedWork: r.relatedWork,
           coverageLedger,
@@ -1170,14 +1172,13 @@ function buildReviewContext(review: any, paper: any): string {
   if (review.unifyingPower) parts.push(`UNIFYING POWER:\n${review.unifyingPower}`);
   if (review.strongestCaseForImportance) parts.push(`STRONGEST CASE FOR IMPORTANCE:\n${review.strongestCaseForImportance}`);
   if (review.strongestObjection) parts.push(`STRONGEST OBJECTION:\n${review.strongestObjection}`);
-  if (review.decisiveCheck) parts.push(`DECISIVE CHECK:\n${review.decisiveCheck}`);
+  if (review.assessmentSensitivity) parts.push(`ASSESSMENT SENSITIVITY:\n${review.assessmentSensitivity}`);
   if (review.internalTechnicalTraction) parts.push(`INTERNAL TECHNICAL TRACTION:\n${review.internalTechnicalTraction}`);
   if (review.finalJudgment) parts.push(`FINAL JUDGMENT:\n${review.finalJudgment}`);
   const scores: string[] = [];
-  if (review.intrinsicScientificMeritScore != null) scores.push(`  Intrinsic Scientific Merit: ${review.intrinsicScientificMeritScore}/100`);
-  if (review.explanatoryTargetBreadthScore != null) scores.push(`  Explanatory Target Breadth: ${review.explanatoryTargetBreadthScore}/100`);
-  if (review.theorySpaceBreadthScore != null) scores.push(`  Theory Space Breadth: ${review.theorySpaceBreadthScore}/100`);
-  if (review.breadthOfImpactScore != null) scores.push(`  Generalization Breadth: ${review.breadthOfImpactScore}/100`);
+  if (review.inputStrengthScore != null) scores.push(`  Input Strength: ${review.inputStrengthScore}/10`);
+  if (review.constructionStrengthScore != null) scores.push(`  Construction Strength: ${review.constructionStrengthScore}/10`);
+  if (review.outputStrengthScore != null) scores.push(`  Output Strength: ${review.outputStrengthScore}/10`);
   if (review.overallIntrinsicScore != null) scores.push(`  OVERALL INTRINSIC SCORE: ${review.overallIntrinsicScore}/100`);
   if (scores.length > 0) parts.push(`SCORES:\n${scores.join('\n')}`);
   // Legacy fields

@@ -1,12 +1,12 @@
 import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import {
-  BENCHMARK_CALIBRATED_V12_1_FULL_PROMPT,
-  BENCHMARK_COMPARATOR_CALIBRATION_V12_1_PROMPT,
-  BLIND_INTRINSIC_ADJUDICATOR_V12_1_PROMPT,
-  BLIND_REVIEW_PASS_V12_1_PROMPT,
-  DATE_METADATA_EXTRACTION_V12_1_PROMPT,
-} from "./prompts/benchmarkCalibratedV12_1";
+  BENCHMARK_CALIBRATED_V15_FULL_PROMPT,
+  BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT,
+  BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT,
+  BLIND_REVIEW_PASS_V15_PROMPT,
+  DATE_METADATA_EXTRACTION_V15_PROMPT,
+} from "./prompts/benchmarkCalibratedV15";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -67,6 +67,8 @@ type ScoreStability = "high" | "medium" | "low";
 type ComparatorCalibrationStatus =
   | "applied"
   | "unavailable"
+  | "not_available"
+  | "not_run"
   | "weak"
   | "insufficient_comparators"
   | "not_run_benchmark_ingestion"
@@ -74,8 +76,7 @@ type ComparatorCalibrationStatus =
 type DiagnosticSubscoreKey =
   | "inputStrengthScore"
   | "constructionStrengthScore"
-  | "outputReachScore"
-  | "generalizationBreadthScore";
+  | "outputStrengthScore";
 type DiagnosticSubscoreValidity = Record<DiagnosticSubscoreKey, boolean>;
 type DiagnosticSubscoreRationale = Record<DiagnosticSubscoreKey, string>;
 
@@ -99,12 +100,25 @@ type CoverageLedger = {
 type InputConstructionOutputLedger = {
   primitiveInputs: string[];
   introducedConstructions: string[];
+  outputs: LedgerOutputItem[];
+  whyOutputsMatter: string;
+  // Legacy fields retained for older saved reviews and comparator context.
   externalEmbeddingsAndChecks: string[];
   centralOutputDependency: CentralOutputDependency;
   outputValidityAssessment: OutputValidityAssessment;
   directOutputs: string[];
   downstreamReach: string;
   assessment: string;
+};
+
+type LedgerOutputItem = {
+  output: string;
+  dependsOnInputs: string[];
+  dependsOnConstructions: string[];
+  externalContextIfAny: string;
+  support: string;
+  validity: string;
+  centrality: "low" | "medium" | "high";
 };
 
 type CentralOutputDependency = {
@@ -186,6 +200,8 @@ type ComparatorProfile = {
   contributionArchetype: ContributionArchetype;
   primitiveInputs: string[];
   introducedConstructions: string[];
+  outputs: string[];
+  // Legacy fields retained for older saved reviews and comparator context.
   externalEmbeddingsAndChecks: string[];
   centralOutputDependency: CentralOutputDependency;
   outputValidityAssessment: OutputValidityAssessment;
@@ -286,6 +302,7 @@ type IndividualReview = {
   inputGrounding: string;
   inputFundamentality: string;
   constructionAssessment: string;
+  outputValidity: string;
   contributionGroundingType: string;
   frameworkIndependence: string;
   hardToVaryAssessment: string;
@@ -306,10 +323,12 @@ type IndividualReview = {
   strongestCaseForImportance: string;
   strongestObjection: string;
   decisiveCheck: string;
+  assessmentSensitivity: string;
   whatWouldRaiseScore: string;
   whatWouldLowerScore: string;
   inputStrengthScore: number;
   constructionStrengthScore: number;
+  outputStrengthScore: number;
   outputReachScore: number;
   generalizationBreadthScore: number;
   subscoreRationale: DiagnosticSubscoreRationale;
@@ -364,6 +383,7 @@ type AggregateReview = {
   inputGroundingAssessment: string;
   inputFundamentalityAssessment: string;
   constructionAssessment: string;
+  outputValidity: string;
   contributionGroundingType: string;
   frameworkIndependenceAssessment: string;
   hardToVaryAssessment: string;
@@ -375,6 +395,7 @@ type AggregateReview = {
   strongestCaseForImportance: string;
   strongestObjection: string;
   decisiveCheck: string;
+  assessmentSensitivity: string;
   whatWouldRaiseScore: string;
   whatWouldLowerScore: string;
   establishedResults: string[];
@@ -390,6 +411,7 @@ type AggregateReview = {
   unifyingPower: string;
   inputStrengthScore: number;
   constructionStrengthScore: number;
+  outputStrengthScore: number;
   outputReachScore: number;
   generalizationBreadthScore: number;
   subscoreRationale: DiagnosticSubscoreRationale;
@@ -639,7 +661,7 @@ Return valid JSON only with this exact structure:
 
 All numeric fields must be numbers, not strings. Output valid JSON only.`;
 
-export const REVIEW_PROMPT_VERSION = "v12.1-central-output-dependency-date-metadata";
+export const REVIEW_PROMPT_VERSION = "v15-simplified-ico-no-decisive-check";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -659,9 +681,9 @@ const REVIEW_OUTPUT_SCHEMA_INSTRUCTION = "Current app JSON schema. Return valid 
 const FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION = `Fatal-error clarification:
 A fatal error is paper-fatal only when it destroys all or nearly all substantial original scientific value in the manuscript. If a paper contains multiple separable contributions, and one contribution fails while another substantial contribution remains correct and valuable, do not treat the paper as fatally flawed. Exclude or penalize the failed claim and score the surviving contribution. A paper may still receive a high score if its surviving contributions are correct, original, well-grounded, and high-value. Fatal-error caps apply only when no substantial separable contribution survives.`;
 
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V12_1_PROMPT);
-export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V12_1_FULL_PROMPT);
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(`${BLIND_INTRINSIC_ADJUDICATOR_V12_1_PROMPT}
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V15_PROMPT);
+export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V15_FULL_PROMPT);
+const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(`${BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT}
 
 ${FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION}
 
@@ -684,31 +706,13 @@ Return these additional fields at the top level when applicable:
   "survivingHighValueContributions": [],
   "failedClaimsExcludedFromScore": [],
   "survivingContributionScoreBasis": "",
-  "centralOutputDependency": {
-    "centralOutput": "",
-    "requiredPrimitiveInputs": [],
-    "requiredIntroducedConstructions": [],
-    "dependencyAssessment": "",
-    "constructionFragility": "",
-    "outputValidity": "",
-    "dependsOnPrimitiveInputs": [],
-    "dependsOnIntroducedConstructions": [],
-    "weakestDependency": "",
-    "assessment": ""
-  },
-  "outputValidityAssessment": {
-    "knownResultRecoveries": [],
-    "novelPredictionsOrConstraints": [],
-    "failedOutputsOrConstraints": [],
-    "assessment": ""
-  }
+  "assessmentSensitivity": ""
 }
 
-Return centralOutputDependency and outputValidityAssessment inside finalIntrinsicReview and at top level when available.
 Do not put fatal-error cap language in scoreCappingReason unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`);
-const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V12_1_PROMPT);
+const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT);
 
-const METADATA_PROMPT = `${DATE_METADATA_EXTRACTION_V12_1_PROMPT}
+const METADATA_PROMPT = `${DATE_METADATA_EXTRACTION_V15_PROMPT}
 
 Extract the exact manuscript title and paper authors from the scientific paper provided.
 You may receive the original PDF plus JSON containing filename hints, embedded PDF metadata, heuristic guesses, and extracted text. Prefer the title and author block printed in the manuscript itself, especially the first page/header. Use embedded PDF metadata or the filename only as fallback hints, because they are often abbreviated, stale, or machine-generated.
@@ -763,12 +767,28 @@ const contributionArchetypeJsonSchema = {
     secondary: jsonString,
   },
 };
+const ledgerOutputItemJsonSchema = {
+  type: "object",
+  required: ["output", "dependsOnInputs", "dependsOnConstructions", "externalContextIfAny", "support", "validity", "centrality"],
+  properties: {
+    output: jsonString,
+    dependsOnInputs: jsonStringArray,
+    dependsOnConstructions: jsonStringArray,
+    externalContextIfAny: jsonString,
+    support: jsonString,
+    validity: jsonString,
+    centrality: jsonString,
+  },
+};
 const inputConstructionOutputLedgerJsonSchema = {
   type: "object",
-  required: ["primitiveInputs", "introducedConstructions", "directOutputs", "assessment"],
+  required: ["primitiveInputs", "introducedConstructions", "outputs", "assessment"],
   properties: {
     primitiveInputs: jsonStringArray,
     introducedConstructions: jsonStringArray,
+    outputs: { type: "array", items: ledgerOutputItemJsonSchema },
+    whyOutputsMatter: jsonString,
+    // Legacy fields accepted for old reviews and model drift.
     externalEmbeddingsAndChecks: jsonStringArray,
     directOutputs: jsonStringArray,
     downstreamReach: jsonString,
@@ -808,6 +828,8 @@ const comparatorProfileJsonSchema = {
     contributionArchetype: contributionArchetypeJsonSchema,
     primitiveInputs: jsonStringArray,
     introducedConstructions: jsonStringArray,
+    outputs: jsonStringArray,
+    // Legacy fields accepted for old reviews and model drift.
     externalEmbeddingsAndChecks: jsonStringArray,
     centralOutputDependency: centralOutputDependencyJsonSchema,
     outputValidityAssessment: outputValidityAssessmentJsonSchema,
@@ -827,8 +849,11 @@ const individualReviewJsonSchema = {
     "scoreBand",
     "bestClassification",
     "inputConstructionOutputLedger",
-    "centralOutputDependency",
-    "outputValidityAssessment",
+    "outputValidity",
+    "assessmentSensitivity",
+    "inputStrengthScore",
+    "constructionStrengthScore",
+    "outputStrengthScore",
   ],
   additionalProperties: true,
   properties: {
@@ -846,6 +871,7 @@ const individualReviewJsonSchema = {
     inputConstructionOutputLedger: inputConstructionOutputLedgerJsonSchema,
     centralOutputDependency: centralOutputDependencyJsonSchema,
     outputValidityAssessment: outputValidityAssessmentJsonSchema,
+    outputValidity: jsonString,
     comparatorProfile: comparatorProfileJsonSchema,
     establishedResults: jsonStringArray,
     interpretiveClaims: jsonStringArray,
@@ -867,11 +893,12 @@ const individualReviewJsonSchema = {
     frameworkConditionality: frameworkConditionalityJsonSchema,
     strongestCaseForImportance: jsonString,
     strongestObjection: jsonString,
-    decisiveCheck: jsonString,
+    assessmentSensitivity: jsonString,
     whatWouldRaiseScore: jsonString,
     whatWouldLowerScore: jsonString,
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
+    outputStrengthScore: jsonNumber,
     outputReachScore: jsonNumber,
     generalizationBreadthScore: jsonNumber,
     subscoreRationale: {
@@ -880,6 +907,7 @@ const individualReviewJsonSchema = {
       properties: {
         inputStrengthScore: jsonString,
         constructionStrengthScore: jsonString,
+        outputStrengthScore: jsonString,
         outputReachScore: jsonString,
         generalizationBreadthScore: jsonString,
       },
@@ -913,8 +941,11 @@ const adjudicatorJsonSchema = {
     comparatorProfile: comparatorProfileJsonSchema,
     centralOutputDependency: centralOutputDependencyJsonSchema,
     outputValidityAssessment: outputValidityAssessmentJsonSchema,
+    outputValidity: jsonString,
+    assessmentSensitivity: jsonString,
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
+    outputStrengthScore: jsonNumber,
     outputReachScore: jsonNumber,
     generalizationBreadthScore: jsonNumber,
     subscoreRationale: {
@@ -923,6 +954,7 @@ const adjudicatorJsonSchema = {
       properties: {
         inputStrengthScore: jsonString,
         constructionStrengthScore: jsonString,
+        outputStrengthScore: jsonString,
         outputReachScore: jsonString,
         generalizationBreadthScore: jsonString,
       },
@@ -1157,8 +1189,13 @@ function normalizeSubscoreRationale(value: unknown): DiagnosticSubscoreRationale
   return {
     inputStrengthScore: firstString([source.inputStrengthScore, source.intrinsicTechnicalScore]),
     constructionStrengthScore: firstString([source.constructionStrengthScore, source.explanatoryTargetBreadthScore]),
-    outputReachScore: firstString([source.outputReachScore, source.theorySpaceBreadthScore]),
-    generalizationBreadthScore: firstString([source.generalizationBreadthScore, source.breadthOfImpactScore]),
+    outputStrengthScore: firstString([
+      source.outputStrengthScore,
+      source.outputReachScore,
+      source.theorySpaceBreadthScore,
+      source.generalizationBreadthScore,
+      source.breadthOfImpactScore,
+    ]),
   };
 }
 
@@ -1166,8 +1203,13 @@ function diagnosticSubscoreValidity(source: Record<string, unknown>): Diagnostic
   return {
     inputStrengthScore: firstNumberField(source, ["inputStrengthScore", "intrinsicTechnicalScore"]) != null,
     constructionStrengthScore: firstNumberField(source, ["constructionStrengthScore", "explanatoryTargetBreadthScore"]) != null,
-    outputReachScore: firstNumberField(source, ["outputReachScore", "theorySpaceBreadthScore"]) != null,
-    generalizationBreadthScore: firstNumberField(source, ["generalizationBreadthScore", "breadthOfImpactScore"]) != null,
+    outputStrengthScore: firstNumberField(source, [
+      "outputStrengthScore",
+      "outputReachScore",
+      "theorySpaceBreadthScore",
+      "generalizationBreadthScore",
+      "breadthOfImpactScore",
+    ]) != null,
   };
 }
 
@@ -1177,13 +1219,12 @@ function allDiagnosticSubscoresValid(validity: DiagnosticSubscoreValidity) {
 
 function diagnosticSubscoreValues(source: Pick<
   IndividualReview | AggregateReview,
-  "inputStrengthScore" | "constructionStrengthScore" | "outputReachScore" | "generalizationBreadthScore"
+  "inputStrengthScore" | "constructionStrengthScore" | "outputStrengthScore"
 >) {
   return [
     source.inputStrengthScore,
     source.constructionStrengthScore,
-    source.outputReachScore,
-    source.generalizationBreadthScore,
+    source.outputStrengthScore,
   ];
 }
 
@@ -1328,6 +1369,84 @@ function normalizeOutputValidityAssessment(value: unknown, fallback?: OutputVali
     ]),
     assessment: firstString([source.assessment, source.validityAssessment, source.outputValidityAssessment], fallback?.assessment ?? ""),
   };
+}
+
+function normalizeLedgerOutputCentrality(value: unknown): LedgerOutputItem["centrality"] {
+  const candidate = asString(value).toLowerCase();
+  if (candidate === "low" || candidate === "medium" || candidate === "high") return candidate;
+  return "medium";
+}
+
+function normalizeLedgerOutputs(
+  value: unknown,
+  options: {
+    legacyDirectOutputs?: unknown;
+    legacyExternalContext?: unknown;
+    centralOutputDependency?: CentralOutputDependency;
+    outputValidityAssessment?: OutputValidityAssessment;
+  } = {},
+): LedgerOutputItem[] {
+  if (Array.isArray(value)) {
+    const outputs = value
+      .map((item) => {
+        if (typeof item === "string") {
+          const output = item.trim();
+          if (!output) return null;
+          return {
+            output,
+            dependsOnInputs: [],
+            dependsOnConstructions: [],
+            externalContextIfAny: "",
+            support: "",
+            validity: "",
+            centrality: "medium",
+          } satisfies LedgerOutputItem;
+        }
+        const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+        const output = firstString([source.output, source.directOutput, source.result, source.claim, source.description]);
+        if (!output) return null;
+        return {
+          output,
+          dependsOnInputs: firstStringArray([source.dependsOnInputs, source.requiredPrimitiveInputs, source.primitiveInputs]),
+          dependsOnConstructions: firstStringArray([source.dependsOnConstructions, source.requiredIntroducedConstructions, source.introducedConstructions]),
+          externalContextIfAny: firstString([source.externalContextIfAny, source.externalContext, source.context]),
+          support: firstString([source.support, source.evidence, source.derivationSupport]),
+          validity: firstString([source.validity, source.outputValidity, source.validityAssessment]),
+          centrality: normalizeLedgerOutputCentrality(source.centrality),
+        } satisfies LedgerOutputItem;
+      })
+      .filter(Boolean) as LedgerOutputItem[];
+    if (outputs.length > 0) return outputs;
+  }
+
+  const legacyOutputs = firstStringArray([options.legacyDirectOutputs]);
+  const legacyContexts = firstStringArray([options.legacyExternalContext]);
+  if (legacyOutputs.length > 0) {
+    return legacyOutputs.map((output, index) => ({
+      output,
+      dependsOnInputs: [],
+      dependsOnConstructions: [],
+      externalContextIfAny: legacyContexts[index] ?? "",
+      support: "",
+      validity: "",
+      centrality: "medium",
+    }));
+  }
+
+  const centralOutput = options.centralOutputDependency?.centralOutput;
+  if (centralOutput) {
+    return [{
+      output: centralOutput,
+      dependsOnInputs: options.centralOutputDependency?.dependsOnPrimitiveInputs ?? [],
+      dependsOnConstructions: options.centralOutputDependency?.dependsOnIntroducedConstructions ?? [],
+      externalContextIfAny: "",
+      support: options.centralOutputDependency?.dependencyAssessment ?? "",
+      validity: options.centralOutputDependency?.outputValidity || options.outputValidityAssessment?.assessment || "",
+      centrality: "high",
+    }];
+  }
+
+  return [];
 }
 
 function normalizeComparatorRelationship(value: unknown): NearestComparator["relationship"] {
@@ -1477,6 +1596,11 @@ function normalizeComparatorProfile(value: unknown, fallbackReview: IndividualRe
     contributionArchetype: normalizeContributionArchetype(source.contributionArchetype, fallbackReview.contributionArchetype),
     primitiveInputs: firstStringArray([source.primitiveInputs, fallbackReview.inputConstructionOutputLedger.primitiveInputs]),
     introducedConstructions: firstStringArray([source.introducedConstructions, fallbackReview.inputConstructionOutputLedger.introducedConstructions]),
+    outputs: firstStringArray([
+      source.outputs,
+      fallbackReview.inputConstructionOutputLedger.outputs.map((item) => item.output),
+      fallbackReview.inputConstructionOutputLedger.directOutputs,
+    ]),
     externalEmbeddingsAndChecks: firstStringArray([source.externalEmbeddingsAndChecks, fallbackReview.inputConstructionOutputLedger.externalEmbeddingsAndChecks]),
     centralOutputDependency: normalizeCentralOutputDependency(source.centralOutputDependency, fallbackReview.centralOutputDependency),
     outputValidityAssessment: normalizeOutputValidityAssessment(source.outputValidityAssessment, fallbackReview.outputValidityAssessment),
@@ -1544,6 +1668,8 @@ function normalizeCalibrationStatus(value: unknown, fallback: ComparatorCalibrat
   if (
     candidate === "applied" ||
     candidate === "unavailable" ||
+    candidate === "not_available" ||
+    candidate === "not_run" ||
     candidate === "weak" ||
     candidate === "insufficient_comparators" ||
     candidate === "not_run_benchmark_ingestion" ||
@@ -1900,8 +2026,36 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
   const inputConstructionOutputLedger = source.inputConstructionOutputLedger && typeof source.inputConstructionOutputLedger === "object"
     ? (source.inputConstructionOutputLedger as Record<string, unknown>)
     : {};
-  const normalizedCentralOutputDependency = normalizeCentralOutputDependency(source.centralOutputDependency);
-  const normalizedOutputValidityAssessment = normalizeOutputValidityAssessment(source.outputValidityAssessment);
+  const normalizedOutputValidityAssessment = normalizeOutputValidityAssessment(source.outputValidityAssessment ?? source.outputValidity);
+  const legacyDirectOutputs = firstStringArray([
+    inputConstructionOutputLedger.directOutputs,
+    source.directOutputs,
+    source.direct_outputs,
+  ]);
+  const legacyExternalEmbeddingsAndChecks = firstStringArray([
+    inputConstructionOutputLedger.externalEmbeddingsAndChecks,
+    source.externalEmbeddingsAndChecks,
+    source.external_embeddings_and_checks,
+    source.externalChecks,
+  ]);
+  const preliminaryCentralOutputDependency = normalizeCentralOutputDependency(source.centralOutputDependency);
+  const normalizedLedgerOutputs = normalizeLedgerOutputs(inputConstructionOutputLedger.outputs ?? source.outputs, {
+    legacyDirectOutputs,
+    legacyExternalContext: legacyExternalEmbeddingsAndChecks,
+    centralOutputDependency: preliminaryCentralOutputDependency,
+    outputValidityAssessment: normalizedOutputValidityAssessment,
+  });
+  const normalizedCentralOutputDependency = normalizeCentralOutputDependency(
+    source.centralOutputDependency ?? {
+      centralOutput: normalizedLedgerOutputs[0]?.output ?? "",
+      requiredPrimitiveInputs: normalizedLedgerOutputs[0]?.dependsOnInputs ?? [],
+      requiredIntroducedConstructions: normalizedLedgerOutputs[0]?.dependsOnConstructions ?? [],
+      dependencyAssessment: normalizedLedgerOutputs[0]?.support ?? "",
+      constructionFragility: "",
+      outputValidity: normalizedLedgerOutputs[0]?.validity ?? asString(source.outputValidity),
+      assessment: normalizedLedgerOutputs[0]?.support ?? "",
+    },
+  );
   const contributionArchetype = normalizeContributionArchetype(source.contributionArchetype);
   const framework = source.frameworkConditionality && typeof source.frameworkConditionality === "object"
     ? (source.frameworkConditionality as Record<string, unknown>)
@@ -1943,8 +2097,15 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
   ]);
   const inputStrengthScore = normalizeDiagnosticSubscore(firstNumberField(source, ["inputStrengthScore", "intrinsicTechnicalScore"]));
   const constructionStrengthScore = normalizeDiagnosticSubscore(firstNumberField(source, ["constructionStrengthScore", "explanatoryTargetBreadthScore"]));
-  const outputReachScore = normalizeDiagnosticSubscore(firstNumberField(source, ["outputReachScore", "theorySpaceBreadthScore"]));
-  const generalizationBreadthScore = normalizeDiagnosticSubscore(firstNumberField(source, ["generalizationBreadthScore", "breadthOfImpactScore"]));
+  const outputStrengthScore = normalizeDiagnosticSubscore(firstNumberField(source, [
+    "outputStrengthScore",
+    "outputReachScore",
+    "theorySpaceBreadthScore",
+    "generalizationBreadthScore",
+    "breadthOfImpactScore",
+  ]));
+  const outputReachScore = normalizeDiagnosticSubscore(firstNumberField(source, ["outputReachScore", "theorySpaceBreadthScore"]), outputStrengthScore);
+  const generalizationBreadthScore = normalizeDiagnosticSubscore(firstNumberField(source, ["generalizationBreadthScore", "breadthOfImpactScore"]), outputStrengthScore);
 
   return {
     title: "anonymized manuscript",
@@ -1969,20 +2130,21 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
         source.introducedConstructions,
         source.introduced_constructions,
       ]),
-      externalEmbeddingsAndChecks: firstStringArray([
-        inputConstructionOutputLedger.externalEmbeddingsAndChecks,
-        source.externalEmbeddingsAndChecks,
-        source.external_embeddings_and_checks,
-        source.externalChecks,
+      outputs: normalizedLedgerOutputs,
+      whyOutputsMatter: firstString([
+        inputConstructionOutputLedger.whyOutputsMatter,
+        inputConstructionOutputLedger.downstreamReach,
+        source.whyOutputsMatter,
+        source.downstreamReach,
+        source.downstream_reach,
       ]),
-      directOutputs: firstStringArray([
-        inputConstructionOutputLedger.directOutputs,
-        source.directOutputs,
-        source.direct_outputs,
-      ]),
+      externalEmbeddingsAndChecks: legacyExternalEmbeddingsAndChecks,
+      directOutputs: legacyDirectOutputs.length > 0 ? legacyDirectOutputs : normalizedLedgerOutputs.map((item) => item.output),
       downstreamReach: firstString([
         inputConstructionOutputLedger.downstreamReach,
+        inputConstructionOutputLedger.whyOutputsMatter,
         source.downstreamReach,
+        source.whyOutputsMatter,
         source.downstream_reach,
       ]),
       assessment: firstString([
@@ -2031,6 +2193,11 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
       source.construction_assessment,
       source.constructionStrengthAssessment,
     ]),
+    outputValidity: firstString([
+      source.outputValidity,
+      normalizedOutputValidityAssessment.assessment,
+      normalizedCentralOutputDependency.outputValidity,
+    ]),
     contributionGroundingType: firstString([
       source.contributionGroundingType,
       source.contribution_grounding_type,
@@ -2064,10 +2231,17 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
       source.weaknesses,
     ]),
     decisiveCheck: firstString([source.decisiveCheck, source.keyCheck, source.keyTest]),
+    assessmentSensitivity: firstString([
+      source.assessmentSensitivity,
+      source.assessment_sensitivity,
+      source.whatWouldChangeAssessment,
+      source.decisiveCheck,
+    ]),
     whatWouldRaiseScore: firstString([source.whatWouldRaiseScore, source.raiseScore, source.scoreUpside]),
     whatWouldLowerScore: firstString([source.whatWouldLowerScore, source.lowerScore, source.scoreDownside]),
     inputStrengthScore,
     constructionStrengthScore,
+    outputStrengthScore,
     outputReachScore,
     generalizationBreadthScore,
     subscoreRationale: normalizeSubscoreRationale(source.subscoreRationale),
@@ -2111,6 +2285,13 @@ function individualReviewReasoningText(review: IndividualReview) {
   return [
     review.summary,
     review.centralClaim,
+    review.inputConstructionOutputLedger.outputs.map((item) => [
+      item.output,
+      item.support,
+      item.validity,
+      item.externalContextIfAny,
+    ].filter(Boolean).join("\n")).join("\n"),
+    review.inputConstructionOutputLedger.whyOutputsMatter,
     review.inputConstructionOutputLedger.assessment,
     review.inputConstructionOutputLedger.downstreamReach,
     review.centralOutputDependency.centralOutput,
@@ -2123,9 +2304,11 @@ function individualReviewReasoningText(review: IndividualReview) {
     review.inputGrounding,
     review.inputFundamentality,
     review.constructionAssessment,
+    review.outputValidity,
     review.novelty,
     review.strongestCaseForImportance,
     review.strongestObjection,
+    review.assessmentSensitivity,
     review.oneParagraphVerdict,
     review.finalJudgment,
   ].filter(Boolean).join("\n").trim();
@@ -2155,18 +2338,23 @@ function validateIndividualReview(review: IndividualReview) {
   }
 
   if (
-    !review.centralOutputDependency.centralOutput.trim() ||
-    review.centralOutputDependency.dependsOnPrimitiveInputs.length === 0 ||
-    review.centralOutputDependency.dependsOnIntroducedConstructions.length === 0 ||
-    !review.centralOutputDependency.assessment.trim()
+    review.inputConstructionOutputLedger.primitiveInputs.length === 0 ||
+    review.inputConstructionOutputLedger.introducedConstructions.length === 0 ||
+    review.inputConstructionOutputLedger.outputs.length === 0 ||
+    !review.inputConstructionOutputLedger.assessment.trim()
   ) {
-    throw new Error("Generated review was missing central-output dependency accounting.");
+    throw new Error("Generated review was missing input-construction-output ledger accounting.");
   }
 
-  if (!review.outputValidityAssessment.assessment.trim()) {
-    if (!review.centralOutputDependency.outputValidity.trim()) {
+  if (!review.outputValidity.trim()) {
+    const hasOutputValidity = review.inputConstructionOutputLedger.outputs.some((output) => output.validity.trim());
+    if (!hasOutputValidity && !review.outputValidityAssessment.assessment.trim() && !review.centralOutputDependency.outputValidity.trim()) {
       throw new Error("Generated review was missing output-validity assessment.");
     }
+  }
+
+  if (!review.assessmentSensitivity.trim()) {
+    throw new Error("Generated review was missing assessment sensitivity.");
   }
 
   if (score === 0 && reasoningText.length < 180) {
@@ -2572,13 +2760,41 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const aggregateFramework = source.frameworkConditionality && typeof source.frameworkConditionality === "object"
     ? (source.frameworkConditionality as Record<string, unknown>)
     : {};
-  const aggregateCentralOutputDependency = normalizeCentralOutputDependency(
+  const aggregateOutputValidityAssessment = normalizeOutputValidityAssessment(
+    source.outputValidityAssessment ?? root.outputValidityAssessment ?? source.outputValidity ?? root.outputValidity,
+    fallbackReview.outputValidityAssessment,
+  );
+  const aggregateLegacyDirectOutputs = firstStringArray([
+    aggregateLedger.directOutputs,
+    source.directOutputs,
+    fallbackReview.inputConstructionOutputLedger.directOutputs,
+  ]);
+  const aggregateLegacyExternalEmbeddingsAndChecks = firstStringArray([
+    aggregateLedger.externalEmbeddingsAndChecks,
+    source.externalEmbeddingsAndChecks,
+    fallbackReview.inputConstructionOutputLedger.externalEmbeddingsAndChecks,
+  ]);
+  const preliminaryAggregateCentralOutputDependency = normalizeCentralOutputDependency(
     source.centralOutputDependency ?? root.centralOutputDependency,
     fallbackReview.centralOutputDependency,
   );
-  const aggregateOutputValidityAssessment = normalizeOutputValidityAssessment(
-    source.outputValidityAssessment ?? root.outputValidityAssessment,
-    fallbackReview.outputValidityAssessment,
+  const aggregateLedgerOutputs = normalizeLedgerOutputs(aggregateLedger.outputs ?? source.outputs, {
+    legacyDirectOutputs: aggregateLegacyDirectOutputs,
+    legacyExternalContext: aggregateLegacyExternalEmbeddingsAndChecks,
+    centralOutputDependency: preliminaryAggregateCentralOutputDependency,
+    outputValidityAssessment: aggregateOutputValidityAssessment,
+  });
+  const aggregateCentralOutputDependency = normalizeCentralOutputDependency(
+    source.centralOutputDependency ?? root.centralOutputDependency ?? {
+      centralOutput: aggregateLedgerOutputs[0]?.output ?? "",
+      requiredPrimitiveInputs: aggregateLedgerOutputs[0]?.dependsOnInputs ?? [],
+      requiredIntroducedConstructions: aggregateLedgerOutputs[0]?.dependsOnConstructions ?? [],
+      dependencyAssessment: aggregateLedgerOutputs[0]?.support ?? "",
+      constructionFragility: "",
+      outputValidity: aggregateLedgerOutputs[0]?.validity ?? asString(source.outputValidity ?? root.outputValidity),
+      assessment: aggregateLedgerOutputs[0]?.support ?? "",
+    },
+    fallbackReview.centralOutputDependency,
   );
   const individualScoreSource = Array.isArray(adjudicationSource.individualScores)
     ? adjudicationSource.individualScores
@@ -2657,20 +2873,30 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       firstNumberField(aggregateSubscoreSource, ["constructionStrengthScore", "explanatoryTargetBreadthScore"]),
       fallbackReview.constructionStrengthScore,
     ),
+    outputStrengthScore: normalizeDiagnosticSubscore(
+      firstNumberField(aggregateSubscoreSource, [
+        "outputStrengthScore",
+        "outputReachScore",
+        "theorySpaceBreadthScore",
+        "generalizationBreadthScore",
+        "breadthOfImpactScore",
+      ]),
+      fallbackReview.outputStrengthScore,
+    ),
     outputReachScore: normalizeDiagnosticSubscore(
       firstNumberField(aggregateSubscoreSource, ["outputReachScore", "theorySpaceBreadthScore"]),
-      fallbackReview.outputReachScore,
+      fallbackReview.outputStrengthScore,
     ),
     generalizationBreadthScore: normalizeDiagnosticSubscore(
       firstNumberField(aggregateSubscoreSource, ["generalizationBreadthScore", "breadthOfImpactScore"]),
-      fallbackReview.generalizationBreadthScore,
+      fallbackReview.outputStrengthScore,
     ),
   };
   const aggregateLegacySubscores = {
     intrinsicTechnicalScore: normalizeDiagnosticSubscore(source.intrinsicTechnicalScore, aggregateSubscores.inputStrengthScore),
     explanatoryTargetBreadthScore: normalizeDiagnosticSubscore(source.explanatoryTargetBreadthScore, aggregateSubscores.constructionStrengthScore),
-    theorySpaceBreadthScore: normalizeDiagnosticSubscore(source.theorySpaceBreadthScore, aggregateSubscores.outputReachScore),
-    breadthOfImpactScore: normalizeDiagnosticSubscore(source.breadthOfImpactScore, aggregateSubscores.generalizationBreadthScore),
+    theorySpaceBreadthScore: normalizeDiagnosticSubscore(source.theorySpaceBreadthScore, aggregateSubscores.outputStrengthScore),
+    breadthOfImpactScore: normalizeDiagnosticSubscore(source.breadthOfImpactScore, aggregateSubscores.outputStrengthScore),
   };
   const aggregateSubscoreRationale = normalizeSubscoreRationale(source.subscoreRationale ?? root.subscoreRationale);
   let scoreCappingReason = firstString([root.scoreCappingReason, source.scoreCappingReason, source.score_capping_reason]);
@@ -2783,20 +3009,24 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
         source.introducedConstructions,
         fallbackReview.inputConstructionOutputLedger.introducedConstructions,
       ]),
-      externalEmbeddingsAndChecks: firstStringArray([
-        aggregateLedger.externalEmbeddingsAndChecks,
-        source.externalEmbeddingsAndChecks,
-        fallbackReview.inputConstructionOutputLedger.externalEmbeddingsAndChecks,
+      outputs: aggregateLedgerOutputs,
+      whyOutputsMatter: firstString([
+        aggregateLedger.whyOutputsMatter,
+        aggregateLedger.downstreamReach,
+        source.whyOutputsMatter,
+        source.downstreamReach,
+        fallbackReview.inputConstructionOutputLedger.whyOutputsMatter,
+        fallbackReview.inputConstructionOutputLedger.downstreamReach,
       ]),
-      directOutputs: firstStringArray([
-        aggregateLedger.directOutputs,
-        source.directOutputs,
-        fallbackReview.inputConstructionOutputLedger.directOutputs,
-      ]),
+      externalEmbeddingsAndChecks: aggregateLegacyExternalEmbeddingsAndChecks,
+      directOutputs: aggregateLegacyDirectOutputs.length > 0 ? aggregateLegacyDirectOutputs : aggregateLedgerOutputs.map((item) => item.output),
       downstreamReach: firstString([
         aggregateLedger.downstreamReach,
+        aggregateLedger.whyOutputsMatter,
         source.downstreamReach,
+        source.whyOutputsMatter,
         fallbackReview.inputConstructionOutputLedger.downstreamReach,
+        fallbackReview.inputConstructionOutputLedger.whyOutputsMatter,
       ]),
       assessment: firstString([
         aggregateLedger.assessment,
@@ -2849,6 +3079,13 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     inputGroundingAssessment: asString(source.inputGroundingAssessment ?? source.inputGrounding, fallbackReview.inputGrounding),
     inputFundamentalityAssessment: asString(source.inputFundamentalityAssessment ?? source.inputFundamentality, fallbackReview.inputFundamentality),
     constructionAssessment: asString(source.constructionAssessment, fallbackReview.constructionAssessment),
+    outputValidity: firstString([
+      source.outputValidity,
+      root.outputValidity,
+      aggregateOutputValidityAssessment.assessment,
+      aggregateCentralOutputDependency.outputValidity,
+      fallbackReview.outputValidity,
+    ]),
     contributionGroundingType: asString(source.contributionGroundingType, fallbackReview.contributionGroundingType),
     frameworkIndependenceAssessment: asString(source.frameworkIndependenceAssessment ?? source.frameworkIndependence, fallbackReview.frameworkIndependence),
     hardToVaryAssessment: asString(source.hardToVaryAssessment, fallbackReview.hardToVaryAssessment),
@@ -2860,6 +3097,13 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     strongestCaseForImportance: asString(source.strongestCaseForImportance, fallbackReview.strongestCaseForImportance),
     strongestObjection: asString(source.strongestObjection, fallbackReview.strongestObjection),
     decisiveCheck: asString(source.decisiveCheck, fallbackReview.decisiveCheck),
+    assessmentSensitivity: firstString([
+      source.assessmentSensitivity,
+      root.assessmentSensitivity,
+      source.whatWouldChangeAssessment,
+      fallbackReview.assessmentSensitivity,
+      source.decisiveCheck,
+    ]),
     whatWouldRaiseScore: asString(source.whatWouldRaiseScore, fallbackReview.whatWouldRaiseScore),
     whatWouldLowerScore: asString(source.whatWouldLowerScore, fallbackReview.whatWouldLowerScore),
     establishedResults: firstStringArray([source.establishedResults, fallbackReview.establishedResults]),
@@ -2893,18 +3137,23 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
 
 function validateAggregateReview(review: AggregateReview) {
   if (
-    !review.centralOutputDependency.centralOutput.trim() ||
-    review.centralOutputDependency.dependsOnPrimitiveInputs.length === 0 ||
-    review.centralOutputDependency.dependsOnIntroducedConstructions.length === 0 ||
-    !review.centralOutputDependency.assessment.trim()
+    review.inputConstructionOutputLedger.primitiveInputs.length === 0 ||
+    review.inputConstructionOutputLedger.introducedConstructions.length === 0 ||
+    review.inputConstructionOutputLedger.outputs.length === 0 ||
+    !review.inputConstructionOutputLedger.assessment.trim()
   ) {
-    throw new Error("Adjudication was missing central-output dependency accounting.");
+    throw new Error("Adjudication was missing input-construction-output ledger accounting.");
   }
 
-  if (!review.outputValidityAssessment.assessment.trim()) {
-    if (!review.centralOutputDependency.outputValidity.trim()) {
+  if (!review.outputValidity.trim()) {
+    const hasOutputValidity = review.inputConstructionOutputLedger.outputs.some((output) => output.validity.trim());
+    if (!hasOutputValidity && !review.outputValidityAssessment.assessment.trim() && !review.centralOutputDependency.outputValidity.trim()) {
       throw new Error("Adjudication was missing output-validity assessment.");
     }
+  }
+
+  if (!review.assessmentSensitivity.trim()) {
+    throw new Error("Adjudication was missing assessment sensitivity.");
   }
 
   if (!allDiagnosticSubscoresValid(review.subscoreValidity)) {
@@ -2942,15 +3191,17 @@ function buildAdjudicatorInput(
       inputGrounding: review.inputGrounding,
       inputFundamentality: review.inputFundamentality,
       constructionAssessment: review.constructionAssessment,
+      outputValidity: review.outputValidity,
       frameworkConditionality: review.frameworkConditionality,
       frameworkIndependence: review.frameworkIndependence,
       manuscriptOriginalContribution: review.manuscriptOriginalContribution,
       survivingContributionIfFlawed: review.survivingContributionIfFlawed,
       strongestCaseForImportance: review.strongestCaseForImportance,
       strongestObjection: review.strongestObjection,
-      decisiveCheck: review.decisiveCheck,
+      assessmentSensitivity: review.assessmentSensitivity,
       inputStrengthScore: review.inputStrengthScore,
       constructionStrengthScore: review.constructionStrengthScore,
+      outputStrengthScore: review.outputStrengthScore,
       outputReachScore: review.outputReachScore,
       generalizationBreadthScore: review.generalizationBreadthScore,
       subscoreRationale: review.subscoreRationale,
@@ -3012,6 +3263,7 @@ function buildComparatorCalibrationInput(
       inputGrounding: aggregate.inputGroundingAssessment,
       inputFundamentality: aggregate.inputFundamentalityAssessment,
       constructionAssessment: aggregate.constructionAssessment,
+      outputValidity: aggregate.outputValidity,
       frameworkIndependence: aggregate.frameworkIndependenceAssessment,
       hardToVaryAssessment: aggregate.hardToVaryAssessment,
       frameworkConditionality: aggregate.frameworkConditionalityAssessment,
@@ -3022,9 +3274,10 @@ function buildComparatorCalibrationInput(
       survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
       strongestCaseForImportance: aggregate.strongestCaseForImportance,
       strongestObjection: aggregate.strongestObjection,
-      decisiveCheck: aggregate.decisiveCheck,
+      assessmentSensitivity: aggregate.assessmentSensitivity,
       inputStrengthScore: aggregate.inputStrengthScore,
       constructionStrengthScore: aggregate.constructionStrengthScore,
+      outputStrengthScore: aggregate.outputStrengthScore,
       outputReachScore: aggregate.outputReachScore,
       generalizationBreadthScore: aggregate.generalizationBreadthScore,
       subscoreRationale: aggregate.subscoreRationale,
@@ -3497,13 +3750,13 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     unifyingPower: aggregate.unifyingPower || null,
     strongestCaseForImportance: aggregate.strongestCaseForImportance || null,
     strongestObjection: aggregate.strongestObjection || null,
-    decisiveCheck: aggregate.decisiveCheck || null,
+    decisiveCheck: null,
     internalTechnicalTraction: aggregate.internalTechnicalTraction || null,
     noveltyConfidence: String(aggregate.noveltyConfidence),
     intrinsicScientificMeritScore: aggregate.subscoreValidity.inputStrengthScore ? aggregate.inputStrengthScore : null,
     explanatoryTargetBreadthScore: aggregate.subscoreValidity.constructionStrengthScore ? aggregate.constructionStrengthScore : null,
-    theorySpaceBreadthScore: aggregate.subscoreValidity.outputReachScore ? aggregate.outputReachScore : null,
-    breadthOfImpactScore: aggregate.subscoreValidity.generalizationBreadthScore ? aggregate.generalizationBreadthScore : null,
+    theorySpaceBreadthScore: aggregate.subscoreValidity.outputStrengthScore ? aggregate.outputStrengthScore : null,
+    breadthOfImpactScore: null,
     overallIntrinsicScore: aggregate.finalScoreBand.median,
     bestClassification: aggregateClassification,
     finalJudgment: aggregate.publicOneParagraphVerdict || representativeReview.finalJudgment,
@@ -3517,8 +3770,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
-      schemaVersion: "v12.1",
-      clusterVersion: "v12.1-organic-profile",
+      schemaVersion: "v15",
+      clusterVersion: "v15-simplified-ico",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
       benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
@@ -3533,6 +3786,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       inputConstructionOutputLedger: aggregate.inputConstructionOutputLedger,
       centralOutputDependency: aggregate.centralOutputDependency,
       outputValidityAssessment: aggregate.outputValidityAssessment,
+      outputValidity: aggregate.outputValidity,
+      assessmentSensitivity: aggregate.assessmentSensitivity,
       nearestComparators: aggregate.nearestComparators,
       externalComparatorSuggestions: aggregate.externalComparatorSuggestions,
       publicComparatorSummary: aggregate.publicComparatorSummary,
@@ -3554,6 +3809,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       subscoreValidity: aggregate.subscoreValidity,
       inputStrengthScore: aggregate.inputStrengthScore,
       constructionStrengthScore: aggregate.constructionStrengthScore,
+      outputStrengthScore: aggregate.outputStrengthScore,
       outputReachScore: aggregate.outputReachScore,
       generalizationBreadthScore: aggregate.generalizationBreadthScore,
       subscoreRationale: aggregate.subscoreRationale,
@@ -3571,12 +3827,15 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
         centralOutputDependency: aggregate.centralOutputDependency,
         outputValidityAssessment: aggregate.outputValidityAssessment,
         constructionAssessment: aggregate.constructionAssessment,
+        outputValidity: aggregate.outputValidity,
+        assessmentSensitivity: aggregate.assessmentSensitivity,
         contributionInventory: aggregate.contributionInventory,
         survivingHighValueContributions: aggregate.survivingHighValueContributions,
         failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
         survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
         inputStrengthScore: aggregate.inputStrengthScore,
         constructionStrengthScore: aggregate.constructionStrengthScore,
+        outputStrengthScore: aggregate.outputStrengthScore,
         outputReachScore: aggregate.outputReachScore,
         generalizationBreadthScore: aggregate.generalizationBreadthScore,
         subscoreRationale: aggregate.subscoreRationale,

@@ -59,6 +59,7 @@ export interface AIReview {
   strongestCaseForImportance?: string;
   strongestObjection?: string;
   decisiveCheck?: string;
+  assessmentSensitivity?: string;
   internalTechnicalTraction?: string;
   noveltyConfidence?: number;
   intrinsicScientificMeritScore?: number;
@@ -67,8 +68,27 @@ export interface AIReview {
   breadthOfImpactScore?: number;
   inputStrengthScore?: number;
   constructionStrengthScore?: number;
+  outputStrengthScore?: number;
   outputReachScore?: number;
   generalizationBreadthScore?: number;
+  inputConstructionOutputLedger?: {
+    primitiveInputs?: string[];
+    introducedConstructions?: string[];
+    outputs?: Array<{
+      output?: string;
+      dependsOnInputs?: string[];
+      dependsOnConstructions?: string[];
+      externalContextIfAny?: string;
+      support?: string;
+      validity?: string;
+      centrality?: 'low' | 'medium' | 'high' | string;
+    }>;
+    whyOutputsMatter?: string;
+    assessment?: string;
+    externalEmbeddingsAndChecks?: string[];
+    directOutputs?: string[];
+    downstreamReach?: string;
+  };
   centralOutputDependency?: {
     centralOutput?: string;
     requiredPrimitiveInputs?: string[];
@@ -87,6 +107,7 @@ export interface AIReview {
     failedOutputsOrConstraints?: string[];
     assessment?: string;
   };
+  outputValidity?: string;
   constructionAssessment?: string;
   overallIntrinsicScore?: number;
   bestClassification?: string;
