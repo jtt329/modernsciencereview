@@ -2922,21 +2922,13 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const subscoreSaturationWarning =
     asBoolean(adjudicationSource.subscoreSaturationWarning) ||
     computeSubscoreSaturationWarning(diagnosticSubscoreValues(aggregateSubscores), aggregateSubscoreValidity);
-  const subscoreConsistencyWarning =
-    firstString([adjudicationSource.subscoreConsistencyWarning, source.subscoreConsistencyWarning]) ||
-    computeSubscoreConsistencyWarning({
-      finalMedian: finalScoreBand.median,
-      scores: diagnosticSubscoreValues(aggregateSubscores),
-      validity: aggregateSubscoreValidity,
-      scoreCappingReason,
-    });
-  const fatalObjectionPresent = asBoolean(
+  let fatalObjectionPresent = asBoolean(
     adjudicationSource.fatalObjectionPresent ?? root.fatalObjectionPresent ?? source.fatalObjectionPresent,
   );
   const fatalToSpecificClaimOnly = asBoolean(
     adjudicationSource.fatalToSpecificClaimOnly ?? root.fatalToSpecificClaimOnly ?? source.fatalToSpecificClaimOnly,
   );
-  const paperFatalError = asBoolean(
+  let paperFatalError = asBoolean(
     adjudicationSource.paperFatalError ?? root.paperFatalError ?? source.paperFatalError,
   );
   const fatalObjectionAssessment = asString(
@@ -2951,24 +2943,43 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     describesSubstantialSurvivingContribution(survivingContributionScoreBasis);
 
   const fatalCapText = scoreCappingFatalLanguage(scoreCappingReason);
+  const adjudicationRepairNotes: string[] = [];
   const diagnosticAverage =
     diagnosticSubscoreValues(aggregateSubscores).reduce((sum, value) => sum + value, 0) /
     diagnosticSubscoreValues(aggregateSubscores).length;
 
   if (!fatalObjectionPresent && fatalCapText) {
-    throw new Error("Contradictory adjudication: scoreCappingReason contains fatal-error cap language while fatalObjectionPresent is false.");
+    if (paperFatalError && !hasSubstantialSurvivingContribution) {
+      fatalObjectionPresent = true;
+      adjudicationRepairNotes.push(
+        "Repaired inconsistent adjudication flags: scoreCappingReason and paperFatalError indicated a paper-fatal cap, but fatalObjectionPresent was false.",
+      );
+    } else {
+      scoreCappingReason = "";
+      adjudicationRepairNotes.push(
+        "Removed contradictory paper-fatal score-capping language because fatalObjectionPresent was false and the review did not establish a paper-fatal error.",
+      );
+    }
   }
 
-  if (saysObjectionNotPaperFatal(fatalObjectionAssessment) && finalScoreBand.median < 30 && fatalCapText) {
-    throw new Error("Contradictory adjudication: fatalObjectionAssessment says the issue is not paper-fatal but the score is capped below 30 for fatal reasons.");
+  if (saysObjectionNotPaperFatal(fatalObjectionAssessment) && finalScoreBand.median < 30 && scoreCappingFatalLanguage(scoreCappingReason)) {
+    scoreCappingReason = "";
+    paperFatalError = false;
+    adjudicationRepairNotes.push(
+      "Removed paper-fatal cap language because fatalObjectionAssessment says the objection is not paper-fatal.",
+    );
   }
 
   if (usableScores.length >= 2 && usableScores.every((score) => score > 90) && diagnosticAverage > 9 && !fatalObjectionPresent && finalScoreBand.median < 50) {
     throw new Error("Contradictory adjudication: high blind pass scores and high diagnostics were collapsed below 50 without a fatal objection.");
   }
 
-  if (hasSubstantialSurvivingContribution && fatalCapText) {
-    throw new Error("Contradictory adjudication: surviving high-value contributions exist but scoreCappingReason says no substantial separable contribution survives.");
+  if (hasSubstantialSurvivingContribution && scoreCappingFatalLanguage(scoreCappingReason)) {
+    scoreCappingReason = "";
+    paperFatalError = false;
+    adjudicationRepairNotes.push(
+      "Removed paper-fatal cap language because the adjudication identified substantial surviving high-value contributions.",
+    );
   }
 
   if (paperFatalError && hasSubstantialSurvivingContribution) {
@@ -2986,6 +2997,15 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     adjustedFinalClassification = "not yet convincing";
     scoreCappingReason = scoreCappingReason || `Paper-fatal error with no substantial separable contribution surviving. ${fatalObjectionAssessment}`.trim();
   }
+
+  const subscoreConsistencyWarning =
+    firstString([adjudicationSource.subscoreConsistencyWarning, source.subscoreConsistencyWarning]) ||
+    computeSubscoreConsistencyWarning({
+      finalMedian: finalScoreBand.median,
+      scores: diagnosticSubscoreValues(aggregateSubscores),
+      validity: aggregateSubscoreValidity,
+      scoreCappingReason,
+    });
 
   return {
     finalComparisonCohort: asString(source.finalComparisonCohort ?? source.comparisonCohort, fallbackReview.comparisonCohort),
@@ -3131,7 +3151,10 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     finalScoreBand,
     finalScoreConfidence: asNumber(source.finalScoreConfidence ?? source.scoreConfidence, fallbackReview.scoreConfidence, 0, 1),
     publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict ?? source.oneParagraphVerdict, fallbackReview.oneParagraphVerdict || fallbackReview.finalJudgment),
-    internalCalibrationNotes: asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments, `${GEMINI_META_MODEL} adjudicator reviewed the manuscript and both independent ${GEMINI_PASS_MODEL} passes.`),
+    internalCalibrationNotes: [
+      asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments, `${GEMINI_META_MODEL} adjudicator reviewed the manuscript and both independent ${GEMINI_PASS_MODEL} passes.`),
+      ...adjudicationRepairNotes,
+    ].filter(Boolean).join("\n\n"),
   };
 }
 

@@ -171,6 +171,14 @@ function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash
   return reviewValues;
 }
 
+function submissionErrorMessage(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (message && message !== "Error" && message !== "[object Object]") return message;
+  const cause = err instanceof Error ? err.cause : null;
+  if (cause instanceof Error && cause.message && cause.message !== "Error") return cause.message;
+  return "Unknown server error while creating this review. The API logged the full error; retry after the current deploy, or check Railway logs if it repeats.";
+}
+
 const COMPARATOR_STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is", "it",
   "of", "on", "or", "over", "the", "to", "via", "with", "within", "without", "paper", "review",
@@ -1079,7 +1087,7 @@ router.post("/papers", async (req, res) => {
       recentSubmissions.delete(submissionKey);
     }
     logger.error({ err }, "Error creating paper");
-    const message = err instanceof Error ? err.message : String(err);
+    const message = submissionErrorMessage(err);
     const quotaExhausted =
       /daily request quota reached|generate_requests_per_model_per_day|per_model_per_day|please retry in|exceeded your current quota/i.test(message);
     const transient =
