@@ -3306,17 +3306,6 @@ function validateAggregateReview(review: AggregateReview) {
   }
 }
 
-function truncateForAdjudicator(text: string, limit = 50000) {
-  if (text.length <= limit) return text;
-  const head = Math.floor(limit * 0.65);
-  const tail = limit - head;
-  return `${text.slice(0, head)}
-
-[... manuscript text truncated for adjudicator payload; independent passes above contain the full-review ledger and assessment ...]
-
-${text.slice(-tail)}`;
-}
-
 function v15LedgerOnly(ledger: InputConstructionOutputLedger | null | undefined) {
   return {
     primitiveInputs: ledger?.primitiveInputs ?? [],
@@ -3538,12 +3527,22 @@ function compactAggregateForStorage(aggregate: AggregateReview) {
 }
 
 function buildAdjudicatorInput(
-  blindedContent: ReviewInput,
+  _blindedContent: ReviewInput,
   reviews: IndividualReview[],
 ): ReviewInput {
+  const compactPasses = reviews.map(compactIndividualReviewForAdjudicator);
   const text = JSON.stringify({
-    blindedManuscriptExcerpt: truncateForAdjudicator(reviewInputText(blindedContent)),
-    independentReviewPasses: reviews.map(compactIndividualReviewForAdjudicator),
+    adjudicatorInputNote:
+      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass summaries, v15 input-construction-output ledgers, diagnostic scores, objections, and judgments below.",
+    manuscriptSummaryAndLedger: compactPasses.map((review) => ({
+      passNumber: review.passNumber,
+      summary: review.summary,
+      centralClaim: review.centralClaim,
+      contributionArchetype: review.contributionArchetype,
+      inputConstructionOutputLedger: review.inputConstructionOutputLedger,
+      comparatorProfile: review.comparatorProfile,
+    })),
+    independentReviewPasses: compactPasses,
   }, null, 2);
 
   return text;
