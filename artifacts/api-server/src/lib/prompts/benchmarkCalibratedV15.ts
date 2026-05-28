@@ -328,7 +328,7 @@ It should include:
 - the input -> construction -> output logic;
 - the strongest limitation or caveat if important.
 
-It should not repeat the same claim in different wording. It should not mention author identity, citations, fame, or later influence.
+It should not repeat the same claim in different wording. It should not mention author identity, citations, fame, or later influence. In blinded prose, prefer "the manuscript" or "the paper" over "the author."
 
 Before final scoring, explicitly consider:
 1. What are the primitive inputs?

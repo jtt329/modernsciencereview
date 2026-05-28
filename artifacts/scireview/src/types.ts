@@ -5,7 +5,7 @@ export interface PaperDateMetadata {
   titleCleaningNotes?: string;
   displayedTitle?: string;
   displayedAuthors?: string[];
-  rawExtractedAuthors?: string[];
+  rawExtractedAuthors?: string;
   authorsConfidence?: number;
   authorsExtractionNotes?: string;
   arxivId?: string;
@@ -184,6 +184,20 @@ export interface AIReview {
   scoreBandHigh?: number;
   scoreConfidence?: number;
   scoreStability?: string;
+  blindPassScores?: number[];
+  passDisagreement?: number;
+  reviewPassComparison?: {
+    individualScores?: number[];
+    scoreStability?: string;
+    passDisagreement?: number;
+    scoreRange?: number;
+  };
+  adjudication?: {
+    individualScores?: number[];
+    scoreStability?: string;
+    passDisagreement?: number;
+    scoreRange?: number;
+  };
   publicVerdict?: string;
   passCount?: number;
   // Model reasoning/thinking (Gemini only)

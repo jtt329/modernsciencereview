@@ -145,11 +145,130 @@ const mergeUniqueText = (...values: unknown[]): string => {
 const formatPointSpread = (value: number | null): string =>
   value == null ? 'Insufficient data' : `${value} ${value === 1 ? 'point' : 'points'}`;
 
+const formatAssessmentMarkdown = (value: string): string => {
+  const text = value.trim();
+  if (!text) return '';
+  const chunks = text.split(/\n{2,}/).map((chunk) => chunk.trim()).filter(Boolean);
+  if (chunks.length > 1) {
+    return chunks.map((chunk) => `- ${chunk.replace(/\n+/g, ' ')}`).join('\n');
+  }
+  return text.replace(/\n{3,}/g, '\n\n');
+};
+
+const numericScores = (value: unknown): number[] =>
+  Array.isArray(value)
+    ? value
+        .map((item) => Number(item))
+        .filter((item) => Number.isFinite(item))
+        .map((item) => Math.round(item))
+    : [];
+
+const getBlindPassScores = (options: {
+  review: AIReview;
+  parsedCoverage: any;
+  aggregateAdjudication: any;
+  storedIndividualReviews: any[];
+}): number[] => {
+  const { review, parsedCoverage, aggregateAdjudication, storedIndividualReviews } = options;
+  const fallbackPaths = [
+    (review as any).blindPassScores,
+    (review as any).reviewPassComparison?.individualScores,
+    (review as any).adjudication?.individualScores,
+    parsedCoverage?.reviewPassComparison?.individualScores,
+    aggregateAdjudication?.individualScores,
+    parsedCoverage?.adjudication?.individualScores,
+    parsedCoverage?.coverageLedger?.reviewPassComparison?.individualScores,
+    parsedCoverage?.coverageLedger?.adjudication?.individualScores,
+  ];
+  for (const path of fallbackPaths) {
+    const scores = numericScores(path);
+    if (scores.length > 0) return scores;
+  }
+  const reviewScores = storedIndividualReviews
+    .map((item) => Number(item?.score ?? item?.scoreBand?.median))
+    .filter((item) => Number.isFinite(item))
+    .map((item) => Math.round(item <= 10 && item > 0 ? item * 10 : item));
+  return reviewScores;
+};
+
 const firstSentence = (value: unknown): string => {
   if (!hasText(value)) return '';
   const text = value.trim().replace(/\s+/g, ' ');
   const sentence = text.match(/^.*?(?:[.!?](?=\s|$)|$)/)?.[0]?.trim() ?? text;
   return sentence.length > 220 ? `${sentence.slice(0, 217).trim()}...` : sentence;
+};
+
+const scoreToneClass = (value: number | null, scale: 10 | 100 = 10) => {
+  if (value == null) return 'text-slate-100 border-white/15';
+  const normalized = scale === 10 ? value * 10 : value;
+  if (normalized >= 85) return 'text-emerald-100 border-emerald-300/25 bg-emerald-400/10';
+  if (normalized >= 65) return 'text-amber-100 border-amber-300/25 bg-amber-400/10';
+  return 'text-rose-100 border-rose-300/25 bg-rose-400/10';
+};
+
+const toneClass = (tone: 'green' | 'yellow' | 'red' | 'neutral') => {
+  switch (tone) {
+    case 'green':
+      return 'text-emerald-100 bg-emerald-400/15 border-emerald-300/25';
+    case 'yellow':
+      return 'text-amber-100 bg-amber-400/15 border-amber-300/25';
+    case 'red':
+      return 'text-rose-100 bg-rose-400/15 border-rose-300/25';
+    default:
+      return 'text-slate-100 bg-slate-400/10 border-white/15';
+  }
+};
+
+const groundingTone = (value: unknown): 'green' | 'yellow' | 'red' | 'neutral' => {
+  const text = hasText(value) ? value.toLowerCase() : '';
+  if (!text) return 'neutral';
+  if (/\b(speculative|weak|unsupported|arbitrary|unmotivated)\b/.test(text)) return 'red';
+  if (/\b(framework[- ]conditional|conditional|debated|model[- ]dependent|assumption|conjecture)\b/.test(text)) return 'yellow';
+  if (/\b(established|strong|theorem|standard|measured|empirical|universal principle|firm|accepted|mathematical)\b/.test(text)) return 'green';
+  return 'neutral';
+};
+
+const levelTone = (value: unknown, reverse = false): 'green' | 'yellow' | 'red' | 'neutral' => {
+  const text = hasText(value) ? value.toLowerCase() : '';
+  if (/\bhigh\b/.test(text)) return reverse ? 'red' : 'green';
+  if (/\bmedium|moderate\b/.test(text)) return 'yellow';
+  if (/\blow\b/.test(text)) return reverse ? 'green' : 'red';
+  return 'neutral';
+};
+
+const hardToVaryTone = (value: unknown): 'green' | 'yellow' | 'red' | 'neutral' => {
+  const text = hasText(value) ? value.toLowerCase() : '';
+  if (!text) return 'neutral';
+  if (/\b(ad hoc|easy[- ]to[- ]vary|tunable|arbitrary|fragile)\b/.test(text)) return 'red';
+  if (/\b(partial|somewhat|limited|tuned|moderate)\b/.test(text)) return 'yellow';
+  if (/\b(hard[- ]to[- ]vary|hard to vary|forced|natural|rigid|necessary|minimal|constrained)\b/.test(text)) return 'green';
+  return 'neutral';
+};
+
+const fragilityTone = (value: unknown): 'green' | 'yellow' | 'red' | 'neutral' => {
+  const text = hasText(value) ? value.toLowerCase() : '';
+  if (!text) return 'neutral';
+  if (/\b(no|none|low|minimal|minor|not)\b.{0,24}\b(fragility|limit|fragile|issue|problem)\b/.test(text) || /\bnone\b|\blow\b|\bminimal\b/.test(text)) return 'green';
+  if (/\b(severe|fatal|invalid|breaks|contradict|major)\b/.test(text)) return 'red';
+  if (/\b(moderate|limited|conditional|fragile|limitation|constraint)\b/.test(text)) return 'yellow';
+  return 'neutral';
+};
+
+const qualityChip = (label: string, value: string, tone: 'green' | 'yellow' | 'red' | 'neutral') => (
+  <span className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-widest ${toneClass(tone)}`}>
+    <span className="opacity-75">{label}:</span>
+    <span className="truncate">{value}</span>
+  </span>
+);
+
+const validityChip = (label: string, value: string) => {
+  const tone = validityTone(value);
+  return (
+    <span className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-widest ${tone.className}`}>
+      <span className="opacity-75">{label}:</span>
+      <span className="truncate">{tone.label}</span>
+    </span>
+  );
 };
 
 const validityTone = (value: unknown): { label: string; className: string } => {
@@ -357,7 +476,18 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     '';
   const aggregateVerdict = storedAggregate?.publicOneParagraphVerdict ?? publicVerdict;
   const aggregateClassification = storedAggregate?.finalClassification ?? review.bestClassification;
-  const storedScoreStability = aggregateAdjudication?.scoreStability || storedAggregate?.scoreStability || (review as any).scoreStability || parsedCoverage?.scoreStability || null;
+  const storedScoreStability =
+    (review as any).scoreStability ||
+    (review as any).reviewPassComparison?.scoreStability ||
+    (review as any).adjudication?.scoreStability ||
+    parsedCoverage?.reviewPassComparison?.scoreStability ||
+    parsedCoverage?.adjudication?.scoreStability ||
+    parsedCoverage?.coverageLedger?.reviewPassComparison?.scoreStability ||
+    parsedCoverage?.coverageLedger?.adjudication?.scoreStability ||
+    aggregateAdjudication?.scoreStability ||
+    storedAggregate?.scoreStability ||
+    parsedCoverage?.scoreStability ||
+    null;
   const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
   const passScoreBands = storedIndividualReviews.map((pass: any) =>
     normalizeDisplayedBand(
@@ -367,13 +497,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       pass.bestClassification,
     )
   );
-  const passMedianScoresByIndex = storedIndividualReviews
-    .map((pass: any, index: number) => {
-      const rawMedian = Number(pass?.scoreBand?.median);
-      return Number.isFinite(rawMedian) ? passScoreBands[index]?.median : null;
-    });
-  const passMedianScores = passMedianScoresByIndex
-    .filter((score: number | null): score is number => typeof score === 'number' && Number.isFinite(score));
+  const blindPassScores = getBlindPassScores({
+    review,
+    parsedCoverage,
+    aggregateAdjudication,
+    storedIndividualReviews,
+  });
   const combinedBand = normalizeDisplayedBand(
     comparatorCalibratedFinalScoreBand?.low ?? review.scoreBandLow ?? review.overallIntrinsicScore ?? review.score,
     comparatorCalibratedFinalScoreBand?.median ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score,
@@ -389,8 +518,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       )
     : null;
   const finalScore = combinedBand.median;
-  const computedPassDisagreement = passMedianScores.length >= 2
-    ? Math.max(...passMedianScores) - Math.min(...passMedianScores)
+  const computedPassDisagreement = blindPassScores.length >= 2
+    ? Math.max(...blindPassScores) - Math.min(...blindPassScores)
     : null;
   const computedStability = computedPassDisagreement == null
     ? 'insufficient data'
@@ -399,7 +528,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       : computedPassDisagreement <= 10
         ? 'medium'
         : 'low';
-  const scoreStability = selectedPass ? storedScoreStability : computedStability;
+  const scoreStability = selectedPass ? storedScoreStability : (storedScoreStability || computedStability);
   const adjustmentLabel = comparatorCalibrationApplied
     ? `${(calibrationAdjustment ?? 0) > 0 ? '+' : ''}${calibrationAdjustment ?? 0}`
     : 'not applied';
@@ -616,27 +745,36 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       label: 'Input Strength',
       value: currentInputStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.inputStrengthScore),
-      color: 'text-cyan-200',
-      border: 'border-cyan-300/20',
+      color: currentInputStrengthScore == null ? 'text-slate-200' : currentInputStrengthScore >= 8 ? 'text-emerald-200' : currentInputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
+      border: currentInputStrengthScore == null ? 'border-white/10' : currentInputStrengthScore >= 8 ? 'border-emerald-300/20' : currentInputStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
     {
       label: 'Construction Strength',
       value: currentConstructionStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.constructionStrengthScore),
-      color: 'text-indigo-200',
-      border: 'border-indigo-300/20',
+      color: currentConstructionStrengthScore == null ? 'text-slate-200' : currentConstructionStrengthScore >= 8 ? 'text-emerald-200' : currentConstructionStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
+      border: currentConstructionStrengthScore == null ? 'border-white/10' : currentConstructionStrengthScore >= 8 ? 'border-emerald-300/20' : currentConstructionStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
     {
       label: 'Output Strength',
       value: currentOutputStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.outputStrengthScore),
-      color: 'text-emerald-200',
-      border: 'border-emerald-300/20',
+      color: currentOutputStrengthScore == null ? 'text-slate-200' : currentOutputStrengthScore >= 8 ? 'text-emerald-200' : currentOutputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
+      border: currentOutputStrengthScore == null ? 'border-white/10' : currentOutputStrengthScore >= 8 ? 'border-emerald-300/20' : currentOutputStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
   ];
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
-    { label: frameworkDependenceLevel ? `Framework Dependence: ${String(frameworkDependenceLevel).replace(/_/g, ' ')}` : 'Framework Dependence', value: frameworkDependenceText, color: 'text-amber-400', icon: <GitBranch className="w-4 h-4" /> },
+    {
+      label: frameworkDependenceLevel ? `Framework Dependence: ${String(frameworkDependenceLevel).replace(/_/g, ' ')}` : 'Framework Dependence',
+      value: frameworkDependenceText,
+      color: levelTone(frameworkDependenceLevel, true) === 'green'
+        ? 'text-emerald-400'
+        : levelTone(frameworkDependenceLevel, true) === 'red'
+          ? 'text-rose-400'
+          : 'text-amber-400',
+      icon: <GitBranch className="w-4 h-4" />,
+    },
     { label: 'Hard-to-Vary Assessment', value: currentHardToVaryAssessment, color: 'text-orange-300', icon: <Shield className="w-4 h-4" /> },
     { label: 'Strongest Case', value: currentStrongestCase, color: 'text-green-400', icon: <TrendingUp className="w-4 h-4" /> },
     { label: 'Strongest Objection', value: currentStrongestObjection, color: 'text-rose-400', icon: <AlertTriangle className="w-4 h-4" /> },
@@ -710,23 +848,33 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <div className={`grid gap-3 ${showCalibrationAdjustment ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
                 <div className="bg-slate-950/25 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
-                  {passMedianScores.length > 0 ? (
+                  {blindPassScores.length > 0 ? (
                     <div className="mt-2 flex flex-wrap gap-2" role="tablist" aria-label="Blind pass review views">
-                      {passMedianScoresByIndex.map((score: number | null | undefined, index: number) => score == null ? null : (
-                        <button
-                          key={index}
-                          role="tab"
-                          aria-selected={activeTab === index}
-                          onClick={() => setActiveTab(index)}
-                          className={`rounded-lg border px-2.5 py-1 text-sm font-black transition-all ${
-                            activeTab === index
-                              ? 'border-white bg-fuchsia-400/30 text-white ring-2 ring-white/60'
-                              : 'border-white/20 bg-fuchsia-400/10 text-fuchsia-100 hover:border-white/60 hover:bg-fuchsia-400/20'
-                          }`}
-                        >
-                          {score}
-                        </button>
-                      ))}
+                      {blindPassScores.map((score: number, index: number) => {
+                        const hasPassDetails = Boolean(storedIndividualReviews[index]);
+                        const className = `rounded-lg border px-2.5 py-1 text-sm font-black transition-all ${
+                          activeTab === index
+                            ? 'border-white bg-fuchsia-400/30 text-white ring-2 ring-white/60'
+                            : hasPassDetails
+                              ? 'border-white/20 bg-fuchsia-400/10 text-fuchsia-100 hover:border-white/60 hover:bg-fuchsia-400/20'
+                              : 'border-white/15 bg-fuchsia-400/10 text-fuchsia-100'
+                        }`;
+                        return hasPassDetails ? (
+                          <button
+                            key={`${score}-${index}`}
+                            role="tab"
+                            aria-selected={activeTab === index}
+                            onClick={() => setActiveTab(index)}
+                            className={className}
+                          >
+                            {score}
+                          </button>
+                        ) : (
+                          <span key={`${score}-${index}`} className={className}>
+                            {score}
+                          </span>
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="text-sm font-bold text-white mt-1">Not stored</p>
@@ -820,7 +968,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         {card.value != null && <span className="text-sm font-bold text-slate-400">/10</span>}
                       </p>
                     </div>
-                    {card.rationale && <p className="mt-3 text-xs leading-relaxed text-slate-300">{card.rationale}</p>}
+                    {card.rationale && <div className="mt-3 text-xs leading-relaxed text-slate-300"><Markdown>{card.rationale}</Markdown></div>}
                   </div>
                 ))}
               </div>
@@ -828,17 +976,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-cyan-300 uppercase tracking-widest">Input Strength</p>
-                    <p className="text-2xl font-black text-cyan-200">
+                    <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentInputStrengthScore)}`}>
                       {currentInputStrengthScore == null ? 'N/A' : currentInputStrengthScore}
                       {currentInputStrengthScore != null && <span className="text-sm font-bold text-cyan-300/70">/10</span>}
                     </p>
                   </div>
-                  {hasText(inputStrengthAssessment) && (
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
-                      <Markdown>{inputStrengthAssessment}</Markdown>
-                    </div>
-                  )}
                   {currentPrimitiveInputs.length > 0 && (
                     <div>
                       <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Primitive Inputs</p>
@@ -852,11 +994,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                   <div className="min-w-0 flex-1">
                                     <Markdown>{item.input}</Markdown>
                                   </div>
-                                  {item.frameworkDependence && (
-                                    <span className="text-[9px] font-black uppercase tracking-widest text-cyan-100 bg-cyan-400/10 border border-cyan-300/20 rounded-full px-2 py-1">
-                                      {item.frameworkDependence}
-                                    </span>
-                                  )}
+                                  <div className="flex max-w-full flex-wrap gap-1.5">
+                                    {item.grounding && qualityChip('Grounding', item.grounding, groundingTone(item.grounding))}
+                                    {item.fundamentality && qualityChip('Fundamentality', item.fundamentality, levelTone(item.fundamentality))}
+                                    {item.frameworkDependence && qualityChip('Framework Dependence', item.frameworkDependence, levelTone(item.frameworkDependence, true))}
+                                  </div>
                                 </div>
                                 {item.role && <p className="mt-1 text-xs text-slate-400">{item.role}</p>}
                               </summary>
@@ -864,7 +1006,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                 <div className="mt-3 grid gap-3 border-t border-white/10 pt-3 md:grid-cols-2">
                                   {item.grounding && <div><p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Grounding</p><Markdown>{item.grounding}</Markdown></div>}
                                   {item.fundamentality && <div><p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Fundamentality</p><Markdown>{item.fundamentality}</Markdown></div>}
-                                  {item.assessment && <div className="md:col-span-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{item.assessment}</Markdown></div>}
+                                  {item.frameworkDependence && <div><p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Framework Dependence</p><Markdown>{item.frameworkDependence}</Markdown></div>}
+                                  {item.assessment && <div className="md:col-span-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{formatAssessmentMarkdown(item.assessment)}</Markdown></div>}
                                 </div>
                               )}
                             </details>
@@ -873,26 +1016,26 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </div>
                     </div>
                   )}
+                  {hasText(inputStrengthAssessment) && (
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Input Assessment</p>
+                      <Markdown>{formatAssessmentMarkdown(inputStrengthAssessment)}</Markdown>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Construction Strength</p>
-                    <p className="text-2xl font-black text-indigo-200">
+                    <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentConstructionStrengthScore)}`}>
                       {currentConstructionStrengthScore == null ? 'N/A' : currentConstructionStrengthScore}
                       {currentConstructionStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
                     </p>
                   </div>
-                  {hasText(constructionStrengthAssessment) && (
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
-                      <Markdown>{constructionStrengthAssessment}</Markdown>
-                    </div>
-                  )}
                   {currentIntroducedConstructions.length > 0 && (
                     <div>
                       <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Introduced Constructions</p>
-                      <div className="space-y-2">
+                      <div className="grid gap-3 lg:grid-cols-2">
                         {currentIntroducedConstructionDetails.map((item, index) => {
                           const hasDetails = [item.role, item.validity, item.hardToVary, item.fragilityOrLimits, item.assessment].some(hasText) || item.inputsUsed.length > 0;
                           return (
@@ -902,11 +1045,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                   <div className="min-w-0 flex-1">
                                     <Markdown>{item.construction}</Markdown>
                                   </div>
-                                  {item.validity && (
-                                    <span className={`text-[9px] font-black uppercase tracking-widest border rounded-full px-2 py-1 ${validityTone(item.validity).className}`}>
-                                      {validityTone(item.validity).label}
-                                    </span>
-                                  )}
+                                  <div className="flex max-w-full flex-wrap gap-1.5">
+                                    {item.validity && validityChip('Validity', item.validity)}
+                                    {item.hardToVary && qualityChip('Hard-to-Vary', item.hardToVary, hardToVaryTone(item.hardToVary))}
+                                    {item.fragilityOrLimits && qualityChip('Fragility/Limits', item.fragilityOrLimits, fragilityTone(item.fragilityOrLimits))}
+                                  </div>
                                 </div>
                                 {item.role && <p className="mt-1 text-xs text-slate-400">{item.role}</p>}
                               </summary>
@@ -916,7 +1059,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                   {item.validity && <div><p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Validity</p><Markdown>{item.validity}</Markdown></div>}
                                   {item.hardToVary && <div><p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Hard To Vary</p><Markdown>{item.hardToVary}</Markdown></div>}
                                   {item.fragilityOrLimits && <div><p className="text-[9px] font-black text-amber-300 uppercase tracking-widest mb-1">Fragility Or Limits</p><Markdown>{item.fragilityOrLimits}</Markdown></div>}
-                                  {item.assessment && <div className="md:col-span-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{item.assessment}</Markdown></div>}
+                                  {item.assessment && <div className="md:col-span-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{formatAssessmentMarkdown(item.assessment)}</Markdown></div>}
                                 </div>
                               )}
                             </details>
@@ -925,12 +1068,18 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </div>
                     </div>
                   )}
+                  {hasText(constructionStrengthAssessment) && (
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Construction Assessment</p>
+                      <Markdown>{formatAssessmentMarkdown(constructionStrengthAssessment)}</Markdown>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-emerald-300 uppercase tracking-widest">Output Strength</p>
-                    <p className="text-2xl font-black text-emerald-200">
+                    <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentOutputStrengthScore)}`}>
                       {currentOutputStrengthScore == null ? 'N/A' : currentOutputStrengthScore}
                       {currentOutputStrengthScore != null && <span className="text-sm font-bold text-emerald-300/70">/10</span>}
                     </p>
@@ -938,7 +1087,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {hasText(outputStrengthAssessment) && (
                     <div>
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
-                      <Markdown>{outputStrengthAssessment}</Markdown>
+                      <Markdown>{formatAssessmentMarkdown(outputStrengthAssessment)}</Markdown>
                     </div>
                   )}
                   {currentLedgerOutputs.length > 0 && (
@@ -969,7 +1118,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                   </span>
                                 )}
                                 {item.externalContextIfAny && (
-                                  <span className="text-[9px] font-black uppercase tracking-widest text-amber-100 bg-amber-400/10 border border-amber-300/20 rounded-full px-2 py-1">
+                                  <span className="text-[9px] font-black uppercase tracking-widest text-sky-100 bg-sky-400/10 border border-sky-300/20 rounded-full px-2 py-1">
                                     External context
                                   </span>
                                 )}
@@ -988,7 +1137,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                               )}
                               {item.externalContextIfAny && (
                                 <div>
-                                  <p className="text-[9px] font-black text-amber-300 uppercase tracking-widest mb-1">External Context</p>
+                                  <p className="text-[9px] font-black text-sky-300 uppercase tracking-widest mb-1">External Context</p>
                                   <Markdown>{item.externalContextIfAny}</Markdown>
                                 </div>
                               )}
@@ -1095,7 +1244,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <div className="grid md:grid-cols-3 gap-3">
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
-                  <p className="text-sm font-black text-white mt-1">{passMedianScores.length > 0 ? passMedianScores.join(', ') : 'Not stored'}</p>
+                  <p className="text-sm font-black text-white mt-1">{blindPassScores.length > 0 ? blindPassScores.join(', ') : 'Not stored'}</p>
                   {passBandLabels && <p className="text-[10px] font-bold text-slate-400 mt-1">{passBandLabels}</p>}
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
@@ -1104,7 +1253,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Review Stability</p>
-                  <p className="text-sm font-black text-white mt-1 capitalize">{computedStability}</p>
+                  <p className="text-sm font-black text-white mt-1 capitalize">{scoreStability || computedStability}</p>
                 </div>
                 {isAdmin && (
                   <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">

@@ -2423,17 +2423,135 @@ function cleanMetadataText(value?: string) {
     .trim();
 }
 
+const ARXIV_ID_REGEX = /\b(?:arxiv:\s*)?(?:(?:[a-z-]+(?:\.[A-Z]{2})?\/\d{7})|(?:\d{4}\.\d{4,5}))(?:v\d+)?\b/gi;
+const LEADING_REPORT_CODE_REGEX = /^\s*(?:[A-Z]{2,}(?:-[A-Z0-9]+)+(?:\/\d+)*(?:-\d+)?|[A-Z]{2,}-[A-Z]{2,}-\d{2,}(?:\/\d+)*(?:-\d+)?)\s*/;
+const REPORT_CODE_SCAN_REGEX = /\b[A-Z]{2,}(?:-[A-Z0-9]+)+(?:\/\d+)*(?:-\d+)?\b/g;
+const TITLE_STOP_WORDS = new Set(["a", "an", "and", "as", "at", "by", "for", "from", "in", "of", "on", "or", "the", "to", "with"]);
+
+function uniqueCleanStrings(values: Array<string | undefined | null>) {
+  return Array.from(new Set(values.map((value) =>
+    stripControlChars(value || "").replace(/\s+/g, " ").trim()
+  ).filter(Boolean)));
+}
+
+function looksLikeJournalCitation(value?: string) {
+  const cleaned = cleanMetadataText(value);
+  if (!cleaned) return false;
+  const hasJournal =
+    /\b(?:commun\.?\s*math\.?\s*phys\.?|communications?\s+in\s+mathematical\s+physics|phys\.?\s*rev\.?|physical\s+review|class\.?\s*quantum\s*grav\.?|classical\s+and\s+quantum\s+gravity|nucl\.?\s*phys\.?|nuclear\s+physics|j\.?\s*math\.?\s*phys\.?|journal\s+of\s+mathematical\s+physics|gen\.?\s*rel\.?\s*grav\.?)\b/i.test(cleaned);
+  return hasJournal && (/\b\d+\s*,\s*\d/.test(cleaned) || /\(\s*\d{4}\s*\)/.test(cleaned) || /\b\d{4}\b/.test(cleaned));
+}
+
+function titleCaseMetadataTitle(value: string) {
+  const words = value.split(/\s+/).filter(Boolean);
+  return words.map((word, index) => {
+    if (/^ads$/i.test(word)) return "AdS";
+    if (/^ds$/i.test(word)) return "dS";
+    if (/^(?:FRW|FLRW|QFT|QMBH|CFT|GR|LQG|QCD|QED)$/i.test(word)) return word.toUpperCase();
+    if (/[\d$\\/[{}\]]/.test(word)) return word;
+    const leading = word.match(/^[('"“‘]*/)?.[0] || "";
+    const trailing = word.match(/[)'”’.,:;!?]*$/)?.[0] || "";
+    const core = word.slice(leading.length, word.length - trailing.length);
+    if (!core) return word;
+    const lower = core.toLowerCase();
+    const followsTitleBreak = index > 0 && /[:.!?]$/.test(words[index - 1]);
+    if (index > 0 && !followsTitleBreak && TITLE_STOP_WORDS.has(lower)) return `${leading}${lower}${trailing}`;
+    const titledCore = lower
+      .split("-")
+      .map((part) => part ? `${part.charAt(0).toUpperCase()}${part.slice(1)}` : part)
+      .join("-");
+    return `${leading}${titledCore}${trailing}`;
+  }).join(" ");
+}
+
+function cleanDisplayTitle(value?: string) {
+  const raw = stripControlChars(value || "")
+    .replace(/\.[Pp][Dd][Ff]$/, "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const arxivIds = uniqueCleanStrings(raw.match(ARXIV_ID_REGEX) || []);
+  const reportCodes = uniqueCleanStrings(raw.match(REPORT_CODE_SCAN_REGEX) || []);
+  if (!raw || looksLikeJournalCitation(raw)) {
+    return {
+      title: "Unknown Title",
+      arxivId: arxivIds[0] || "",
+      reportCodes,
+      notes: raw ? "Rejected journal citation as title." : "No title text found.",
+    };
+  }
+
+  let cleaned = raw
+    .replace(ARXIV_ID_REGEX, " ")
+    .replace(/\b(?:preprint|report)\s+no\.?\s*[:#]?\s*/gi, " ")
+    .replace(/[†‡§*]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const strippedReports: string[] = [...reportCodes];
+  let previous = "";
+  while (previous !== cleaned) {
+    previous = cleaned;
+    const match = cleaned.match(LEADING_REPORT_CODE_REGEX);
+    if (match?.[0]) {
+      strippedReports.push(stripControlChars(match[0]).replace(/\s+/g, " ").trim());
+      cleaned = cleaned.slice(match[0].length).trim();
+    }
+  }
+
+  cleaned = cleaned
+    .replace(/^\s*(?:title|paper|article)\s*[:.-]\s*/i, "")
+    .replace(/\s+(?:by\s+)?[A-Z]\.\s*[A-Z][A-Za-z.'-]+(?:\s*[†‡§*])?$/u, "")
+    .replace(/\s+(?:[A-Z][A-Za-z.'-]+\s*,\s*)?[A-Z]\.\s*[A-Z][A-Za-z.'-]+(?:\s*[†‡§*])?$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned || looksLikeJournalCitation(cleaned) || cleaned.length < 8) {
+    return {
+      title: "Unknown Title",
+      arxivId: arxivIds[0] || "",
+      reportCodes: uniqueCleanStrings(strippedReports),
+      notes: "Title cleanup rejected non-title text.",
+    };
+  }
+
+  const title = titleCaseMetadataTitle(cleaned);
+  const changed = title !== raw;
+  return {
+    title,
+    arxivId: arxivIds[0] || "",
+    reportCodes: uniqueCleanStrings(strippedReports),
+    notes: changed ? "Deterministic cleanup stripped identifiers, citations, or title-page markers." : "",
+  };
+}
+
+function isOnlyReportCodeLine(value: string) {
+  const stripped = value.replace(ARXIV_ID_REGEX, " ").replace(REPORT_CODE_SCAN_REGEX, " ").replace(/\s+/g, " ").trim();
+  return !stripped || /^[(){}\[\].,;:|/-]+$/.test(stripped);
+}
+
 function splitAuthorNames(value: string) {
-  return cleanMetadataText(value)
-    .split(/\s*(?:;|\band\b|,(?=\s*[A-Z][A-Za-z.'-]+(?:\s|$)))\s*/i)
+  return stripControlChars(value || "")
+    .replace(/\.[Pp][Dd][Ff]$/, "")
+    .replace(/_/g, " ")
+    .replace(/[†‡§*]/g, " ")
+    .replace(/\b\d+\b/g, " ")
+    .replace(/\s+/g, " ")
+    .split(/\s*(?:;|&|\band\b|,(?=\s*(?:[A-Z]\.?|[A-Z][A-Za-z.'-]+)(?:\s|$)))\s*/i)
     .map((part) => part.replace(/\s+/g, " ").trim())
-    .filter(Boolean)
+    .filter((part) =>
+      Boolean(part) &&
+      !/@/.test(part) &&
+      !/\b(university|institute|department|laboratory|college|school|faculty|centre|center|press|journal|received|accepted|abstract)\b/i.test(part) &&
+      /[A-Za-z]{2}/.test(part)
+    )
     .slice(0, 30);
 }
 
 function isUsefulTitleHint(value?: string) {
-  const cleaned = cleanMetadataText(value);
+  const cleaned = cleanDisplayTitle(value).title;
   if (cleaned.length < 8 || cleaned.length > 220) return false;
+  if (looksLikeJournalCitation(cleaned)) return false;
   if (/^(untitled|unknown|arxiv|paper|document)$/i.test(cleaned)) return false;
   if (/^[a-z]+[0-9]{2,}$/i.test(cleaned)) return false;
   if (/^\d{4}\.\d{4,5}(v\d+)?$/i.test(cleaned)) return false;
@@ -2456,6 +2574,9 @@ function manuscriptHeaderText(paperContent: string) {
   const abstractIndex = lines.findIndex((line) => /^abstract\b/i.test(line));
   return (abstractIndex > 0 ? lines.slice(0, abstractIndex) : lines.slice(0, 40)).filter((line) =>
     !/^(arxiv:|doi:|submitted by\b|submitted to\b|keywords?\b|pacs\b|msc\b)/i.test(line) &&
+    !looksLikeJournalCitation(line) &&
+    !/^\s*(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?\s*$/i.test(line) &&
+    !isOnlyReportCodeLine(line) &&
     !/\b\d{1,2}\s+[A-Z][a-z]{2,8}\s+\d{4}\b/.test(line) &&
     !/^[A-Za-z-]+\/[A-Za-z.-]+\d+v\d+/i.test(line),
   );
@@ -2515,11 +2636,11 @@ function heuristicMetadata(paperContent: string, hints: MetadataHints = {}) {
     }
   }
 
-  const headerTitle = titleLines.length > 0 ? titleLines.join(" ").replace(/\s+/g, " ").trim() : "";
+  const headerTitle = titleLines.length > 0 ? cleanDisplayTitle(titleLines.join(" ")).title : "";
   const titleCandidate =
-    headerTitle ||
-    (isUsefulTitleHint(hints.pdfTitle) ? cleanMetadataText(hints.pdfTitle) : "") ||
-    (isUsefulTitleHint(hints.fileName) ? cleanMetadataText(hints.fileName) : "") ||
+    (isUsefulTitleHint(headerTitle) ? headerTitle : "") ||
+    (isUsefulTitleHint(hints.pdfTitle) ? cleanDisplayTitle(hints.pdfTitle).title : "") ||
+    (isUsefulTitleHint(hints.fileName) ? cleanDisplayTitle(hints.fileName).title : "") ||
     "Unknown Title";
 
   const authorStartIndex = titleStartIndex === -1 ? -1 : titleStartIndex + titleLines.length;
@@ -3675,7 +3796,10 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
   const isSuspiciousTitle = (value: string) =>
     !value ||
     value === "Unknown Title" ||
+    looksLikeJournalCitation(value) ||
     /^(arxiv:|submitted by\b)/i.test(value) ||
+    /^\s*(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?\s*$/i.test(value) ||
+    isOnlyReportCodeLine(value) ||
     value.length < 8 ||
     looksTruncatedTitle(value);
   const isSuspiciousAuthors = (value: string) =>
@@ -3704,35 +3828,81 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       },
     );
     const parsedMetadata = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-    const title = firstString([
+    const rawParsedTitle = firstString([
       parsedMetadata.cleanedTitle,
       parsedMetadata.displayedTitle,
       parsedMetadata.rawExtractedTitle,
       parsedMetadata.title,
     ], fallback.title);
+    const parsedTitleCleanup = cleanDisplayTitle(rawParsedTitle);
+    const fallbackTitleCleanup = cleanDisplayTitle(fallback.title);
+    const bestTitle =
+      isSuspiciousTitle(parsedTitleCleanup.title)
+        ? (isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title)
+        : parsedTitleCleanup.title;
     const displayedAuthors = firstStringArray([parsedMetadata.displayedAuthors]);
     const authors = displayedAuthors.length > 0
       ? displayedAuthors.join(", ")
       : asString(parsedMetadata.authors, fallback.authors);
-    const bestTitle = isSuspiciousTitle(title) ? fallback.title : title;
-    const bestAuthors = isSuspiciousAuthors(authors) ? fallback.authors : authors;
-    const bestAuthorList = isSuspiciousAuthors(authors)
+    let bestAuthors = isSuspiciousAuthors(authors) ? fallback.authors : authors;
+    let bestAuthorList = isSuspiciousAuthors(authors)
       ? splitAuthorNames(fallback.authors)
       : displayedAuthors.length > 0
         ? displayedAuthors
         : splitAuthorNames(bestAuthors);
+    const fallbackAuthorList = splitAuthorNames(fallback.authors);
+    const usedFallbackMultiAuthorBlock = bestAuthorList.length === 1 && fallbackAuthorList.length > 1;
+    if (usedFallbackMultiAuthorBlock) {
+      bestAuthorList = fallbackAuthorList;
+      bestAuthors = fallbackAuthorList.join(", ");
+    }
+    const titleCleanupNotes = uniqueCleanStrings([
+      asString(parsedMetadata.titleCleaningNotes),
+      parsedTitleCleanup.notes,
+      isSuspiciousTitle(parsedTitleCleanup.title) ? fallbackTitleCleanup.notes : "",
+    ]).join(" ");
+    const normalizedSource = {
+      ...parsedMetadata,
+      rawExtractedTitle: rawParsedTitle,
+      cleanedTitle: bestTitle,
+      displayedTitle: bestTitle,
+      titleCleaningNotes: titleCleanupNotes || asString(parsedMetadata.titleCleaningNotes),
+      arxivId: asString(parsedMetadata.arxivId) || parsedTitleCleanup.arxivId || fallbackTitleCleanup.arxivId,
+      reportCodes: uniqueCleanStrings([
+        ...firstStringArray([parsedMetadata.reportCodes]),
+        ...parsedTitleCleanup.reportCodes,
+        ...fallbackTitleCleanup.reportCodes,
+      ]),
+      rawExtractedAuthors: asString(parsedMetadata.rawExtractedAuthors, authors),
+      authorsExtractionNotes: uniqueCleanStrings([
+        asString(parsedMetadata.authorsExtractionNotes),
+        usedFallbackMultiAuthorBlock ? "Deterministic fallback replaced a one-author parse with a multi-author title-page block." : "",
+      ]).join(" "),
+      displayedAuthors: bestAuthorList.length > 0 ? bestAuthorList : splitAuthorNames(bestAuthors),
+    };
     return {
       title: bestTitle,
       authors: bestAuthors,
-      dateMetadata: normalizeExtractedDateMetadata(parsedMetadata, {
+      dateMetadata: normalizeExtractedDateMetadata(normalizedSource, {
         displayedTitle: bestTitle,
         displayedAuthors: bestAuthorList.length > 0 ? bestAuthorList : splitAuthorNames(bestAuthors),
       }),
     };
   } catch {
+    const fallbackTitleCleanup = cleanDisplayTitle(fallback.title);
+    const fallbackTitle = isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title;
     return {
-      ...fallback,
-      dateMetadata: defaultDateMetadata(fallback.title, splitAuthorNames(fallback.authors)),
+      title: fallbackTitle,
+      authors: fallback.authors,
+      dateMetadata: {
+        ...defaultDateMetadata(fallbackTitle, splitAuthorNames(fallback.authors)),
+        rawExtractedTitle: fallback.title,
+        cleanedTitle: fallbackTitle,
+        displayedTitle: fallbackTitle,
+        arxivId: fallbackTitleCleanup.arxivId,
+        reportCodes: fallbackTitleCleanup.reportCodes,
+        titleCleaningNotes: fallbackTitleCleanup.notes || "Fallback metadata was used.",
+      },
     };
   }
 }
