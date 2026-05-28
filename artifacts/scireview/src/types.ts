@@ -71,6 +71,10 @@ export interface AIReview {
   outputStrengthScore?: number;
   outputReachScore?: number;
   generalizationBreadthScore?: number;
+  diagnosticBaselineScore?: number;
+  diagnosticBaselineDelta?: number;
+  scoreAdjustmentReason?: string;
+  scoringAnomaly?: string;
   inputConstructionOutputLedger?: {
     primitiveInputs?: string[];
     introducedConstructions?: string[];

@@ -309,6 +309,19 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     storedAggregate?.scoreCappingReason ??
     comparatorCalibration?.scoreCappingReason ??
     '';
+  const diagnosticBaselineDelta =
+    parsedCoverage?.diagnosticBaselineDelta ??
+    aggregateAdjudication?.diagnosticBaselineDelta ??
+    storedAggregate?.diagnosticBaselineDelta ??
+    null;
+  const scoreAdjustmentReason =
+    parsedCoverage?.scoreAdjustmentReason ??
+    aggregateAdjudication?.scoreAdjustmentReason ??
+    storedAggregate?.scoreAdjustmentReason ??
+    '';
+  const shouldShowScoreAdjustmentReason =
+    hasText(scoreAdjustmentReason) ||
+    (typeof diagnosticBaselineDelta === 'number' && Math.abs(diagnosticBaselineDelta) > 8);
   const failedClaimsExcludedFromScore = parsedCoverage?.failedClaimsExcludedFromScore
     ?? aggregateAdjudication?.failedClaimsExcludedFromScore
     ?? storedAggregate?.failedClaimsExcludedFromScore
@@ -989,7 +1002,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </div>
               </div>
 
-              {(calibrationRationale || scoreGapAssessment || publicComparatorSummary || scoreCappingReason || asArray(failedClaimsExcludedFromScore).length > 0 || asArray(survivingHighValueContributions).length > 0 || hasText(survivingContributionScoreBasis)) && (
+              {(calibrationRationale || scoreGapAssessment || publicComparatorSummary || scoreCappingReason || shouldShowScoreAdjustmentReason || asArray(failedClaimsExcludedFromScore).length > 0 || asArray(survivingHighValueContributions).length > 0 || hasText(survivingContributionScoreBasis)) && (
                 <div className="space-y-3">
                   {asArray(failedClaimsExcludedFromScore).length > 0 && (
                     <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Claim(s) Excluded From Score" color="text-rose-300">
@@ -1009,6 +1022,15 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {scoreCappingReason && (
                     <Section icon={<AlertTriangle className="w-4 h-4" />} label="Score Capping Reason" color="text-amber-300">
                       <Markdown>{scoreCappingReason}</Markdown>
+                    </Section>
+                  )}
+                  {shouldShowScoreAdjustmentReason && (
+                    <Section icon={<TrendingUp className="w-4 h-4" />} label="Score Adjustment Reason" color="text-sky-300">
+                      <Markdown>
+                        {hasText(scoreAdjustmentReason)
+                          ? scoreAdjustmentReason
+                          : 'Missing: the final score differs from the diagnostic baseline by more than 8 points.'}
+                      </Markdown>
                     </Section>
                   )}
                   {calibrationRationale && (

@@ -465,7 +465,7 @@ type IndividualPassResult = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v15-minimal-ico-blind-review";
+export const REVIEW_PROMPT_VERSION = "v15.1-simplified-ico-score-anchored";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -480,55 +480,9 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 
 
-const FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION = `Fatal-error clarification:
-A fatal error is paper-fatal only when it destroys all or nearly all substantial original scientific value in the manuscript. If a paper contains multiple separable contributions, and one contribution fails while another substantial contribution remains correct and valuable, do not treat the paper as fatally flawed. Exclude or penalize the failed claim and score the surviving contribution. A paper may still receive a high score if its surviving contributions are correct, original, well-grounded, and high-value. Fatal-error caps apply only when no substantial separable contribution survives.`;
-
-const V15_DIAGNOSTIC_SCORING_CONTRACT = `V15 diagnostic scoring contract:
-The only diagnostic subscores are inputStrengthScore, constructionStrengthScore, and outputStrengthScore. They are real anchors, not decoration.
-
-Compute your implicit diagnostic baseline as 10 x the average of those three subscores. The final 0-100 score may move above or below this baseline, but if it differs by more than 8 points, include a concrete scoreCappingReason or scoreAdjustmentReason explaining the deviation from durable content in the manuscript.
-
-If it differs by more than 12 points, the justification must be especially explicit and manuscript-internal.
-
-If a high-centrality output is invalid, unsupported, contradicted, or dependent on a failed construction, outputStrengthScore should normally be 7 or below.
-
-If constructionStrengthScore is 6 or below and outputStrengthScore is 7 or below, the final score should normally not exceed 75 unless a substantial surviving-contribution rationale justifies the higher score.
-
-Do not use later field influence, citation history, "opened a field", fame, or historical importance to raise the intrinsic score. Credit only durable content actually present in the manuscript.`;
-
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(`${BLIND_REVIEW_PASS_V15_PROMPT}
-
-${V15_DIAGNOSTIC_SCORING_CONTRACT}`);
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V15_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V15_FULL_PROMPT);
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(`${BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT}
-
-${FATAL_ERROR_SURVIVING_CONTRIBUTION_CLARIFICATION}
-
-${V15_DIAGNOSTIC_SCORING_CONTRACT}
-
-Before deciding fatalObjectionPresent, create a contribution inventory. A claim-level or section-level failure is not paper-fatal when a high-value separable contribution survives.
-
-Return these additional fields at the top level when applicable:
-{
-  "fatalToSpecificClaimOnly": false,
-  "paperFatalError": false,
-  "contributionInventory": [
-    {
-      "claimOrContribution": "",
-      "status": "correct | likely_correct | uncertain | flawed | false",
-      "contributionWeight": "low | medium | high | field_shaping",
-      "separability": "inseparable | separable | independent",
-      "survivalStatus": "survives | partially_survives | fails",
-      "notes": ""
-    }
-  ],
-  "survivingHighValueContributions": [],
-  "failedClaimsExcludedFromScore": [],
-  "survivingContributionScoreBasis": "",
-  "assessmentSensitivity": ""
-}
-
-Do not put fatal-error cap language in scoreCappingReason unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`);
+const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT);
 const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT);
 
 const METADATA_PROMPT = `${DATE_METADATA_EXTRACTION_V15_PROMPT}
@@ -3161,6 +3115,7 @@ function compactIndividualReviewForAdjudicator(review: IndividualReview, index: 
     subscoreRationale: review.subscoreRationale,
     subscoreValidity: review.subscoreValidity,
     scoreCappingReason: review.scoreCappingReason,
+    scoreAdjustmentReason: review.scoreAdjustmentReason,
     oneParagraphVerdict: review.oneParagraphVerdict,
     finalJudgment: review.finalJudgment,
   };
@@ -3903,7 +3858,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
       schemaVersion: "v15",
-      clusterVersion: "v15-simplified-ico",
+      clusterVersion: "v15.1-simplified-ico",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
       benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
