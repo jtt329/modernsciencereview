@@ -1720,7 +1720,7 @@ function normalizeScoreBandWithFallback(source: Record<string, unknown>) {
 
 function rangeToStability(range: number): ScoreStability {
   if (range <= 5) return "high";
-  if (range <= 12) return "medium";
+  if (range <= 10) return "medium";
   return "low";
 }
 
@@ -3142,7 +3142,7 @@ function compactIndividualReviewForStorage(review: IndividualReview, index: numb
   };
 }
 
-function v15ComparatorCalibrationForStorage(calibration: ComparatorCalibration) {
+export function v15ComparatorCalibrationForStorage(calibration: ComparatorCalibration) {
   return {
     comparatorCalibrationStatus: calibration.comparatorCalibrationStatus,
     benchmarkSetVersion: calibration.benchmarkSetVersion,
@@ -3193,7 +3193,7 @@ function v15AdjudicationForStorage(aggregate: AggregateReview) {
   };
 }
 
-function compactAggregateForStorage(aggregate: AggregateReview) {
+export function compactAggregateForStorage(aggregate: AggregateReview) {
   return {
     finalComparisonCohort: aggregate.finalComparisonCohort,
     finalLocalCohort: aggregate.finalLocalCohort,

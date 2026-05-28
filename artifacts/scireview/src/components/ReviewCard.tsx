@@ -44,8 +44,26 @@ const listMarkdown = (items: unknown): string =>
 const hasText = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
 
-const asObject = (value: unknown): Record<string, any> | null =>
-  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, any> : null;
+const normalizeComparableText = (value: string): string =>
+  value.trim().replace(/\s+/g, ' ').toLowerCase();
+
+const mergeUniqueText = (...values: unknown[]): string => {
+  const chunks: string[] = [];
+  values.forEach((value) => {
+    if (!hasText(value)) return;
+    const candidate = value.trim();
+    const normalizedCandidate = normalizeComparableText(candidate);
+    const isDuplicate = chunks.some((chunk) => {
+      const normalizedChunk = normalizeComparableText(chunk);
+      return normalizedChunk.includes(normalizedCandidate) || normalizedCandidate.includes(normalizedChunk);
+    });
+    if (!isDuplicate) chunks.push(candidate);
+  });
+  return chunks.join('\n\n');
+};
+
+const formatPointSpread = (value: number | null): string =>
+  value == null ? 'Insufficient data' : `${value} ${value === 1 ? 'point' : 'points'}`;
 
 const validSubscore = (value: unknown, isValid = true): number | null => {
   const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
@@ -87,19 +105,7 @@ const asLedgerOutputs = (ledger: any): Array<{
   }).filter((item: any) => item.output);
 
   if (normalized.length > 0) return normalized;
-  const legacyDirectOutputs = asArray(ledger?.directOutputs);
-  const legacyExternalChecks = asArray(ledger?.externalEmbeddingsAndChecks);
-  const legacyOutputs = legacyDirectOutputs.length > 0 ? legacyDirectOutputs : legacyExternalChecks;
-
-  return legacyOutputs.map((output) => ({
-    output,
-    dependsOnInputs: [],
-    dependsOnConstructions: [],
-    externalContextIfAny: legacyExternalChecks.includes(output) ? output : '',
-    support: '',
-    validity: '',
-    centrality: 'medium',
-  }));
+  return [];
 };
 
 
@@ -139,7 +145,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     };
   };
 
-  const isNewFormat = review.overallIntrinsicScore != null;
   let parsedCoverage: any = null;
   if (review.coverageLedgerJson) {
     try {
@@ -172,14 +177,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const theorySpaceVariants = parsedCoverage?.theorySpaceVariants ?? coverageLedger?.theorySpaceVariants ?? [];
   const mechanismSharingAssessment = parsedCoverage?.mechanismSharingAssessment ?? coverageLedger?.mechanismSharingAssessment ?? '';
   const inputConstructionOutputLedger = parsedCoverage?.inputConstructionOutputLedger ?? storedAggregate?.inputConstructionOutputLedger ?? null;
-  const centralOutputDependency = parsedCoverage?.centralOutputDependency
-    ?? storedAggregate?.centralOutputDependency
-    ?? storedAggregate?.comparatorProfile?.centralOutputDependency
-    ?? null;
-  const outputValidityAssessment = parsedCoverage?.outputValidityAssessment
-    ?? storedAggregate?.outputValidityAssessment
-    ?? storedAggregate?.comparatorProfile?.outputValidityAssessment
-    ?? null;
   const inputGrounding = parsedCoverage?.inputGrounding ?? storedAggregate?.inputGroundingAssessment ?? '';
   const inputFundamentality = parsedCoverage?.inputFundamentality ?? storedAggregate?.inputFundamentalityAssessment ?? '';
   const aggregateAdjudication = parsedCoverage?.adjudication ?? storedAggregate?.adjudication ?? null;
@@ -292,7 +289,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ? 'insufficient data'
     : computedPassDisagreement <= 5
       ? 'high'
-      : computedPassDisagreement <= 12
+      : computedPassDisagreement <= 10
         ? 'medium'
         : 'low';
   const scoreStability = selectedPass ? storedScoreStability : computedStability;
@@ -335,12 +332,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ?? storedAggregate?.survivingContributionScoreBasis
     ?? '';
   const promptVersion = parsedCoverage?.promptVersion ?? storedAggregate?.promptVersion ?? '';
+  const isV15Review = parsedCoverage?.schemaVersion === 'v15' || /^v15(?:\.|\b|-)/.test(String(promptVersion));
   const benchmarkSetVersion = parsedCoverage?.benchmarkSetVersion ?? comparatorCalibration?.benchmarkSetVersion ?? '';
   const extractionMethod = parsedCoverage?.extractionMethod ?? '';
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
   const currentLocalCohort = selectedPass?.localCohort || selectedPass?.comparisonCohort || selectedPass?.broadField || localCohort;
   const currentSummary = selectedPass?.summary || storedAggregate?.finalSummary || review.summary;
   const currentVerdict = selectedPass?.oneParagraphVerdict || selectedPass?.finalJudgment || aggregateVerdict;
+  const scientificReviewText = mergeUniqueText(currentVerdict, currentSummary);
   const currentCentralClaim = selectedPass?.centralClaim || review.centralClaim;
   const currentDirectTargets = selectedPass?.coverageLedger?.directTargets ?? directTargets;
   const currentImportedInputs = selectedPass?.coverageLedger?.importedInputs ?? importedInputs;
@@ -349,54 +348,16 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const currentInputConstructionOutputLedger = selectedPass?.inputConstructionOutputLedger ?? inputConstructionOutputLedger;
   const currentPrimitiveInputs = currentInputConstructionOutputLedger?.primitiveInputs ?? [];
   const currentIntroducedConstructions = currentInputConstructionOutputLedger?.introducedConstructions ?? [];
-  const currentExternalEmbeddingsAndChecks = currentInputConstructionOutputLedger?.externalEmbeddingsAndChecks ?? [];
-  const currentDirectOutputs = currentInputConstructionOutputLedger?.directOutputs ?? [];
-  const currentDownstreamReach = currentInputConstructionOutputLedger?.downstreamReach ?? '';
   const currentLedgerOutputs = asLedgerOutputs(currentInputConstructionOutputLedger);
   const currentWhyOutputsMatter =
     currentInputConstructionOutputLedger?.whyOutputsMatter ??
-    currentInputConstructionOutputLedger?.downstreamReach ??
     '';
   const currentInputConstructionOutputAssessment = currentInputConstructionOutputLedger?.assessment ?? '';
-  const currentCentralOutputDependency = selectedPass?.centralOutputDependency ?? centralOutputDependency;
-  const currentCentralOutput = currentCentralOutputDependency?.centralOutput ?? '';
-  const currentCentralOutputPrimitiveDependencies = asArray(
-    currentCentralOutputDependency?.requiredPrimitiveInputs ??
-    currentCentralOutputDependency?.dependsOnPrimitiveInputs
-  );
-  const currentCentralOutputConstructionDependencies = asArray(
-    currentCentralOutputDependency?.requiredIntroducedConstructions ??
-    currentCentralOutputDependency?.dependsOnIntroducedConstructions
-  );
-  const currentWeakestDependency =
-    currentCentralOutputDependency?.constructionFragility ??
-    currentCentralOutputDependency?.weakestDependency ??
-    '';
-  const currentCentralOutputDependencyAssessment =
-    currentCentralOutputDependency?.dependencyAssessment ??
-    currentCentralOutputDependency?.assessment ??
-    '';
-  const currentCentralOutputValidity = currentCentralOutputDependency?.outputValidity ?? '';
-  const currentOutputValidityAssessment = selectedPass?.outputValidityAssessment ?? outputValidityAssessment;
-  const currentOutputValidityObject = asObject(currentOutputValidityAssessment);
-  const currentKnownResultRecoveries = asArray(currentOutputValidityObject?.knownResultRecoveries);
-  const currentNovelPredictionsOrConstraints = asArray(currentOutputValidityObject?.novelPredictionsOrConstraints);
-  const currentFailedOutputsOrConstraints = asArray(currentOutputValidityObject?.failedOutputsOrConstraints);
-  const currentOutputValidityText =
-    selectedPass?.outputValidity ||
-    parsedCoverage?.outputValidity ||
-    storedAggregate?.outputValidity ||
-    (typeof currentOutputValidityAssessment === 'string'
-      ? currentOutputValidityAssessment
-      : currentOutputValidityObject?.assessment ?? currentCentralOutputValidity);
   const hasIcoLedger = Boolean(
     currentPrimitiveInputs.length ||
     currentIntroducedConstructions.length ||
     currentLedgerOutputs.length ||
-    currentExternalEmbeddingsAndChecks.length ||
-    currentDirectOutputs.length ||
     currentWhyOutputsMatter ||
-    currentDownstreamReach ||
     currentInputConstructionOutputAssessment
   );
   const currentInputGrounding = selectedPass?.inputGrounding || inputGrounding;
@@ -427,10 +388,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     || parsedCoverage?.hardToVaryAssessment
     || storedAggregate?.hardToVaryAssessment
     || '';
-  const currentOriginalContribution = selectedPass?.manuscriptOriginalContribution
-    || parsedCoverage?.manuscriptOriginalContribution
-    || storedAggregate?.originalContributionAssessment
-    || '';
   const currentContributionArchetype = selectedPass?.contributionArchetype ?? aggregateContributionArchetype;
   const currentNearestComparators = selectedPass?.nearestComparators ?? aggregateNearestComparators ?? [];
   const currentEstablishedResults = listMarkdown(selectedPass?.establishedResults) || review.establishedResults || listMarkdown(storedAggregate?.establishedResults);
@@ -442,8 +399,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     currentEstablishedResults,
     currentInterpretiveClaims,
     currentSpeculativeClaims,
-    currentWhatWouldRaiseScore,
-    currentWhatWouldLowerScore,
   ].some(hasText) || (
     isAdmin && (
       (Array.isArray(externalComparatorSuggestions) && externalComparatorSuggestions.length > 0) ||
@@ -454,25 +409,53 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ? format(new Date(review.createdAt), 'MMM d, yyyy h:mm:ss a')
     : null;
   const selectedSubscoreValidity = selectedPass?.subscoreValidity ?? subscoreValidity;
+  const currentSubscoreRationale =
+    selectedPass?.subscoreRationale ??
+    storedAggregate?.subscoreRationale ??
+    parsedCoverage?.subscoreRationale ??
+    {};
   const subscoreIsValid = (key: string, legacyKey: string) =>
     (selectedSubscoreValidity as any)?.[key] ?? (selectedSubscoreValidity as any)?.[legacyKey] ?? true;
   const currentInputStrengthScore = validSubscore(
-    selectedPass?.inputStrengthScore ?? storedAggregate?.inputStrengthScore ?? parsedCoverage?.inputStrengthScore ?? review.inputStrengthScore ?? review.intrinsicScientificMeritScore,
-    subscoreIsValid('inputStrengthScore', 'intrinsicTechnicalScore') !== false,
+    selectedPass?.inputStrengthScore ?? storedAggregate?.inputStrengthScore ?? parsedCoverage?.inputStrengthScore ?? review.inputStrengthScore ?? (isV15Review ? undefined : review.intrinsicScientificMeritScore),
+    isV15Review || subscoreIsValid('inputStrengthScore', 'intrinsicTechnicalScore') !== false,
   );
   const currentConstructionStrengthScore = validSubscore(
-    selectedPass?.constructionStrengthScore ?? storedAggregate?.constructionStrengthScore ?? parsedCoverage?.constructionStrengthScore ?? review.constructionStrengthScore ?? review.explanatoryTargetBreadthScore,
-    subscoreIsValid('constructionStrengthScore', 'explanatoryTargetBreadthScore') !== false,
-  );
-  const currentOutputReachScore = validSubscore(
-    selectedPass?.outputReachScore ?? storedAggregate?.outputReachScore ?? parsedCoverage?.outputReachScore ?? review.outputReachScore ?? review.theorySpaceBreadthScore,
-    subscoreIsValid('outputReachScore', 'theorySpaceBreadthScore') !== false,
+    selectedPass?.constructionStrengthScore ?? storedAggregate?.constructionStrengthScore ?? parsedCoverage?.constructionStrengthScore ?? review.constructionStrengthScore ?? (isV15Review ? undefined : review.explanatoryTargetBreadthScore),
+    isV15Review || subscoreIsValid('constructionStrengthScore', 'explanatoryTargetBreadthScore') !== false,
   );
   const currentOutputStrengthScore = validSubscore(
-    selectedPass?.outputStrengthScore ?? storedAggregate?.outputStrengthScore ?? parsedCoverage?.outputStrengthScore ?? review.outputStrengthScore ?? currentOutputReachScore ?? review.theorySpaceBreadthScore,
-    subscoreIsValid('outputStrengthScore', 'outputReachScore') !== false,
+    selectedPass?.outputStrengthScore ?? storedAggregate?.outputStrengthScore ?? parsedCoverage?.outputStrengthScore ?? review.outputStrengthScore ?? (
+      isV15Review
+        ? undefined
+        : selectedPass?.outputReachScore ?? storedAggregate?.outputReachScore ?? parsedCoverage?.outputReachScore ?? review.outputReachScore ?? review.theorySpaceBreadthScore
+    ),
+    isV15Review || subscoreIsValid('outputStrengthScore', 'outputReachScore') !== false,
   );
-  const passDisagreement = computedPassDisagreement;
+  const scoreSpread = computedPassDisagreement;
+  const inputStrengthAssessment = mergeUniqueText(
+    currentInputGrounding,
+    currentInputFundamentality,
+    currentSubscoreRationale?.inputStrengthScore,
+  );
+  const constructionStrengthAssessment = mergeUniqueText(
+    currentConstructionAssessment,
+    currentSubscoreRationale?.constructionStrengthScore,
+  );
+  const outputStrengthAssessment = mergeUniqueText(
+    currentSubscoreRationale?.outputStrengthScore,
+    currentWhyOutputsMatter,
+    currentInputConstructionOutputAssessment,
+  );
+  const frameworkDependenceLevel =
+    selectedPass?.frameworkConditionality?.level ??
+    storedAggregate?.frameworkConditionality?.level ??
+    parsedCoverage?.frameworkConditionality?.level ??
+    '';
+  const frameworkDependenceText = mergeUniqueText(
+    currentFrameworkConditionality,
+    currentFrameworkIndependence,
+  );
   const rawModelPipeline = String(parsedCoverage?.modelName ?? review.modelName ?? '');
   const modelBase = /gemini-3\.1-pro/i.test(rawModelPipeline)
     ? 'Gemini 3.1 Pro Preview'
@@ -493,16 +476,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     .join('; ');
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
-    { label: 'Input Grounding', value: currentInputGrounding, color: 'text-cyan-400', icon: <Shield className="w-4 h-4" /> },
-    { label: 'Input Fundamentality', value: currentInputFundamentality, color: 'text-violet-400', icon: <BrainCircuit className="w-4 h-4" /> },
-    { label: 'Construction Assessment', value: currentConstructionAssessment, color: 'text-indigo-300', icon: <GitBranch className="w-4 h-4" /> },
-    { label: 'Output Validity', value: currentOutputValidityText, color: 'text-emerald-300', icon: <CheckCircle2 className="w-4 h-4" /> },
-    { label: 'Framework Independence', value: currentFrameworkIndependence, color: 'text-sky-300', icon: <GitBranch className="w-4 h-4" /> },
-    { label: 'Framework Conditionality', value: currentFrameworkConditionality, color: 'text-amber-400', icon: <GitBranch className="w-4 h-4" /> },
+    { label: frameworkDependenceLevel ? `Framework Dependence: ${String(frameworkDependenceLevel).replace(/_/g, ' ')}` : 'Framework Dependence', value: frameworkDependenceText, color: 'text-amber-400', icon: <GitBranch className="w-4 h-4" /> },
     { label: 'Hard-to-Vary Assessment', value: currentHardToVaryAssessment, color: 'text-orange-300', icon: <Shield className="w-4 h-4" /> },
     { label: 'Strongest Case', value: currentStrongestCase, color: 'text-green-400', icon: <TrendingUp className="w-4 h-4" /> },
     { label: 'Strongest Objection', value: currentStrongestObjection, color: 'text-rose-400', icon: <AlertTriangle className="w-4 h-4" /> },
     { label: 'Assessment Sensitivity', value: currentAssessmentSensitivity, color: 'text-yellow-400', icon: <Microscope className="w-4 h-4" /> },
+    { label: 'What Would Raise Score', value: currentWhatWouldRaiseScore, color: 'text-green-300', icon: <TrendingUp className="w-4 h-4" /> },
+    { label: 'What Would Lower Score', value: currentWhatWouldLowerScore, color: 'text-rose-300', icon: <AlertTriangle className="w-4 h-4" /> },
   ];
   return (
     <>
@@ -570,17 +550,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <button
                   role="tab"
                   aria-selected={scoreDetail === 'adjudicator'}
+                  aria-disabled={adjudicatorFallbackActive}
+                  disabled={adjudicatorFallbackActive}
                   onClick={() => {
+                    if (adjudicatorFallbackActive) return;
                     setActiveTab('combined');
                     setScoreDetail('adjudicator');
                   }}
                   className={`relative cursor-pointer rounded-lg border px-2 py-1 transition-all ${
-                    scoreDetail === 'adjudicator'
+                    adjudicatorFallbackActive
+                      ? 'cursor-not-allowed border-rose-300/30 bg-rose-400/10 text-rose-100'
+                      : scoreDetail === 'adjudicator'
                       ? 'border-white bg-sky-400/30 text-white ring-2 ring-white/70 shadow-[0_0_0_1px_rgba(255,255,255,0.35),0_10px_30px_rgba(255,255,255,0.12)]'
                       : 'border-white/20 bg-sky-400/10 text-sky-100 hover:border-white/60 hover:bg-sky-400/20'
                   }`}
                 >
-                  Adjudicator Rating {adjudicatorRating}
+                  {adjudicatorFallbackActive ? 'Adjudicator Failed' : `Adjudicator Rating ${adjudicatorRating}`}
                 </button>
                 <span className="text-white">-&gt;</span>
                 <button
@@ -620,26 +605,53 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
 
             <div className="border-t border-white/10 pt-4">
               <div className="grid gap-3 md:grid-cols-3">
-              <div>
-                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
-                <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
-              </div>
-              <div>
-                <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Local Cohort</p>
-                <p className="text-sm font-bold text-white mt-1">{currentLocalCohort || 'Not specified'}</p>
-                {canonicalClusterLabel && (
-                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                    Cluster: {canonicalClusterLabel}
+                <div>
+                  <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Classification</p>
+                  <p className="text-sm font-bold text-white mt-1 capitalize">{currentClassification}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest">Comparison Cohort</p>
+                  <p className="text-sm font-bold text-white mt-1">{currentLocalCohort || 'Not specified'}</p>
+                  {canonicalClusterLabel && (
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+                      Cluster: {canonicalClusterLabel}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind-Pass Scores</p>
+                  <p className="text-sm font-bold text-white mt-1">{passMedianScores.length > 0 ? passMedianScores.join(', ') : 'Not stored'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Blind-Pass Spread</p>
+                  <p className="text-sm font-bold text-white mt-1">{formatPointSpread(scoreSpread)}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Review Stability</p>
+                  <p className="text-sm font-bold text-white mt-1 capitalize">{scoreStability || 'Not stored'}</p>
+                </div>
+                <div>
+                  <p className={`text-[10px] font-black uppercase tracking-widest ${adjudicatorFallbackActive ? 'text-rose-300' : 'text-emerald-300'}`}>Adjudicator Status</p>
+                  <p className="text-sm font-bold text-white mt-1">
+                    {adjudicatorFallbackActive ? 'Failed - fallback from blind passes' : 'Successful'}
                   </p>
+                </div>
+                {!adjudicatorFallbackActive && (
+                  <div>
+                    <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Adjudicator Rating</p>
+                    <p className="text-sm font-bold text-white mt-1">{adjudicatorRating}</p>
+                  </div>
                 )}
-              </div>
-              <div>
-                <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Stability</p>
-                <p className="text-sm font-bold text-white mt-1 capitalize">
-                  {scoreStability || 'Not stored'}
-                  {passDisagreement != null && !selectedPass ? ` (${passDisagreement} point disagreement)` : ''}
-                </p>
-              </div>
+                {comparatorCalibrationApplied && (
+                  <div>
+                    <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Calibration Adjustment</p>
+                    <p className="text-sm font-bold text-white mt-1">{adjustmentLabel}</p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Final Score</p>
+                  <p className="text-sm font-bold text-white mt-1">{finalScore}</p>
+                </div>
               </div>
             </div>
           </div>
@@ -729,30 +741,137 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
           )}
 
-          {/* Central Claim */}
+          {scientificReviewText && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
+              <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest flex items-center gap-2">
+                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Review' : 'Scientific Review'}
+              </h3>
+              <Markdown>{scientificReviewText}</Markdown>
+              {submittedAtLabel && (
+                <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
+                  Submitted {submittedAtLabel}
+                </p>
+              )}
+            </div>
+          )}
+
           {currentCentralClaim && (
             <Section icon={<Target className="w-4 h-4" />} label="Central Claim" color="text-sky-400">
               <Markdown>{currentCentralClaim}</Markdown>
             </Section>
           )}
 
-          {currentSummary && (
-            <Section icon={<BookOpen className="w-4 h-4" />} label="Review Summary" color="text-indigo-300">
-              <Markdown>{currentSummary}</Markdown>
-            </Section>
-          )}
-
-          {currentVerdict && (
-            <div className="bg-white/5 border border-white/10 rounded-2xl p-6 space-y-3">
-              <h3 className="text-xs font-black text-emerald-300 uppercase tracking-widest flex items-center gap-2">
-                <Award className="w-4 h-4" /> {selectedPass ? 'Pass Verdict' : 'Verdict'}
+          {hasIcoLedger && (
+            <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
+              <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest flex items-center gap-2">
+                <BrainCircuit className="w-4 h-4" /> Input → Construction → Output Assessment
               </h3>
-              <Markdown>{currentVerdict}</Markdown>
-              {submittedAtLabel && (
-                <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
-                  Submitted {submittedAtLabel}
-                </p>
-              )}
+              <div className="space-y-4">
+                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-black text-cyan-300 uppercase tracking-widest">Input Strength</p>
+                    <p className="text-2xl font-black text-cyan-200">
+                      {currentInputStrengthScore == null ? 'N/A' : currentInputStrengthScore}
+                      {currentInputStrengthScore != null && <span className="text-sm font-bold text-cyan-300/70">/10</span>}
+                    </p>
+                  </div>
+                  {hasText(inputStrengthAssessment) && (
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
+                      <Markdown>{inputStrengthAssessment}</Markdown>
+                    </div>
+                  )}
+                  {currentPrimitiveInputs.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Primitive Inputs</p>
+                      <Markdown>{listMarkdown(currentPrimitiveInputs)}</Markdown>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Construction Strength</p>
+                    <p className="text-2xl font-black text-indigo-200">
+                      {currentConstructionStrengthScore == null ? 'N/A' : currentConstructionStrengthScore}
+                      {currentConstructionStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
+                    </p>
+                  </div>
+                  {hasText(constructionStrengthAssessment) && (
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
+                      <Markdown>{constructionStrengthAssessment}</Markdown>
+                    </div>
+                  )}
+                  {currentIntroducedConstructions.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Introduced Constructions</p>
+                      <Markdown>{listMarkdown(currentIntroducedConstructions)}</Markdown>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-black text-emerald-300 uppercase tracking-widest">Output Strength</p>
+                    <p className="text-2xl font-black text-emerald-200">
+                      {currentOutputStrengthScore == null ? 'N/A' : currentOutputStrengthScore}
+                      {currentOutputStrengthScore != null && <span className="text-sm font-bold text-emerald-300/70">/10</span>}
+                    </p>
+                  </div>
+                  {hasText(outputStrengthAssessment) && (
+                    <div>
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
+                      <Markdown>{outputStrengthAssessment}</Markdown>
+                    </div>
+                  )}
+                  {currentLedgerOutputs.length > 0 && (
+                    <div className="space-y-3">
+                      <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Outputs</p>
+                      {currentLedgerOutputs.map((item: any, i: number) => {
+                        const validitySummary = mergeUniqueText(item.validity, item.support);
+                        return (
+                          <div key={`${item.output}-${i}`} className="bg-white/5 border border-white/10 rounded-xl p-3 space-y-2">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-emerald-400 shrink-0">▸</span>
+                              <div className="min-w-0 flex-1"><Markdown>{item.output}</Markdown></div>
+                              {item.centrality && (
+                                <span className="text-[9px] font-black uppercase tracking-widest text-emerald-100 bg-emerald-400/15 border border-emerald-300/20 rounded-full px-2 py-1">
+                                  {item.centrality}
+                                </span>
+                              )}
+                            </div>
+                            {item.dependsOnInputs.length > 0 && (
+                              <div>
+                                <p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Inputs Used</p>
+                                <Markdown>{listMarkdown(item.dependsOnInputs)}</Markdown>
+                              </div>
+                            )}
+                            {item.dependsOnConstructions.length > 0 && (
+                              <div>
+                                <p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Constructions Used</p>
+                                <Markdown>{listMarkdown(item.dependsOnConstructions)}</Markdown>
+                              </div>
+                            )}
+                            {item.externalContextIfAny && (
+                              <div>
+                                <p className="text-[9px] font-black text-amber-300 uppercase tracking-widest mb-1">External Context</p>
+                                <Markdown>{item.externalContextIfAny}</Markdown>
+                              </div>
+                            )}
+                            {validitySummary && (
+                              <div>
+                                <p className="text-[9px] font-black text-emerald-300 uppercase tracking-widest mb-1">Validity</p>
+                                <Markdown>{validitySummary}</Markdown>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 
@@ -772,127 +891,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               </div>
             </Section>
           )}
-
-          {/* Sub-scores (new format only) */}
-          {isNewFormat && (
-            <div className="grid md:grid-cols-3 gap-3">
-              {[
-                { label: 'Input Strength', value: currentInputStrengthScore, color: 'text-indigo-300', subColor: 'text-indigo-400' },
-                { label: 'Construction Strength', value: currentConstructionStrengthScore, color: 'text-sky-300', subColor: 'text-sky-400' },
-                { label: 'Output Strength', value: currentOutputStrengthScore, color: 'text-violet-300', subColor: 'text-violet-400' },
-              ].map((item) => (
-                <div key={item.label} className="bg-white/5 border border-white/10 rounded-2xl p-4 text-center">
-                  <div className={`text-3xl font-black ${item.color}`}>
-                    {item.value == null ? 'N/A' : item.value}
-                    {item.value != null && <span className={`text-base font-bold ${item.subColor} opacity-60`}>/10</span>}
-                  </div>
-                  <div className={`text-[10px] font-bold ${item.subColor} uppercase tracking-widest mt-1`}>{item.label}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Input-Construction-Output Ledger */}
-          {currentInputConstructionOutputLedger && (() => {
-            const hasContent =
-              currentPrimitiveInputs.length ||
-              currentIntroducedConstructions.length ||
-              currentLedgerOutputs.length ||
-              currentWhyOutputsMatter ||
-              currentInputConstructionOutputAssessment;
-            if (!hasContent) return null;
-            return (
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
-                <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest flex items-center gap-2">
-                  <BrainCircuit className="w-4 h-4" /> Input-Construction-Output Ledger
-                </h3>
-                <div className="space-y-4">
-                  {currentPrimitiveInputs.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Primitive Inputs</p>
-                      <ul className="space-y-1">
-                        {currentPrimitiveInputs.map((item: string, i: number) => (
-                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-cyan-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {currentIntroducedConstructions.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Introduced Constructions</p>
-                      <ul className="space-y-1">
-                        {currentIntroducedConstructions.map((item: string, i: number) => (
-                          <li key={i} className="text-xs text-slate-300 flex gap-2"><span className="text-indigo-400 shrink-0">▸</span><div className="min-w-0 flex-1"><Markdown>{item}</Markdown></div></li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {currentLedgerOutputs.length > 0 && (
-                    <div className="space-y-2">
-                      <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Outputs</p>
-                      <div className="space-y-3">
-                        {currentLedgerOutputs.map((item: any, i: number) => (
-                          <div key={`${item.output}-${i}`} className="bg-slate-950/25 border border-white/10 rounded-xl p-3 space-y-2">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <span className="text-emerald-400 shrink-0">▸</span>
-                              <div className="min-w-0 flex-1"><Markdown>{item.output}</Markdown></div>
-                              {item.centrality && (
-                                <span className="text-[9px] font-black uppercase tracking-widest text-emerald-100 bg-emerald-400/15 border border-emerald-300/20 rounded-full px-2 py-1">
-                                  {item.centrality}
-                                </span>
-                              )}
-                            </div>
-                            {item.dependsOnInputs.length > 0 && (
-                              <div>
-                                <p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Depends on Inputs</p>
-                                <Markdown>{listMarkdown(item.dependsOnInputs)}</Markdown>
-                              </div>
-                            )}
-                            {item.dependsOnConstructions.length > 0 && (
-                              <div>
-                                <p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Depends on Constructions</p>
-                                <Markdown>{listMarkdown(item.dependsOnConstructions)}</Markdown>
-                              </div>
-                            )}
-                            {item.externalContextIfAny && (
-                              <div>
-                                <p className="text-[9px] font-black text-amber-300 uppercase tracking-widest mb-1">External Context</p>
-                                <Markdown>{item.externalContextIfAny}</Markdown>
-                              </div>
-                            )}
-                            {item.support && (
-                              <div>
-                                <p className="text-[9px] font-black text-sky-300 uppercase tracking-widest mb-1">Support</p>
-                                <Markdown>{item.support}</Markdown>
-                              </div>
-                            )}
-                            {item.validity && (
-                              <div>
-                                <p className="text-[9px] font-black text-emerald-300 uppercase tracking-widest mb-1">Validity</p>
-                                <Markdown>{item.validity}</Markdown>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-                {currentWhyOutputsMatter && (
-                  <div className="border-t border-white/10 pt-3">
-                    <p className="text-[10px] font-black text-teal-300 uppercase tracking-widest mb-1">Why the Outputs Matter</p>
-                    <Markdown>{currentWhyOutputsMatter}</Markdown>
-                  </div>
-                )}
-                {currentInputConstructionOutputAssessment && (
-                  <div className="border-t border-white/10 pt-3">
-                    <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest mb-1">Assessment</p>
-                    <Markdown>{currentInputConstructionOutputAssessment}</Markdown>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
 
           {/* Legacy Coverage Ledger */}
           {!hasIcoLedger && (review.coverageLedgerJson || selectedPass?.coverageLedger) && (() => {
@@ -977,11 +975,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {passBandLabels && <p className="text-[10px] font-bold text-slate-400 mt-1">{passBandLabels}</p>}
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Pass Disagreement</p>
-                  <p className="text-sm font-black text-white mt-1">{computedPassDisagreement ?? 'Insufficient data'}</p>
+                  <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Blind-Pass Spread</p>
+                  <p className="text-sm font-black text-white mt-1">{formatPointSpread(scoreSpread)}</p>
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Derived Stability</p>
+                  <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Review Stability</p>
                   <p className="text-sm font-black text-white mt-1 capitalize">{computedStability}</p>
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
@@ -1059,9 +1057,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       explanatoryDeltaAssessment.inputsComparison,
                       explanatoryDeltaAssessment.constructionComparison,
                       explanatoryDeltaAssessment.outputsComparison,
-                      explanatoryDeltaAssessment.generalizationComparison,
                       explanatoryDeltaAssessment.outputValidityComparison,
-                      explanatoryDeltaAssessment.downstreamReachComparison,
                       explanatoryDeltaAssessment.frameworkConditionalityComparison,
                     ].filter(hasText).map((item: string, index: number) => (
                       <Markdown key={index}>{item}</Markdown>
@@ -1140,16 +1136,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 {currentSpeculativeClaims && (
                   <Section icon={<AlertTriangle className="w-4 h-4" />} label="Speculative Claims" color="text-amber-300">
                     <Markdown>{currentSpeculativeClaims}</Markdown>
-                  </Section>
-                )}
-                {currentWhatWouldRaiseScore && (
-                  <Section icon={<TrendingUp className="w-4 h-4" />} label="What Would Raise Score" color="text-green-300">
-                    <Markdown>{currentWhatWouldRaiseScore}</Markdown>
-                  </Section>
-                )}
-                {currentWhatWouldLowerScore && (
-                  <Section icon={<AlertTriangle className="w-4 h-4" />} label="What Would Lower Score" color="text-rose-300">
-                    <Markdown>{currentWhatWouldLowerScore}</Markdown>
                   </Section>
                 )}
                 {isAdmin && Array.isArray(externalComparatorSuggestions) && externalComparatorSuggestions.length > 0 && (

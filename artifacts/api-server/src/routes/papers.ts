@@ -12,11 +12,13 @@ import {
   REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   buildPdfFallbackText,
+  compactAggregateForStorage,
   expectedReviewModelName,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
   normalizeReviewPipelineMode,
   recalibrateStoredAggregateWithComparators,
+  v15ComparatorCalibrationForStorage,
   type ComparatorContextSelector,
   type ReviewPipelineMode,
   type ReviewComparatorContextItem,
@@ -239,11 +241,10 @@ function compactLedger(value: any) {
         .filter((item: any) => item?.output)
         .slice(0, 6)
     : [];
-  const legacyOutputs = safeStringArray(value.directOutputs).slice(0, 5).map((output) => ({ output }));
   return {
     primitiveInputs: safeStringArray(value.primitiveInputs).slice(0, 5),
     introducedConstructions: safeStringArray(value.introducedConstructions).slice(0, 5),
-    outputs: outputs.length > 0 ? outputs : legacyOutputs,
+    outputs,
     whyOutputsMatter: typeof value.whyOutputsMatter === "string" ? value.whyOutputsMatter.slice(0, 700) : "",
     assessment: typeof value.assessment === "string" ? value.assessment.slice(0, 700) : "",
   };
@@ -608,22 +609,24 @@ router.post("/papers/comparator-backfill", async (req, res) => {
             benchmarkSetVersion,
           },
         };
+        const storedVersionedAggregate = compactAggregateForStorage(versionedAggregate);
+        const storedComparatorCalibration = v15ComparatorCalibrationForStorage(versionedAggregate.comparatorCalibration);
         const updatedCoverageLedger = {
           ...coverageLedger,
-          nearestComparators: versionedAggregate.nearestComparators,
-          externalComparatorSuggestions: versionedAggregate.externalComparatorSuggestions,
-          publicComparatorSummary: versionedAggregate.publicComparatorSummary,
-          adminComparatorNotes: versionedAggregate.adminComparatorNotes,
-          comparatorProfile: versionedAggregate.comparatorProfile,
-          comparatorCalibration: versionedAggregate.comparatorCalibration,
-          comparatorCalibrationStatus: versionedAggregate.comparatorCalibration.comparatorCalibrationStatus,
-          explanatoryDeltaAssessment: versionedAggregate.comparatorCalibration.explanatoryDeltaAssessment,
-          comparatorsNeedingRecalibration: versionedAggregate.comparatorCalibration.comparatorsNeedingRecalibration,
-          blindIntrinsicScoreBand: versionedAggregate.blindIntrinsicScoreBand,
-          comparatorCalibratedFinalScoreBand: versionedAggregate.finalScoreBand,
-          aggregate: versionedAggregate,
-          finalComparisonCohort: versionedAggregate.finalComparisonCohort,
-          scoreStability: versionedAggregate.scoreStability,
+          nearestComparators: storedVersionedAggregate.nearestComparators,
+          externalComparatorSuggestions: storedVersionedAggregate.externalComparatorSuggestions,
+          publicComparatorSummary: storedVersionedAggregate.publicComparatorSummary,
+          adminComparatorNotes: storedVersionedAggregate.adminComparatorNotes,
+          comparatorProfile: storedVersionedAggregate.comparatorProfile,
+          comparatorCalibration: storedComparatorCalibration,
+          comparatorCalibrationStatus: storedComparatorCalibration.comparatorCalibrationStatus,
+          explanatoryDeltaAssessment: storedComparatorCalibration.explanatoryDeltaAssessment,
+          comparatorsNeedingRecalibration: storedComparatorCalibration.comparatorsNeedingRecalibration,
+          blindIntrinsicScoreBand: storedVersionedAggregate.blindIntrinsicScoreBand,
+          comparatorCalibratedFinalScoreBand: storedVersionedAggregate.finalScoreBand,
+          aggregate: storedVersionedAggregate,
+          finalComparisonCohort: storedVersionedAggregate.finalComparisonCohort,
+          scoreStability: storedVersionedAggregate.scoreStability,
           benchmarkSetCandidate: true,
           benchmarkSetVersion,
           backfilledAt: new Date().toISOString(),
