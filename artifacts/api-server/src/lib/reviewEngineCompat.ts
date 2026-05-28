@@ -297,6 +297,7 @@ type IndividualReview = {
   contributionArchetype: ContributionArchetype;
   summary: string;
   centralClaim: string;
+  scientificReview: string;
   inputConstructionOutputLedger: InputConstructionOutputLedger;
   centralOutputDependency: CentralOutputDependency;
   outputValidityAssessment: OutputValidityAssessment;
@@ -345,6 +346,7 @@ type IndividualReview = {
   breadthOfImpactScore: number;
   subscoreValidity: DiagnosticSubscoreValidity;
   scoreCappingReason: string;
+  scoreAdjustmentReason: string;
   specialtyRelativeScore: number;
   broadFieldRelativeScore: number;
   crossFieldConsequenceScore: number;
@@ -362,6 +364,7 @@ type AggregateReview = {
   finalSpecialtyField: string;
   finalSummary: string;
   finalCentralClaim: string;
+  scientificReview: string;
   contributionArchetype: ContributionArchetype;
   inputConstructionOutputLedger: InputConstructionOutputLedger;
   centralOutputDependency: CentralOutputDependency;
@@ -465,7 +468,7 @@ type IndividualPassResult = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v15.1-simplified-ico-score-anchored";
+export const REVIEW_PROMPT_VERSION = "v15.2-scientific-review-ico-display";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -608,11 +611,11 @@ const individualReviewJsonSchema = {
   required: [
     "summary",
     "centralClaim",
+    "scientificReview",
     "correctness",
     "scoreBand",
     "bestClassification",
     "inputConstructionOutputLedger",
-    "outputValidity",
     "assessmentSensitivity",
     "inputStrengthScore",
     "constructionStrengthScore",
@@ -630,9 +633,9 @@ const individualReviewJsonSchema = {
     paperType: jsonString,
     summary: jsonString,
     centralClaim: jsonString,
+    scientificReview: jsonString,
     contributionArchetype: contributionArchetypeJsonSchema,
     inputConstructionOutputLedger: inputConstructionOutputLedgerJsonSchema,
-    outputValidity: jsonString,
     comparatorProfile: comparatorProfileJsonSchema,
     establishedResults: jsonStringArray,
     interpretiveClaims: jsonStringArray,
@@ -695,9 +698,9 @@ const adjudicatorJsonSchema = {
     adjudicatorRating: jsonNumber,
     intrinsicScoreBand: scoreBandJsonSchema,
     finalScoreBand: scoreBandJsonSchema,
+    scientificReview: jsonString,
     finalIntrinsicReview: individualReviewJsonSchema,
     comparatorProfile: comparatorProfileJsonSchema,
-    outputValidity: jsonString,
     assessmentSensitivity: jsonString,
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
@@ -1940,6 +1943,15 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     contributionArchetype,
     summary: firstString([source.summary, source.abstract, source.overview, source.reviewSummary, source.finalSummary]),
     centralClaim: firstString([source.centralClaim, source.central_claim, source.mainClaim, source.claim]),
+    scientificReview: firstString([
+      source.scientificReview,
+      source.publicScientificReview,
+      source.publicReview,
+      source.publicOneParagraphVerdict,
+      source.oneParagraphVerdict,
+      source.finalJudgment,
+      source.summary,
+    ]),
     inputConstructionOutputLedger: {
       primitiveInputs: firstStringArray([
         inputConstructionOutputLedger.primitiveInputs,
@@ -2072,6 +2084,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     breadthOfImpactScore: normalizeDiagnosticSubscore(source.breadthOfImpactScore, generalizationBreadthScore),
     subscoreValidity,
     scoreCappingReason: firstString([source.scoreCappingReason, source.score_capping_reason]),
+    scoreAdjustmentReason: firstString([source.scoreAdjustmentReason, source.score_adjustment_reason, source.scoreAdjustmentRationale]),
     specialtyRelativeScore: normalizedSpecialtyScore,
     broadFieldRelativeScore: Math.round(asNumber(source.broadFieldRelativeScore, 0, 0, 100)),
     crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, 0, 0, 100)),
@@ -2106,6 +2119,7 @@ function individualReviewReasoningText(review: IndividualReview) {
   return [
     review.summary,
     review.centralClaim,
+    review.scientificReview,
     review.inputConstructionOutputLedger.outputs.map((item) => [
       item.output,
       item.support,
@@ -2167,11 +2181,11 @@ function validateIndividualReview(review: IndividualReview) {
     throw new Error("Generated review was missing input-construction-output ledger accounting.");
   }
 
-  if (!review.outputValidity.trim()) {
-    const hasOutputValidity = review.inputConstructionOutputLedger.outputs.some((output) => output.validity.trim());
-    if (!hasOutputValidity && !review.outputValidityAssessment.assessment.trim() && !review.centralOutputDependency.outputValidity.trim()) {
-      throw new Error("Generated review was missing output-validity assessment.");
-    }
+  const hasOutputValidity = review.inputConstructionOutputLedger.outputs.some((output) =>
+    output.validity.trim() || output.support.trim(),
+  );
+  if (!hasOutputValidity) {
+    throw new Error("Generated review was missing output-level validity/support.");
   }
 
   if (!review.assessmentSensitivity.trim()) {
@@ -2861,6 +2875,19 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     finalSpecialtyField: asString(source.finalSpecialtyField ?? source.specialtyField, fallbackReview.specialtyField),
     finalSummary: asString(source.finalSummary ?? source.summary, fallbackReview.summary),
     finalCentralClaim: asString(source.centralClaim, fallbackReview.centralClaim),
+    scientificReview: firstString([
+      root.scientificReview,
+      source.scientificReview,
+      source.publicScientificReview,
+      root.publicOneParagraphVerdict,
+      source.publicOneParagraphVerdict,
+      source.oneParagraphVerdict,
+      source.finalJudgment,
+      fallbackReview.scientificReview,
+      fallbackReview.oneParagraphVerdict,
+      fallbackReview.finalJudgment,
+      source.summary,
+    ]),
     contributionArchetype: normalizeContributionArchetype(source.contributionArchetype, fallbackReview.contributionArchetype),
     inputConstructionOutputLedger: {
       primitiveInputs: firstStringArray([
@@ -3004,7 +3031,17 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     finalClassification: adjustedFinalClassification,
     finalScoreBand,
     finalScoreConfidence: asNumber(source.finalScoreConfidence ?? source.scoreConfidence, fallbackReview.scoreConfidence, 0, 1),
-    publicOneParagraphVerdict: asString(source.publicOneParagraphVerdict ?? source.oneParagraphVerdict, fallbackReview.oneParagraphVerdict || fallbackReview.finalJudgment),
+    publicOneParagraphVerdict: firstString([
+      root.scientificReview,
+      source.scientificReview,
+      source.publicScientificReview,
+      source.publicOneParagraphVerdict,
+      source.oneParagraphVerdict,
+      source.finalJudgment,
+      fallbackReview.scientificReview,
+      fallbackReview.oneParagraphVerdict,
+      fallbackReview.finalJudgment,
+    ]),
     internalCalibrationNotes: [
       asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments, `${GEMINI_META_MODEL} adjudicator reviewed the manuscript and both independent ${GEMINI_PASS_MODEL} passes.`),
       ...adjudicationRepairNotes,
@@ -3022,11 +3059,11 @@ function validateAggregateReview(review: AggregateReview) {
     throw new Error("Adjudication was missing input-construction-output ledger accounting.");
   }
 
-  if (!review.outputValidity.trim()) {
-    const hasOutputValidity = review.inputConstructionOutputLedger.outputs.some((output) => output.validity.trim());
-    if (!hasOutputValidity && !review.outputValidityAssessment.assessment.trim() && !review.centralOutputDependency.outputValidity.trim()) {
-      throw new Error("Adjudication was missing output-validity assessment.");
-    }
+  const hasOutputValidity = review.inputConstructionOutputLedger.outputs.some((output) =>
+    output.validity.trim() || output.support.trim(),
+  );
+  if (!hasOutputValidity) {
+    throw new Error("Adjudication was missing output-level validity/support.");
   }
 
   if (!review.assessmentSensitivity.trim()) {
@@ -3095,13 +3132,13 @@ function compactIndividualReviewForAdjudicator(review: IndividualReview, index: 
     specialtyField: review.specialtyField,
     summary: review.summary,
     centralClaim: review.centralClaim,
+    scientificReview: review.scientificReview,
     inputConstructionOutputLedger: v15LedgerOnly(review.inputConstructionOutputLedger),
     comparatorProfile: v15ComparatorProfileOnly((review as IndividualReview & { comparatorProfile?: ComparatorProfile }).comparatorProfile),
     correctness: review.correctness,
     inputGrounding: review.inputGrounding,
     inputFundamentality: review.inputFundamentality,
     constructionAssessment: review.constructionAssessment,
-    outputValidity: review.outputValidity,
     frameworkConditionality: review.frameworkConditionality,
     frameworkIndependence: review.frameworkIndependence,
     manuscriptOriginalContribution: review.manuscriptOriginalContribution,
@@ -3201,6 +3238,7 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
     finalSpecialtyField: aggregate.finalSpecialtyField,
     finalSummary: aggregate.finalSummary,
     finalCentralClaim: aggregate.finalCentralClaim,
+    scientificReview: aggregate.scientificReview,
     contributionArchetype: aggregate.contributionArchetype,
     inputConstructionOutputLedger: v15LedgerOnly(aggregate.inputConstructionOutputLedger),
     nearestComparators: aggregate.nearestComparators,
@@ -3226,7 +3264,6 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
     inputGroundingAssessment: aggregate.inputGroundingAssessment,
     inputFundamentalityAssessment: aggregate.inputFundamentalityAssessment,
     constructionAssessment: aggregate.constructionAssessment,
-    outputValidity: aggregate.outputValidity,
     contributionGroundingType: aggregate.contributionGroundingType,
     frameworkIndependenceAssessment: aggregate.frameworkIndependenceAssessment,
     hardToVaryAssessment: aggregate.hardToVaryAssessment,
@@ -3283,6 +3320,7 @@ function buildAdjudicatorInput(
       passNumber: review.passNumber,
       summary: review.summary,
       centralClaim: review.centralClaim,
+      scientificReview: review.scientificReview,
       contributionArchetype: review.contributionArchetype,
       inputConstructionOutputLedger: review.inputConstructionOutputLedger,
       comparatorProfile: review.comparatorProfile,
@@ -3326,13 +3364,13 @@ function buildComparatorCalibrationInput(
       specialtyField: aggregate.finalSpecialtyField,
       summary: aggregate.finalSummary,
       centralClaim: aggregate.finalCentralClaim,
+      scientificReview: aggregate.scientificReview,
       contributionArchetype: aggregate.contributionArchetype,
       inputConstructionOutputLedger: v15LedgerOnly(aggregate.inputConstructionOutputLedger),
       correctness: aggregate.correctnessAssessment,
       inputGrounding: aggregate.inputGroundingAssessment,
       inputFundamentality: aggregate.inputFundamentalityAssessment,
       constructionAssessment: aggregate.constructionAssessment,
-      outputValidity: aggregate.outputValidity,
       frameworkIndependence: aggregate.frameworkIndependenceAssessment,
       hardToVaryAssessment: aggregate.hardToVaryAssessment,
       frameworkConditionality: aggregate.frameworkConditionalityAssessment,
@@ -3819,11 +3857,17 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
   const storedComparatorCalibration = v15ComparatorCalibrationForStorage(aggregate.comparatorCalibration);
   const storedAdjudication = v15AdjudicationForStorage(aggregate);
   const storedIndividualReviews = result.individualReviews.map(compactIndividualReviewForStorage);
+  const publicScientificReview =
+    aggregate.scientificReview ||
+    aggregate.publicOneParagraphVerdict ||
+    representativeReview.scientificReview ||
+    representativeReview.oneParagraphVerdict ||
+    representativeReview.finalJudgment;
   return {
     summary: aggregate.finalSummary || representativeReview.summary || representativeReview.oneParagraphVerdict,
     correctness: aggregate.correctnessAssessment || representativeReview.correctness,
     novelty: aggregate.novelty || representativeReview.novelty,
-    overallEvaluation: aggregate.publicOneParagraphVerdict || representativeReview.finalJudgment,
+    overallEvaluation: publicScientificReview,
     score: aggregate.finalScoreBand.median,
     relatedWork: "",
     centralClaim: aggregate.finalCentralClaim || representativeReview.centralClaim || null,
@@ -3846,7 +3890,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     breadthOfImpactScore: null,
     overallIntrinsicScore: aggregate.finalScoreBand.median,
     bestClassification: aggregateClassification,
-    finalJudgment: aggregate.publicOneParagraphVerdict || representativeReview.finalJudgment,
+    finalJudgment: publicScientificReview,
     coverageLedgerJson: JSON.stringify({
       promptVersion: REVIEW_PROMPT_VERSION,
       generatedAt,
@@ -3857,8 +3901,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
-      schemaVersion: "v15",
-      clusterVersion: "v15.1-simplified-ico",
+      schemaVersion: "v15.2",
+      clusterVersion: "v15.2-scientific-review-ico",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
       benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
@@ -3871,7 +3915,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL} ${GEMINI_CALIBRATION_MODEL}`),
       contributionArchetype: storedAggregate.contributionArchetype,
       inputConstructionOutputLedger: storedAggregate.inputConstructionOutputLedger,
-      outputValidity: aggregate.outputValidity,
+      scientificReview: publicScientificReview,
       assessmentSensitivity: aggregate.assessmentSensitivity,
       nearestComparators: aggregate.nearestComparators,
       externalComparatorSuggestions: aggregate.externalComparatorSuggestions,
@@ -3907,13 +3951,13 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       finalIntrinsicReview: {
         summary: aggregate.finalSummary,
         centralClaim: aggregate.finalCentralClaim,
+        scientificReview: publicScientificReview,
         localCohort: aggregate.finalLocalCohort,
         scoreBand: aggregate.blindIntrinsicScoreBand,
         blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
         bestClassification: aggregate.finalClassification,
         inputConstructionOutputLedger: storedAggregate.inputConstructionOutputLedger,
         constructionAssessment: aggregate.constructionAssessment,
-        outputValidity: aggregate.outputValidity,
         assessmentSensitivity: aggregate.assessmentSensitivity,
         contributionInventory: aggregate.contributionInventory,
         survivingHighValueContributions: aggregate.survivingHighValueContributions,
@@ -3958,7 +4002,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     scoreBandHigh: aggregate.finalScoreBand.high,
     scoreConfidence: String(aggregate.finalScoreConfidence),
     scoreStability: aggregate.scoreStability,
-    publicVerdict: aggregate.publicOneParagraphVerdict || representativeReview.oneParagraphVerdict || null,
+    publicVerdict: publicScientificReview || null,
     individualReviewsJson: JSON.stringify(storedIndividualReviews),
     aggregateMetaJson: JSON.stringify(storedAggregate),
     passCount: REVIEW_PASS_COUNT,

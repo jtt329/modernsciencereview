@@ -1,4 +1,4 @@
-// Canonical v15.1 prompt stages.
+// Canonical v15.2 prompt stages.
 // Keep this file as the source of truth; include only prompts the app actually sends.
 
 export const DATE_METADATA_EXTRACTION_V15_PROMPT = String.raw`Extract display metadata for the paper. This stage is outside blind scoring.
@@ -304,6 +304,8 @@ Before final scoring, explicitly consider:
 13. What kinds of evidence, derivations, counterexamples, robustness tests, or applications would most materially change the assessment?
 14. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?
 
+For scientificReview, write one coherent public review rather than stitching together a summary and verdict. It should be verdict-led, then explanatory: state the bottom-line judgment/classification, the central reason for the score, the input-construction-output logic, and the strongest important limitation or caveat. Use 1-3 paragraphs or roughly 5-10 sentences when useful, and avoid repeating the same claim twice.
+
 Return valid JSON only with this structure:
 
 {
@@ -317,6 +319,7 @@ Return valid JSON only with this structure:
   "paperType": "",
   "summary": "",
   "centralClaim": "",
+  "scientificReview": "",
   "contributionArchetype": {
     "primary": "",
     "secondary": ""
@@ -359,7 +362,6 @@ Return valid JSON only with this structure:
   "inputGrounding": "",
   "inputFundamentality": "",
   "constructionAssessment": "",
-  "outputValidity": "",
   "frameworkIndependence": "",
   "hardToVaryAssessment": "",
   "manuscriptOriginalContribution": "",
@@ -424,7 +426,7 @@ export const BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT = [
 
 You receive compact paper context and two independent blind review passes. Do not use comparator papers, author identity, publication dates, citation history, venue, fame, or later influence.
 
-Produce the final blind intrinsic review using the same v15.1 JSON schema as the blind passes.
+Produce the final blind intrinsic review using the same v15.2 JSON schema as the blind passes.
 
 Do not merely average. Audit the two passes for correctness, input/construction/output roles, output validity, failed-claim handling, framework conditionality, diagnostic subscore consistency, and whether the score and classification match the reasoning.
 
@@ -438,7 +440,7 @@ export const BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT = String.raw`Use this s
 
 You receive the final blind intrinsic review plus candidate in-site comparator profiles.
 
-Assess explanatory delta over the nearest reviewed comparators using only the v15.1 simplified fields:
+Assess explanatory delta over the nearest reviewed comparators using only the v15.2 simplified fields:
 - primitiveInputs
 - introducedConstructions
 - outputs
@@ -509,7 +511,7 @@ Return valid JSON only:
 }`;
 
 export const BENCHMARK_CALIBRATED_V15_FULL_PROMPT = [
-  "SCIReview Prompt System v15.1",
+  "SCIReview Prompt System v15.2",
   "Canonical staged prompts. The blind reviewer receives BLIND_REVIEW_PASS_V15_PROMPT directly, with no legacy diagnostic prompt appended by the review engine.",
   "A. Metadata extraction",
   DATE_METADATA_EXTRACTION_V15_PROMPT,

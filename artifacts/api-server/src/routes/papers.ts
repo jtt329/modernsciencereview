@@ -771,6 +771,7 @@ router.get("/papers/export", async (_req, res) => {
           breadthOfImpactScore: isV15Review ? undefined : r.breadthOfImpactScore,
           bestClassification: r.bestClassification,
           centralClaim: r.centralClaim,
+          scientificReview: coverageLedger?.scientificReview ?? aggregate?.scientificReview ?? coverageLedger?.finalIntrinsicReview?.scientificReview ?? null,
           summary: r.summary,
           correctness: r.correctness,
           novelty: r.novelty,

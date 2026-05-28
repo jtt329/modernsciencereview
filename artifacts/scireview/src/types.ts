@@ -48,6 +48,7 @@ export interface AIReview {
   relatedWork: string;
   // Structured fields
   centralClaim?: string;
+  scientificReview?: string;
   establishedResults?: string;
   interpretiveClaims?: string;
   speculativeClaims?: string;
