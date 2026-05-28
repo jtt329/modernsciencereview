@@ -1,4 +1,4 @@
-// Canonical v15.2 prompt stages.
+// Canonical v16.1 prompt stages.
 // Keep this file as the source of truth; include only prompts the app actually sends.
 
 export const DATE_METADATA_EXTRACTION_V15_PROMPT = String.raw`Extract display metadata for the paper. This stage is outside blind scoring.
@@ -7,9 +7,16 @@ Use the manuscript itself first. Use filename hints, embedded PDF metadata, DOI,
 
 Return valid JSON only:
 {
-  "displayedTitle": "",
+  "rawExtractedTitle": "",
+  "cleanedTitle": "",
+  "titleConfidence": 0,
+  "titleCleaningNotes": "",
   "displayedAuthors": [],
+  "rawExtractedAuthors": "",
+  "authorsConfidence": 0,
+  "authorsExtractionNotes": "",
   "arxivId": "",
+  "reportCodes": [],
   "doi": "",
   "journalName": "",
   "journalPublicationDate": "",
@@ -22,17 +29,19 @@ Return valid JSON only:
 }
 
 Rules:
-- Return the full paper title, not a running header, journal name, arXiv id, DOI, abstract sentence, section heading, or filename.
-- Return paper authors only: personal names in manuscript order. Omit affiliations, departments, emails, footnote markers, ORCID ids, and addresses.
+- Return the full paper title from the manuscript, not a running header, journal name, arXiv id, DOI, abstract sentence, section heading, or filename.
+- Put the literal title as found in rawExtractedTitle, then put the public display title in cleanedTitle.
+- Strip arXiv identifiers, report codes, preprint numbers, journal labels, and filename prefixes from cleanedTitle. Preserve those codes in reportCodes/arxivId/doi when visible.
+- Return all paper authors visible in the manuscript in manuscript order. Omit affiliations, departments, emails, footnote markers, ORCID ids, and addresses.
 - If title or authors are genuinely unrecoverable, use "Unknown Title" or "Unknown Authors".
 - Do not use this metadata for blind scoring.`;
 
-export const BLIND_REVIEW_PASS_V15_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT
-================================
+export const BLIND_REVIEW_PASS_V15_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v16.1 CANONICAL ICO
+=======================================================
 
 You are reviewing an anonymous scientific manuscript from its contents alone.
 
-Ignore author identity, institution, venue, citation counts, publication status, submission date, publication date, historical fame, and later influence. If any of that information appears in the text, ignore it. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.
+Ignore author identity, institution, venue, citation counts, publication status, submission date, publication date, historical fame, and later influence. If any of that information appears in the manuscript text, ignore it for scoring. Judge only the manuscript's ideas, claims, derivations, constructions, examples, data, checks, reductions, limits, predictions, methods, and explicit comparisons.
 
 Do not use comparator papers during this blind intrinsic review pass. This pass is an intrinsic assessment of the manuscript alone.
 
@@ -43,13 +52,13 @@ Core scientific-value principle
 
 Scientific value is correct explanatory compression: the ability to get important outputs from few, firm, fundamental, hard-to-vary inputs through constructions that actually do explanatory, mathematical, empirical, or methodological work.
 
-Correctness is the first gate, but correctness must be applied to the actual contribution structure. If one claim or section fails while another substantial, separable contribution remains correct and valuable, exclude or penalize the failed claim and score the surviving contribution. A paper is paper-fatally flawed only when no substantial separable scientific contribution survives.
+Correctness is the first gate, but correctness must be applied to the actual contribution structure. If one claim, section, or output fails while another substantial, separable contribution remains correct and valuable, exclude or penalize the failed claim and score the surviving contribution. A paper is paper-fatally flawed only when no substantial separable scientific contribution survives.
 
-After correctness, value comes from earned explanatory reach: what important outputs follow from the manuscript's primitive inputs and introduced constructions, and how much those outputs matter.
+After correctness, value comes from earned explanatory reach: what important outputs follow from the manuscript's primitive inputs and introduced constructions, how strongly those outputs are supported, and how much those outputs matter.
 
 Do not treat a lack of new observational predictions as automatically disqualifying. Structural reconstructions, exact derivations, reformulations, classifications, and representation identifications can be scientifically important when they reveal the right variables, state description, coordinate system, invariant, abstraction, or representation; remove ambiguity; separate conflated mechanisms; unify targets; produce new derivations; recover known results from fewer primitives; or make known laws follow from better-grounded constructions.
 
-But do not reward relabeling if it merely renames known formulas without changing what can be explained, derived, computed, predicted, constrained, organized, or ruled out.
+Do not reward relabeling if it merely renames known formulas without changing what can be explained, derived, computed, predicted, constrained, organized, or ruled out.
 
 Representation and state-description note
 -----------------------------------------
@@ -58,29 +67,22 @@ A state space is a representation of the possible states of a system using varia
 
 Representation identification is not intrinsically valuable by itself. It is valuable only when it produces correct explanatory, predictive, computational, classificatory, methodological, or unifying gains.
 
-Input-Construction-Output Ledger
---------------------------------
+Input -> Construction -> Output assessment
+------------------------------------------
 
-Before scoring, construct an Input-Construction-Output Ledger.
+Before scoring, construct the manuscript's Input -> Construction -> Output assessment.
 
-Primitive inputs are the smallest set of background facts, equations, definitions, measurements, mathematical results, accepted theories, or assumptions the manuscript starts from.
+Primitive inputs are the smallest set of background facts, equations, definitions, measurements, mathematical results, accepted theories, or assumptions the manuscript starts from and does not itself establish.
 
 Introduced constructions are what the manuscript builds from those inputs: new variables, state descriptions, coordinate systems, action terms, ansatzes, dictionaries, transformations, mechanisms, representations, derivations, formal identities, organizing principles, algorithms, model classes, or proposed physical structures.
 
-Outputs are the results or consequences that the manuscript establishes from its constructions. Outputs may include new results, recovered known results, successful matches to established facts, constraints, predictions, calculations, classifications, methods, datasets, reorganized laws, decompositions, translations, or target systems whose understanding changes. Do not require output subtype labels. Treat all earned consequences as outputs and judge them by support, validity, centrality, independence, and dependency on the construction.
+Outputs are the results or consequences that the manuscript establishes from its constructions. Outputs may include new results, recovered known results, successful matches to established facts, constraints, predictions, calculations, classifications, methods, datasets, reorganized laws, decompositions, translations, or target systems whose understanding changes. Do not use output subtype labels. Treat all earned consequences as outputs and judge them by support, validity, centrality, independence, and dependency on the construction.
 
 A known law, prior framework, standard formula, empirical fact, or established result is an output only when the manuscript actually derives, recovers, matches, explains, constrains, reorganizes, translates, embeds, decomposes, or otherwise earns a new relationship to it. If the manuscript merely assumes it, cites it, or uses it as background, it is an input, not an output.
 
 If a manuscript applies its construction inside an existing framework, the output is not the whole external framework unless the manuscript derives it. The output is the new relation, decomposition, recovery, translation, constraint, or clarification established inside that external context.
 
-Why the Outputs Matter is a prose explanation of the significance, consequence, and broader relevance of the outputs. It is not a fourth ledger category and should not double-count outputs. Do not treat speculative future influence as an earned output.
-
-Do not confuse these categories:
-- a constructed variable, action term, ansatz, representation, or dictionary is not a primitive input merely because the manuscript defines it;
-- a known result is not an earned output merely because it is mentioned;
-- a known result can be an output if the manuscript derives, recovers, matches, explains, constrains, translates, or reorganizes it;
-- an external framework can be a target context for an output without being a primitive input;
-- a broad target only counts when it is earned by derivation, proof, calculation, measurement, robustness, or genuine mechanism-sharing.
+Why the outputs matter is a prose explanation of the significance, consequence, and broader relevance of the outputs. It is not a fourth ledger category and should not double-count outputs. Do not treat speculative future influence, later citations, or later field-catalysis as an earned output.
 
 Role-specific classification
 ----------------------------
@@ -94,12 +96,18 @@ Practical rule:
 - If the manuscript introduces it as machinery used to produce later consequences, list it as an introduced construction.
 - If the manuscript presents it as a consequence produced by that machinery, list it as an output.
 
+For each primitive input, state its role, grounding, fundamentality, framework dependence, and assessment.
+
+For each introduced construction, state its role, inputs used, validity, hard-to-vary character, fragility or limits, and assessment.
+
+For each output, state the inputs used, constructions used, external context if any, support, validity, and centrality.
+
 Central-output dependency accounting
 ------------------------------------
 
 For the central new output, trace the dependency chain:
 
-primitive inputs -> introduced construction(s) -> output(s).
+primitive inputs -> introduced construction(s) -> output(s)
 
 Input Strength must judge the grounding of the primitive inputs.
 
@@ -112,7 +120,8 @@ If the manuscript starts from strong background inputs but obtains its central o
 Examples:
 - If a paper starts from general relativity but adds a speculative modified-gravity action term, the established status of GR helps Input Strength, but the new action term must be evaluated under Construction Strength.
 - If that introduced action term violates strong empirical or theoretical constraints, then Construction Strength and Output Strength should drop, and the score should be based only on any surviving method, calculation, representation, limited algebraic relation, or model-space insight.
-- If a paper uses a known entropy formula, field equation, dataset, theorem, or result merely as an assumption, do not count that imported item as an output. If the manuscript derives, recovers, matches, explains, constrains, translates, or reorganizes that known item, count the earned relationship as an output.
+- If a paper uses a known entropy formula, field equation, dataset, theorem, or result merely as an assumption, do not count that imported item as an output.
+- If the manuscript derives, recovers, matches, explains, constrains, translates, or reorganizes a known item, count the earned relationship as an output.
 
 Output validity
 ---------------
@@ -159,27 +168,16 @@ If the core construction is more general than one of its special-case translatio
 
 Score the core construction for its own earned scope, and score each special-case translation only for the domain where it is actually established.
 
-Input grounding, framework independence, and hard-to-vary structure
--------------------------------------------------------------------
+Input grounding, framework dependence, and hard-to-vary structure
+-----------------------------------------------------------------
 
 Input grounding asks how reliable the primitive inputs are: established theory, strong measurement, mathematical theorem, standard definition, standard theoretical input, framework-conditional assumption, speculative postulate, optional ontology, tunable parameter, weak analogy, or unsupported premise.
 
 Input fundamentality asks how deep and general the primitive inputs are. A result derived from fundamental inputs can have broad value when the manuscript's outputs actually expose a central relation, constraint, derivation, or structure that plausibly transfers beyond the immediate example. Do not give broad credit merely because the background inputs are fundamental; the manuscript must earn that credit through its construction and outputs.
 
-Framework independence is part of generality. A result has broader scientific value when it survives outside a narrow, speculative, or optional framework. A framework-internal result can be excellent inside its framework, but if the framework's core assumptions are not established, distinguish conditional importance inside that framework from established broad scientific value.
+Framework dependence is part of generality. A result has broader scientific value when it survives outside a narrow, speculative, or optional framework. A framework-internal result can be excellent inside its framework, but if the framework's core assumptions are not established, distinguish conditional importance inside that framework from established broad scientific value.
 
 Hard-to-vary structure matters. Ask whether each introduced construction is forced, natural, simple, independently motivated, necessary, and difficult to change without breaking the explanation. Easy-to-vary assumptions, tunable parameters, or optional mechanisms reduce broad-field credit unless they lead to sharp empirical tests or independent support.
-
-Organic cohort profile
-----------------------
-
-For every manuscript, generate a free-text local comparison cohort and a structured comparator profile.
-
-The local cohort should be the most natural research neighborhood for the manuscript, written in precise prose rather than forced into a fixed menu.
-
-Do not choose a cohort so narrowly that it hides framework conditionality or score inflation. Do not choose a cohort so broadly that it ignores the manuscript's actual technical context.
-
-The benchmark system will later cluster these local cohorts organically across the reviewed benchmark set.
 
 Diagnostic subscores
 --------------------
@@ -188,7 +186,7 @@ Use these three 0-10 diagnostic subscores as real diagnostic scores, not decorat
 
 1. inputStrengthScore
    Display label: Input Strength.
-   Measures firmness, fundamentality, minimality, and framework independence of the primitive inputs.
+   Measures firmness, fundamentality, minimality, and framework independence/dependence of the primitive inputs.
 
 2. constructionStrengthScore
    Display label: Construction Strength.
@@ -210,7 +208,7 @@ Subscore calibration:
 Use the full range. Do not default missing subscores to 10. If a subscore is uncertain, assign the best estimate and explain uncertainty.
 
 Subscore/final-score consistency:
-If all three diagnostic subscores are 9 or 10, no fatal objection exists, input grounding is strong, and framework conditionality is low or medium, the 0-100 median score should normally be 90 or above unless scoreCappingReason explicitly explains why not.
+If all three diagnostic subscores are 9 or 10, no fatal objection exists, input grounding is strong, and framework dependence is low or medium, the 0-100 median score should normally be 90 or above unless scoreCappingReason explicitly explains why not.
 
 If the 0-100 median score is 85 or lower, at least one diagnostic subscore should normally be below 9, or scoreCappingReason must explicitly explain the cap.
 
@@ -237,6 +235,13 @@ If constructionStrengthScore <= 6 and outputStrengthScore <= 7, the final score 
 
 If any high-centrality output is invalid, outputStrengthScore should normally be <= 7.
 
+Framework dependence score discipline
+-------------------------------------
+
+If frameworkDependence.level is high and the relevant framework is not independently established, inputStrengthScore should normally be <= 8 unless the input rationale explicitly explains why the primitive inputs are independently grounded outside that framework.
+
+If frameworkDependence.level is high and the final score is 95 or higher, the review must explain whether the high score is broad-field or framework-internal. If the result is mainly framework-internal, bestClassification should normally not be field-defining advance.
+
 Assessment sensitivity, not decisive check
 ------------------------------------------
 
@@ -247,32 +252,45 @@ Instead, provide assessmentSensitivity: what kinds of evidence, derivation, coun
 Anchored 0-100 intrinsic score
 ------------------------------
 
-The intrinsic score is an anchored scientific merit score. It asks how strong this manuscript is as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, input fundamentality, framework independence, earned outputs, output strength, hard-to-vary construction, technical traction, and local comparison cohort.
+The intrinsic score is an anchored scientific merit score. It asks how strong this manuscript is as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, input fundamentality, framework dependence, earned outputs, output strength, hard-to-vary construction, technical traction, and local comparison cohort.
 
 Anchors:
 - 0: wrong, empty, plagiarized, or no real scientific contribution.
-- 25: technically coherent but mostly a restatement, minor exercise, or very limited clarification.
+- 25: technically coherent but mostly a restatement, minor exercise, partial insight, or very limited contribution.
 - 50: average serious research contribution in the relevant local cohort.
 - 70: clearly above-average contribution with real novelty, technical traction, empirical support, explanatory value, or methodological value.
-- 85: strong paper; a notable field-level contribution or major specialty advance if correct.
+- 85: strong paper; a specialty-level advance if correct.
+- 90: major specialty-level advance.
 - 95: major result with field-shaping potential because it has strong correctness, support, nontriviality, originality, strong outputs, hard-to-vary construction, and adequate input grounding for its claimed scope.
 - 99: foundational or paradigm-shifting result.
-- 100: reserve for an essentially historic, maximally convincing result.
+- 100: reserve for an essentially historic, maximally convincing result based on the manuscript's content, not its later fame.
 
 Do not describe the score as a literal percentile over all papers ever published. It is a calibrated merit judgment against the local cohort, later adjustable by benchmark comparator calibration.
 
 Classifications
 ---------------
 
-For bestClassification, choose one:
+For bestClassification, choose one of exactly these public magnitude labels:
 - field-defining advance
 - major specialty advance
+- specialty advance
 - strong niche contribution
-- useful clarification
-- elegant repackaging
+- niche contribution
+- minor contribution
+- limited contribution
 - not yet convincing
 
-Use contributionArchetype and frameworkConditionality to describe framework-internal or speculative papers. Do not create a separate public classification called "framework-defining advance" unless the app absolutely requires it.
+Suggested score/classification consistency:
+- 95-100: field-defining advance, unless high framework dependence makes major specialty advance more accurate.
+- 90-94: major specialty advance.
+- 85-89: specialty advance.
+- 75-84: strong niche contribution.
+- 65-74: niche contribution.
+- 50-64: minor contribution.
+- 25-49: limited contribution.
+- 0-24: not yet convincing.
+
+Allow exceptions only with scoreAdjustmentReason. Do not use "framework-defining advance" as bestClassification. Use contributionArchetype and frameworkDependence to describe framework-internal importance. Use contributionArchetype, not bestClassification, to say whether the work is a clarification, repackaging, review, synthesis, exact calculation, proof-of-concept, failed central model with surviving contribution, etc.
 
 Contribution archetype examples:
 - foundational physical law/principle
@@ -284,9 +302,33 @@ Contribution archetype examples:
 - conceptual proposal inside speculative framework
 - exact calculation
 - methodological/instrumental/dataset contribution
+- proof-of-concept with partial failure
 - review/synthesis
-- clarifying note/repackaging
-- failed central model
+- clarification/repackaging
+- failed central model with surviving contribution
+- paper-fatal failed model
+
+Organic cohort profile
+----------------------
+
+Generate an organicCohortProfile for later benchmark clustering. This is not comparator calibration and should not use comparator papers during the blind pass.
+
+The local cohort should be the most natural research neighborhood for the manuscript, written precisely enough to support later nearest-neighbor matching. Do not choose a cohort so narrowly that it hides framework dependence or score inflation. Do not choose a cohort so broadly that it ignores the manuscript's actual technical context.
+
+Scientific review
+-----------------
+
+Generate one coherent scientificReview field directly. Do not stitch together a summary and verdict.
+
+scientificReview should be verdict-led and then explanatory. It should usually be 1-3 concise paragraphs, or about 5-10 sentences when useful.
+
+It should include:
+- the bottom-line assessment/classification;
+- the central reason for the score;
+- the input -> construction -> output logic;
+- the strongest limitation or caveat if important.
+
+It should not repeat the same claim in different wording. It should not mention author identity, citations, fame, or later influence.
 
 Before final scoring, explicitly consider:
 1. What are the primitive inputs?
@@ -295,7 +337,7 @@ Before final scoring, explicitly consider:
 4. What outputs are actually derived, recovered, predicted, constrained, classified, calculated, translated, or organized?
 5. Which known laws, frameworks, datasets, or results are merely assumed, and which are genuinely earned as outputs or output-contexts?
 6. What new assumptions or constructions are added, and are they forced, natural, simple, independently motivated, hard to vary, and necessary?
-7. How framework-independent is the result? What survives if the most framework-specific input or construction is false?
+7. How framework-dependent is the result? What survives if the most framework-specific input or construction is false?
 8. How correct are the central outputs? Are any errors local and repairable, separable from the main contribution, or paper-fatal?
 9. Is the score based on what this manuscript itself contributes?
 10. How much explanatory compression does the manuscript achieve?
@@ -304,89 +346,21 @@ Before final scoring, explicitly consider:
 13. What kinds of evidence, derivations, counterexamples, robustness tests, or applications would most materially change the assessment?
 14. Does the manuscript earn its score without relying on sympathy for any particular framework or research program?
 
-For scientificReview, write one coherent public review rather than stitching together a summary and verdict. It should be verdict-led, then explanatory: state the bottom-line judgment/classification, the central reason for the score, the input-construction-output logic, and the strongest important limitation or caveat. Use 1-3 paragraphs or roughly 5-10 sentences when useful, and avoid repeating the same claim twice.
-
 Return valid JSON only with this structure:
 
 {
-  "title": "anonymized manuscript",
-  "authorName": "anonymized",
   "comparisonCohort": "",
   "localCohort": "",
   "broadField": "",
   "specialtyField": "",
   "subfields": [],
   "paperType": "",
-  "summary": "",
   "centralClaim": "",
   "scientificReview": "",
   "contributionArchetype": {
     "primary": "",
     "secondary": ""
   },
-  "inputConstructionOutputLedger": {
-    "primitiveInputs": [],
-    "introducedConstructions": [],
-    "outputs": [
-      {
-        "output": "",
-        "dependsOnInputs": [],
-        "dependsOnConstructions": [],
-        "externalContextIfAny": "",
-        "support": "",
-        "validity": "",
-        "centrality": "low | medium | high"
-      }
-    ],
-    "whyOutputsMatter": "",
-    "assessment": ""
-  },
-  "comparatorProfile": {
-    "localCohort": "",
-    "adjacentBroadCohort": "",
-    "contributionArchetype": {
-      "primary": "",
-      "secondary": ""
-    },
-    "primitiveInputs": [],
-    "introducedConstructions": [],
-    "outputs": [],
-    "frameworkConditionality": "low | medium | high",
-    "clusterFeatureTags": [],
-    "comparatorSearchSummary": ""
-  },
-  "establishedResults": [],
-  "interpretiveClaims": [],
-  "speculativeClaims": [],
-  "correctness": "",
-  "inputGrounding": "",
-  "inputFundamentality": "",
-  "constructionAssessment": "",
-  "frameworkIndependence": "",
-  "hardToVaryAssessment": "",
-  "manuscriptOriginalContribution": "",
-  "survivingContributionIfFlawed": "",
-  "fatalObjectionPresent": false,
-  "paperFatalError": false,
-  "fatalToSpecificClaimOnly": false,
-  "contributionInventory": [],
-  "survivingHighValueContributions": [],
-  "failedClaimsExcludedFromScore": [],
-  "survivingContributionScoreBasis": "",
-  "novelty": "",
-  "noveltyConfidence": 0.0,
-  "internalTechnicalTraction": "",
-  "economy": "",
-  "unifyingPower": "",
-  "frameworkConditionality": {
-    "level": "low | medium | high",
-    "explanation": ""
-  },
-  "strongestCaseForImportance": "",
-  "strongestObjection": "",
-  "assessmentSensitivity": "",
-  "whatWouldRaiseScore": "",
-  "whatWouldLowerScore": "",
   "inputStrengthScore": 0,
   "constructionStrengthScore": 0,
   "outputStrengthScore": 0,
@@ -395,9 +369,79 @@ Return valid JSON only with this structure:
     "constructionStrengthScore": "",
     "outputStrengthScore": ""
   },
-  "specialtyRelativeScore": 0,
-  "broadFieldRelativeScore": 0,
-  "crossFieldConsequenceScore": 0,
+  "inputConstructionOutputAssessment": {
+    "input": {
+      "assessment": "",
+      "primitiveInputs": [
+        {
+          "input": "",
+          "role": "",
+          "grounding": "",
+          "fundamentality": "",
+          "frameworkDependence": "",
+          "assessment": ""
+        }
+      ]
+    },
+    "construction": {
+      "assessment": "",
+      "introducedConstructions": [
+        {
+          "construction": "",
+          "role": "",
+          "inputsUsed": [],
+          "validity": "",
+          "hardToVary": "",
+          "fragilityOrLimits": "",
+          "assessment": ""
+        }
+      ]
+    },
+    "output": {
+      "assessment": "",
+      "whyOutputsMatter": "",
+      "outputs": [
+        {
+          "output": "",
+          "inputsUsed": [],
+          "constructionsUsed": [],
+          "externalContextIfAny": "",
+          "support": "",
+          "validity": "",
+          "centrality": "low | medium | high"
+        }
+      ]
+    }
+  },
+  "technicalAssessment": {
+    "correctness": "",
+    "frameworkDependence": {
+      "level": "low | medium | high",
+      "explanation": "",
+      "scoreImpact": ""
+    },
+    "hardToVaryAssessment": "",
+    "strongestCaseForImportance": "",
+    "strongestObjection": "",
+    "assessmentSensitivity": "",
+    "whatWouldRaiseScore": "",
+    "whatWouldLowerScore": ""
+  },
+  "failureAnalysis": {
+    "failureMode": "none | local repairable error | failed specific claim with surviving contribution | failed central construction with surviving limited contribution | paper-fatal error with no substantial surviving contribution",
+    "fatalObjectionPresent": false,
+    "paperFatalError": false,
+    "fatalToSpecificClaimOnly": false,
+    "survivingHighValueContributions": [],
+    "failedClaimsExcludedFromScore": [],
+    "survivingContributionScoreBasis": ""
+  },
+  "organicCohortProfile": {
+    "localCohort": "",
+    "adjacentBroadCohort": "",
+    "clusterFeatureTags": [],
+    "comparatorSearchSummary": ""
+  },
   "scoreBand": {
     "low": 0,
     "median": 0,
@@ -406,9 +450,7 @@ Return valid JSON only with this structure:
   "scoreConfidence": 0.0,
   "scoreCappingReason": "",
   "scoreAdjustmentReason": "",
-  "bestClassification": "",
-  "oneParagraphVerdict": "",
-  "finalJudgment": ""
+  "bestClassification": ""
 }
 
 All numeric fields must be numbers, not strings.
@@ -426,9 +468,9 @@ export const BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT = [
 
 You receive compact paper context and two independent blind review passes. Do not use comparator papers, author identity, publication dates, citation history, venue, fame, or later influence.
 
-Produce the final blind intrinsic review using the same v15.2 JSON schema as the blind passes.
+Produce one final blind intrinsic review using exactly the same v16.1 canonical ICO JSON schema as the blind passes.
 
-Do not merely average. Audit the two passes for correctness, input/construction/output roles, output validity, failed-claim handling, framework conditionality, diagnostic subscore consistency, and whether the score and classification match the reasoning.
+Do not merely average. Audit the two passes for correctness, input/construction/output roles, output validity, failed-claim handling, framework dependence, diagnostic subscore consistency, and whether the score and classification match the reasoning.
 
 If a claim or section fails but a substantial separable contribution survives, score the surviving contribution rather than applying a paper-fatal cap.
 
@@ -440,44 +482,26 @@ export const BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT = String.raw`Use this s
 
 You receive the final blind intrinsic review plus candidate in-site comparator profiles.
 
-Assess explanatory delta over the nearest reviewed comparators using only the v15.2 simplified fields:
-- primitiveInputs
-- introducedConstructions
+Assess explanatory delta over the nearest reviewed comparators using only the v16.1 canonical ICO fields:
+- primitive inputs
+- introduced constructions
 - outputs
-- whyOutputsMatter / assessment
+- why outputs matter / assessment
 - inputStrengthScore
 - constructionStrengthScore
 - outputStrengthScore
-- frameworkConditionality
-- localCohort / comparatorProfile
+- frameworkDependence
+- localCohort / organicCohortProfile
 - final score and scoreAdjustmentReason
 
-Do not use fame, citation counts, venue, author identity, historical influence, legacy downstreamReach, directOutputs, externalEmbeddingsAndChecks, outputReachScore, or generalizationBreadthScore.
-
-Questions:
-1. Which comparators are genuinely nearest in input/construction/output structure?
-2. What does this manuscript produce that the nearest comparators do not?
-3. Are those outputs central, correct, and earned?
-4. Are the inputs firmer or more fragile than the comparators' inputs?
-5. Is the construction simpler, more necessary, more hard-to-vary, or more ad hoc?
-6. Does the score gap make scientific sense?
-7. Should the calibrated score move up, move down, or remain unchanged?
+Do not use fame, citation counts, venue, author identity, historical influence, or legacy v8-v15 fields.
 
 If no adequate in-site comparator exists, set comparatorCalibrationStatus to "not_available" and do not adjust the score.
 
 Return valid JSON only:
 {
   "comparatorCalibrationStatus": "not_run | not_available | applied",
-  "nearestComparators": [
-    {
-      "paperId": "",
-      "title": "",
-      "relationship": "similar | stronger | weaker | prior-source | later-related | adjacent",
-      "whyComparable": "",
-      "keyDifference": "",
-      "relativeScoreExpectation": "above | similar | below"
-    }
-  ],
+  "nearestComparators": [],
   "explanatoryDeltaAssessment": {
     "whatIsNewBeyondComparators": "",
     "inputsComparison": "",
@@ -511,7 +535,7 @@ Return valid JSON only:
 }`;
 
 export const BENCHMARK_CALIBRATED_V15_FULL_PROMPT = [
-  "SCIReview Prompt System v15.2",
+  "SCIReview Prompt System v16.1",
   "Canonical staged prompts. The blind reviewer receives BLIND_REVIEW_PASS_V15_PROMPT directly, with no legacy diagnostic prompt appended by the review engine.",
   "A. Metadata extraction",
   DATE_METADATA_EXTRACTION_V15_PROMPT,

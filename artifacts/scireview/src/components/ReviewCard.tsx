@@ -35,11 +35,91 @@ const Section = ({ icon, label, color, children }: { icon: React.ReactNode; labe
 
 const asArray = (value: unknown): string[] =>
   Array.isArray(value)
-    ? value.map((item) => (typeof item === 'string' ? item.trim() : '')).filter(Boolean)
+    ? value.map((item) => {
+        if (typeof item === 'string') return item.trim();
+        if (!item || typeof item !== 'object') return '';
+        const source = item as Record<string, unknown>;
+        return String(source.input ?? source.construction ?? source.output ?? source.name ?? source.description ?? '').trim();
+      }).filter(Boolean)
     : [];
 
 const listMarkdown = (items: unknown): string =>
   asArray(items).map((item) => `- ${item}`).join('\n');
+
+type PrimitiveInputDetail = {
+  input: string;
+  role: string;
+  grounding: string;
+  fundamentality: string;
+  frameworkDependence: string;
+  assessment: string;
+};
+
+type IntroducedConstructionDetail = {
+  construction: string;
+  role: string;
+  inputsUsed: string[];
+  validity: string;
+  hardToVary: string;
+  fragilityOrLimits: string;
+  assessment: string;
+};
+
+const asObjectArray = (value: unknown): any[] => Array.isArray(value) ? value : [];
+
+const firstText = (...values: unknown[]): string => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+};
+
+const asPrimitiveInputDetails = (ledger: any): PrimitiveInputDetail[] => {
+  const source = ledger?.input?.primitiveInputs ?? ledger?.primitiveInputs;
+  return asObjectArray(source)
+    .map((item) => {
+      if (typeof item === 'string') {
+        const input = item.trim();
+        return input ? { input, role: '', grounding: '', fundamentality: '', frameworkDependence: '', assessment: '' } : null;
+      }
+      if (!item || typeof item !== 'object') return null;
+      const input = firstText(item.input, item.name, item.description, item.primitiveInput);
+      if (!input) return null;
+      return {
+        input,
+        role: firstText(item.role, item.function, item.use),
+        grounding: firstText(item.grounding, item.inputGrounding),
+        fundamentality: firstText(item.fundamentality, item.inputFundamentality),
+        frameworkDependence: firstText(item.frameworkDependence, item.frameworkConditionality),
+        assessment: firstText(item.assessment, item.notes),
+      };
+    })
+    .filter(Boolean) as PrimitiveInputDetail[];
+};
+
+const asIntroducedConstructionDetails = (ledger: any): IntroducedConstructionDetail[] => {
+  const source = ledger?.construction?.introducedConstructions ?? ledger?.introducedConstructions;
+  return asObjectArray(source)
+    .map((item) => {
+      if (typeof item === 'string') {
+        const construction = item.trim();
+        return construction ? { construction, role: '', inputsUsed: [], validity: '', hardToVary: '', fragilityOrLimits: '', assessment: '' } : null;
+      }
+      if (!item || typeof item !== 'object') return null;
+      const construction = firstText(item.construction, item.name, item.description, item.introducedConstruction);
+      if (!construction) return null;
+      return {
+        construction,
+        role: firstText(item.role, item.function, item.use),
+        inputsUsed: asArray(item.inputsUsed ?? item.dependsOnInputs ?? item.requiredPrimitiveInputs),
+        validity: firstText(item.validity, item.correctness),
+        hardToVary: firstText(item.hardToVary, item.hardToVaryCharacter),
+        fragilityOrLimits: firstText(item.fragilityOrLimits, item.fragility, item.limits),
+        assessment: firstText(item.assessment, item.notes),
+      };
+    })
+    .filter(Boolean) as IntroducedConstructionDetail[];
+};
 
 const hasText = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0;
@@ -104,7 +184,8 @@ const asLedgerOutputs = (ledger: any): Array<{
   validity: string;
   centrality: string;
 }> => {
-  const outputs = Array.isArray(ledger?.outputs) ? ledger.outputs : [];
+  const outputLedger = ledger?.output && typeof ledger.output === 'object' ? ledger.output : ledger;
+  const outputs = Array.isArray(outputLedger?.outputs) ? outputLedger.outputs : [];
   const normalized = outputs.map((item: any) => {
     if (typeof item === 'string') {
       return {
@@ -119,8 +200,8 @@ const asLedgerOutputs = (ledger: any): Array<{
     }
     return {
       output: String(item?.output ?? item?.directOutput ?? item?.result ?? '').trim(),
-      dependsOnInputs: asArray(item?.dependsOnInputs ?? item?.requiredPrimitiveInputs),
-      dependsOnConstructions: asArray(item?.dependsOnConstructions ?? item?.requiredIntroducedConstructions),
+      dependsOnInputs: asArray(item?.inputsUsed ?? item?.dependsOnInputs ?? item?.requiredPrimitiveInputs),
+      dependsOnConstructions: asArray(item?.constructionsUsed ?? item?.dependsOnConstructions ?? item?.requiredIntroducedConstructions),
       externalContextIfAny: String(item?.externalContextIfAny ?? item?.externalContext ?? '').trim(),
       support: String(item?.support ?? item?.evidence ?? '').trim(),
       validity: String(item?.validity ?? item?.outputValidity ?? '').trim(),
@@ -199,7 +280,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const importedInputs = parsedCoverage?.importedInputs ?? coverageLedger?.importedInputs ?? [];
   const theorySpaceVariants = parsedCoverage?.theorySpaceVariants ?? coverageLedger?.theorySpaceVariants ?? [];
   const mechanismSharingAssessment = parsedCoverage?.mechanismSharingAssessment ?? coverageLedger?.mechanismSharingAssessment ?? '';
-  const inputConstructionOutputLedger = parsedCoverage?.inputConstructionOutputLedger ?? storedAggregate?.inputConstructionOutputLedger ?? null;
+  const inputConstructionOutputLedger =
+    parsedCoverage?.inputConstructionOutputAssessment ??
+    parsedCoverage?.inputConstructionOutputLedger ??
+    storedAggregate?.inputConstructionOutputAssessment ??
+    storedAggregate?.inputConstructionOutputLedger ??
+    null;
   const inputGrounding = parsedCoverage?.inputGrounding ?? storedAggregate?.inputGroundingAssessment ?? '';
   const inputFundamentality = parsedCoverage?.inputFundamentality ?? storedAggregate?.inputFundamentalityAssessment ?? '';
   const aggregateAdjudication = parsedCoverage?.adjudication ?? storedAggregate?.adjudication ?? null;
@@ -355,6 +441,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ?? '';
   const promptVersion = parsedCoverage?.promptVersion ?? storedAggregate?.promptVersion ?? '';
   const isV15Review = parsedCoverage?.schemaVersion === 'v15' || /^v15(?:\.|\b|-)/.test(String(promptVersion));
+  const isCanonicalIcoReview = parsedCoverage?.schemaVersion === 'v16.1' || /^v16(?:\.|\b|-)/.test(String(promptVersion));
   const benchmarkSetVersion = parsedCoverage?.benchmarkSetVersion ?? comparatorCalibration?.benchmarkSetVersion ?? '';
   const extractionMethod = parsedCoverage?.extractionMethod ?? '';
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
@@ -375,14 +462,23 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const currentImportedInputs = selectedPass?.coverageLedger?.importedInputs ?? importedInputs;
   const currentTheorySpaceVariants = selectedPass?.coverageLedger?.theorySpaceVariants ?? theorySpaceVariants;
   const currentMechanismSharingAssessment = selectedPass?.coverageLedger?.mechanismSharingAssessment ?? mechanismSharingAssessment;
-  const currentInputConstructionOutputLedger = selectedPass?.inputConstructionOutputLedger ?? inputConstructionOutputLedger;
-  const currentPrimitiveInputs = currentInputConstructionOutputLedger?.primitiveInputs ?? [];
-  const currentIntroducedConstructions = currentInputConstructionOutputLedger?.introducedConstructions ?? [];
+  const currentInputConstructionOutputLedger =
+    selectedPass?.inputConstructionOutputAssessment ??
+    selectedPass?.inputConstructionOutputLedger ??
+    inputConstructionOutputLedger;
+  const currentPrimitiveInputDetails = asPrimitiveInputDetails(currentInputConstructionOutputLedger);
+  const currentIntroducedConstructionDetails = asIntroducedConstructionDetails(currentInputConstructionOutputLedger);
+  const currentPrimitiveInputs = currentPrimitiveInputDetails.map((item) => item.input);
+  const currentIntroducedConstructions = currentIntroducedConstructionDetails.map((item) => item.construction);
   const currentLedgerOutputs = asLedgerOutputs(currentInputConstructionOutputLedger);
   const currentWhyOutputsMatter =
+    currentInputConstructionOutputLedger?.output?.whyOutputsMatter ??
     currentInputConstructionOutputLedger?.whyOutputsMatter ??
     '';
-  const currentInputConstructionOutputAssessment = currentInputConstructionOutputLedger?.assessment ?? '';
+  const currentInputConstructionOutputAssessment =
+    currentInputConstructionOutputLedger?.output?.assessment ??
+    currentInputConstructionOutputLedger?.assessment ??
+    '';
   const hasIcoLedger = Boolean(
     currentPrimitiveInputs.length ||
     currentIntroducedConstructions.length ||
@@ -390,22 +486,34 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     currentWhyOutputsMatter ||
     currentInputConstructionOutputAssessment
   );
-  const currentInputGrounding = selectedPass?.inputGrounding || inputGrounding;
+  const currentInputGrounding =
+    selectedPass?.inputConstructionOutputAssessment?.input?.assessment ||
+    currentInputConstructionOutputLedger?.input?.assessment ||
+    selectedPass?.inputGrounding ||
+    inputGrounding;
   const currentInputFundamentality = selectedPass?.inputFundamentality || inputFundamentality;
-  const currentConstructionAssessment = selectedPass?.constructionAssessment
+  const currentConstructionAssessment =
+    selectedPass?.inputConstructionOutputAssessment?.construction?.assessment ||
+    currentInputConstructionOutputLedger?.construction?.assessment ||
+    selectedPass?.constructionAssessment
     || parsedCoverage?.constructionAssessment
     || storedAggregate?.constructionAssessment
     || '';
-  const currentCorrectness = selectedPass?.correctness || review.correctness;
-  const currentStrongestCase = selectedPass?.strongestCaseForImportance || review.strongestCaseForImportance;
-  const currentStrongestObjection = selectedPass?.strongestObjection || review.strongestObjection;
+  const selectedTechnicalAssessment = selectedPass?.technicalAssessment ?? {};
+  const aggregateTechnicalAssessment = parsedCoverage?.technicalAssessment ?? storedAggregate?.technicalAssessment ?? {};
+  const currentCorrectness = selectedTechnicalAssessment?.correctness || aggregateTechnicalAssessment?.correctness || selectedPass?.correctness || review.correctness;
+  const currentStrongestCase = selectedTechnicalAssessment?.strongestCase || aggregateTechnicalAssessment?.strongestCase || selectedPass?.strongestCaseForImportance || review.strongestCaseForImportance;
+  const currentStrongestObjection = selectedTechnicalAssessment?.strongestObjection || aggregateTechnicalAssessment?.strongestObjection || selectedPass?.strongestObjection || review.strongestObjection;
   const currentAssessmentSensitivity =
+    selectedTechnicalAssessment?.assessmentSensitivity ||
+    aggregateTechnicalAssessment?.assessmentSensitivity ||
     selectedPass?.assessmentSensitivity ||
     parsedCoverage?.assessmentSensitivity ||
     storedAggregate?.assessmentSensitivity ||
     review.assessmentSensitivity ||
     '';
-  const currentFrameworkConditionality = selectedPass?.frameworkConditionality?.explanation
+  const selectedFrameworkDependence = selectedTechnicalAssessment?.frameworkDependence ?? aggregateTechnicalAssessment?.frameworkDependence ?? selectedPass?.frameworkConditionality ?? {};
+  const currentFrameworkConditionality = selectedFrameworkDependence?.explanation
     || (review as any).frameworkConditionalityExplanation
     || storedAggregate?.frameworkConditionalityAssessment
     || parsedCoverage?.frameworkConditionalityAssessment
@@ -414,15 +522,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     || parsedCoverage?.frameworkIndependence
     || storedAggregate?.frameworkIndependenceAssessment
     || '';
-  const currentHardToVaryAssessment = selectedPass?.hardToVaryAssessment
+  const currentHardToVaryAssessment = selectedTechnicalAssessment?.hardToVaryAssessment
+    || aggregateTechnicalAssessment?.hardToVaryAssessment
+    || selectedPass?.hardToVaryAssessment
     || parsedCoverage?.hardToVaryAssessment
     || storedAggregate?.hardToVaryAssessment
     || '';
-  const currentEstablishedResults = listMarkdown(selectedPass?.establishedResults) || review.establishedResults || listMarkdown(storedAggregate?.establishedResults);
-  const currentInterpretiveClaims = listMarkdown(selectedPass?.interpretiveClaims) || review.interpretiveClaims || listMarkdown(storedAggregate?.interpretiveClaims);
-  const currentSpeculativeClaims = listMarkdown(selectedPass?.speculativeClaims) || review.speculativeClaims || listMarkdown(storedAggregate?.speculativeClaims);
-  const currentWhatWouldRaiseScore = selectedPass?.whatWouldRaiseScore || parsedCoverage?.whatWouldRaiseScore || storedAggregate?.whatWouldRaiseScore || '';
-  const currentWhatWouldLowerScore = selectedPass?.whatWouldLowerScore || parsedCoverage?.whatWouldLowerScore || storedAggregate?.whatWouldLowerScore || '';
+  const currentEstablishedResults = isCanonicalIcoReview ? '' : listMarkdown(selectedPass?.establishedResults) || review.establishedResults || listMarkdown(storedAggregate?.establishedResults);
+  const currentInterpretiveClaims = isCanonicalIcoReview ? '' : listMarkdown(selectedPass?.interpretiveClaims) || review.interpretiveClaims || listMarkdown(storedAggregate?.interpretiveClaims);
+  const currentSpeculativeClaims = isCanonicalIcoReview ? '' : listMarkdown(selectedPass?.speculativeClaims) || review.speculativeClaims || listMarkdown(storedAggregate?.speculativeClaims);
+  const currentWhatWouldRaiseScore = selectedTechnicalAssessment?.whatWouldRaiseScore || aggregateTechnicalAssessment?.whatWouldRaiseScore || selectedPass?.whatWouldRaiseScore || parsedCoverage?.whatWouldRaiseScore || storedAggregate?.whatWouldRaiseScore || '';
+  const currentWhatWouldLowerScore = selectedTechnicalAssessment?.whatWouldLowerScore || aggregateTechnicalAssessment?.whatWouldLowerScore || selectedPass?.whatWouldLowerScore || parsedCoverage?.whatWouldLowerScore || storedAggregate?.whatWouldLowerScore || '';
   const hasOptionalDetails = [
     currentEstablishedResults,
     currentInterpretiveClaims,
@@ -475,7 +585,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     currentWhyOutputsMatter,
   );
   const frameworkDependenceLevel =
-    selectedPass?.frameworkConditionality?.level ??
+    selectedFrameworkDependence?.level ??
     storedAggregate?.frameworkConditionality?.level ??
     parsedCoverage?.frameworkConditionality?.level ??
     '';
@@ -732,7 +842,35 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {currentPrimitiveInputs.length > 0 && (
                     <div>
                       <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Primitive Inputs</p>
-                      <Markdown>{listMarkdown(currentPrimitiveInputs)}</Markdown>
+                      <div className="space-y-2">
+                        {currentPrimitiveInputDetails.map((item, index) => {
+                          const hasDetails = [item.role, item.grounding, item.fundamentality, item.frameworkDependence, item.assessment].some(hasText);
+                          return (
+                            <details key={`${item.input}-${index}`} className="group bg-white/5 border border-cyan-300/15 rounded-xl p-3" open={!hasDetails ? true : undefined}>
+                              <summary className="cursor-pointer list-none">
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <Markdown>{item.input}</Markdown>
+                                  </div>
+                                  {item.frameworkDependence && (
+                                    <span className="text-[9px] font-black uppercase tracking-widest text-cyan-100 bg-cyan-400/10 border border-cyan-300/20 rounded-full px-2 py-1">
+                                      {item.frameworkDependence}
+                                    </span>
+                                  )}
+                                </div>
+                                {item.role && <p className="mt-1 text-xs text-slate-400">{item.role}</p>}
+                              </summary>
+                              {hasDetails && (
+                                <div className="mt-3 grid gap-3 border-t border-white/10 pt-3 md:grid-cols-2">
+                                  {item.grounding && <div><p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Grounding</p><Markdown>{item.grounding}</Markdown></div>}
+                                  {item.fundamentality && <div><p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Fundamentality</p><Markdown>{item.fundamentality}</Markdown></div>}
+                                  {item.assessment && <div className="md:col-span-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{item.assessment}</Markdown></div>}
+                                </div>
+                              )}
+                            </details>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -754,7 +892,37 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {currentIntroducedConstructions.length > 0 && (
                     <div>
                       <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Introduced Constructions</p>
-                      <Markdown>{listMarkdown(currentIntroducedConstructions)}</Markdown>
+                      <div className="space-y-2">
+                        {currentIntroducedConstructionDetails.map((item, index) => {
+                          const hasDetails = [item.role, item.validity, item.hardToVary, item.fragilityOrLimits, item.assessment].some(hasText) || item.inputsUsed.length > 0;
+                          return (
+                            <details key={`${item.construction}-${index}`} className="group bg-white/5 border border-indigo-300/15 rounded-xl p-3">
+                              <summary className="cursor-pointer list-none">
+                                <div className="flex flex-wrap items-start justify-between gap-2">
+                                  <div className="min-w-0 flex-1">
+                                    <Markdown>{item.construction}</Markdown>
+                                  </div>
+                                  {item.validity && (
+                                    <span className={`text-[9px] font-black uppercase tracking-widest border rounded-full px-2 py-1 ${validityTone(item.validity).className}`}>
+                                      {validityTone(item.validity).label}
+                                    </span>
+                                  )}
+                                </div>
+                                {item.role && <p className="mt-1 text-xs text-slate-400">{item.role}</p>}
+                              </summary>
+                              {hasDetails && (
+                                <div className="mt-3 grid gap-3 border-t border-white/10 pt-3 md:grid-cols-2">
+                                  {item.inputsUsed.length > 0 && <div><p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Inputs Used</p><Markdown>{listMarkdown(item.inputsUsed)}</Markdown></div>}
+                                  {item.validity && <div><p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Validity</p><Markdown>{item.validity}</Markdown></div>}
+                                  {item.hardToVary && <div><p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Hard To Vary</p><Markdown>{item.hardToVary}</Markdown></div>}
+                                  {item.fragilityOrLimits && <div><p className="text-[9px] font-black text-amber-300 uppercase tracking-widest mb-1">Fragility Or Limits</p><Markdown>{item.fragilityOrLimits}</Markdown></div>}
+                                  {item.assessment && <div className="md:col-span-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{item.assessment}</Markdown></div>}
+                                </div>
+                              )}
+                            </details>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
                 </div>

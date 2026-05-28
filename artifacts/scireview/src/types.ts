@@ -1,7 +1,15 @@
 export interface PaperDateMetadata {
+  rawExtractedTitle?: string;
+  cleanedTitle?: string;
+  titleConfidence?: number;
+  titleCleaningNotes?: string;
   displayedTitle?: string;
   displayedAuthors?: string[];
+  rawExtractedAuthors?: string[];
+  authorsConfidence?: number;
+  authorsExtractionNotes?: string;
   arxivId?: string;
+  reportCodes?: string[];
   doi?: string;
   journalName?: string;
   journalPublicationDate?: string;
@@ -35,6 +43,41 @@ export interface Paper {
   reviewCentralClaim?: string | null;
   reviewFinalJudgment?: string | null;
 }
+
+export type IcoPrimitiveInput =
+  | string
+  | {
+      input?: string;
+      role?: string;
+      grounding?: string;
+      fundamentality?: string;
+      frameworkDependence?: string;
+      assessment?: string;
+    };
+
+export type IcoIntroducedConstruction =
+  | string
+  | {
+      construction?: string;
+      role?: string;
+      inputsUsed?: string[];
+      validity?: string;
+      hardToVary?: string;
+      fragilityOrLimits?: string;
+      assessment?: string;
+    };
+
+export type IcoOutput = {
+  output?: string;
+  dependsOnInputs?: string[];
+  dependsOnConstructions?: string[];
+  inputsUsed?: string[];
+  constructionsUsed?: string[];
+  externalContextIfAny?: string;
+  support?: string;
+  validity?: string;
+  centrality?: 'low' | 'medium' | 'high' | string;
+};
 
 export interface AIReview {
   id: string;
@@ -77,22 +120,29 @@ export interface AIReview {
   scoreAdjustmentReason?: string;
   scoringAnomaly?: string;
   inputConstructionOutputLedger?: {
-    primitiveInputs?: string[];
-    introducedConstructions?: string[];
-    outputs?: Array<{
-      output?: string;
-      dependsOnInputs?: string[];
-      dependsOnConstructions?: string[];
-      externalContextIfAny?: string;
-      support?: string;
-      validity?: string;
-      centrality?: 'low' | 'medium' | 'high' | string;
-    }>;
+    primitiveInputs?: IcoPrimitiveInput[];
+    introducedConstructions?: IcoIntroducedConstruction[];
+    outputs?: IcoOutput[];
     whyOutputsMatter?: string;
     assessment?: string;
     externalEmbeddingsAndChecks?: string[];
     directOutputs?: string[];
     downstreamReach?: string;
+  };
+  inputConstructionOutputAssessment?: {
+    input?: {
+      assessment?: string;
+      primitiveInputs?: IcoPrimitiveInput[];
+    };
+    construction?: {
+      assessment?: string;
+      introducedConstructions?: IcoIntroducedConstruction[];
+    };
+    output?: {
+      assessment?: string;
+      whyOutputsMatter?: string;
+      outputs?: IcoOutput[];
+    };
   };
   centralOutputDependency?: {
     centralOutput?: string;
