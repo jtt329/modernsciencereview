@@ -500,7 +500,7 @@ type IndividualPassResult = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v16.3-card-assessments-blind-passes";
+export const REVIEW_PROMPT_VERSION = "v16.4-tabs-single-score";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -678,7 +678,7 @@ const individualReviewJsonSchema = {
   required: [
     "centralClaim",
     "scientificReview",
-    "scoreBand",
+    "intrinsicScore",
     "bestClassification",
     "inputConstructionOutputAssessment",
     "technicalAssessment",
@@ -744,6 +744,7 @@ const individualReviewJsonSchema = {
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
     outputStrengthScore: jsonNumber,
+    intrinsicScore: jsonNumber,
     subscoreRationale: {
       type: "object",
       additionalProperties: true,
@@ -1868,6 +1869,7 @@ function firstNumber(values: unknown[]) {
 function normalizeScoreBandWithFallback(source: Record<string, unknown>) {
   const band = normalizeScoreBand(source.scoreBand);
   const explicitScore = firstNumber([
+    source.intrinsicScore,
     source.score,
     source.overallScore,
     source.overallIntrinsicScore,
@@ -3162,6 +3164,8 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const defaultHigh = Math.max(...usableScores);
   const defaultMedian = medianScore(usableScores);
   const explicitAggregateScore = firstNumber([
+    root.intrinsicScore,
+    source.intrinsicScore,
     root.adjudicatorRating,
     source.adjudicatorRating,
     root.finalCalibratedScore,
@@ -3696,7 +3700,7 @@ function compactIndividualReviewForAdjudicator(review: IndividualReview, index: 
   return {
     passNumber: index + 1,
     score: review.scoreBand.median,
-    scoreBand: review.scoreBand,
+    intrinsicScore: review.scoreBand.median,
     bestClassification: review.bestClassification,
     classification: review.bestClassification,
     comparisonCohort: review.comparisonCohort,
@@ -3871,7 +3875,7 @@ function buildAdjudicatorInput(
   const compactPasses = reviews.map(compactIndividualReviewForAdjudicator);
   const text = JSON.stringify({
     adjudicatorInputNote:
-      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.3 canonical input-construction-output assessments, diagnostic scores, objections, and judgments below.",
+      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.4 canonical input-construction-output assessments, diagnostic scores, objections, and single intrinsic scores below.",
     manuscriptSummaryAndLedger: compactPasses.map((review) => ({
       passNumber: review.passNumber,
       centralClaim: review.centralClaim,
@@ -3945,8 +3949,7 @@ function buildComparatorCalibrationInput(
       scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
       diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
       diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
-      scoreBand: aggregate.blindIntrinsicScoreBand,
-      blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
+      intrinsicScore: aggregate.blindIntrinsicScoreBand.median,
       scoreConfidence: aggregate.finalScoreConfidence,
       bestClassification: aggregate.finalClassification,
       oneParagraphVerdict: aggregate.publicOneParagraphVerdict,
@@ -4585,8 +4588,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
-      schemaVersion: "v16.3",
-      clusterVersion: "v16.3-canonical-ico",
+      schemaVersion: "v16.4",
+      clusterVersion: "v16.4-canonical-ico",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
       benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
@@ -4608,11 +4611,12 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       publicComparatorSummary: aggregate.publicComparatorSummary,
       adminComparatorNotes: aggregate.adminComparatorNotes,
       comparatorProfile: storedAggregate.comparatorProfile,
-      comparatorCalibration: storedComparatorCalibration,
+      comparatorCalibration: result.pipelineMode === "benchmark-ingestion" ? null : storedComparatorCalibration,
       explanatoryDeltaAssessment: result.pipelineMode === "benchmark-ingestion" ? null : storedComparatorCalibration.explanatoryDeltaAssessment,
       comparatorsNeedingRecalibration: aggregate.comparatorCalibration.comparatorsNeedingRecalibration,
-      blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
-      comparatorCalibratedFinalScoreBand: aggregate.finalScoreBand,
+      intrinsicScore: aggregate.finalScoreBand.median,
+      finalScore: aggregate.finalScoreBand.median,
+      blindPassScores: aggregate.individualScores,
       adjudicatorStatus: aggregate.adjudicatorStatus,
       adjudication: storedAdjudication,
       reviewPassComparison: storedAdjudication,

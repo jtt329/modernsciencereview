@@ -370,6 +370,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const [showPrompt, setShowPrompt] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<'combined' | number>('combined');
+  const [activeIcoTab, setActiveIcoTab] = useState<'input' | 'construction' | 'output'>('input');
 
   const normalizeDisplayedBand = (
     low: number | null | undefined,
@@ -456,10 +457,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   );
   const aggregateScoreBand = storedAggregate?.finalScoreBand ?? null;
   const comparatorCalibration = parsedCoverage?.comparatorCalibration ?? storedAggregate?.comparatorCalibration ?? null;
-  const blindIntrinsicScoreBand = parsedCoverage?.blindIntrinsicScoreBand
-    ?? comparatorCalibration?.intrinsicScoreBand
-    ?? storedAggregate?.blindIntrinsicScoreBand
-    ?? null;
   const comparatorCalibratedFinalScoreBand = parsedCoverage?.comparatorCalibratedFinalScoreBand
     ?? comparatorCalibration?.finalPublicScoreBand
     ?? aggregateScoreBand
@@ -526,9 +523,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
   const passScoreBands = storedIndividualReviews.map((pass: any) =>
     normalizeDisplayedBand(
-      pass.scoreBand?.low,
-      pass.scoreBand?.median,
-      pass.scoreBand?.high,
+      pass.scoreBand?.low ?? pass.intrinsicScore ?? pass.score,
+      pass.scoreBand?.median ?? pass.intrinsicScore ?? pass.score,
+      pass.scoreBand?.high ?? pass.intrinsicScore ?? pass.score,
       pass.bestClassification,
     )
   );
@@ -539,20 +536,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     storedIndividualReviews,
   });
   const combinedBand = normalizeDisplayedBand(
-    comparatorCalibratedFinalScoreBand?.low ?? review.scoreBandLow ?? review.overallIntrinsicScore ?? review.score,
-    comparatorCalibratedFinalScoreBand?.median ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score,
-    comparatorCalibratedFinalScoreBand?.high ?? review.scoreBandHigh ?? review.overallIntrinsicScore ?? review.score,
+    comparatorCalibratedFinalScoreBand?.low ?? parsedCoverage?.finalScore ?? parsedCoverage?.intrinsicScore ?? review.scoreBandLow ?? review.overallIntrinsicScore ?? review.score,
+    comparatorCalibratedFinalScoreBand?.median ?? parsedCoverage?.finalScore ?? parsedCoverage?.intrinsicScore ?? review.scoreBandMedian ?? review.overallIntrinsicScore ?? review.score,
+    comparatorCalibratedFinalScoreBand?.high ?? parsedCoverage?.finalScore ?? parsedCoverage?.intrinsicScore ?? review.scoreBandHigh ?? review.overallIntrinsicScore ?? review.score,
     aggregateClassification ?? review.bestClassification,
   );
-  const blindBand = blindIntrinsicScoreBand
-    ? normalizeDisplayedBand(
-        blindIntrinsicScoreBand.low,
-        blindIntrinsicScoreBand.median,
-        blindIntrinsicScoreBand.high,
-        aggregateClassification ?? review.bestClassification,
-      )
-    : null;
   const finalScore = combinedBand.median;
+  const selectedPassScore = selectedPass
+    ? Math.round(Number(selectedPass.intrinsicScore ?? selectedPass.score ?? selectedPass.scoreBand?.median ?? finalScore))
+    : finalScore;
+  const displayedScore = Number.isFinite(selectedPassScore) ? selectedPassScore : finalScore;
+  const displayedScoreLabel = selectedPass ? `Blind Pass ${(activeTab as number) + 1}` : 'Final Score';
   const computedPassDisagreement = blindPassScores.length >= 2
     ? Math.max(...blindPassScores) - Math.min(...blindPassScores)
     : null;
@@ -563,7 +557,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       : computedPassDisagreement <= 10
         ? 'medium'
         : 'low';
+  const scoreSpread = computedPassDisagreement;
   const scoreStability = selectedPass ? storedScoreStability : (storedScoreStability || computedStability);
+  const spreadText = scoreSpread == null
+    ? 'Insufficient data'
+    : `${scoreSpread} ${scoreSpread === 1 ? 'point' : 'points'}`;
   const adjustmentLabel = comparatorCalibrationApplied
     ? `${(calibrationAdjustment ?? 0) > 0 ? '+' : ''}${calibrationAdjustment ?? 0}`
     : 'not applied';
@@ -742,11 +740,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ),
     isV15Review || subscoreIsValid('outputStrengthScore', 'outputReachScore') !== false,
   );
-  const scoreSpread = computedPassDisagreement;
   const stabilityLabel = String(scoreStability || computedStability || 'insufficient data').replace(/_/g, ' ');
   const stabilityDisplay = scoreSpread == null
     ? 'Insufficient data'
-    : `${stabilityLabel.charAt(0).toUpperCase()}${stabilityLabel.slice(1)} · ${scoreSpread}-point spread`;
+    : `${stabilityLabel.charAt(0).toUpperCase()}${stabilityLabel.slice(1)} · ${spreadText} spread`;
   const outputStrengthAssessment = mergeUniqueText(
     currentSubscoreRationale?.outputStrengthScore,
     currentInputConstructionOutputAssessment,
@@ -777,6 +774,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const modelPromptLine = [modelBase, versionAndMode].filter(Boolean).join(' · ');
   const diagnosticCards = [
     {
+      id: 'input' as const,
       label: 'Input Strength',
       value: currentInputStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.inputStrengthScore),
@@ -784,6 +782,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       border: currentInputStrengthScore == null ? 'border-white/10' : currentInputStrengthScore >= 8 ? 'border-emerald-300/20' : currentInputStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
     {
+      id: 'construction' as const,
       label: 'Construction Strength',
       value: currentConstructionStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.constructionStrengthScore),
@@ -791,6 +790,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       border: currentConstructionStrengthScore == null ? 'border-white/10' : currentConstructionStrengthScore >= 8 ? 'border-emerald-300/20' : currentConstructionStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
     {
+      id: 'output' as const,
       label: 'Output Strength',
       value: currentOutputStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.outputStrengthScore),
@@ -846,9 +846,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-5">
               <div className="space-y-2">
-                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Final Score</p>
+                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">{displayedScoreLabel}</p>
                 <div className="flex flex-wrap items-end gap-4">
-                  <p className="text-6xl font-black text-emerald-200 leading-none">{finalScore}</p>
+                  <p className="text-6xl font-black text-emerald-200 leading-none">{displayedScore}</p>
                   <div className="pb-1">
                     <p className="text-lg font-black text-white capitalize">{currentClassification}</p>
                     <p className="text-xs text-slate-400">{currentLocalCohort || 'Comparison cohort not specified'}</p>
@@ -910,7 +910,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 })}
               </div>
               {blindPassScores.length > 0 && storedIndividualReviews.length === 0 && (
-                <p className="text-xs text-slate-500">Blind pass review text was not saved for this older review.</p>
+                <p className="text-xs text-slate-500">Only blind pass scores were stored for this older review.</p>
               )}
               <div className="flex flex-wrap gap-3 text-xs text-slate-400">
                 {!comparatorCalibrationApplied && <span>{scorePathCaption}</span>}
@@ -978,7 +978,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               </h3>
               <div className="grid gap-3 md:grid-cols-3">
                 {diagnosticCards.map((card) => (
-                  <div key={card.label} className={`bg-slate-950/25 border ${card.border} rounded-xl p-4`}>
+                  <button
+                    key={card.label}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeIcoTab === card.id}
+                    onClick={() => setActiveIcoTab(card.id)}
+                    className={`text-left bg-slate-950/25 border ${activeIcoTab === card.id ? 'border-white ring-2 ring-white/40 shadow-lg shadow-white/5' : card.border} rounded-xl p-4 transition-all hover:border-white/45`}
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{card.label}</p>
                       <p className={`text-2xl font-black ${card.color}`}>
@@ -987,11 +994,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </p>
                     </div>
                     {card.rationale && <div className="mt-3 text-xs leading-relaxed text-slate-300"><Markdown>{card.rationale}</Markdown></div>}
-                  </div>
+                  </button>
                 ))}
               </div>
               <div className="space-y-4">
-                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
+                {activeIcoTab === 'input' && <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-cyan-300 uppercase tracking-widest">Input Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentInputStrengthScore)}`}>
@@ -1006,9 +1013,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         {currentPrimitiveInputDetails.map((item, index) => {
                           return (
                             <div key={`${item.input}-${index}`} className="bg-white/5 border border-cyan-300/15 rounded-xl p-4 space-y-3">
-                              <div className="space-y-1">
-                                <Markdown>{item.input}</Markdown>
-                                {item.role && <Markdown>{item.role}</Markdown>}
+                              <div className="flex items-start gap-3">
+                                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-300/10 text-[10px] font-black text-cyan-100">
+                                  {index + 1}
+                                </span>
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <Markdown>{item.input}</Markdown>
+                                  {item.role && <Markdown>{item.role}</Markdown>}
+                                </div>
                               </div>
                               <div className="space-y-1">
                                 {(item.grounding || item.groundingQuality) && qualityLine('Grounding', item.grounding || item.groundingQuality, groundingTone(item.groundingQuality || item.grounding))}
@@ -1027,9 +1039,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </div>
                     </div>
                   )}
-                </div>
+                </div>}
 
-                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
+                {activeIcoTab === 'construction' && <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Construction Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentConstructionStrengthScore)}`}>
@@ -1044,9 +1056,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         {currentIntroducedConstructionDetails.map((item, index) => {
                           return (
                             <div key={`${item.construction}-${index}`} className="bg-white/5 border border-indigo-300/15 rounded-xl p-4 space-y-3">
-                              <div className="space-y-1">
-                                <Markdown>{item.construction}</Markdown>
-                                {item.role && <Markdown>{item.role}</Markdown>}
+                              <div className="flex items-start gap-3">
+                                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-indigo-300/30 bg-indigo-300/10 text-[10px] font-black text-indigo-100">
+                                  {index + 1}
+                                </span>
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <Markdown>{item.construction}</Markdown>
+                                  {item.role && <Markdown>{item.role}</Markdown>}
+                                </div>
                               </div>
                               <div className="space-y-1">
                                 {(item.validity || item.validityLevel) && qualityLine('Validity', item.validity || item.validityLevel, validityTone(item.validityLevel || item.validity).tone)}
@@ -1065,9 +1082,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </div>
                     </div>
                   )}
-                </div>
+                </div>}
 
-                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
+                {activeIcoTab === 'output' && <div className="bg-slate-950/25 border border-white/10 rounded-xl p-4 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-emerald-300 uppercase tracking-widest">Output Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentOutputStrengthScore)}`}>
@@ -1093,8 +1110,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                           <details key={`${item.output}-${i}`} className="group bg-white/5 border border-white/10 rounded-xl p-3">
                             <summary className="cursor-pointer list-none space-y-2">
                               <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0 flex-1">
-                                  <Markdown>{item.output}</Markdown>
+                                <div className="min-w-0 flex flex-1 items-start gap-3">
+                                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-300/10 text-[10px] font-black text-emerald-100">
+                                    {i + 1}
+                                  </span>
+                                  <div className="min-w-0 flex-1">
+                                    <Markdown>{item.output}</Markdown>
+                                  </div>
                                 </div>
                                 {item.centrality && (
                                   <span className="shrink-0 text-[9px] font-black uppercase tracking-widest text-emerald-100 bg-emerald-400/15 border border-emerald-300/20 rounded-full px-2 py-1">
@@ -1147,7 +1169,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       </div>
                     </div>
                   )}
-                </div>
+                </div>}
               </div>
             </div>
           )}
@@ -1229,15 +1251,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </summary>
             <div className="mt-4 space-y-4">
               <div className="grid md:grid-cols-3 gap-3">
-                {isAdmin && (
-                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                    <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Adjudicator Band</p>
-                    <p className="text-sm font-black text-white mt-1">{blindBand ? `${blindBand.low}-${blindBand.median}-${blindBand.high}` : 'Not stored'}</p>
-                  </div>
-                )}
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">{comparatorCalibrationApplied ? 'Final Calibrated Band' : 'Final Blind Intrinsic Band'}</p>
-                  <p className="text-sm font-black text-white mt-1">{combinedBand.low}-{combinedBand.median}-{combinedBand.high}</p>
+                  <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Final Score</p>
+                  <p className="text-sm font-black text-white mt-1">{finalScore}</p>
+                </div>
+                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
+                  <p className="text-sm font-black text-white mt-1">{blindPassScores.length ? blindPassScores.join(', ') : 'Not stored'}</p>
+                </div>
+                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                  <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Blind-Pass Spread</p>
+                  <p className="text-sm font-black text-white mt-1">{spreadText}</p>
                 </div>
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparator Status</p>

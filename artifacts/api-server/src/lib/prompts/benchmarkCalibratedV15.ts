@@ -1,4 +1,4 @@
-// Canonical v16.3 prompt stages.
+// Canonical v16.4 prompt stages.
 // Keep this file as the source of truth; include only prompts the app actually sends.
 
 export const DATE_METADATA_EXTRACTION_V15_PROMPT = String.raw`Extract display metadata for the paper. This stage is outside blind scoring.
@@ -36,7 +36,7 @@ Rules:
 - If title or authors are genuinely unrecoverable, use "Unknown Title" or "Unknown Authors".
 - Do not use this metadata for blind scoring.`;
 
-export const BLIND_REVIEW_PASS_V15_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v16.3 CANONICAL ICO WITH STRUCTURED QUALITY FIELDS
+export const BLIND_REVIEW_PASS_V15_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v16.4 CANONICAL ICO WITH SINGLE SCORE AND TABBED REVIEW SUPPORT
 =======================================================
 
 You are reviewing an anonymous scientific manuscript from its contents alone.
@@ -224,9 +224,9 @@ Subscore calibration:
 Use the full range. Do not default missing subscores to 10. If a subscore is uncertain, assign the best estimate and explain uncertainty.
 
 Subscore/final-score consistency:
-If all three diagnostic subscores are 9 or 10, no fatal objection exists, input grounding is strong, and framework dependence is low or medium, the 0-100 median score should normally be 90 or above unless scoreCappingReason explicitly explains why not.
+If all three diagnostic subscores are 9 or 10, no fatal objection exists, input grounding is strong, and framework dependence is low or medium, the 0-100 intrinsicScore should normally be 90 or above unless scoreCappingReason explicitly explains why not.
 
-If the 0-100 median score is 85 or lower, at least one diagnostic subscore should normally be below 9, or scoreCappingReason must explicitly explain the cap.
+If the 0-100 intrinsicScore is 85 or lower, at least one diagnostic subscore should normally be below 9, or scoreCappingReason must explicitly explain the cap.
 
 Do not output 10/10 across all three diagnostic subscores unless the manuscript is genuinely exceptional on all three dimensions.
 
@@ -265,10 +265,17 @@ Do not require a single decisive check. Many theoretical, mathematical, structur
 
 Instead, provide assessmentSensitivity: what kinds of evidence, derivation, counterexample, calculation, proof, empirical result, application, robustness test, or comparator result would most materially change the assessment. If there is no single decisive check, say so and list the most important classes of checks or extensions.
 
+Single-score output; no score bands
+-----------------------------------
+
+Return one 0-100 intrinsicScore. Do not create low/median/high score bands. Score bands were an older uncertainty display and should not be generated in this prompt. Uncertainty is represented by two independent blind pass scores, their spread, review stability, scoreConfidence, scoreCappingReason, scoreAdjustmentReason, and assessmentSensitivity.
+
+The adjudicator should audit the two blind pass reviews and select one adjudicator/final score. It should not manufacture an additional uncertainty band. If the score is uncertain, explain why in assessmentSensitivity or scoreAdjustmentReason rather than creating a band.
+
 Anchored 0-100 intrinsic score
 ------------------------------
 
-The intrinsic score is an anchored scientific merit score. It asks how strong this manuscript is as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, input fundamentality, framework dependence, earned outputs, output strength, hard-to-vary construction, technical traction, and local comparison cohort.
+The intrinsicScore is an anchored scientific merit score. It asks how strong this manuscript is as a scientific contribution, judging only content and support, after considering correctness, originality, input grounding, input fundamentality, framework dependence, earned outputs, output strength, hard-to-vary construction, technical traction, and local comparison cohort.
 
 Anchors:
 - 0: wrong, empty, plagiarized, or no real scientific contribution.
@@ -353,6 +360,11 @@ Per-item assessments belong inside the item they assess. For example, each primi
 Section-level overallAssessment fields should be brief summaries of the section as a whole, usually one or two sentences. If the item-level assessments already say everything important, the section-level overallAssessment may be left empty or very short.
 
 In blinded prose, prefer "the manuscript" or "the paper" over "the author."
+
+Review-pass storage note
+------------------------
+
+The application will run this prompt twice independently before adjudication. Each blind pass should return the same full JSON structure. The application should store a compact copy of each blind pass review so the public page can show Final Review, Blind Pass 1, and Blind Pass 2 tabs.
 
 Before final scoring, explicitly consider:
 1. What are the primitive inputs?
@@ -473,11 +485,7 @@ Return valid JSON only with this structure:
     "clusterFeatureTags": [],
     "comparatorSearchSummary": ""
   },
-  "scoreBand": {
-    "low": 0,
-    "median": 0,
-    "high": 0
-  },
+  "intrinsicScore": 0,
   "scoreConfidence": 0.0,
   "scoreCappingReason": "",
   "scoreAdjustmentReason": "",
@@ -499,7 +507,7 @@ export const BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT = [
 
 You receive compact paper context and two independent blind review passes. Do not use comparator papers, author identity, publication dates, citation history, venue, fame, or later influence.
 
-Produce one final blind intrinsic review using exactly the same v16.3 canonical ICO JSON schema as the blind passes.
+Produce one final blind intrinsic review using exactly the same v16.4 canonical ICO JSON schema as the blind passes. Return one intrinsicScore, not a low/median/high scoreBand.
 
 Do not merely average. Audit the two passes for correctness, input/construction/output roles, output validity, failed-claim handling, framework dependence, diagnostic subscore consistency, and whether the score and classification match the reasoning.
 
@@ -513,7 +521,7 @@ export const BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT = String.raw`Use this s
 
 You receive the final blind intrinsic review plus candidate in-site comparator profiles.
 
-Assess explanatory delta over the nearest reviewed comparators using only the v16.3 canonical ICO fields:
+Assess explanatory delta over the nearest reviewed comparators using only the v16.4 canonical ICO fields:
 - primitive inputs
 - introduced constructions
 - outputs
@@ -523,7 +531,7 @@ Assess explanatory delta over the nearest reviewed comparators using only the v1
 - outputStrengthScore
 - frameworkDependence
 - localCohort / organicCohortProfile
-- final score and scoreAdjustmentReason
+- intrinsicScore / final score and scoreAdjustmentReason
 
 Do not use fame, citation counts, venue, author identity, historical influence, or legacy v8-v15 fields.
 
@@ -566,7 +574,7 @@ Return valid JSON only:
 }`;
 
 export const BENCHMARK_CALIBRATED_V15_FULL_PROMPT = [
-  "SCIReview Prompt System v16.3",
+  "SCIReview Prompt System v16.4",
   "Canonical staged prompts. The blind reviewer receives BLIND_REVIEW_PASS_V15_PROMPT directly, with no legacy diagnostic prompt appended by the review engine.",
   "A. Metadata extraction",
   DATE_METADATA_EXTRACTION_V15_PROMPT,
