@@ -1,4 +1,4 @@
-// Canonical v16.1 prompt stages.
+// Canonical v16.2 prompt stages.
 // Keep this file as the source of truth; include only prompts the app actually sends.
 
 export const DATE_METADATA_EXTRACTION_V15_PROMPT = String.raw`Extract display metadata for the paper. This stage is outside blind scoring.
@@ -36,7 +36,7 @@ Rules:
 - If title or authors are genuinely unrecoverable, use "Unknown Title" or "Unknown Authors".
 - Do not use this metadata for blind scoring.`;
 
-export const BLIND_REVIEW_PASS_V15_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v16.1 CANONICAL ICO
+export const BLIND_REVIEW_PASS_V15_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v16.2 CANONICAL ICO WITH STRUCTURED QUALITY FIELDS
 =======================================================
 
 You are reviewing an anonymous scientific manuscript from its contents alone.
@@ -96,11 +96,27 @@ Practical rule:
 - If the manuscript introduces it as machinery used to produce later consequences, list it as an introduced construction.
 - If the manuscript presents it as a consequence produced by that machinery, list it as an output.
 
-For each primitive input, state its role, grounding, fundamentality, framework dependence, and assessment.
+For each primitive input, state its role, grounding, groundingQuality, fundamentality, fundamentalityLevel, frameworkDependence, frameworkDependenceLevel, and assessment.
 
-For each introduced construction, state its role, inputs used, validity, hard-to-vary character, fragility or limits, and assessment.
+For primitive inputs:
+- groundingQuality is a quality judgment: weak | moderate | strong.
+- fundamentalityLevel is a depth judgment: low | medium | high.
+- frameworkDependenceLevel is a dependency judgment: low | medium | high, where low is good and high means narrow, optional, speculative, or framework-internal.
 
-For each output, state the inputs used, constructions used, external context if any, support, validity, and centrality.
+Do not label an input as medium or high framework dependence merely because the paper uses a thermodynamic, geometric, or representation-based interpretation. Framework dependence means reliance on a narrow or optional research framework whose assumptions may fail independently of the broader physics. Standard general relativity, standard thermodynamics, standard differential geometry, established black-hole thermodynamics, and ordinary FRW geometry are normally low framework dependence unless the manuscript uses them in a speculative or unusually fragile way.
+
+For each introduced construction, state its role, inputs used, validity, validityLevel, hard-to-vary character, hardToVaryLevel, fragility or limits, fragilityLevel, and assessment.
+
+For introduced constructions:
+- validityLevel: invalid | conditional | valid | strong.
+- hardToVaryLevel: low | medium | high, where high is good.
+- fragilityLevel: low | medium | high, where low is good and high means fragile.
+
+For each output, state the inputs used, constructions used, external context if any, support, validity, validityLevel, and centrality.
+
+For outputs:
+- validityLevel: invalid | conditional | valid | strong.
+- centrality: low | medium | high.
 
 Central-output dependency accounting
 ------------------------------------
@@ -328,7 +344,9 @@ It should include:
 - the input -> construction -> output logic;
 - the strongest limitation or caveat if important.
 
-It should not repeat the same claim in different wording. It should not mention author identity, citations, fame, or later influence. In blinded prose, prefer "the manuscript" or "the paper" over "the author."
+It should not repeat the same claim in different wording. It should not mention author identity, citations, fame, or later influence.
+
+When writing assessment fields, use one coherent paragraph or a short clean bullet-ready list. Do not concatenate many raw fragments without punctuation or structure.
 
 Before final scoring, explicitly consider:
 1. What are the primitive inputs?
@@ -376,8 +394,11 @@ Return valid JSON only with this structure:
         {
           "input": "",
           "role": "",
+          "groundingQuality": "weak | moderate | strong",
           "grounding": "",
+          "fundamentalityLevel": "low | medium | high",
           "fundamentality": "",
+          "frameworkDependenceLevel": "low | medium | high",
           "frameworkDependence": "",
           "assessment": ""
         }
@@ -390,8 +411,11 @@ Return valid JSON only with this structure:
           "construction": "",
           "role": "",
           "inputsUsed": [],
+          "validityLevel": "invalid | conditional | valid | strong",
           "validity": "",
+          "hardToVaryLevel": "low | medium | high",
           "hardToVary": "",
+          "fragilityLevel": "low | medium | high",
           "fragilityOrLimits": "",
           "assessment": ""
         }
@@ -407,6 +431,7 @@ Return valid JSON only with this structure:
           "constructionsUsed": [],
           "externalContextIfAny": "",
           "support": "",
+          "validityLevel": "invalid | conditional | valid | strong",
           "validity": "",
           "centrality": "low | medium | high"
         }
@@ -468,7 +493,7 @@ export const BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT = [
 
 You receive compact paper context and two independent blind review passes. Do not use comparator papers, author identity, publication dates, citation history, venue, fame, or later influence.
 
-Produce one final blind intrinsic review using exactly the same v16.1 canonical ICO JSON schema as the blind passes.
+Produce one final blind intrinsic review using exactly the same v16.2 canonical ICO JSON schema as the blind passes.
 
 Do not merely average. Audit the two passes for correctness, input/construction/output roles, output validity, failed-claim handling, framework dependence, diagnostic subscore consistency, and whether the score and classification match the reasoning.
 
@@ -482,7 +507,7 @@ export const BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT = String.raw`Use this s
 
 You receive the final blind intrinsic review plus candidate in-site comparator profiles.
 
-Assess explanatory delta over the nearest reviewed comparators using only the v16.1 canonical ICO fields:
+Assess explanatory delta over the nearest reviewed comparators using only the v16.2 canonical ICO fields:
 - primitive inputs
 - introduced constructions
 - outputs
@@ -535,7 +560,7 @@ Return valid JSON only:
 }`;
 
 export const BENCHMARK_CALIBRATED_V15_FULL_PROMPT = [
-  "SCIReview Prompt System v16.1",
+  "SCIReview Prompt System v16.2",
   "Canonical staged prompts. The blind reviewer receives BLIND_REVIEW_PASS_V15_PROMPT directly, with no legacy diagnostic prompt appended by the review engine.",
   "A. Metadata extraction",
   DATE_METADATA_EXTRACTION_V15_PROMPT,

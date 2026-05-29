@@ -723,8 +723,20 @@ router.get("/papers/export", async (_req, res) => {
         coverageLedger?.schemaVersion === "v15" ||
         String(coverageLedger?.promptVersion ?? "").startsWith("v15");
       const isCanonicalIcoReview =
-        coverageLedger?.schemaVersion === "v16.1" ||
-        String(coverageLedger?.promptVersion ?? "").startsWith("v16");
+        /^v16(?:\.|\b|-)/.test(String(coverageLedger?.schemaVersion ?? "")) ||
+        /^v16(?:\.|\b|-)/.test(String(coverageLedger?.promptVersion ?? ""));
+      const comparatorCalibrationStatus =
+        coverageLedger?.comparatorCalibrationStatus ??
+        comparatorCalibration?.comparatorCalibrationStatus ??
+        null;
+      const calibrationAdjustment = Number(comparatorCalibration?.calibrationAdjustment ?? 0);
+      const comparatorCalibrationApplied = Boolean(
+        comparatorCalibration &&
+          (comparatorCalibrationStatus === "applied" ||
+            comparatorCalibrationStatus === "weak" ||
+            (Number.isFinite(calibrationAdjustment) && Math.abs(calibrationAdjustment) > 0)),
+      );
+      const visibleComparatorCalibration = comparatorCalibrationApplied ? comparatorCalibration : null;
       const centralOutputDependency =
         isV15Review || isCanonicalIcoReview
           ? undefined
@@ -764,8 +776,8 @@ router.get("/papers/export", async (_req, res) => {
           passDisagreement: adjudication?.passDisagreement ?? adjudication?.scoreRange ?? aggregate?.passDisagreement ?? null,
           scoreStability: adjudication?.scoreStability ?? aggregate?.scoreStability ?? coverageLedger?.scoreStability ?? null,
           adjudicatorRating: aggregate?.adjudicatorRating ?? coverageLedger?.adjudicatorRating ?? coverageLedger?.blindIntrinsicScoreBand?.median ?? null,
-          comparatorCalibrationStatus: coverageLedger?.comparatorCalibrationStatus ?? comparatorCalibration?.comparatorCalibrationStatus ?? null,
-          calibrationAdjustment: comparatorCalibration?.calibrationAdjustment ?? null,
+          comparatorCalibrationStatus,
+          calibrationAdjustment: comparatorCalibrationApplied ? comparatorCalibration?.calibrationAdjustment ?? null : null,
           finalCalibratedScore: finalScoreBand?.median ?? r.overallIntrinsicScore ?? r.score ?? null,
           localCohort: coverageLedger?.finalLocalCohort ?? coverageLedger?.localCohort ?? aggregate?.finalLocalCohort ?? comparatorProfile?.localCohort ?? null,
           inputStrengthScore: coverageLedger?.inputStrengthScore ?? aggregate?.inputStrengthScore ?? null,
@@ -821,19 +833,21 @@ router.get("/papers/export", async (_req, res) => {
           legacyDecisiveCheck: isV15Review || isCanonicalIcoReview ? undefined : r.decisiveCheck,
           finalJudgment: isCanonicalIcoReview ? undefined : r.finalJudgment,
           relatedWork: r.relatedWork,
-          coverageLedger,
+          coverageLedger: isCanonicalIcoReview ? undefined : coverageLedger,
           contributionArchetype: coverageLedger?.contributionArchetype ?? aggregate?.contributionArchetype ?? null,
           inputConstructionOutputLedger,
           inputConstructionOutputAssessment: inputConstructionOutputLedger,
           centralOutputDependency,
           outputValidityAssessment,
-          nearestComparators: coverageLedger?.nearestComparators ?? aggregate?.nearestComparators ?? [],
+          nearestComparators: comparatorCalibrationApplied ? coverageLedger?.nearestComparators ?? aggregate?.nearestComparators ?? [] : [],
           blindIntrinsicScoreBand: coverageLedger?.blindIntrinsicScoreBand ?? coverageLedger?.aggregate?.blindIntrinsicScoreBand ?? null,
-          comparatorCalibration,
-          explanatoryDeltaAssessment: coverageLedger?.explanatoryDeltaAssessment ?? comparatorCalibration?.explanatoryDeltaAssessment ?? null,
-          comparatorsNeedingRecalibration: coverageLedger?.comparatorsNeedingRecalibration ?? comparatorCalibration?.comparatorsNeedingRecalibration ?? [],
-          comparatorCalibratedFinalScoreBand: finalScoreBand,
-          comparatorProfile,
+          comparatorCalibration: visibleComparatorCalibration,
+          explanatoryDeltaAssessment: comparatorCalibrationApplied
+            ? coverageLedger?.explanatoryDeltaAssessment ?? comparatorCalibration?.explanatoryDeltaAssessment ?? null
+            : null,
+          comparatorsNeedingRecalibration: comparatorCalibrationApplied ? coverageLedger?.comparatorsNeedingRecalibration ?? comparatorCalibration?.comparatorsNeedingRecalibration ?? [] : [],
+          comparatorCalibratedFinalScoreBand: comparatorCalibrationApplied ? finalScoreBand : null,
+          comparatorProfile: comparatorCalibrationApplied ? comparatorProfile : null,
           externalComparatorSuggestions: coverageLedger?.externalComparatorSuggestions ?? aggregate?.externalComparatorSuggestions ?? [],
           publicComparatorSummary: coverageLedger?.publicComparatorSummary ?? aggregate?.publicComparatorSummary ?? null,
           adminComparatorNotes: coverageLedger?.adminComparatorNotes ?? aggregate?.adminComparatorNotes ?? null,

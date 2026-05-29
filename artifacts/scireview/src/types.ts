@@ -49,8 +49,11 @@ export type IcoPrimitiveInput =
   | {
       input?: string;
       role?: string;
+      groundingQuality?: 'weak' | 'moderate' | 'strong' | string;
       grounding?: string;
+      fundamentalityLevel?: 'low' | 'medium' | 'high' | string;
       fundamentality?: string;
+      frameworkDependenceLevel?: 'low' | 'medium' | 'high' | string;
       frameworkDependence?: string;
       assessment?: string;
     };
@@ -61,8 +64,11 @@ export type IcoIntroducedConstruction =
       construction?: string;
       role?: string;
       inputsUsed?: string[];
+      validityLevel?: 'invalid' | 'conditional' | 'valid' | 'strong' | string;
       validity?: string;
+      hardToVaryLevel?: 'low' | 'medium' | 'high' | string;
       hardToVary?: string;
+      fragilityLevel?: 'low' | 'medium' | 'high' | string;
       fragilityOrLimits?: string;
       assessment?: string;
     };
@@ -75,6 +81,7 @@ export type IcoOutput = {
   constructionsUsed?: string[];
   externalContextIfAny?: string;
   support?: string;
+  validityLevel?: 'invalid' | 'conditional' | 'valid' | 'strong' | string;
   validity?: string;
   centrality?: 'low' | 'medium' | 'high' | string;
 };

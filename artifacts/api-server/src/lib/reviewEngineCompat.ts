@@ -117,8 +117,11 @@ type InputConstructionOutputLedger = {
 type PrimitiveInputItem = {
   input: string;
   role: string;
+  groundingQuality: "weak" | "moderate" | "strong" | "";
   grounding: string;
+  fundamentalityLevel: FrameworkLevel | "";
   fundamentality: string;
+  frameworkDependenceLevel: FrameworkLevel | "";
   frameworkDependence: string;
   assessment: string;
 };
@@ -127,8 +130,11 @@ type IntroducedConstructionItem = {
   construction: string;
   role: string;
   inputsUsed: string[];
+  validityLevel: "invalid" | "conditional" | "valid" | "strong" | "";
   validity: string;
+  hardToVaryLevel: FrameworkLevel | "";
   hardToVary: string;
+  fragilityLevel: FrameworkLevel | "";
   fragilityOrLimits: string;
   assessment: string;
 };
@@ -141,6 +147,7 @@ type LedgerOutputItem = {
   constructionsUsed: string[];
   externalContextIfAny: string;
   support: string;
+  validityLevel: "invalid" | "conditional" | "valid" | "strong" | "";
   validity: string;
   centrality: "low" | "medium" | "high";
 };
@@ -490,7 +497,7 @@ type IndividualPassResult = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v16.1-canonical-ico-minimal";
+export const REVIEW_PROMPT_VERSION = "v16.2-canonical-ico-structured-quality";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -575,38 +582,45 @@ const contributionArchetypeJsonSchema = {
 };
 const ledgerOutputItemJsonSchema = {
   type: "object",
-  required: ["output", "inputsUsed", "constructionsUsed", "externalContextIfAny", "support", "validity", "centrality"],
+  required: ["output", "inputsUsed", "constructionsUsed", "externalContextIfAny", "support", "validityLevel", "validity", "centrality"],
   properties: {
     output: jsonString,
     inputsUsed: jsonStringArray,
     constructionsUsed: jsonStringArray,
     externalContextIfAny: jsonString,
     support: jsonString,
+    validityLevel: jsonString,
     validity: jsonString,
     centrality: jsonString,
   },
 };
 const primitiveInputItemJsonSchema = {
   type: "object",
-  required: ["input", "role", "grounding", "fundamentality", "frameworkDependence", "assessment"],
+  required: ["input", "role", "groundingQuality", "grounding", "fundamentalityLevel", "fundamentality", "frameworkDependenceLevel", "frameworkDependence", "assessment"],
   properties: {
     input: jsonString,
     role: jsonString,
+    groundingQuality: jsonString,
     grounding: jsonString,
+    fundamentalityLevel: jsonString,
     fundamentality: jsonString,
+    frameworkDependenceLevel: jsonString,
     frameworkDependence: jsonString,
     assessment: jsonString,
   },
 };
 const introducedConstructionItemJsonSchema = {
   type: "object",
-  required: ["construction", "role", "inputsUsed", "validity", "hardToVary", "fragilityOrLimits", "assessment"],
+  required: ["construction", "role", "inputsUsed", "validityLevel", "validity", "hardToVaryLevel", "hardToVary", "fragilityLevel", "fragilityOrLimits", "assessment"],
   properties: {
     construction: jsonString,
     role: jsonString,
     inputsUsed: jsonStringArray,
+    validityLevel: jsonString,
     validity: jsonString,
+    hardToVaryLevel: jsonString,
     hardToVary: jsonString,
+    fragilityLevel: jsonString,
     fragilityOrLimits: jsonString,
     assessment: jsonString,
   },
@@ -1123,6 +1137,24 @@ function introducedConstructionLabels(items: IntroducedConstructionItem[] | stri
   return (items ?? []).map((item) => itemText(item, ["construction", "name", "description", "role"])).filter(Boolean);
 }
 
+function normalizeQualityLevel(value: unknown): PrimitiveInputItem["groundingQuality"] {
+  const candidate = asString(value).toLowerCase().trim();
+  if (candidate === "weak" || candidate === "moderate" || candidate === "strong") return candidate;
+  return "";
+}
+
+function normalizeOptionalFrameworkLevel(value: unknown): FrameworkLevel | "" {
+  const candidate = asString(value).toLowerCase().trim();
+  if (candidate === "low" || candidate === "medium" || candidate === "high") return candidate;
+  return "";
+}
+
+function normalizeValidityLevel(value: unknown): LedgerOutputItem["validityLevel"] {
+  const candidate = asString(value).toLowerCase().trim();
+  if (candidate === "invalid" || candidate === "conditional" || candidate === "valid" || candidate === "strong") return candidate;
+  return "";
+}
+
 function normalizePrimitiveInputs(values: unknown[], fallback: PrimitiveInputItem[] = []): PrimitiveInputItem[] {
   for (const value of values) {
     if (!Array.isArray(value)) continue;
@@ -1134,8 +1166,11 @@ function normalizePrimitiveInputs(values: unknown[], fallback: PrimitiveInputIte
           return {
             input,
             role: "",
+            groundingQuality: "",
             grounding: "",
+            fundamentalityLevel: "",
             fundamentality: "",
+            frameworkDependenceLevel: "",
             frameworkDependence: "",
             assessment: "",
           } satisfies PrimitiveInputItem;
@@ -1146,8 +1181,11 @@ function normalizePrimitiveInputs(values: unknown[], fallback: PrimitiveInputIte
         return {
           input,
           role: firstString([source.role, source.function, source.use]),
+          groundingQuality: normalizeQualityLevel(source.groundingQuality),
           grounding: firstString([source.grounding, source.inputGrounding]),
+          fundamentalityLevel: normalizeOptionalFrameworkLevel(source.fundamentalityLevel),
           fundamentality: firstString([source.fundamentality, source.inputFundamentality]),
+          frameworkDependenceLevel: normalizeOptionalFrameworkLevel(source.frameworkDependenceLevel),
           frameworkDependence: firstString([source.frameworkDependence, source.frameworkConditionality]),
           assessment: firstString([source.assessment, source.notes]),
         } satisfies PrimitiveInputItem;
@@ -1170,8 +1208,11 @@ function normalizeIntroducedConstructions(values: unknown[], fallback: Introduce
             construction,
             role: "",
             inputsUsed: [],
+            validityLevel: "",
             validity: "",
+            hardToVaryLevel: "",
             hardToVary: "",
+            fragilityLevel: "",
             fragilityOrLimits: "",
             assessment: "",
           } satisfies IntroducedConstructionItem;
@@ -1183,8 +1224,11 @@ function normalizeIntroducedConstructions(values: unknown[], fallback: Introduce
           construction,
           role: firstString([source.role, source.function, source.use]),
           inputsUsed: firstStringArray([source.inputsUsed, source.dependsOnInputs, source.requiredPrimitiveInputs]),
+          validityLevel: normalizeValidityLevel(source.validityLevel),
           validity: firstString([source.validity, source.correctness]),
+          hardToVaryLevel: normalizeOptionalFrameworkLevel(source.hardToVaryLevel),
           hardToVary: firstString([source.hardToVary, source.hardToVaryCharacter, source.hard_to_vary]),
+          fragilityLevel: normalizeOptionalFrameworkLevel(source.fragilityLevel),
           fragilityOrLimits: firstString([source.fragilityOrLimits, source.fragility, source.limits]),
           assessment: firstString([source.assessment, source.notes]),
         } satisfies IntroducedConstructionItem;
@@ -1320,6 +1364,7 @@ function normalizeLedgerOutputs(
             constructionsUsed: [],
             externalContextIfAny: "",
             support: "",
+            validityLevel: "",
             validity: "",
             centrality: "medium",
           } satisfies LedgerOutputItem;
@@ -1337,6 +1382,7 @@ function normalizeLedgerOutputs(
           constructionsUsed,
           externalContextIfAny: firstString([source.externalContextIfAny, source.externalContext, source.context]),
           support: firstString([source.support, source.evidence, source.derivationSupport]),
+          validityLevel: normalizeValidityLevel(source.validityLevel),
           validity: firstString([source.validity, source.outputValidity, source.validityAssessment]),
           centrality: normalizeLedgerOutputCentrality(source.centrality),
         } satisfies LedgerOutputItem;
@@ -1356,6 +1402,7 @@ function normalizeLedgerOutputs(
       constructionsUsed: [],
       externalContextIfAny: legacyContexts[index] ?? "",
       support: "",
+      validityLevel: "",
       validity: "",
       centrality: "medium",
     }));
@@ -1371,6 +1418,7 @@ function normalizeLedgerOutputs(
       constructionsUsed: options.centralOutputDependency?.dependsOnIntroducedConstructions ?? [],
       externalContextIfAny: "",
       support: options.centralOutputDependency?.dependencyAssessment ?? "",
+      validityLevel: "",
       validity: options.centralOutputDependency?.outputValidity || options.outputValidityAssessment?.assessment || "",
       centrality: "high",
     }];
@@ -1699,11 +1747,11 @@ function normalizeComparatorCalibrationResult(
 
 function classificationFallbackFromScore(score: number) {
   if (score >= 95) return "field-defining advance";
-  if (score >= 85) return "major specialty advance";
-  if (score >= 75) return "specialty advance";
-  if (score >= 65) return "strong niche contribution";
-  if (score >= 55) return "niche contribution";
-  if (score >= 40) return "minor contribution";
+  if (score >= 90) return "major specialty advance";
+  if (score >= 85) return "specialty advance";
+  if (score >= 75) return "strong niche contribution";
+  if (score >= 65) return "niche contribution";
+  if (score >= 50) return "minor contribution";
   if (score >= 25) return "limited contribution";
   return "not yet convincing";
 }
@@ -1717,11 +1765,9 @@ function alignClassificationToScore(classification: string, score: number) {
 
   const fallback = classificationFallbackFromScore(score);
   const currentRank = classificationRank(classification);
-  const fallbackRank = classificationRank(fallback);
 
   if (currentRank === -1) return fallback;
-  if (fallbackRank === -1) return classification;
-  return currentRank > fallbackRank ? fallback : classification;
+  return currentRank === classificationRank(fallback) ? classification : fallback;
 }
 
 function describesStrongFrameworkIndependence(text: string) {
@@ -1750,6 +1796,14 @@ function applyClassificationConsistency(
 ) {
   if (score < 20 && !describesSubstantialSurvivingContribution(details.survivingContribution || "")) {
     return "not yet convincing";
+  }
+
+  if (
+    classification === "field-defining advance" &&
+    score >= 95 &&
+    details.frameworkLevel === "high"
+  ) {
+    return "major specialty advance";
   }
 
   if (
@@ -2434,6 +2488,96 @@ function uniqueCleanStrings(values: Array<string | undefined | null>) {
   ).filter(Boolean)));
 }
 
+function decodeXmlEntities(value: string) {
+  const entityMap: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: "\"",
+    apos: "'",
+  };
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (entity, code) => {
+    const lower = code.toLowerCase();
+    if (entityMap[lower]) return entityMap[lower];
+    if (lower.startsWith("#x")) {
+      const parsed = Number.parseInt(lower.slice(2), 16);
+      return Number.isFinite(parsed) ? String.fromCodePoint(parsed) : entity;
+    }
+    if (lower.startsWith("#")) {
+      const parsed = Number.parseInt(lower.slice(1), 10);
+      return Number.isFinite(parsed) ? String.fromCodePoint(parsed) : entity;
+    }
+    return entity;
+  });
+}
+
+function normalizeArxivId(value?: string) {
+  const cleaned = stripControlChars(value || "")
+    .replace(/^https?:\/\/arxiv\.org\/(?:abs|pdf)\//i, "")
+    .replace(/^arxiv:\s*/i, "")
+    .replace(/\.pdf$/i, "")
+    .trim();
+  const match = cleaned.match(/(?:(?:[a-z-]+(?:\.[A-Z]{2})?\/\d{7})|(?:\d{4}\.\d{4,5}))(?:v\d+)?/i);
+  return match?.[0]?.replace(/v\d+$/i, "") || "";
+}
+
+function firstArxivIdFromText(value?: string) {
+  const match = stripControlChars(value || "").match(ARXIV_ID_REGEX);
+  return normalizeArxivId(match?.[0] || "");
+}
+
+type ArxivMetadata = {
+  arxivId: string;
+  title: string;
+  authors: string[];
+  published: string;
+  doi: string;
+  journalRef: string;
+};
+
+function xmlTagText(source: string, tagName: string) {
+  const match = source.match(new RegExp(`<${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)</${tagName}>`, "i"));
+  return decodeXmlEntities(match?.[1] || "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchArxivMetadata(arxivId?: string): Promise<ArxivMetadata | null> {
+  const normalizedId = normalizeArxivId(arxivId);
+  if (!normalizedId) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 7000);
+  try {
+    const response = await fetch(`https://export.arxiv.org/api/query?id_list=${encodeURIComponent(normalizedId)}`, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "ModernScienceReview/1.0 (metadata extraction)",
+      },
+    });
+    if (!response.ok) return null;
+    const xml = await response.text();
+    const entry = xml.match(/<entry>([\s\S]*?)<\/entry>/i)?.[1] || "";
+    if (!entry) return null;
+    const authors = Array.from(entry.matchAll(/<author>\s*<name>([\s\S]*?)<\/name>\s*<\/author>/gi))
+      .map((match) => decodeXmlEntities(match[1]).replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    const title = cleanDisplayTitle(xmlTagText(entry, "title")).title;
+    return {
+      arxivId: normalizedId,
+      title: title && title !== "Unknown Title" ? title : "",
+      authors,
+      published: xmlTagText(entry, "published"),
+      doi: xmlTagText(entry, "arxiv:doi") || xmlTagText(entry, "doi"),
+      journalRef: xmlTagText(entry, "arxiv:journal_ref") || xmlTagText(entry, "journal_ref"),
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function looksLikeJournalCitation(value?: string) {
   const cleaned = cleanMetadataText(value);
   if (!cleaned) return false;
@@ -2599,13 +2743,19 @@ function heuristicMetadata(paperContent: string, hints: MetadataHints = {}) {
   };
 
   const looksLikeAuthorLine = (line: string) => {
-    if (looksLikeAffiliation(line) || /^abstract\b/i.test(line)) return false;
-    if (line.length < 3 || line.length > 180) return false;
-    if (!/[A-Za-z]/.test(line)) return false;
-    const normalized = line.replace(/\band\b/gi, ",").replace(/\s+/g, " ").trim();
+    const sanitized = line
+      .replace(/[†‡§*]/g, " ")
+      .replace(/\b\d+\b/g, " ")
+      .replace(/\([^)]*(?:university|institute|department|laboratory|college|school|email|@)[^)]*\)/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (looksLikeAffiliation(sanitized) || /^abstract\b/i.test(sanitized)) return false;
+    if (sanitized.length < 3 || sanitized.length > 220) return false;
+    if (!/[A-Za-z]/.test(sanitized)) return false;
+    const normalized = sanitized.replace(/\band\b/gi, ",").replace(/\s+/g, " ").trim();
     const parts = normalized.split(",").map((part) => part.trim()).filter(Boolean);
     if (parts.length === 0 || parts.length > 10) return false;
-    const hasInitial = /\b[A-Z]\./.test(line);
+    const hasInitial = /\b[A-Z]\./.test(sanitized);
 
     return parts.every((part) => {
       const tokens = part.split(/\s+/).filter(Boolean);
@@ -2646,9 +2796,14 @@ function heuristicMetadata(paperContent: string, hints: MetadataHints = {}) {
   const authorStartIndex = titleStartIndex === -1 ? -1 : titleStartIndex + titleLines.length;
   const authorLines: string[] = [];
   if (authorStartIndex !== -1) {
-    for (const line of headerLines.slice(authorStartIndex, authorStartIndex + 4)) {
+    let skippedNonAuthorLines = 0;
+    for (const line of headerLines.slice(authorStartIndex, authorStartIndex + 10)) {
       if (looksLikeAffiliation(line) || /^abstract\b/i.test(line)) break;
-      if (!looksLikeAuthorLine(line)) break;
+      if (!looksLikeAuthorLine(line)) {
+        skippedNonAuthorLines += 1;
+        if (authorLines.length > 0 || skippedNonAuthorLines > 1) break;
+        continue;
+      }
       authorLines.push(line);
     }
   }
@@ -3413,6 +3568,7 @@ function v15LedgerOnly(ledger: InputConstructionOutputLedger | null | undefined)
       dependsOnConstructions: item.dependsOnConstructions,
       externalContextIfAny: item.externalContextIfAny,
       support: item.support,
+      validityLevel: item.validityLevel,
       validity: item.validity,
       centrality: item.centrality,
     })),
@@ -3440,6 +3596,7 @@ function v16IcoAssessmentOnly(ledger: InputConstructionOutputLedger | null | und
         constructionsUsed: item.constructionsUsed ?? item.dependsOnConstructions,
         externalContextIfAny: item.externalContextIfAny,
         support: item.support,
+        validityLevel: item.validityLevel,
         validity: item.validity,
         centrality: item.centrality,
       })),
@@ -3639,7 +3796,7 @@ function buildAdjudicatorInput(
   const compactPasses = reviews.map(compactIndividualReviewForAdjudicator);
   const text = JSON.stringify({
     adjudicatorInputNote:
-      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.1 canonical input-construction-output assessments, diagnostic scores, objections, and judgments below.",
+      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.2 canonical input-construction-output assessments, diagnostic scores, objections, and judgments below.",
     manuscriptSummaryAndLedger: compactPasses.map((review) => ({
       passNumber: review.passNumber,
       centralClaim: review.centralClaim,
@@ -3791,6 +3948,13 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     manuscriptHeaderText: headerText.slice(0, 8000),
     extractedTextBeginning: stripControlChars(paperContent).slice(0, 16000),
   }, null, 2);
+  const detectedArxivId = firstArxivIdFromText([
+    hints.fileName,
+    hints.pdfTitle,
+    headerText,
+    stripControlChars(paperContent).slice(0, 16000),
+  ].filter(Boolean).join("\n"));
+  const arxivMetadata = await fetchArxivMetadata(detectedArxivId);
   const looksTruncatedTitle = (value: string) =>
     /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
   const isSuspiciousTitle = (value: string) =>
@@ -3836,8 +4000,18 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     ], fallback.title);
     const parsedTitleCleanup = cleanDisplayTitle(rawParsedTitle);
     const fallbackTitleCleanup = cleanDisplayTitle(fallback.title);
+    const parsedTitleConfidence = asNumber(parsedMetadata.titleConfidence, 0, 0, 1);
+    const shouldPreferArxivTitle =
+      Boolean(arxivMetadata?.title) &&
+      (
+        parsedTitleConfidence < 0.7 ||
+        isSuspiciousTitle(parsedTitleCleanup.title) ||
+        isSuspiciousTitle(fallbackTitleCleanup.title)
+      );
     const bestTitle =
-      isSuspiciousTitle(parsedTitleCleanup.title)
+      shouldPreferArxivTitle
+        ? arxivMetadata!.title
+        : isSuspiciousTitle(parsedTitleCleanup.title)
         ? (isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title)
         : parsedTitleCleanup.title;
     const displayedAuthors = firstStringArray([parsedMetadata.displayedAuthors]);
@@ -3856,10 +4030,24 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       bestAuthorList = fallbackAuthorList;
       bestAuthors = fallbackAuthorList.join(", ");
     }
+    const arxivAuthorList = arxivMetadata?.authors ?? [];
+    const usedArxivAuthors =
+      arxivAuthorList.length > 0 &&
+      (
+        bestAuthorList.length === 0 ||
+        bestAuthorList[0] === "Unknown Authors" ||
+        arxivAuthorList.length > bestAuthorList.length ||
+        asNumber(parsedMetadata.authorsConfidence, 0, 0, 1) < 0.7
+      );
+    if (usedArxivAuthors) {
+      bestAuthorList = arxivAuthorList;
+      bestAuthors = arxivAuthorList.join(", ");
+    }
     const titleCleanupNotes = uniqueCleanStrings([
       asString(parsedMetadata.titleCleaningNotes),
       parsedTitleCleanup.notes,
       isSuspiciousTitle(parsedTitleCleanup.title) ? fallbackTitleCleanup.notes : "",
+      shouldPreferArxivTitle ? "arXiv metadata replaced low-confidence or suspicious title extraction." : "",
     ]).join(" ");
     const normalizedSource = {
       ...parsedMetadata,
@@ -3867,16 +4055,24 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       cleanedTitle: bestTitle,
       displayedTitle: bestTitle,
       titleCleaningNotes: titleCleanupNotes || asString(parsedMetadata.titleCleaningNotes),
-      arxivId: asString(parsedMetadata.arxivId) || parsedTitleCleanup.arxivId || fallbackTitleCleanup.arxivId,
+      titleConfidence: shouldPreferArxivTitle ? Math.max(parsedTitleConfidence, 0.95) : parsedTitleConfidence,
+      arxivId: normalizeArxivId(asString(parsedMetadata.arxivId) || parsedTitleCleanup.arxivId || fallbackTitleCleanup.arxivId || arxivMetadata?.arxivId || detectedArxivId),
       reportCodes: uniqueCleanStrings([
         ...firstStringArray([parsedMetadata.reportCodes]),
         ...parsedTitleCleanup.reportCodes,
         ...fallbackTitleCleanup.reportCodes,
       ]),
+      doi: asString(parsedMetadata.doi) || arxivMetadata?.doi || "",
+      journalName: asString(parsedMetadata.journalName) || arxivMetadata?.journalRef || "",
+      arxivFirstSubmissionDate: asString(parsedMetadata.arxivFirstSubmissionDate) || arxivMetadata?.published || "",
+      originalPublicationDateBestGuess: asString(parsedMetadata.originalPublicationDateBestGuess) || asString(parsedMetadata.journalPublicationDate) || arxivMetadata?.published || "",
+      dateSource: asString(parsedMetadata.dateSource) || (arxivMetadata?.published ? "arxiv metadata" : ""),
       rawExtractedAuthors: asString(parsedMetadata.rawExtractedAuthors, authors),
+      authorsConfidence: usedArxivAuthors ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), 0.95) : asNumber(parsedMetadata.authorsConfidence, 0, 0, 1),
       authorsExtractionNotes: uniqueCleanStrings([
         asString(parsedMetadata.authorsExtractionNotes),
         usedFallbackMultiAuthorBlock ? "Deterministic fallback replaced a one-author parse with a multi-author title-page block." : "",
+        usedArxivAuthors ? "arXiv metadata supplied the complete author list." : "",
       ]).join(" "),
       displayedAuthors: bestAuthorList.length > 0 ? bestAuthorList : splitAuthorNames(bestAuthors),
     };
@@ -3890,18 +4086,29 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     };
   } catch {
     const fallbackTitleCleanup = cleanDisplayTitle(fallback.title);
-    const fallbackTitle = isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title;
+    const fallbackTitle = arxivMetadata?.title || (isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title);
+    const fallbackAuthors = arxivMetadata?.authors?.length ? arxivMetadata.authors.join(", ") : fallback.authors;
+    const fallbackAuthorList = arxivMetadata?.authors?.length ? arxivMetadata.authors : splitAuthorNames(fallback.authors);
     return {
       title: fallbackTitle,
-      authors: fallback.authors,
+      authors: fallbackAuthors,
       dateMetadata: {
-        ...defaultDateMetadata(fallbackTitle, splitAuthorNames(fallback.authors)),
+        ...defaultDateMetadata(fallbackTitle, fallbackAuthorList),
         rawExtractedTitle: fallback.title,
         cleanedTitle: fallbackTitle,
         displayedTitle: fallbackTitle,
-        arxivId: fallbackTitleCleanup.arxivId,
+        arxivId: normalizeArxivId(arxivMetadata?.arxivId || fallbackTitleCleanup.arxivId || detectedArxivId),
         reportCodes: fallbackTitleCleanup.reportCodes,
-        titleCleaningNotes: fallbackTitleCleanup.notes || "Fallback metadata was used.",
+        doi: arxivMetadata?.doi || "",
+        journalName: arxivMetadata?.journalRef || "",
+        arxivFirstSubmissionDate: arxivMetadata?.published || "",
+        originalPublicationDateBestGuess: arxivMetadata?.published || "",
+        dateSource: arxivMetadata?.published ? "arxiv metadata" : "unknown",
+        titleCleaningNotes: arxivMetadata?.title ? "arXiv metadata was used after model metadata extraction failed." : fallbackTitleCleanup.notes || "Fallback metadata was used.",
+        displayedAuthors: fallbackAuthorList,
+        rawExtractedAuthors: fallbackAuthors,
+        authorsConfidence: arxivMetadata?.authors?.length ? 0.95 : 0.4,
+        authorsExtractionNotes: arxivMetadata?.authors?.length ? "arXiv metadata was used after model metadata extraction failed." : "Fallback metadata was used.",
       },
     };
   }
@@ -4294,8 +4501,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
-      schemaVersion: "v16.1",
-      clusterVersion: "v16.1-canonical-ico",
+      schemaVersion: "v16.2",
+      clusterVersion: "v16.2-canonical-ico",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
       benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",

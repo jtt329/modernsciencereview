@@ -49,8 +49,11 @@ const listMarkdown = (items: unknown): string =>
 type PrimitiveInputDetail = {
   input: string;
   role: string;
+  groundingQuality: string;
   grounding: string;
+  fundamentalityLevel: string;
   fundamentality: string;
+  frameworkDependenceLevel: string;
   frameworkDependence: string;
   assessment: string;
 };
@@ -59,8 +62,11 @@ type IntroducedConstructionDetail = {
   construction: string;
   role: string;
   inputsUsed: string[];
+  validityLevel: string;
   validity: string;
+  hardToVaryLevel: string;
   hardToVary: string;
+  fragilityLevel: string;
   fragilityOrLimits: string;
   assessment: string;
 };
@@ -80,7 +86,7 @@ const asPrimitiveInputDetails = (ledger: any): PrimitiveInputDetail[] => {
     .map((item) => {
       if (typeof item === 'string') {
         const input = item.trim();
-        return input ? { input, role: '', grounding: '', fundamentality: '', frameworkDependence: '', assessment: '' } : null;
+        return input ? { input, role: '', groundingQuality: '', grounding: '', fundamentalityLevel: '', fundamentality: '', frameworkDependenceLevel: '', frameworkDependence: '', assessment: '' } : null;
       }
       if (!item || typeof item !== 'object') return null;
       const input = firstText(item.input, item.name, item.description, item.primitiveInput);
@@ -88,8 +94,11 @@ const asPrimitiveInputDetails = (ledger: any): PrimitiveInputDetail[] => {
       return {
         input,
         role: firstText(item.role, item.function, item.use),
+        groundingQuality: firstText(item.groundingQuality),
         grounding: firstText(item.grounding, item.inputGrounding),
+        fundamentalityLevel: firstText(item.fundamentalityLevel),
         fundamentality: firstText(item.fundamentality, item.inputFundamentality),
+        frameworkDependenceLevel: firstText(item.frameworkDependenceLevel),
         frameworkDependence: firstText(item.frameworkDependence, item.frameworkConditionality),
         assessment: firstText(item.assessment, item.notes),
       };
@@ -103,7 +112,7 @@ const asIntroducedConstructionDetails = (ledger: any): IntroducedConstructionDet
     .map((item) => {
       if (typeof item === 'string') {
         const construction = item.trim();
-        return construction ? { construction, role: '', inputsUsed: [], validity: '', hardToVary: '', fragilityOrLimits: '', assessment: '' } : null;
+        return construction ? { construction, role: '', inputsUsed: [], validityLevel: '', validity: '', hardToVaryLevel: '', hardToVary: '', fragilityLevel: '', fragilityOrLimits: '', assessment: '' } : null;
       }
       if (!item || typeof item !== 'object') return null;
       const construction = firstText(item.construction, item.name, item.description, item.introducedConstruction);
@@ -112,8 +121,11 @@ const asIntroducedConstructionDetails = (ledger: any): IntroducedConstructionDet
         construction,
         role: firstText(item.role, item.function, item.use),
         inputsUsed: asArray(item.inputsUsed ?? item.dependsOnInputs ?? item.requiredPrimitiveInputs),
+        validityLevel: firstText(item.validityLevel),
         validity: firstText(item.validity, item.correctness),
+        hardToVaryLevel: firstText(item.hardToVaryLevel),
         hardToVary: firstText(item.hardToVary, item.hardToVaryCharacter),
+        fragilityLevel: firstText(item.fragilityLevel),
         fragilityOrLimits: firstText(item.fragilityOrLimits, item.fragility, item.limits),
         assessment: firstText(item.assessment, item.notes),
       };
@@ -206,19 +218,6 @@ const scoreToneClass = (value: number | null, scale: 10 | 100 = 10) => {
   return 'text-rose-100 border-rose-300/25 bg-rose-400/10';
 };
 
-const toneClass = (tone: 'green' | 'yellow' | 'red' | 'neutral') => {
-  switch (tone) {
-    case 'green':
-      return 'text-emerald-100 bg-emerald-400/15 border-emerald-300/25';
-    case 'yellow':
-      return 'text-amber-100 bg-amber-400/15 border-amber-300/25';
-    case 'red':
-      return 'text-rose-100 bg-rose-400/15 border-rose-300/25';
-    default:
-      return 'text-slate-100 bg-slate-400/10 border-white/15';
-  }
-};
-
 const groundingTone = (value: unknown): 'green' | 'yellow' | 'red' | 'neutral' => {
   const text = hasText(value) ? value.toLowerCase() : '';
   if (!text) return 'neutral';
@@ -254,38 +253,49 @@ const fragilityTone = (value: unknown): 'green' | 'yellow' | 'red' | 'neutral' =
   return 'neutral';
 };
 
-const qualityChip = (label: string, value: string, tone: 'green' | 'yellow' | 'red' | 'neutral') => (
-  <span className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-widest ${toneClass(tone)}`}>
-    <span className="opacity-75">{label}:</span>
-    <span className="truncate">{value}</span>
+const labelToneTextClass = (tone: 'green' | 'yellow' | 'red' | 'neutral') => {
+  switch (tone) {
+    case 'green':
+      return 'text-emerald-300';
+    case 'yellow':
+      return 'text-amber-300';
+    case 'red':
+      return 'text-rose-300';
+    default:
+      return 'text-slate-300';
+  }
+};
+
+const InlineMarkdown = ({ children }: { children: string }) => (
+  <span className="inline [&_p]:m-0 [&_p]:inline">
+    <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+      {normalizeMathMarkdown(children)}
+    </ReactMarkdown>
   </span>
 );
 
-const validityChip = (label: string, value: string) => {
-  const tone = validityTone(value);
-  return (
-    <span className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[9px] font-black uppercase tracking-widest ${tone.className}`}>
-      <span className="opacity-75">{label}:</span>
-      <span className="truncate">{tone.label}</span>
-    </span>
-  );
-};
+const qualityLine = (label: string, value: string, tone: 'green' | 'yellow' | 'red' | 'neutral') => (
+  <div className="text-xs leading-relaxed text-slate-300">
+    <span className={`font-black uppercase tracking-widest ${labelToneTextClass(tone)}`}>{label}:</span>{' '}
+    <InlineMarkdown>{value}</InlineMarkdown>
+  </div>
+);
 
-const validityTone = (value: unknown): { label: string; className: string } => {
+const validityTone = (value: unknown): { label: string; className: string; tone: 'green' | 'yellow' | 'red' | 'neutral' } => {
   const text = hasText(value) ? value.toLowerCase() : '';
   if (/\binvalid\b|\bwrong\b|\bfails?\b|\bunsupported\b|\bcontradict/i.test(text)) {
-    return { label: 'Invalid', className: 'text-rose-100 bg-rose-400/15 border-rose-300/25' };
+    return { label: 'Invalid', tone: 'red', className: 'text-rose-100 bg-rose-400/15 border-rose-300/25' };
   }
   if (/\bconditional\b|\bpartial\b|\bdepends\b|\buncertain\b|\bfragile\b|\blimited\b/i.test(text)) {
-    return { label: 'Conditional', className: 'text-amber-100 bg-amber-400/15 border-amber-300/25' };
+    return { label: 'Conditional', tone: 'yellow', className: 'text-amber-100 bg-amber-400/15 border-amber-300/25' };
   }
   if (/\bstrong\b|\brobust\b|\bwell supported\b|\bsecure\b/i.test(text)) {
-    return { label: 'Strong', className: 'text-emerald-100 bg-emerald-400/15 border-emerald-300/25' };
+    return { label: 'Strong', tone: 'green', className: 'text-emerald-100 bg-emerald-400/15 border-emerald-300/25' };
   }
   if (/\bcorrect\b|\bvalid\b|\bderived\b|\bsupported\b/i.test(text)) {
-    return { label: 'Correct', className: 'text-emerald-100 bg-emerald-400/15 border-emerald-300/25' };
+    return { label: 'Correct', tone: 'green', className: 'text-emerald-100 bg-emerald-400/15 border-emerald-300/25' };
   }
-  return { label: 'Validity', className: 'text-slate-100 bg-slate-400/10 border-white/15' };
+  return { label: 'Validity', tone: 'neutral', className: 'text-slate-100 bg-slate-400/10 border-white/15' };
 };
 
 const validSubscore = (value: unknown, isValid = true): number | null => {
@@ -300,6 +310,7 @@ const asLedgerOutputs = (ledger: any): Array<{
   dependsOnConstructions: string[];
   externalContextIfAny: string;
   support: string;
+  validityLevel: string;
   validity: string;
   centrality: string;
 }> => {
@@ -313,6 +324,7 @@ const asLedgerOutputs = (ledger: any): Array<{
         dependsOnConstructions: [],
         externalContextIfAny: '',
         support: '',
+        validityLevel: '',
         validity: '',
         centrality: 'medium',
       };
@@ -323,6 +335,7 @@ const asLedgerOutputs = (ledger: any): Array<{
       dependsOnConstructions: asArray(item?.constructionsUsed ?? item?.dependsOnConstructions ?? item?.requiredIntroducedConstructions),
       externalContextIfAny: String(item?.externalContextIfAny ?? item?.externalContext ?? '').trim(),
       support: String(item?.support ?? item?.evidence ?? '').trim(),
+      validityLevel: String(item?.validityLevel ?? '').trim(),
       validity: String(item?.validity ?? item?.outputValidity ?? '').trim(),
       centrality: String(item?.centrality ?? 'medium').trim(),
     };
@@ -570,7 +583,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ?? '';
   const promptVersion = parsedCoverage?.promptVersion ?? storedAggregate?.promptVersion ?? '';
   const isV15Review = parsedCoverage?.schemaVersion === 'v15' || /^v15(?:\.|\b|-)/.test(String(promptVersion));
-  const isCanonicalIcoReview = parsedCoverage?.schemaVersion === 'v16.1' || /^v16(?:\.|\b|-)/.test(String(promptVersion));
+  const isCanonicalIcoReview = /^v16(?:\.|\b|-)/.test(String(parsedCoverage?.schemaVersion || '')) || /^v16(?:\.|\b|-)/.test(String(promptVersion));
   const benchmarkSetVersion = parsedCoverage?.benchmarkSetVersion ?? comparatorCalibration?.benchmarkSetVersion ?? '';
   const extractionMethod = parsedCoverage?.extractionMethod ?? '';
   const currentClassification = selectedPass?.bestClassification ?? aggregateClassification ?? review.bestClassification ?? 'Unclassified';
@@ -700,6 +713,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     isV15Review || subscoreIsValid('outputStrengthScore', 'outputReachScore') !== false,
   );
   const scoreSpread = computedPassDisagreement;
+  const stabilityLabel = String(scoreStability || computedStability || 'insufficient data').replace(/_/g, ' ');
+  const stabilityDisplay = scoreSpread == null
+    ? 'Insufficient data'
+    : `${stabilityLabel.charAt(0).toUpperCase()}${stabilityLabel.slice(1)} · ${scoreSpread}-point spread`;
   const inputStrengthAssessment = mergeUniqueText(
     currentInputGrounding,
     currentInputFundamentality,
@@ -834,43 +851,15 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
 
             <div className="border-t border-white/10 pt-4 space-y-3">
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Score Path</p>
-                <button
-                  onClick={() => setActiveTab('combined')}
-                  className={`text-[10px] font-black uppercase tracking-widest transition-colors ${
-                    activeTab === 'combined' ? 'text-emerald-200' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Show final review
-                </button>
-              </div>
-              <div className={`grid gap-3 ${showCalibrationAdjustment ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+              <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Score Path</p>
+              <div className={`grid gap-3 ${showCalibrationAdjustment ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
                 <div className="bg-slate-950/25 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
                   {blindPassScores.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-2" role="tablist" aria-label="Blind pass review views">
+                    <div className="mt-2 flex flex-wrap gap-2">
                       {blindPassScores.map((score: number, index: number) => {
-                        const hasPassDetails = Boolean(storedIndividualReviews[index]);
-                        const className = `rounded-lg border px-2.5 py-1 text-sm font-black transition-all ${
-                          activeTab === index
-                            ? 'border-white bg-fuchsia-400/30 text-white ring-2 ring-white/60'
-                            : hasPassDetails
-                              ? 'border-white/20 bg-fuchsia-400/10 text-fuchsia-100 hover:border-white/60 hover:bg-fuchsia-400/20'
-                              : 'border-white/15 bg-fuchsia-400/10 text-fuchsia-100'
-                        }`;
-                        return hasPassDetails ? (
-                          <button
-                            key={`${score}-${index}`}
-                            role="tab"
-                            aria-selected={activeTab === index}
-                            onClick={() => setActiveTab(index)}
-                            className={className}
-                          >
-                            {score}
-                          </button>
-                        ) : (
-                          <span key={`${score}-${index}`} className={className}>
+                        return (
+                          <span key={`${score}-${index}`} className="rounded-lg border border-white/15 bg-fuchsia-400/10 px-2.5 py-1 text-sm font-black text-fuchsia-100">
                             {score}
                           </span>
                         );
@@ -881,12 +870,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   )}
                 </div>
                 <div className="bg-slate-950/25 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Blind-Pass Spread</p>
-                  <p className="text-sm font-bold text-white mt-1">{formatPointSpread(scoreSpread)}</p>
-                </div>
-                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Review Stability</p>
-                  <p className="text-sm font-bold text-white mt-1 capitalize">{scoreStability || 'Not stored'}</p>
+                  <p className="text-sm font-bold text-white mt-1">{stabilityDisplay}</p>
                 </div>
                 {showCalibrationAdjustment && (
                   <div className="bg-slate-950/25 border border-white/10 rounded-xl p-3">
@@ -898,6 +883,42 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               {!comparatorCalibrationApplied && (
                 <p className="text-xs text-slate-400">{scorePathCaption}</p>
               )}
+              <div className="flex flex-wrap gap-2 pt-1" role="tablist" aria-label="Review detail views">
+                <button
+                  role="tab"
+                  aria-selected={activeTab === 'combined'}
+                  onClick={() => setActiveTab('combined')}
+                  className={`rounded-xl border px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${
+                    activeTab === 'combined'
+                      ? 'border-white bg-emerald-400/20 text-white ring-2 ring-white/50'
+                      : 'border-white/15 bg-white/5 text-slate-300 hover:border-white/40 hover:text-white'
+                  }`}
+                >
+                  Final Review
+                </button>
+                {blindPassScores.map((score: number, index: number) => {
+                  const hasPassDetails = Boolean(storedIndividualReviews[index]);
+                  return (
+                    <button
+                      key={`pass-tab-${index}`}
+                      role="tab"
+                      aria-selected={activeTab === index}
+                      onClick={() => hasPassDetails && setActiveTab(index)}
+                      disabled={!hasPassDetails}
+                      title={hasPassDetails ? `Show blind pass ${index + 1}` : 'Blind pass review text was not stored for this paper.'}
+                      className={`rounded-xl border px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${
+                        activeTab === index
+                          ? 'border-white bg-fuchsia-400/25 text-white ring-2 ring-white/50'
+                          : hasPassDetails
+                            ? 'border-white/15 bg-white/5 text-slate-300 hover:border-white/40 hover:text-white'
+                            : 'cursor-not-allowed border-white/10 bg-white/[0.02] text-slate-600'
+                      }`}
+                    >
+                      Blind Pass {index + 1}: {score}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
@@ -986,18 +1007,16 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Primitive Inputs</p>
                       <div className="space-y-2">
                         {currentPrimitiveInputDetails.map((item, index) => {
-                          const hasDetails = [item.role, item.grounding, item.fundamentality, item.frameworkDependence, item.assessment].some(hasText);
+                          const hasDetails = [item.role, item.groundingQuality, item.grounding, item.fundamentalityLevel, item.fundamentality, item.frameworkDependenceLevel, item.frameworkDependence, item.assessment].some(hasText);
                           return (
                             <details key={`${item.input}-${index}`} className="group bg-white/5 border border-cyan-300/15 rounded-xl p-3" open={!hasDetails ? true : undefined}>
                               <summary className="cursor-pointer list-none">
-                                <div className="flex flex-wrap items-start justify-between gap-2">
-                                  <div className="min-w-0 flex-1">
-                                    <Markdown>{item.input}</Markdown>
-                                  </div>
-                                  <div className="flex max-w-full flex-wrap gap-1.5">
-                                    {item.grounding && qualityChip('Grounding', item.grounding, groundingTone(item.grounding))}
-                                    {item.fundamentality && qualityChip('Fundamentality', item.fundamentality, levelTone(item.fundamentality))}
-                                    {item.frameworkDependence && qualityChip('Framework Dependence', item.frameworkDependence, levelTone(item.frameworkDependence, true))}
+                                <div className="space-y-2">
+                                  <Markdown>{item.input}</Markdown>
+                                  <div className="space-y-1">
+                                    {(item.grounding || item.groundingQuality) && qualityLine('Grounding', item.grounding || item.groundingQuality, groundingTone(item.groundingQuality || item.grounding))}
+                                    {(item.fundamentalityLevel || item.fundamentality) && qualityLine('Fundamentality', item.fundamentalityLevel || item.fundamentality, levelTone(item.fundamentalityLevel || item.fundamentality))}
+                                    {(item.frameworkDependenceLevel || item.frameworkDependence) && qualityLine('Framework Dependence', item.frameworkDependenceLevel || item.frameworkDependence, levelTone(item.frameworkDependenceLevel || item.frameworkDependence, true))}
                                   </div>
                                 </div>
                                 {item.role && <p className="mt-1 text-xs text-slate-400">{item.role}</p>}
@@ -1037,18 +1056,16 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Introduced Constructions</p>
                       <div className="grid gap-3 lg:grid-cols-2">
                         {currentIntroducedConstructionDetails.map((item, index) => {
-                          const hasDetails = [item.role, item.validity, item.hardToVary, item.fragilityOrLimits, item.assessment].some(hasText) || item.inputsUsed.length > 0;
+                          const hasDetails = [item.role, item.validityLevel, item.validity, item.hardToVaryLevel, item.hardToVary, item.fragilityLevel, item.fragilityOrLimits, item.assessment].some(hasText) || item.inputsUsed.length > 0;
                           return (
                             <details key={`${item.construction}-${index}`} className="group bg-white/5 border border-indigo-300/15 rounded-xl p-3">
                               <summary className="cursor-pointer list-none">
-                                <div className="flex flex-wrap items-start justify-between gap-2">
-                                  <div className="min-w-0 flex-1">
-                                    <Markdown>{item.construction}</Markdown>
-                                  </div>
-                                  <div className="flex max-w-full flex-wrap gap-1.5">
-                                    {item.validity && validityChip('Validity', item.validity)}
-                                    {item.hardToVary && qualityChip('Hard-to-Vary', item.hardToVary, hardToVaryTone(item.hardToVary))}
-                                    {item.fragilityOrLimits && qualityChip('Fragility/Limits', item.fragilityOrLimits, fragilityTone(item.fragilityOrLimits))}
+                                <div className="space-y-2">
+                                  <Markdown>{item.construction}</Markdown>
+                                  <div className="space-y-1">
+                                    {(item.validity || item.validityLevel) && qualityLine('Validity', item.validity || item.validityLevel, validityTone(item.validityLevel || item.validity).tone)}
+                                    {(item.hardToVaryLevel || item.hardToVary) && qualityLine('Hard to Vary', item.hardToVaryLevel || item.hardToVary, hardToVaryTone(item.hardToVaryLevel || item.hardToVary))}
+                                    {(item.fragilityLevel || item.fragilityOrLimits) && qualityLine('Fragility', item.fragilityLevel || item.fragilityOrLimits, fragilityTone(item.fragilityLevel || item.fragilityOrLimits))}
                                   </div>
                                 </div>
                                 {item.role && <p className="mt-1 text-xs text-slate-400">{item.role}</p>}
@@ -1096,7 +1113,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       <div className="grid gap-3 lg:grid-cols-2">
                       {currentLedgerOutputs.map((item: any, i: number) => {
                         const validitySummary = mergeUniqueText(item.validity, item.support);
-                        const tone = validityTone(validitySummary);
+                        const tone = validityTone(item.validityLevel || validitySummary);
                         const validityPreview = firstSentence(validitySummary);
                         return (
                           <details key={`${item.output}-${i}`} className="group bg-white/5 border border-white/10 rounded-xl p-3">
@@ -1111,20 +1128,16 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                   </span>
                                 )}
                               </div>
-                              <div className="flex flex-wrap items-center gap-2">
-                                {validitySummary && (
-                                  <span className={`text-[9px] font-black uppercase tracking-widest border rounded-full px-2 py-1 ${tone.className}`}>
-                                    {tone.label}
-                                  </span>
+                              <div className="space-y-1">
+                                {(validitySummary || item.validityLevel) && (
+                                  qualityLine('Validity', item.validityLevel || tone.label, tone.tone)
                                 )}
                                 {item.externalContextIfAny && (
-                                  <span className="text-[9px] font-black uppercase tracking-widest text-sky-100 bg-sky-400/10 border border-sky-300/20 rounded-full px-2 py-1">
-                                    External context
-                                  </span>
+                                  qualityLine('External Context', item.externalContextIfAny, 'neutral')
                                 )}
-                                <span className="text-[9px] font-bold uppercase tracking-widest text-slate-500 group-open:hidden">
+                                <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500 group-open:hidden">
                                   Details
-                                </span>
+                                </div>
                               </div>
                               {validityPreview && <p className="text-xs leading-relaxed text-slate-400 group-open:hidden">{validityPreview}</p>}
                             </summary>
