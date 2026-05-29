@@ -311,19 +311,10 @@ const qualityLine = (label: string, value: string, tone: 'green' | 'yellow' | 'r
 
 type IcoTabId = 'input' | 'construction' | 'output';
 
-const ICO_TAB_THEME: Record<IcoTabId, { activeCard: string; panel: string }> = {
-  input: {
-    activeCard: 'border-cyan-200/35 bg-cyan-300/[0.09] shadow-lg shadow-cyan-950/20',
-    panel: 'border-cyan-200/20 bg-cyan-300/[0.07]',
-  },
-  construction: {
-    activeCard: 'border-indigo-200/35 bg-indigo-300/[0.09] shadow-lg shadow-indigo-950/20',
-    panel: 'border-indigo-200/20 bg-indigo-300/[0.07]',
-  },
-  output: {
-    activeCard: 'border-emerald-200/35 bg-emerald-300/[0.09] shadow-lg shadow-emerald-950/20',
-    panel: 'border-emerald-200/20 bg-emerald-300/[0.07]',
-  },
+const ICO_TAB_THEME = {
+  activeCard: 'border-indigo-200/35 bg-indigo-300/[0.10] shadow-lg shadow-indigo-950/20',
+  inactiveCard: 'border-indigo-300/10 bg-indigo-950/25 opacity-80 hover:border-indigo-200/25 hover:bg-indigo-900/35 hover:opacity-100',
+  panel: 'border-indigo-200/20 bg-indigo-300/[0.07]',
 };
 
 const validityTone = (value: unknown): { label: string; className: string; tone: 'green' | 'yellow' | 'red' | 'neutral' } => {
@@ -804,7 +795,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       value: currentInputStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.inputStrengthScore),
       color: currentInputStrengthScore == null ? 'text-slate-200' : currentInputStrengthScore >= 8 ? 'text-emerald-200' : currentInputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
-      border: currentInputStrengthScore == null ? 'border-white/10' : currentInputStrengthScore >= 8 ? 'border-emerald-300/20' : currentInputStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
     {
       id: 'construction' as const,
@@ -812,7 +802,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       value: currentConstructionStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.constructionStrengthScore),
       color: currentConstructionStrengthScore == null ? 'text-slate-200' : currentConstructionStrengthScore >= 8 ? 'text-emerald-200' : currentConstructionStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
-      border: currentConstructionStrengthScore == null ? 'border-white/10' : currentConstructionStrengthScore >= 8 ? 'border-emerald-300/20' : currentConstructionStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
     {
       id: 'output' as const,
@@ -820,10 +809,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       value: currentOutputStrengthScore,
       rationale: firstSentence(currentSubscoreRationale?.outputStrengthScore),
       color: currentOutputStrengthScore == null ? 'text-slate-200' : currentOutputStrengthScore >= 8 ? 'text-emerald-200' : currentOutputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
-      border: currentOutputStrengthScore == null ? 'border-white/10' : currentOutputStrengthScore >= 8 ? 'border-emerald-300/20' : currentOutputStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
   ];
-  const activeIcoTheme = ICO_TAB_THEME[activeIcoTab];
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     {
@@ -999,14 +986,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
 
           {hasIcoLedger && (
             <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-4">
-              <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest flex items-center gap-2">
+              <h3 className="text-xs font-black text-indigo-300 uppercase tracking-widest flex items-center gap-2">
                 <BrainCircuit className="w-4 h-4" /> Input → Construction → Output Assessment
               </h3>
               <div className="space-y-3">
                 <div className="grid items-stretch gap-3 md:grid-cols-3">
                   {diagnosticCards.map((card) => {
                     const active = activeIcoTab === card.id;
-                    const theme = ICO_TAB_THEME[card.id];
                     return (
                       <button
                         key={card.label}
@@ -1014,7 +1000,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         role="tab"
                         aria-selected={active}
                         onClick={() => setActiveIcoTab(card.id)}
-                        className={`h-full rounded-2xl border p-4 text-left transition-all ${active ? theme.activeCard : `${card.border} bg-slate-950/20 opacity-80 hover:bg-white/[0.05] hover:opacity-100`}`}
+                        className={`h-full rounded-2xl border p-4 text-left transition-all ${active ? ICO_TAB_THEME.activeCard : ICO_TAB_THEME.inactiveCard}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{card.label}</p>
@@ -1028,24 +1014,24 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     );
                   })}
                 </div>
-                <div className={`rounded-2xl border p-4 ${activeIcoTheme.panel}`}>
+                <div className={`rounded-2xl border p-4 ${ICO_TAB_THEME.panel}`}>
                 {activeIcoTab === 'input' && <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs font-black text-cyan-300 uppercase tracking-widest">Input Strength</p>
+                    <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Input Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentInputStrengthScore)}`}>
                       {currentInputStrengthScore == null ? 'N/A' : currentInputStrengthScore}
-                      {currentInputStrengthScore != null && <span className="text-sm font-bold text-cyan-300/70">/10</span>}
+                      {currentInputStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
                     </p>
                   </div>
                   {currentPrimitiveInputs.length > 0 && (
                     <div>
-                      <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-2">Primitive Inputs</p>
+                      <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-2">Primitive Inputs</p>
                       <div className="space-y-3">
                         {currentPrimitiveInputDetails.map((item, index) => {
                           return (
-                            <div key={`${item.input}-${index}`} className="bg-white/5 border border-cyan-300/15 rounded-xl p-4 space-y-3">
+                            <div key={`${item.input}-${index}`} className="bg-indigo-300/[0.045] border border-indigo-300/15 rounded-xl p-4 space-y-3">
                               <div className="flex items-start gap-3">
-                                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-cyan-300/30 bg-cyan-300/10 text-[10px] font-black text-cyan-100">
+                                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-indigo-300/30 bg-indigo-300/10 text-[10px] font-black text-indigo-100">
                                   {index + 1}
                                 </span>
                                 <div className="min-w-0 flex-1 space-y-1">
@@ -1117,15 +1103,15 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
 
                 {activeIcoTab === 'output' && <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs font-black text-emerald-300 uppercase tracking-widest">Output Strength</p>
+                    <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Output Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentOutputStrengthScore)}`}>
                       {currentOutputStrengthScore == null ? 'N/A' : currentOutputStrengthScore}
-                      {currentOutputStrengthScore != null && <span className="text-sm font-bold text-emerald-300/70">/10</span>}
+                      {currentOutputStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
                     </p>
                   </div>
                   {currentLedgerOutputs.length > 0 && (
                     <div className="space-y-3">
-                      <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Outputs</p>
+                      <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Outputs</p>
                       <div className="grid gap-3 lg:grid-cols-2">
                       {currentLedgerOutputs.map((item: any, i: number) => {
                         const outputAssessment = item.assessment;
@@ -1139,11 +1125,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                           || item.externalContextIfAny
                           || supportAddsDetail;
                         return (
-                          <details key={`${item.output}-${i}`} className="group rounded-xl border border-emerald-300/15 bg-emerald-300/[0.045] p-4">
+                          <details key={`${item.output}-${i}`} className="group rounded-xl border border-indigo-300/15 bg-indigo-300/[0.045] p-4">
                             <summary className="cursor-pointer list-none space-y-2">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0 flex flex-1 items-start gap-3">
-                                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-emerald-300/30 bg-emerald-300/10 text-[10px] font-black text-emerald-100">
+                                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-indigo-300/30 bg-indigo-300/10 text-[10px] font-black text-indigo-100">
                                     {i + 1}
                                   </span>
                                   <div className="min-w-0 flex-1">
@@ -1151,7 +1137,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                   </div>
                                 </div>
                                 {item.centrality && (
-                                  <span className="shrink-0 text-[9px] font-black uppercase tracking-widest text-emerald-100 bg-emerald-400/15 border border-emerald-300/20 rounded-full px-2 py-1">
+                                  <span className="shrink-0 text-[9px] font-black uppercase tracking-widest text-indigo-100 bg-indigo-400/15 border border-indigo-300/20 rounded-full px-2 py-1">
                                     {item.centrality}
                                   </span>
                                 )}
@@ -1173,7 +1159,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                             {hasExpandedOutputDetails && <div className="mt-3 space-y-3 pt-2">
                               {item.dependsOnInputs.length > 0 && (
                                 <div>
-                                  <p className="mb-1 text-xs font-black uppercase tracking-widest text-cyan-300">Inputs Used</p>
+                                  <p className="mb-1 text-xs font-black uppercase tracking-widest text-indigo-300">Inputs Used</p>
                                   <Markdown>{listMarkdown(item.dependsOnInputs)}</Markdown>
                                 </div>
                               )}
