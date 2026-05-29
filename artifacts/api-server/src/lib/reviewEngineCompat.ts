@@ -501,7 +501,7 @@ type IndividualPassResult = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v16.6-output-card-assessments";
+export const REVIEW_PROMPT_VERSION = "v16.7-correctly-established-contribution";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -3910,7 +3910,7 @@ function buildAdjudicatorInput(
   const compactPasses = reviews.map(compactIndividualReviewForAdjudicator);
   const text = JSON.stringify({
     adjudicatorInputNote:
-      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.6 canonical input-construction-output assessments, diagnostic scores, objections, per-output assessments, and single intrinsic scores below.",
+      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.7 canonical input-construction-output assessments, diagnostic scores, objections, per-output assessments, and single intrinsic scores below.",
     manuscriptSummaryAndLedger: compactPasses.map((review) => ({
       passNumber: review.passNumber,
       centralClaim: review.centralClaim,
@@ -4623,8 +4623,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
-      schemaVersion: "v16.6",
-      clusterVersion: "v16.6-canonical-ico",
+      schemaVersion: "v16.7",
+      clusterVersion: "v16.7-canonical-ico",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
       benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",

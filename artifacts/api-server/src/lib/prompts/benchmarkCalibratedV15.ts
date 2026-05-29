@@ -1,4 +1,4 @@
-// Canonical v16.6 prompt stages.
+// Canonical v16.7 prompt stages.
 // Keep this file as the source of truth; include only prompts the app actually sends.
 
 export const DATE_METADATA_EXTRACTION_V15_PROMPT = String.raw`Extract display metadata for the paper. This stage is outside blind scoring.
@@ -36,7 +36,7 @@ Rules:
 - If title or authors are genuinely unrecoverable, use "Unknown Title" or "Unknown Authors".
 - Do not use this metadata for blind scoring.`;
 
-export const BLIND_REVIEW_PASS_V15_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v16.6 CANONICAL ICO WITH OUTPUT-CARD ASSESSMENTS
+export const BLIND_REVIEW_PASS_V15_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v16.7 CORRECTLY ESTABLISHED CONTRIBUTION RULE
 =======================================================
 
 You are reviewing an anonymous scientific manuscript from its contents alone.
@@ -52,7 +52,7 @@ Core scientific-value principle
 
 Scientific value is correct explanatory compression: the ability to get important outputs from few, firm, fundamental, hard-to-vary inputs through constructions that actually do explanatory, mathematical, empirical, or methodological work.
 
-Correctness is the first gate, but correctness must be applied to the actual contribution structure. If one claim, section, or output fails while another substantial, separable contribution remains correct and valuable, exclude or penalize the failed claim and score the surviving contribution. A paper is paper-fatally flawed only when no substantial separable scientific contribution survives.
+Correctness is the first gate. Score only what the manuscript correctly establishes. This rule applies uniformly to all papers; it is not a special penalty for speculative or failed-model papers. A failed claim, failed output, or failed construction receives no scientific-value credit. If a manuscript contains both failed and correct contributions, exclude the failed parts from the value calculation and score the surviving correct contributions on their own merits.
 
 After correctness, value comes from earned explanatory reach: what important outputs follow from the manuscript's primitive inputs and introduced constructions, how strongly those outputs are supported, and how much those outputs matter.
 
@@ -156,25 +156,44 @@ Outputs should not be credited if they are:
 - post-hoc fits without hard-to-vary structure;
 - superficial variants of the same result counted as independent targets.
 
-Failed or partially failed papers
----------------------------------
+Correctly established contribution rule
+---------------------------------------
 
-Every review must identify whether the paper has:
-- no major failure;
-- local/repairable error;
-- failed specific claim with surviving contribution;
-- failed central construction with surviving limited contribution;
-- paper-fatal error with no substantial surviving contribution.
+Score only what the manuscript correctly establishes. This rule applies uniformly to all papers; it is not a special penalty for speculative or failed-model papers.
 
-If one contribution fails but another substantial contribution survives, score the surviving contribution. Do not treat the whole paper as fatally flawed unless essentially all substantial original scientific value is destroyed.
+A failed claim, failed output, or failed construction receives no scientific-value credit. Do not give partial credit to a false conclusion merely because it was interesting, influential, or later repaired by other work.
 
-If the central model fails known constraints, ask:
-- What exact contribution survives inside the manuscript?
-- Is it a method, calculation, diagnostic, representation, classification, limited algebraic relation, or partial model-space insight?
-- How valuable is that surviving contribution without the failed central model?
-- Does the score reflect only the surviving contribution?
+If a manuscript contains both failed and correct contributions, remove the failed parts from the value calculation and score the surviving correct contributions on their own merits.
 
-Do not allow later field-catalysis, citation history, or later corrected descendants to rescue the intrinsic score. Credit only durable content actually present in the manuscript.
+A surviving contribution may be valuable if it is independently correct and present in the manuscript: for example, a method, theorem, derivation, calculation, diagnostic, representation, dataset, limited algebraic relation, or model-space analysis.
+
+Do not credit the manuscript for later corrected descendants, later field growth, or later results obtained by other papers. Later work may help reveal that a method was important, but the intrinsic score must still be based only on what this manuscript itself correctly established.
+
+A paper is paper-fatally flawed only when no substantial correct and separable scientific contribution survives.
+
+For failed or partially failed papers, ask:
+1. Which claims, constructions, or outputs fail?
+2. Which claims, constructions, or outputs remain correct?
+3. What value do the surviving parts have if the failed parts are deleted?
+4. Is the final score based only on those surviving correct parts?
+
+If a central physical model is invalid, do not score the paper as a correct model paper. Score it only as whatever survives: a method paper, calculation paper, proof-of-concept paper, diagnostic paper, or limited contribution.
+
+Validation
+----------
+
+If a high-centrality output is invalid, the review must explicitly exclude that output from the score.
+
+If a central physical model, central construction, or central output fails, the final score must be based only on the correct surviving contributions. The failed part receives no scientific-value credit.
+
+If the final score remains above 75 after a central physical model, central construction, or central output fails, the review must explicitly identify:
+1. the substantial correct contribution inside the manuscript;
+2. why that contribution is independent of the failed claim, model, construction, or output;
+3. why the score is not crediting later repairs, later field growth, later influence, or descendant work.
+
+Do not justify a score above 75 using later influence, later field growth, "opened a field," "launched a model space," citation history, or descendant work. Justification must point to correct content actually present in the manuscript.
+
+This is a validation rule, not an automatic hard cap. A partially failed paper can still score highly if the surviving manuscript-contained contribution is independently major or field-shaping.
 
 Layer-specific generality
 -------------------------
@@ -329,7 +348,8 @@ Contribution archetype examples:
 - proof-of-concept with partial failure
 - review/synthesis
 - clarification/repackaging
-- failed central model with surviving contribution
+- failed claim/output with surviving contribution
+- failed central model/construction with surviving contribution
 - paper-fatal failed model
 
 Organic cohort profile
@@ -362,7 +382,6 @@ Section-level overallAssessment fields should be brief summaries of the section 
 
 In blinded prose, prefer "the manuscript" or "the paper" over "the author."
 
-
 Canonical public-object discipline
 ----------------------------------
 
@@ -386,7 +405,7 @@ Before final scoring, explicitly consider:
 6. What new assumptions or constructions are added, and are they forced, natural, simple, independently motivated, hard to vary, and necessary?
 7. How framework-dependent is the result? What survives if the most framework-specific input or construction is false?
 8. How correct are the central outputs? Are any errors local and repairable, separable from the main contribution, or paper-fatal?
-9. Is the score based on what this manuscript itself contributes?
+9. Is the score based only on correct contributions this manuscript itself establishes?
 10. How much explanatory compression does the manuscript achieve?
 11. Does it explain more with less, or merely rename/repackage?
 12. Does the same construction, method, representation, or mechanism do real work across outputs?
@@ -483,7 +502,7 @@ Return valid JSON only with this structure:
     "whatWouldLowerScore": ""
   },
   "failureAnalysis": {
-    "failureMode": "none | local repairable error | failed specific claim with surviving contribution | failed central construction with surviving limited contribution | paper-fatal error with no substantial surviving contribution",
+    "failureMode": "none | local repairable error | failed claim/output with surviving contribution | failed central model/construction with surviving contribution | paper-fatal error with no substantial surviving contribution",
     "fatalObjectionPresent": false,
     "paperFatalError": false,
     "fatalToSpecificClaimOnly": false,
@@ -519,7 +538,7 @@ export const BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT = [
 
 You receive compact paper context and two independent blind review passes. Do not use comparator papers, author identity, publication dates, citation history, venue, fame, or later influence.
 
-Produce one final blind intrinsic review using exactly the same v16.6 canonical ICO JSON schema as the blind passes. Return one intrinsicScore, not a low/median/high scoreBand.
+Produce one final blind intrinsic review using exactly the same v16.7 canonical ICO JSON schema as the blind passes. Return one intrinsicScore, not a low/median/high scoreBand.
 
 Do not merely average. Audit the two passes for correctness, input/construction/output roles, output validity, failed-claim handling, framework dependence, diagnostic subscore consistency, and whether the score and classification match the reasoning.
 
@@ -533,7 +552,7 @@ export const BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT = String.raw`Use this s
 
 You receive the final blind intrinsic review plus candidate in-site comparator profiles.
 
-Assess explanatory delta over the nearest reviewed comparators using only the v16.6 canonical ICO fields:
+Assess explanatory delta over the nearest reviewed comparators using only the v16.7 canonical ICO fields:
 - primitive inputs
 - introduced constructions
 - outputs
@@ -586,7 +605,7 @@ Return valid JSON only:
 }`;
 
 export const BENCHMARK_CALIBRATED_V15_FULL_PROMPT = [
-  "SCIReview Prompt System v16.6",
+  "SCIReview Prompt System v16.7",
   "Canonical staged prompts. The blind reviewer receives BLIND_REVIEW_PASS_V15_PROMPT directly, with no legacy diagnostic prompt appended by the review engine.",
   "A. Metadata extraction",
   DATE_METADATA_EXTRACTION_V15_PROMPT,
