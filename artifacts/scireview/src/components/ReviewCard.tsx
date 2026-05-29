@@ -154,9 +154,6 @@ const mergeUniqueText = (...values: unknown[]): string => {
   return chunks.join('\n\n');
 };
 
-const formatPointSpread = (value: number | null): string =>
-  value == null ? 'Insufficient data' : `${value} ${value === 1 ? 'point' : 'points'}`;
-
 const formatAssessmentMarkdown = (value: string): string => {
   const text = value.trim();
   if (!text) return '';
@@ -175,6 +172,25 @@ const numericScores = (value: unknown): number[] =>
         .map((item) => Math.round(item))
     : [];
 
+const normalizeStoredPass = (pass: any) => {
+  if (!pass || typeof pass !== 'object') return null;
+  const score = Number(pass.score ?? pass.scoreBand?.median ?? pass.finalScore ?? pass.overallIntrinsicScore);
+  return {
+    ...pass,
+    score: Number.isFinite(score) ? Math.round(score <= 10 && score > 0 ? score * 10 : score) : pass.score,
+    bestClassification: pass.bestClassification ?? pass.classification ?? pass.finalClassification ?? '',
+  };
+};
+
+const storedPassesFrom = (...values: unknown[]): any[] => {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+    const passes = value.map(normalizeStoredPass).filter(Boolean) as any[];
+    if (passes.length > 0) return passes;
+  }
+  return [];
+};
+
 const getBlindPassScores = (options: {
   review: AIReview;
   parsedCoverage: any;
@@ -189,8 +205,12 @@ const getBlindPassScores = (options: {
     parsedCoverage?.reviewPassComparison?.individualScores,
     aggregateAdjudication?.individualScores,
     parsedCoverage?.adjudication?.individualScores,
+    parsedCoverage?.blindPassScores,
+    parsedCoverage?.blindPassReviews?.map((item: any) => item?.score ?? item?.scoreBand?.median),
     parsedCoverage?.coverageLedger?.reviewPassComparison?.individualScores,
     parsedCoverage?.coverageLedger?.adjudication?.individualScores,
+    parsedCoverage?.coverageLedger?.blindPassScores,
+    parsedCoverage?.coverageLedger?.blindPassReviews?.map((item: any) => item?.score ?? item?.scoreBand?.median),
   ];
   for (const path of fallbackPaths) {
     const scores = numericScores(path);
@@ -427,11 +447,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     storedAggregate?.adjudicatorStatus ??
     'success';
   const adjudicatorFallbackActive = adjudicatorStatus === 'failed_fallback' || adjudicatorStatus === 'not_run';
-  const storedIndividualReviews = storedIndividualReviewsFromField.length > 0
-    ? storedIndividualReviewsFromField
-    : Array.isArray(parsedCoverage?.individualReviews)
-      ? parsedCoverage.individualReviews
-      : [];
+  const storedIndividualReviews = storedPassesFrom(
+    storedIndividualReviewsFromField,
+    parsedCoverage?.blindPassReviews,
+    parsedCoverage?.coverageLedger?.blindPassReviews,
+    parsedCoverage?.individualReviews,
+    parsedCoverage?.coverageLedger?.individualReviews,
+  );
   const aggregateScoreBand = storedAggregate?.finalScoreBand ?? null;
   const comparatorCalibration = parsedCoverage?.comparatorCalibration ?? storedAggregate?.comparatorCalibration ?? null;
   const blindIntrinsicScoreBand = parsedCoverage?.blindIntrinsicScoreBand
@@ -618,7 +640,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     currentInputConstructionOutputLedger?.whyOutputsMatter ??
     '';
   const currentInputConstructionOutputAssessment =
+    currentInputConstructionOutputLedger?.output?.overallAssessment ??
     currentInputConstructionOutputLedger?.output?.assessment ??
+    currentInputConstructionOutputLedger?.outputOverallAssessment ??
     currentInputConstructionOutputLedger?.assessment ??
     '';
   const hasIcoLedger = Boolean(
@@ -629,14 +653,20 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     currentInputConstructionOutputAssessment
   );
   const currentInputGrounding =
+    selectedPass?.inputConstructionOutputAssessment?.input?.overallAssessment ||
     selectedPass?.inputConstructionOutputAssessment?.input?.assessment ||
+    currentInputConstructionOutputLedger?.input?.overallAssessment ||
     currentInputConstructionOutputLedger?.input?.assessment ||
+    currentInputConstructionOutputLedger?.inputOverallAssessment ||
     selectedPass?.inputGrounding ||
     inputGrounding;
   const currentInputFundamentality = selectedPass?.inputFundamentality || inputFundamentality;
   const currentConstructionAssessment =
+    selectedPass?.inputConstructionOutputAssessment?.construction?.overallAssessment ||
     selectedPass?.inputConstructionOutputAssessment?.construction?.assessment ||
+    currentInputConstructionOutputLedger?.construction?.overallAssessment ||
     currentInputConstructionOutputLedger?.construction?.assessment ||
+    currentInputConstructionOutputLedger?.constructionOverallAssessment ||
     selectedPass?.constructionAssessment
     || parsedCoverage?.constructionAssessment
     || storedAggregate?.constructionAssessment
@@ -717,17 +747,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const stabilityDisplay = scoreSpread == null
     ? 'Insufficient data'
     : `${stabilityLabel.charAt(0).toUpperCase()}${stabilityLabel.slice(1)} · ${scoreSpread}-point spread`;
-  const inputStrengthAssessment = mergeUniqueText(
-    currentInputGrounding,
-    currentInputFundamentality,
-    currentSubscoreRationale?.inputStrengthScore,
-  );
-  const constructionStrengthAssessment = mergeUniqueText(
-    currentConstructionAssessment,
-    currentSubscoreRationale?.constructionStrengthScore,
-  );
   const outputStrengthAssessment = mergeUniqueText(
     currentSubscoreRationale?.outputStrengthScore,
+    currentInputConstructionOutputAssessment,
     currentWhyOutputsMatter,
   );
   const frameworkDependenceLevel =
@@ -753,10 +775,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       : '';
   const versionAndMode = [shortPromptVersion, pipelineModeLabel].filter(Boolean).join(' ');
   const modelPromptLine = [modelBase, versionAndMode].filter(Boolean).join(' · ');
-  const passBandLabels = passScoreBands
-    .filter(Boolean)
-    .map((band: { low: number; median: number; high: number }, index: number) => `P${index + 1}: ${band.low}-${band.median}-${band.high}`)
-    .join('; ');
   const diagnosticCards = [
     {
       label: 'Input Strength',
@@ -851,38 +869,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </div>
 
             <div className="border-t border-white/10 pt-4 space-y-3">
-              <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Score Path</p>
-              <div className={`grid gap-3 ${showCalibrationAdjustment ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
-                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
-                  {blindPassScores.length > 0 ? (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {blindPassScores.map((score: number, index: number) => {
-                        return (
-                          <span key={`${score}-${index}`} className="rounded-lg border border-white/15 bg-fuchsia-400/10 px-2.5 py-1 text-sm font-black text-fuchsia-100">
-                            {score}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <p className="text-sm font-bold text-white mt-1">Not stored</p>
-                  )}
-                </div>
-                <div className="bg-slate-950/25 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Review Stability</p>
-                  <p className="text-sm font-bold text-white mt-1">{stabilityDisplay}</p>
-                </div>
-                {showCalibrationAdjustment && (
-                  <div className="bg-slate-950/25 border border-white/10 rounded-xl p-3">
-                    <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Calibration Adjustment</p>
-                    <p className="text-sm font-bold text-white mt-1">{adjustmentLabel}</p>
-                  </div>
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Review Views</p>
+                <p className="text-xs font-bold text-slate-300">Review Stability: {stabilityDisplay}</p>
               </div>
-              {!comparatorCalibrationApplied && (
-                <p className="text-xs text-slate-400">{scorePathCaption}</p>
-              )}
               <div className="flex flex-wrap gap-2 pt-1" role="tablist" aria-label="Review detail views">
                 <button
                   role="tab"
@@ -918,6 +908,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     </button>
                   );
                 })}
+              </div>
+              {blindPassScores.length > 0 && storedIndividualReviews.length === 0 && (
+                <p className="text-xs text-slate-500">Blind pass review text was not saved for this older review.</p>
+              )}
+              <div className="flex flex-wrap gap-3 text-xs text-slate-400">
+                {!comparatorCalibrationApplied && <span>{scorePathCaption}</span>}
+                {showCalibrationAdjustment && <span>Calibration adjustment: {adjustmentLabel}</span>}
               </div>
             </div>
           </div>
@@ -1004,41 +1001,30 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   </div>
                   {currentPrimitiveInputs.length > 0 && (
                     <div>
-                      <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-1">Primitive Inputs</p>
-                      <div className="space-y-2">
+                      <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest mb-2">Primitive Inputs</p>
+                      <div className="space-y-3">
                         {currentPrimitiveInputDetails.map((item, index) => {
-                          const hasDetails = [item.role, item.groundingQuality, item.grounding, item.fundamentalityLevel, item.fundamentality, item.frameworkDependenceLevel, item.frameworkDependence, item.assessment].some(hasText);
                           return (
-                            <details key={`${item.input}-${index}`} className="group bg-white/5 border border-cyan-300/15 rounded-xl p-3" open={!hasDetails ? true : undefined}>
-                              <summary className="cursor-pointer list-none">
-                                <div className="space-y-2">
-                                  <Markdown>{item.input}</Markdown>
-                                  <div className="space-y-1">
-                                    {(item.grounding || item.groundingQuality) && qualityLine('Grounding', item.grounding || item.groundingQuality, groundingTone(item.groundingQuality || item.grounding))}
-                                    {(item.fundamentalityLevel || item.fundamentality) && qualityLine('Fundamentality', item.fundamentalityLevel || item.fundamentality, levelTone(item.fundamentalityLevel || item.fundamentality))}
-                                    {(item.frameworkDependenceLevel || item.frameworkDependence) && qualityLine('Framework Dependence', item.frameworkDependenceLevel || item.frameworkDependence, levelTone(item.frameworkDependenceLevel || item.frameworkDependence, true))}
-                                  </div>
-                                </div>
-                                {item.role && <p className="mt-1 text-xs text-slate-400">{item.role}</p>}
-                              </summary>
-                              {hasDetails && (
-                                <div className="mt-3 grid gap-3 border-t border-white/10 pt-3 md:grid-cols-2">
-                                  {item.grounding && <div><p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Grounding</p><Markdown>{item.grounding}</Markdown></div>}
-                                  {item.fundamentality && <div><p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Fundamentality</p><Markdown>{item.fundamentality}</Markdown></div>}
-                                  {item.frameworkDependence && <div><p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Framework Dependence</p><Markdown>{item.frameworkDependence}</Markdown></div>}
-                                  {item.assessment && <div className="md:col-span-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{formatAssessmentMarkdown(item.assessment)}</Markdown></div>}
+                            <div key={`${item.input}-${index}`} className="bg-white/5 border border-cyan-300/15 rounded-xl p-4 space-y-3">
+                              <div className="space-y-1">
+                                <Markdown>{item.input}</Markdown>
+                                {item.role && <Markdown>{item.role}</Markdown>}
+                              </div>
+                              <div className="space-y-1">
+                                {(item.grounding || item.groundingQuality) && qualityLine('Grounding', item.grounding || item.groundingQuality, groundingTone(item.groundingQuality || item.grounding))}
+                                {(item.fundamentalityLevel || item.fundamentality) && qualityLine('Fundamentality', item.fundamentalityLevel || item.fundamentality, levelTone(item.fundamentalityLevel || item.fundamentality))}
+                                {(item.frameworkDependenceLevel || item.frameworkDependence) && qualityLine('Framework Dependence', item.frameworkDependenceLevel || item.frameworkDependence, levelTone(item.frameworkDependenceLevel || item.frameworkDependence, true))}
+                              </div>
+                              {item.assessment && (
+                                <div className="border-t border-white/10 pt-3">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
+                                  <Markdown>{formatAssessmentMarkdown(item.assessment)}</Markdown>
                                 </div>
                               )}
-                            </details>
+                            </div>
                           );
                         })}
                       </div>
-                    </div>
-                  )}
-                  {hasText(inputStrengthAssessment) && (
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Input Assessment</p>
-                      <Markdown>{formatAssessmentMarkdown(inputStrengthAssessment)}</Markdown>
                     </div>
                   )}
                 </div>
@@ -1053,42 +1039,30 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   </div>
                   {currentIntroducedConstructions.length > 0 && (
                     <div>
-                      <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-1">Introduced Constructions</p>
+                      <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-2">Introduced Constructions</p>
                       <div className="grid gap-3 lg:grid-cols-2">
                         {currentIntroducedConstructionDetails.map((item, index) => {
-                          const hasDetails = [item.role, item.validityLevel, item.validity, item.hardToVaryLevel, item.hardToVary, item.fragilityLevel, item.fragilityOrLimits, item.assessment].some(hasText) || item.inputsUsed.length > 0;
                           return (
-                            <details key={`${item.construction}-${index}`} className="group bg-white/5 border border-indigo-300/15 rounded-xl p-3">
-                              <summary className="cursor-pointer list-none">
-                                <div className="space-y-2">
-                                  <Markdown>{item.construction}</Markdown>
-                                  <div className="space-y-1">
-                                    {(item.validity || item.validityLevel) && qualityLine('Validity', item.validity || item.validityLevel, validityTone(item.validityLevel || item.validity).tone)}
-                                    {(item.hardToVaryLevel || item.hardToVary) && qualityLine('Hard to Vary', item.hardToVaryLevel || item.hardToVary, hardToVaryTone(item.hardToVaryLevel || item.hardToVary))}
-                                    {(item.fragilityLevel || item.fragilityOrLimits) && qualityLine('Fragility', item.fragilityLevel || item.fragilityOrLimits, fragilityTone(item.fragilityLevel || item.fragilityOrLimits))}
-                                  </div>
-                                </div>
-                                {item.role && <p className="mt-1 text-xs text-slate-400">{item.role}</p>}
-                              </summary>
-                              {hasDetails && (
-                                <div className="mt-3 grid gap-3 border-t border-white/10 pt-3 md:grid-cols-2">
+                            <div key={`${item.construction}-${index}`} className="bg-white/5 border border-indigo-300/15 rounded-xl p-4 space-y-3">
+                              <div className="space-y-1">
+                                <Markdown>{item.construction}</Markdown>
+                                {item.role && <Markdown>{item.role}</Markdown>}
+                              </div>
+                              <div className="space-y-1">
+                                {(item.validity || item.validityLevel) && qualityLine('Validity', item.validity || item.validityLevel, validityTone(item.validityLevel || item.validity).tone)}
+                                {(item.hardToVaryLevel || item.hardToVary) && qualityLine('Hard to Vary', item.hardToVaryLevel || item.hardToVary, hardToVaryTone(item.hardToVaryLevel || item.hardToVary))}
+                                {(item.fragilityLevel || item.fragilityOrLimits) && qualityLine('Fragility / Limits', item.fragilityLevel || item.fragilityOrLimits, fragilityTone(item.fragilityLevel || item.fragilityOrLimits))}
+                              </div>
+                              {(item.inputsUsed.length > 0 || item.assessment) && (
+                                <div className="space-y-3 border-t border-white/10 pt-3">
                                   {item.inputsUsed.length > 0 && <div><p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Inputs Used</p><Markdown>{listMarkdown(item.inputsUsed)}</Markdown></div>}
-                                  {item.validity && <div><p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Validity</p><Markdown>{item.validity}</Markdown></div>}
-                                  {item.hardToVary && <div><p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Hard To Vary</p><Markdown>{item.hardToVary}</Markdown></div>}
-                                  {item.fragilityOrLimits && <div><p className="text-[9px] font-black text-amber-300 uppercase tracking-widest mb-1">Fragility Or Limits</p><Markdown>{item.fragilityOrLimits}</Markdown></div>}
-                                  {item.assessment && <div className="md:col-span-2"><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{formatAssessmentMarkdown(item.assessment)}</Markdown></div>}
+                                  {item.assessment && <div><p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p><Markdown>{formatAssessmentMarkdown(item.assessment)}</Markdown></div>}
                                 </div>
                               )}
-                            </details>
+                            </div>
                           );
                         })}
                       </div>
-                    </div>
-                  )}
-                  {hasText(constructionStrengthAssessment) && (
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Construction Assessment</p>
-                      <Markdown>{formatAssessmentMarkdown(constructionStrengthAssessment)}</Markdown>
                     </div>
                   )}
                 </div>
@@ -1255,19 +1229,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             </summary>
             <div className="mt-4 space-y-4">
               <div className="grid md:grid-cols-3 gap-3">
-                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
-                  <p className="text-sm font-black text-white mt-1">{blindPassScores.length > 0 ? blindPassScores.join(', ') : 'Not stored'}</p>
-                  {passBandLabels && <p className="text-[10px] font-bold text-slate-400 mt-1">{passBandLabels}</p>}
-                </div>
-                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-amber-300 uppercase tracking-widest">Blind-Pass Spread</p>
-                  <p className="text-sm font-black text-white mt-1">{formatPointSpread(scoreSpread)}</p>
-                </div>
-                <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-                  <p className="text-[10px] font-black text-violet-300 uppercase tracking-widest">Review Stability</p>
-                  <p className="text-sm font-black text-white mt-1 capitalize">{scoreStability || computedStability}</p>
-                </div>
                 {isAdmin && (
                   <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                     <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Adjudicator Band</p>
@@ -1395,9 +1356,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       return (
                         <div key={index} className="bg-white/5 border border-white/10 rounded-xl p-3">
                           <p className="text-xs font-black text-white">Pass {index + 1} · {band?.median ?? '—'} · {pass.bestClassification || 'unclassified'}</p>
-                          {(pass.oneParagraphVerdict || pass.finalJudgment || pass.summary) && (
+                          {(pass.scientificReview || pass.oneParagraphVerdict || pass.finalJudgment || pass.summary) && (
                             <div className="mt-2">
-                              <Markdown>{pass.oneParagraphVerdict || pass.finalJudgment || pass.summary}</Markdown>
+                              <Markdown>{pass.scientificReview || pass.oneParagraphVerdict || pass.finalJudgment || pass.summary}</Markdown>
                             </div>
                           )}
                         </div>
