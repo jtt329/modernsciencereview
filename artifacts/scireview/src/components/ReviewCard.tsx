@@ -309,6 +309,23 @@ const qualityLine = (label: string, value: string, tone: 'green' | 'yellow' | 'r
   </div>
 );
 
+type IcoTabId = 'input' | 'construction' | 'output';
+
+const ICO_TAB_THEME: Record<IcoTabId, { activeCard: string; panel: string }> = {
+  input: {
+    activeCard: 'border-cyan-200/35 bg-cyan-300/[0.09] shadow-lg shadow-cyan-950/20',
+    panel: 'border-cyan-200/20 bg-cyan-300/[0.07]',
+  },
+  construction: {
+    activeCard: 'border-indigo-200/35 bg-indigo-300/[0.09] shadow-lg shadow-indigo-950/20',
+    panel: 'border-indigo-200/20 bg-indigo-300/[0.07]',
+  },
+  output: {
+    activeCard: 'border-emerald-200/35 bg-emerald-300/[0.09] shadow-lg shadow-emerald-950/20',
+    panel: 'border-emerald-200/20 bg-emerald-300/[0.07]',
+  },
+};
+
 const validityTone = (value: unknown): { label: string; className: string; tone: 'green' | 'yellow' | 'red' | 'neutral' } => {
   const text = hasText(value) ? value.toLowerCase() : '';
   if (/\binvalid\b|\bwrong\b|\bfails?\b|\bunsupported\b|\bcontradict/i.test(text)) {
@@ -383,7 +400,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const [showPrompt, setShowPrompt] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<'combined' | number>('combined');
-  const [activeIcoTab, setActiveIcoTab] = useState<'input' | 'construction' | 'output'>('input');
+  const [activeIcoTab, setActiveIcoTab] = useState<IcoTabId>('input');
 
   const normalizeDisplayedBand = (
     low: number | null | undefined,
@@ -806,6 +823,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       border: currentOutputStrengthScore == null ? 'border-white/10' : currentOutputStrengthScore >= 8 ? 'border-emerald-300/20' : currentOutputStrengthScore >= 5 ? 'border-amber-300/20' : 'border-rose-300/20',
     },
   ];
+  const activeIcoTheme = ICO_TAB_THEME[activeIcoTab];
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     {
@@ -984,10 +1002,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <h3 className="text-xs font-black text-cyan-300 uppercase tracking-widest flex items-center gap-2">
                 <BrainCircuit className="w-4 h-4" /> Input → Construction → Output Assessment
               </h3>
-              <div className="space-y-0">
-                <div className="grid items-stretch gap-x-3 gap-y-0 md:grid-cols-3">
+              <div className="space-y-3">
+                <div className="grid items-stretch gap-3 md:grid-cols-3">
                   {diagnosticCards.map((card) => {
                     const active = activeIcoTab === card.id;
+                    const theme = ICO_TAB_THEME[card.id];
                     return (
                       <button
                         key={card.label}
@@ -995,7 +1014,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         role="tab"
                         aria-selected={active}
                         onClick={() => setActiveIcoTab(card.id)}
-                        className={`relative z-10 mb-0 h-full text-left bg-slate-950/25 border ${active ? 'border-white border-b-transparent rounded-b-none bg-slate-950/45 shadow-lg shadow-white/5' : `${card.border} rounded-b-xl mb-3`} rounded-t-xl p-4 transition-all hover:border-white/45`}
+                        className={`h-full rounded-2xl border p-4 text-left transition-all ${active ? theme.activeCard : `${card.border} bg-slate-950/20 opacity-80 hover:bg-white/[0.05] hover:opacity-100`}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{card.label}</p>
@@ -1009,8 +1028,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     );
                   })}
                 </div>
-                <div className="-mt-px rounded-b-2xl rounded-t-none border border-white/45 bg-slate-950/20 p-3">
-                {activeIcoTab === 'input' && <div className="bg-slate-950/25 rounded-xl p-4 space-y-3">
+                <div className={`rounded-2xl border p-4 ${activeIcoTheme.panel}`}>
+                {activeIcoTab === 'input' && <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-cyan-300 uppercase tracking-widest">Input Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentInputStrengthScore)}`}>
@@ -1053,7 +1072,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   )}
                 </div>}
 
-                {activeIcoTab === 'construction' && <div className="bg-slate-950/25 rounded-xl p-4 space-y-3">
+                {activeIcoTab === 'construction' && <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Construction Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentConstructionStrengthScore)}`}>
@@ -1096,7 +1115,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   )}
                 </div>}
 
-                {activeIcoTab === 'output' && <div className="bg-slate-950/25 rounded-xl p-4 space-y-3">
+                {activeIcoTab === 'output' && <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-emerald-300 uppercase tracking-widest">Output Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentOutputStrengthScore)}`}>
@@ -1112,13 +1131,15 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         const outputAssessment = item.assessment;
                         const validityLabel = item.validityLevel || item.validity;
                         const tone = validityTone(validityLabel || outputAssessment || item.support);
+                        const assessmentLabel = item.validityLevel || (tone.label === 'Validity' ? 'Review' : tone.label);
+                        const assessmentBody = outputAssessment || item.validity || item.support;
                         const supportAddsDetail = addsNewInformation(item.support, outputAssessment);
                         const hasExpandedOutputDetails = item.dependsOnInputs.length > 0
                           || item.dependsOnConstructions.length > 0
                           || item.externalContextIfAny
                           || supportAddsDetail;
                         return (
-                          <details key={`${item.output}-${i}`} className="group bg-white/5 border border-white/10 rounded-xl p-3">
+                          <details key={`${item.output}-${i}`} className="group rounded-xl border border-emerald-300/15 bg-emerald-300/[0.045] p-4">
                             <summary className="cursor-pointer list-none space-y-2">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0 flex flex-1 items-start gap-3">
@@ -1136,15 +1157,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                 )}
                               </div>
                               <div className="space-y-1">
-                                {(validityLabel || outputAssessment || item.support) && (
-                                  qualityLine('Validity', validityLabel || tone.label, tone.tone)
+                                {(assessmentLabel || assessmentBody) && (
+                                  qualityLine('Assessment', assessmentLabel, tone.tone)
                                 )}
                               </div>
-                              {outputAssessment && (
-                                <div className="rounded-lg border border-emerald-300/10 bg-emerald-300/[0.03] p-3">
-                                  <p className="text-[9px] font-black text-emerald-300 uppercase tracking-widest mb-1">Assessment</p>
-                                  <Markdown>{formatAssessmentMarkdown(outputAssessment)}</Markdown>
-                                </div>
+                              {assessmentBody && (
+                                <Markdown>{formatAssessmentMarkdown(assessmentBody)}</Markdown>
                               )}
                               {hasExpandedOutputDetails && (
                                 <div className="text-[9px] font-bold uppercase tracking-widest text-slate-500 group-open:hidden">
@@ -1152,28 +1170,28 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                 </div>
                               )}
                             </summary>
-                            {hasExpandedOutputDetails && <div className="mt-3 space-y-3 border-t border-white/10 pt-3">
+                            {hasExpandedOutputDetails && <div className="mt-3 space-y-3 pt-2">
                               {item.dependsOnInputs.length > 0 && (
                                 <div>
-                                  <p className="text-[9px] font-black text-cyan-300 uppercase tracking-widest mb-1">Inputs Used</p>
+                                  <p className="mb-1 text-xs font-black uppercase tracking-widest text-cyan-300">Inputs Used</p>
                                   <Markdown>{listMarkdown(item.dependsOnInputs)}</Markdown>
                                 </div>
                               )}
                               {item.dependsOnConstructions.length > 0 && (
                                 <div>
-                                  <p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Constructions Used</p>
+                                  <p className="mb-1 text-xs font-black uppercase tracking-widest text-indigo-300">Constructions Used</p>
                                   <Markdown>{listMarkdown(item.dependsOnConstructions)}</Markdown>
                                 </div>
                               )}
                               {item.externalContextIfAny && (
                                 <div>
-                                  <p className="text-[9px] font-black text-sky-300 uppercase tracking-widest mb-1">External Context</p>
+                                  <p className="mb-1 text-xs font-black uppercase tracking-widest text-sky-300">External Context</p>
                                   <Markdown>{item.externalContextIfAny}</Markdown>
                                 </div>
                               )}
                               {supportAddsDetail && (
                                 <div>
-                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Support</p>
+                                  <p className="mb-1 text-xs font-black uppercase tracking-widest text-slate-300">Support</p>
                                   <Markdown>{item.support}</Markdown>
                                 </div>
                               )}
