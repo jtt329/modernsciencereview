@@ -153,6 +153,7 @@ type LedgerOutputItem = {
   validityLevel: "invalid" | "conditional" | "valid" | "strong" | "";
   validity: string;
   centrality: "low" | "medium" | "high";
+  assessment: string;
 };
 
 type CentralOutputDependency = {
@@ -500,7 +501,7 @@ type IndividualPassResult = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v16.4-tabs-single-score";
+export const REVIEW_PROMPT_VERSION = "v16.6-output-card-assessments";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -585,7 +586,7 @@ const contributionArchetypeJsonSchema = {
 };
 const ledgerOutputItemJsonSchema = {
   type: "object",
-  required: ["output", "inputsUsed", "constructionsUsed", "externalContextIfAny", "support", "validityLevel", "validity", "centrality"],
+  required: ["output", "inputsUsed", "constructionsUsed", "externalContextIfAny", "support", "validityLevel", "validity", "centrality", "assessment"],
   properties: {
     output: jsonString,
     inputsUsed: jsonStringArray,
@@ -595,6 +596,7 @@ const ledgerOutputItemJsonSchema = {
     validityLevel: jsonString,
     validity: jsonString,
     centrality: jsonString,
+    assessment: jsonString,
   },
 };
 const primitiveInputItemJsonSchema = {
@@ -961,6 +963,21 @@ function firstString(values: unknown[], fallback = "") {
     if (text) return text;
   }
   return fallback;
+}
+
+function mergeDistinctText(values: unknown[]) {
+  const chunks: string[] = [];
+  for (const value of values) {
+    const text = asString(value);
+    if (!text) continue;
+    const normalized = text.replace(/\s+/g, " ").toLowerCase();
+    const duplicate = chunks.some((chunk) => {
+      const existing = chunk.replace(/\s+/g, " ").toLowerCase();
+      return existing.includes(normalized) || normalized.includes(existing);
+    });
+    if (!duplicate) chunks.push(text);
+  }
+  return chunks.join(" ");
 }
 
 function asNumber(value: unknown, fallback = 0, min?: number, max?: number) {
@@ -1348,6 +1365,12 @@ function normalizeLedgerOutputCentrality(value: unknown): LedgerOutputItem["cent
   return "medium";
 }
 
+function synthesizeOutputAssessment(source: Record<string, unknown>, support: string, validity: string) {
+  const explicitAssessment = firstString([source.assessment, source.outputAssessment, source.analysis, source.notes]);
+  if (explicitAssessment) return explicitAssessment;
+  return mergeDistinctText([validity, support]);
+}
+
 function normalizeLedgerOutputs(
   value: unknown,
   options: {
@@ -1374,6 +1397,7 @@ function normalizeLedgerOutputs(
             validityLevel: "",
             validity: "",
             centrality: "medium",
+            assessment: "",
           } satisfies LedgerOutputItem;
         }
         const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
@@ -1381,6 +1405,8 @@ function normalizeLedgerOutputs(
         if (!output) return null;
         const inputsUsed = firstStringArray([source.inputsUsed, source.dependsOnInputs, source.requiredPrimitiveInputs, source.primitiveInputs]);
         const constructionsUsed = firstStringArray([source.constructionsUsed, source.dependsOnConstructions, source.requiredIntroducedConstructions, source.introducedConstructions]);
+        const support = firstString([source.support, source.evidence, source.derivationSupport]);
+        const validity = firstString([source.validity, source.outputValidity, source.validityAssessment]);
         return {
           output,
           dependsOnInputs: inputsUsed,
@@ -1388,10 +1414,11 @@ function normalizeLedgerOutputs(
           inputsUsed,
           constructionsUsed,
           externalContextIfAny: firstString([source.externalContextIfAny, source.externalContext, source.context]),
-          support: firstString([source.support, source.evidence, source.derivationSupport]),
+          support,
           validityLevel: normalizeValidityLevel(source.validityLevel),
-          validity: firstString([source.validity, source.outputValidity, source.validityAssessment]),
+          validity,
           centrality: normalizeLedgerOutputCentrality(source.centrality),
+          assessment: synthesizeOutputAssessment(source, support, validity),
         } satisfies LedgerOutputItem;
       })
       .filter(Boolean) as LedgerOutputItem[];
@@ -1412,6 +1439,7 @@ function normalizeLedgerOutputs(
       validityLevel: "",
       validity: "",
       centrality: "medium",
+      assessment: "",
     }));
   }
 
@@ -1428,6 +1456,11 @@ function normalizeLedgerOutputs(
       validityLevel: "",
       validity: options.centralOutputDependency?.outputValidity || options.outputValidityAssessment?.assessment || "",
       centrality: "high",
+      assessment: mergeDistinctText([
+        options.centralOutputDependency?.outputValidity,
+        options.centralOutputDependency?.dependencyAssessment,
+        options.outputValidityAssessment?.assessment,
+      ]),
     }];
   }
 
@@ -2408,10 +2441,10 @@ function validateIndividualReview(review: IndividualReview) {
   }
 
   const hasOutputValidity = review.inputConstructionOutputLedger.outputs.some((output) =>
-    output.validity.trim() || output.support.trim(),
+    output.assessment.trim() || output.validity.trim() || output.support.trim(),
   );
   if (!hasOutputValidity) {
-    throw new Error("Generated review was missing output-level validity/support.");
+    throw new Error("Generated review was missing output-level assessment/validity/support.");
   }
 
   if (!review.assessmentSensitivity.trim()) {
@@ -3598,10 +3631,10 @@ function validateAggregateReview(review: AggregateReview) {
   }
 
   const hasOutputValidity = review.inputConstructionOutputLedger.outputs.some((output) =>
-    output.validity.trim() || output.support.trim(),
+    output.assessment.trim() || output.validity.trim() || output.support.trim(),
   );
   if (!hasOutputValidity) {
-    throw new Error("Adjudication was missing output-level validity/support.");
+    throw new Error("Adjudication was missing output-level assessment/validity/support.");
   }
 
   if (!review.assessmentSensitivity.trim()) {
@@ -3640,6 +3673,7 @@ function v15LedgerOnly(ledger: InputConstructionOutputLedger | null | undefined)
       validityLevel: item.validityLevel,
       validity: item.validity,
       centrality: item.centrality,
+      assessment: item.assessment,
     })),
     inputOverallAssessment: ledger?.inputOverallAssessment ?? "",
     constructionOverallAssessment: ledger?.constructionOverallAssessment ?? "",
@@ -3677,6 +3711,7 @@ function v16IcoAssessmentOnly(ledger: InputConstructionOutputLedger | null | und
         validityLevel: item.validityLevel,
         validity: item.validity,
         centrality: item.centrality,
+        assessment: item.assessment,
       })),
     },
   };
@@ -3875,7 +3910,7 @@ function buildAdjudicatorInput(
   const compactPasses = reviews.map(compactIndividualReviewForAdjudicator);
   const text = JSON.stringify({
     adjudicatorInputNote:
-      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.4 canonical input-construction-output assessments, diagnostic scores, objections, and single intrinsic scores below.",
+      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.6 canonical input-construction-output assessments, diagnostic scores, objections, per-output assessments, and single intrinsic scores below.",
     manuscriptSummaryAndLedger: compactPasses.map((review) => ({
       passNumber: review.passNumber,
       centralClaim: review.centralClaim,
@@ -4588,8 +4623,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       passCount: REVIEW_PASS_COUNT,
       validPassCount: result.individualReviews.length,
       pipelineMode: result.pipelineMode,
-      schemaVersion: "v16.4",
-      clusterVersion: "v16.4-canonical-ico",
+      schemaVersion: "v16.6",
+      clusterVersion: "v16.6-canonical-ico",
       localCohort: aggregate.finalLocalCohort,
       canonicalClusterLabel: null,
       benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",

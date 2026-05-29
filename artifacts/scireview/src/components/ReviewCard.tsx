@@ -154,6 +154,14 @@ const mergeUniqueText = (...values: unknown[]): string => {
   return chunks.join('\n\n');
 };
 
+const addsNewInformation = (candidate: string, existing: string): boolean => {
+  if (!hasText(candidate)) return false;
+  if (!hasText(existing)) return true;
+  const normalizedCandidate = normalizeComparableText(candidate);
+  const normalizedExisting = normalizeComparableText(existing);
+  return !normalizedExisting.includes(normalizedCandidate);
+};
+
 const formatAssessmentMarkdown = (value: string): string => {
   const text = value.trim();
   if (!text) return '';
@@ -333,6 +341,7 @@ const asLedgerOutputs = (ledger: any): Array<{
   validityLevel: string;
   validity: string;
   centrality: string;
+  assessment: string;
 }> => {
   const outputLedger = ledger?.output && typeof ledger.output === 'object' ? ledger.output : ledger;
   const outputs = Array.isArray(outputLedger?.outputs) ? outputLedger.outputs : [];
@@ -347,17 +356,21 @@ const asLedgerOutputs = (ledger: any): Array<{
         validityLevel: '',
         validity: '',
         centrality: 'medium',
+        assessment: '',
       };
     }
+    const support = String(item?.support ?? item?.evidence ?? '').trim();
+    const validity = String(item?.validity ?? item?.outputValidity ?? '').trim();
     return {
       output: String(item?.output ?? item?.directOutput ?? item?.result ?? '').trim(),
       dependsOnInputs: asArray(item?.inputsUsed ?? item?.dependsOnInputs ?? item?.requiredPrimitiveInputs),
       dependsOnConstructions: asArray(item?.constructionsUsed ?? item?.dependsOnConstructions ?? item?.requiredIntroducedConstructions),
       externalContextIfAny: String(item?.externalContextIfAny ?? item?.externalContext ?? '').trim(),
-      support: String(item?.support ?? item?.evidence ?? '').trim(),
+      support,
       validityLevel: String(item?.validityLevel ?? '').trim(),
-      validity: String(item?.validity ?? item?.outputValidity ?? '').trim(),
+      validity,
       centrality: String(item?.centrality ?? 'medium').trim(),
+      assessment: mergeUniqueText(item?.assessment, validity, support),
     };
   }).filter((item: any) => item.output);
 
@@ -744,11 +757,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const stabilityDisplay = scoreSpread == null
     ? 'Insufficient data'
     : `${stabilityLabel.charAt(0).toUpperCase()}${stabilityLabel.slice(1)} · ${spreadText} spread`;
-  const outputStrengthAssessment = mergeUniqueText(
-    currentSubscoreRationale?.outputStrengthScore,
-    currentInputConstructionOutputAssessment,
-    currentWhyOutputsMatter,
-  );
   const frameworkDependenceLevel =
     selectedFrameworkDependence?.level ??
     storedAggregate?.frameworkConditionality?.level ??
@@ -1092,20 +1100,16 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       {currentOutputStrengthScore != null && <span className="text-sm font-bold text-emerald-300/70">/10</span>}
                     </p>
                   </div>
-                  {hasText(outputStrengthAssessment) && (
-                    <div>
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
-                      <Markdown>{formatAssessmentMarkdown(outputStrengthAssessment)}</Markdown>
-                    </div>
-                  )}
                   {currentLedgerOutputs.length > 0 && (
                     <div className="space-y-3">
                       <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Outputs</p>
                       <div className="grid gap-3 lg:grid-cols-2">
                       {currentLedgerOutputs.map((item: any, i: number) => {
-                        const validitySummary = mergeUniqueText(item.validity, item.support);
-                        const tone = validityTone(item.validityLevel || validitySummary);
-                        const validityPreview = firstSentence(validitySummary);
+                        const outputAssessment = item.assessment;
+                        const validityLabel = item.validityLevel || item.validity;
+                        const tone = validityTone(validityLabel || outputAssessment || item.support);
+                        const assessmentPreview = firstSentence(outputAssessment);
+                        const supportAddsDetail = addsNewInformation(item.support, outputAssessment);
                         return (
                           <details key={`${item.output}-${i}`} className="group bg-white/5 border border-white/10 rounded-xl p-3">
                             <summary className="cursor-pointer list-none space-y-2">
@@ -1125,8 +1129,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                 )}
                               </div>
                               <div className="space-y-1">
-                                {(validitySummary || item.validityLevel) && (
-                                  qualityLine('Validity', item.validityLevel || tone.label, tone.tone)
+                                {(validityLabel || outputAssessment || item.support) && (
+                                  qualityLine('Validity', validityLabel || tone.label, tone.tone)
                                 )}
                                 {item.externalContextIfAny && (
                                   qualityLine('External Context', item.externalContextIfAny, 'neutral')
@@ -1135,19 +1139,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                   Details
                                 </div>
                               </div>
-                              {validityPreview && <p className="text-xs leading-relaxed text-slate-400 group-open:hidden">{validityPreview}</p>}
+                              {assessmentPreview && <p className="text-xs leading-relaxed text-slate-400 group-open:hidden">{assessmentPreview}</p>}
                             </summary>
                             <div className="mt-3 space-y-3 border-t border-white/10 pt-3">
-                              {validitySummary && (
+                              {outputAssessment && (
                                 <div>
-                                  <p className="text-[9px] font-black text-emerald-300 uppercase tracking-widest mb-1">Validity</p>
-                                  <Markdown>{validitySummary}</Markdown>
-                                </div>
-                              )}
-                              {item.externalContextIfAny && (
-                                <div>
-                                  <p className="text-[9px] font-black text-sky-300 uppercase tracking-widest mb-1">External Context</p>
-                                  <Markdown>{item.externalContextIfAny}</Markdown>
+                                  <p className="text-[9px] font-black text-emerald-300 uppercase tracking-widest mb-1">Assessment</p>
+                                  <Markdown>{formatAssessmentMarkdown(outputAssessment)}</Markdown>
                                 </div>
                               )}
                               {item.dependsOnInputs.length > 0 && (
@@ -1160,6 +1158,18 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                 <div>
                                   <p className="text-[9px] font-black text-indigo-300 uppercase tracking-widest mb-1">Constructions Used</p>
                                   <Markdown>{listMarkdown(item.dependsOnConstructions)}</Markdown>
+                                </div>
+                              )}
+                              {item.externalContextIfAny && (
+                                <div>
+                                  <p className="text-[9px] font-black text-sky-300 uppercase tracking-widest mb-1">External Context</p>
+                                  <Markdown>{item.externalContextIfAny}</Markdown>
+                                </div>
+                              )}
+                              {supportAddsDetail && (
+                                <div>
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Support</p>
+                                  <Markdown>{item.support}</Markdown>
                                 </div>
                               )}
                             </div>
