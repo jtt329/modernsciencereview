@@ -53,6 +53,16 @@ function parseJsonObject(value: string | null): Record<string, any> | null {
   }
 }
 
+function parseJsonArray(value: string | null): any[] | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function extractJsonValue(text: string): any {
   try {
     return JSON.parse(text);
@@ -288,7 +298,13 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
   const aggregate = parsed?.aggregate && typeof parsed.aggregate === "object" ? parsed.aggregate : null;
   const comparatorCalibration = parsed?.comparatorCalibration ?? aggregate?.comparatorCalibration ?? null;
   const contributionArchetype = parsed?.contributionArchetype ?? aggregate?.contributionArchetype ?? null;
-  const comparatorProfile = parsed?.comparatorProfile ?? aggregate?.comparatorProfile ?? aggregateFromField?.comparatorProfile ?? null;
+  const comparatorProfile =
+    parsed?.organicCohortProfile ??
+    parsed?.comparatorProfile ??
+    aggregate?.comparatorProfile ??
+    aggregateFromField?.organicCohortProfile ??
+    aggregateFromField?.comparatorProfile ??
+    null;
   const inputConstructionOutputLedger =
     compactLedger(
       parsed?.inputConstructionOutputAssessment ??
@@ -308,13 +324,13 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
     inputConstructionOutputLedger,
     centralOutputDependency,
     outputValidityAssessment,
-    centralClaim: review?.centralClaim || aggregate?.finalCentralClaim || null,
-    summary: review?.summary || aggregate?.finalSummary || null,
+    centralClaim: review?.centralClaim || parsed?.centralClaim || aggregate?.finalCentralClaim || null,
+    summary: parsed?.scientificReview || review?.summary || aggregate?.finalSummary || null,
     classification: review?.bestClassification || aggregate?.finalClassification || null,
-    localCohort: parsed?.finalLocalCohort || parsed?.localCohort || aggregate?.finalLocalCohort || aggregateFromField?.finalLocalCohort || comparatorProfile?.localCohort || null,
-    comparisonCohort: parsed?.finalComparisonCohort || aggregate?.finalComparisonCohort || null,
-    score: comparatorCalibration?.finalPublicScoreBand?.median ?? review?.overallIntrinsicScore ?? review?.score ?? null,
-    frameworkConditionality: parsed?.frameworkConditionalityLevel || comparatorProfile?.frameworkConditionality || null,
+    localCohort: parsed?.localCohort || parsed?.finalLocalCohort || aggregate?.finalLocalCohort || aggregateFromField?.localCohort || aggregateFromField?.finalLocalCohort || comparatorProfile?.localCohort || null,
+    comparisonCohort: parsed?.comparisonCohort || parsed?.finalComparisonCohort || aggregate?.finalComparisonCohort || null,
+    score: parsed?.intrinsicScore ?? parsed?.finalScore ?? comparatorCalibration?.finalPublicScoreBand?.median ?? review?.overallIntrinsicScore ?? review?.score ?? null,
+    frameworkConditionality: parsed?.technicalAssessment?.frameworkDependence?.level || parsed?.frameworkConditionalityLevel || comparatorProfile?.frameworkConditionality || null,
     comparatorSearchSummary: comparatorProfile?.comparatorSearchSummary || null,
     canonicalClusterLabel: parsed?.canonicalClusterLabel || parsed?.benchmarkCluster?.canonicalClusterLabel || aggregate?.canonicalClusterLabel || aggregateFromField?.canonicalClusterLabel || null,
     clusterVersion: parsed?.clusterVersion || aggregate?.clusterVersion || aggregateFromField?.clusterVersion || null,
@@ -437,7 +453,7 @@ function benchmarkProfileForClustering(
   const aggregate = coverageLedger.aggregate && typeof coverageLedger.aggregate === "object"
     ? coverageLedger.aggregate
     : null;
-  const comparatorProfile = coverageLedger.comparatorProfile ?? aggregate?.comparatorProfile ?? null;
+  const comparatorProfile = coverageLedger.organicCohortProfile ?? coverageLedger.comparatorProfile ?? aggregate?.comparatorProfile ?? null;
   const ico = compactLedger(
     coverageLedger.inputConstructionOutputAssessment ??
       coverageLedger.inputConstructionOutputLedger ??
@@ -447,12 +463,12 @@ function benchmarkProfileForClustering(
   return {
     paperId: paper.id,
     title: paper.title,
-    localCohort: coverageLedger.finalLocalCohort ?? coverageLedger.localCohort ?? aggregate?.finalLocalCohort ?? comparatorProfile?.localCohort ?? "",
+    localCohort: coverageLedger.localCohort ?? coverageLedger.finalLocalCohort ?? aggregate?.finalLocalCohort ?? comparatorProfile?.localCohort ?? "",
     broadField: paper.field ?? coverageLedger.broadField ?? "",
     subfields: safeStringArray(paper.subfields),
     contributionArchetype: coverageLedger.contributionArchetype ?? aggregate?.contributionArchetype ?? comparatorProfile?.contributionArchetype ?? null,
     inputConstructionOutputLedger: ico,
-    frameworkConditionality: comparatorProfile?.frameworkConditionality ?? coverageLedger.frameworkConditionalityLevel ?? null,
+    frameworkConditionality: coverageLedger.technicalAssessment?.frameworkDependence?.level ?? comparatorProfile?.frameworkConditionality ?? coverageLedger.frameworkConditionalityLevel ?? null,
     score: review.overallIntrinsicScore ?? review.score ?? null,
     classification: review.bestClassification ?? aggregate?.finalClassification ?? null,
     strongestObjection: review.strongestObjection ?? aggregate?.strongestObjection ?? "",
@@ -692,6 +708,80 @@ router.get("/papers/export", async (_req, res) => {
     const exported = papers.map(p => {
       const r = reviewMap.get(p.id);
       const coverageLedger = r ? parseJsonObject(r.coverageLedgerJson) : null;
+      if (r && coverageLedger?.reviewObjectVersion === "v16.7-canonical") {
+        const blindPassReviewsFromField = parseJsonArray((r as any).individualReviewsJson ?? null);
+        const blindPassReviews = Array.isArray(coverageLedger.blindPassReviews)
+          ? coverageLedger.blindPassReviews
+          : Array.isArray(blindPassReviewsFromField)
+            ? blindPassReviewsFromField
+            : [];
+        const comparatorCalibrationRan =
+          coverageLedger.comparatorCalibrationStatus === "applied" ||
+          coverageLedger.comparatorCalibrationStatus === "weak" ||
+          (typeof coverageLedger.calibrationAdjustment === "number" && coverageLedger.calibrationAdjustment !== 0);
+        const canonicalReview: Record<string, any> = {
+          reviewObjectVersion: coverageLedger.reviewObjectVersion,
+          promptVersion: coverageLedger.promptVersion ?? REVIEW_PROMPT_VERSION,
+          pipelineMode: coverageLedger.pipelineMode ?? null,
+          benchmarkSetCandidate: coverageLedger.benchmarkSetCandidate ?? false,
+          benchmarkSetVersion: coverageLedger.benchmarkSetVersion ?? null,
+          extractionMethod: coverageLedger.extractionMethod ?? null,
+          pdfVisibleFallbackUsed: coverageLedger.pdfVisibleFallbackUsed ?? false,
+          blindingStrength: coverageLedger.blindingStrength ?? "strong",
+          comparisonCohort: coverageLedger.comparisonCohort ?? null,
+          localCohort: coverageLedger.localCohort ?? null,
+          broadField: coverageLedger.broadField ?? null,
+          specialtyField: coverageLedger.specialtyField ?? null,
+          subfields: coverageLedger.subfields ?? [],
+          paperType: coverageLedger.paperType ?? null,
+          centralClaim: coverageLedger.centralClaim ?? r.centralClaim ?? null,
+          scientificReview: coverageLedger.scientificReview ?? null,
+          contributionArchetype: coverageLedger.contributionArchetype ?? null,
+          inputStrengthScore: coverageLedger.inputStrengthScore ?? null,
+          constructionStrengthScore: coverageLedger.constructionStrengthScore ?? null,
+          outputStrengthScore: coverageLedger.outputStrengthScore ?? null,
+          subscoreRationale: coverageLedger.subscoreRationale ?? null,
+          inputConstructionOutputAssessment: coverageLedger.inputConstructionOutputAssessment ?? null,
+          technicalAssessment: coverageLedger.technicalAssessment ?? null,
+          failureAnalysis: coverageLedger.failureAnalysis ?? null,
+          organicCohortProfile: coverageLedger.organicCohortProfile ?? null,
+          intrinsicScore: coverageLedger.intrinsicScore ?? coverageLedger.finalScore ?? r.overallIntrinsicScore ?? r.score ?? null,
+          scoreConfidence: coverageLedger.scoreConfidence ?? null,
+          scoreCappingReason: coverageLedger.scoreCappingReason ?? "",
+          scoreAdjustmentReason: coverageLedger.scoreAdjustmentReason ?? "",
+          bestClassification: coverageLedger.bestClassification ?? r.bestClassification ?? null,
+          promptMetadata: {
+            modelName: coverageLedger.modelName ?? r.modelName,
+            passModel: coverageLedger.passModel ?? null,
+            adjudicatorModel: coverageLedger.adjudicatorModel ?? null,
+            passCount: coverageLedger.passCount ?? null,
+            validPassCount: coverageLedger.validPassCount ?? null,
+            blindPassScores: coverageLedger.blindPassScores ?? [],
+            blindPassSpread: coverageLedger.blindPassSpread ?? coverageLedger.passDisagreement ?? null,
+            passDisagreement: coverageLedger.passDisagreement ?? coverageLedger.blindPassSpread ?? null,
+            scoreStability: coverageLedger.scoreStability ?? null,
+            adjudicatorStatus: coverageLedger.adjudicatorStatus ?? null,
+            diagnosticBaselineScore: coverageLedger.diagnosticBaselineScore ?? null,
+            diagnosticBaselineDelta: coverageLedger.diagnosticBaselineDelta ?? null,
+            comparatorCalibrationStatus: coverageLedger.comparatorCalibrationStatus ?? null,
+            ...(comparatorCalibrationRan ? { calibrationAdjustment: coverageLedger.calibrationAdjustment ?? 0 } : {}),
+          },
+          blindPassReviews,
+        };
+        return {
+          paper: {
+            id: p.id,
+            title: p.title,
+            paperAuthors: p.paperAuthors,
+            dateMetadata: p.dateMetadata,
+            field: p.field,
+            subfields: p.subfields,
+            createdAt: p.createdAt,
+            pdfUrl: p.pdfUrl,
+          },
+          review: canonicalReview,
+        };
+      }
       const aggregateFromField = r ? parseJsonObject((r as any).aggregateMetaJson ?? null) : null;
       const aggregate = coverageLedger?.aggregate && typeof coverageLedger.aggregate === "object"
         ? coverageLedger.aggregate
@@ -888,14 +978,20 @@ router.get("/papers", async (req, res) => {
       summary: reviewsTable.summary,
       centralClaim: reviewsTable.centralClaim,
       finalJudgment: reviewsTable.finalJudgment,
+      coverageLedgerJson: reviewsTable.coverageLedgerJson,
     }).from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
-    const papersWithSummary = papers.map(p => ({
-      ...p,
-      reviewSummary: reviewMap.get(p.id)?.summary || null,
-      reviewCentralClaim: reviewMap.get(p.id)?.centralClaim || null,
-      reviewFinalJudgment: reviewMap.get(p.id)?.finalJudgment || null,
-    }));
+    const papersWithSummary = papers.map(p => {
+      const review = reviewMap.get(p.id);
+      const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
+      const scientificReview = ledger?.scientificReview ?? null;
+      return {
+        ...p,
+        reviewSummary: scientificReview || review?.summary || null,
+        reviewCentralClaim: ledger?.centralClaim || review?.centralClaim || null,
+        reviewFinalJudgment: scientificReview || review?.finalJudgment || null,
+      };
+    });
     res.json({ papers: papersWithSummary });
   } catch (err: any) {
     logger.error({ err }, "Error listing papers");

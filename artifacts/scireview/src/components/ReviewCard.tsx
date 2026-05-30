@@ -610,15 +610,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const shouldShowScoreAdjustmentReason =
     hasText(scoreAdjustmentReason) ||
     (typeof diagnosticBaselineDelta === 'number' && Math.abs(diagnosticBaselineDelta) > 8);
-  const failedClaimsExcludedFromScore = parsedCoverage?.failedClaimsExcludedFromScore
+  const canonicalFailureAnalysis =
+    parsedCoverage?.failureAnalysis ??
+    storedAggregate?.failureAnalysis ??
+    {};
+  const failedClaimsExcludedFromScore = canonicalFailureAnalysis?.failedClaimsExcludedFromScore
+    ?? parsedCoverage?.failedClaimsExcludedFromScore
     ?? aggregateAdjudication?.failedClaimsExcludedFromScore
     ?? storedAggregate?.failedClaimsExcludedFromScore
     ?? [];
-  const survivingHighValueContributions = parsedCoverage?.survivingHighValueContributions
+  const survivingHighValueContributions = canonicalFailureAnalysis?.survivingHighValueContributions
+    ?? parsedCoverage?.survivingHighValueContributions
     ?? aggregateAdjudication?.survivingHighValueContributions
     ?? storedAggregate?.survivingHighValueContributions
     ?? [];
-  const survivingContributionScoreBasis = parsedCoverage?.survivingContributionScoreBasis
+  const survivingContributionScoreBasis = canonicalFailureAnalysis?.survivingContributionScoreBasis
+    ?? parsedCoverage?.survivingContributionScoreBasis
     ?? aggregateAdjudication?.survivingContributionScoreBasis
     ?? storedAggregate?.survivingContributionScoreBasis
     ?? '';
@@ -693,8 +700,18 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const selectedTechnicalAssessment = selectedPass?.technicalAssessment ?? {};
   const aggregateTechnicalAssessment = parsedCoverage?.technicalAssessment ?? storedAggregate?.technicalAssessment ?? {};
   const currentCorrectness = selectedTechnicalAssessment?.correctness || aggregateTechnicalAssessment?.correctness || selectedPass?.correctness || review.correctness;
-  const currentStrongestCase = selectedTechnicalAssessment?.strongestCase || aggregateTechnicalAssessment?.strongestCase || selectedPass?.strongestCaseForImportance || review.strongestCaseForImportance;
-  const currentStrongestObjection = selectedTechnicalAssessment?.strongestObjection || aggregateTechnicalAssessment?.strongestObjection || selectedPass?.strongestObjection || review.strongestObjection;
+  const currentStrongestCase =
+    selectedTechnicalAssessment?.strongestCaseForImportance ||
+    selectedTechnicalAssessment?.strongestCase ||
+    aggregateTechnicalAssessment?.strongestCaseForImportance ||
+    aggregateTechnicalAssessment?.strongestCase ||
+    selectedPass?.strongestCaseForImportance ||
+    review.strongestCaseForImportance;
+  const currentStrongestObjection =
+    selectedTechnicalAssessment?.strongestObjection ||
+    aggregateTechnicalAssessment?.strongestObjection ||
+    selectedPass?.strongestObjection ||
+    review.strongestObjection;
   const currentAssessmentSensitivity =
     selectedTechnicalAssessment?.assessmentSensitivity ||
     aggregateTechnicalAssessment?.assessmentSensitivity ||

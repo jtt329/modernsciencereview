@@ -233,6 +233,16 @@ type AdjudicationDetails = {
   scoringAnomaly: string;
 };
 
+type ReviewFailureAnalysis = {
+  failureMode: string;
+  fatalObjectionPresent: boolean;
+  paperFatalError: boolean;
+  fatalToSpecificClaimOnly: boolean;
+  survivingHighValueContributions: string[];
+  failedClaimsExcludedFromScore: string[];
+  survivingContributionScoreBasis: string;
+};
+
 type ComparatorProfile = {
   localCohort: string;
   primaryCohort: string;
@@ -328,6 +338,7 @@ type IndividualReview = {
   subfields: string[];
   paperType: string;
   contributionArchetype: ContributionArchetype;
+  organicCohortProfile: ComparatorProfile;
   summary: string;
   centralClaim: string;
   scientificReview: string;
@@ -388,6 +399,7 @@ type IndividualReview = {
   bestClassification: string;
   oneParagraphVerdict: string;
   finalJudgment: string;
+  failureAnalysis: ReviewFailureAnalysis;
 };
 
 type AggregateReview = {
@@ -502,6 +514,7 @@ type IndividualPassResult = {
 
 
 export const REVIEW_PROMPT_VERSION = "v16.7-correctly-established-contribution";
+const REVIEW_OBJECT_VERSION = "v16.7-canonical";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -561,15 +574,6 @@ const jsonString = { type: "string" };
 const jsonNumber = { type: "number" };
 const jsonBoolean = { type: "boolean" };
 const jsonStringArray = { type: "array", items: jsonString };
-const scoreBandJsonSchema = {
-  type: "object",
-  required: ["low", "median", "high"],
-  properties: {
-    low: jsonNumber,
-    median: jsonNumber,
-    high: jsonNumber,
-  },
-};
 const frameworkConditionalityJsonSchema = {
   type: "object",
   properties: {
@@ -756,7 +760,6 @@ const individualReviewJsonSchema = {
         outputStrengthScore: jsonString,
       },
     },
-    scoreBand: scoreBandJsonSchema,
     scoreConfidence: jsonNumber,
     scoreCappingReason: jsonString,
     scoreAdjustmentReason: jsonString,
@@ -2084,6 +2087,9 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
   const organicCohortProfile = source.organicCohortProfile && typeof source.organicCohortProfile === "object"
     ? (source.organicCohortProfile as Record<string, unknown>)
     : {};
+  const failureAnalysis = source.failureAnalysis && typeof source.failureAnalysis === "object"
+    ? (source.failureAnalysis as Record<string, unknown>)
+    : {};
   const normalizedOutputValidityAssessment = normalizeOutputValidityAssessment(source.outputValidityAssessment ?? source.outputValidity);
   const legacyDirectOutputs = firstStringArray([
     inputConstructionOutputLedger.directOutputs,
@@ -2178,6 +2184,25 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     subfields: firstStringArray([source.subfields, source.subFields, source.sub_fields]),
     paperType: normalizedPaperType,
     contributionArchetype,
+    organicCohortProfile: {
+      localCohort: firstString([organicCohortProfile.localCohort, source.localCohort, source.comparisonCohort]),
+      primaryCohort: firstString([organicCohortProfile.primaryCohort, organicCohortProfile.localCohort, source.localCohort, source.comparisonCohort]),
+      adjacentBroadCohort: firstString([organicCohortProfile.adjacentBroadCohort, source.broadField, source.field]),
+      contributionArchetype,
+      primitiveInputs: firstStringArray([organicCohortProfile.primitiveInputs]),
+      introducedConstructions: firstStringArray([organicCohortProfile.introducedConstructions]),
+      outputs: firstStringArray([organicCohortProfile.outputs]),
+      externalEmbeddingsAndChecks: [],
+      centralOutputDependency: normalizeCentralOutputDependency(null),
+      outputValidityAssessment: normalizeOutputValidityAssessment(null),
+      directOutputs: [],
+      downstreamReach: "",
+      frameworkConditionality: normalizedFrameworkLevel,
+      scoreBand: { low: 0, median: 0, high: 0 },
+      classification: "",
+      clusterFeatureTags: firstStringArray([organicCohortProfile.clusterFeatureTags, source.clusterFeatureTags]),
+      comparatorSearchSummary: firstString([organicCohortProfile.comparatorSearchSummary, source.comparatorSearchSummary]),
+    },
     summary: firstString([
       source.scientificReview,
       source.publicScientificReview,
@@ -2371,6 +2396,25 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
       source.finalVerdict,
       source.verdict,
     ]),
+    failureAnalysis: {
+      failureMode: firstString([failureAnalysis.failureMode, source.failureMode]),
+      fatalObjectionPresent: asBoolean(failureAnalysis.fatalObjectionPresent ?? source.fatalObjectionPresent),
+      paperFatalError: asBoolean(failureAnalysis.paperFatalError ?? source.paperFatalError),
+      fatalToSpecificClaimOnly: asBoolean(failureAnalysis.fatalToSpecificClaimOnly ?? source.fatalToSpecificClaimOnly),
+      survivingHighValueContributions: firstStringArray([
+        failureAnalysis.survivingHighValueContributions,
+        source.survivingHighValueContributions,
+      ]),
+      failedClaimsExcludedFromScore: firstStringArray([
+        failureAnalysis.failedClaimsExcludedFromScore,
+        source.failedClaimsExcludedFromScore,
+      ]),
+      survivingContributionScoreBasis: firstString([
+        failureAnalysis.survivingContributionScoreBasis,
+        source.survivingContributionScoreBasis,
+        source.survivingContributionIfFlawed,
+      ]),
+    },
   };
 }
 
@@ -3731,11 +3775,127 @@ function v15ComparatorProfileOnly(profile: ComparatorProfile | null | undefined)
   };
 }
 
+function v16OrganicCohortProfileOnly(profile: ComparatorProfile | null | undefined) {
+  return {
+    localCohort: profile?.localCohort ?? "",
+    primaryCohort: profile?.primaryCohort ?? profile?.localCohort ?? "",
+    adjacentBroadCohort: profile?.adjacentBroadCohort ?? "",
+    contributionArchetype: profile?.contributionArchetype ?? { primary: "", secondary: "" },
+    primitiveInputs: profile?.primitiveInputs ?? [],
+    introducedConstructions: profile?.introducedConstructions ?? [],
+    outputs: profile?.outputs ?? [],
+    frameworkConditionality: profile?.frameworkConditionality ?? "medium",
+    clusterFeatureTags: profile?.clusterFeatureTags ?? [],
+    comparatorSearchSummary: profile?.comparatorSearchSummary ?? "",
+  };
+}
+
+function v16TechnicalAssessmentFromIndividual(review: IndividualReview) {
+  return {
+    correctness: review.correctness,
+    frameworkDependence: {
+      level: review.frameworkConditionality.level,
+      explanation: review.frameworkConditionality.explanation,
+    },
+    hardToVaryAssessment: review.hardToVaryAssessment,
+    strongestCaseForImportance: review.strongestCaseForImportance,
+    strongestObjection: review.strongestObjection,
+    assessmentSensitivity: review.assessmentSensitivity,
+    whatWouldRaiseScore: review.whatWouldRaiseScore,
+    whatWouldLowerScore: review.whatWouldLowerScore,
+  };
+}
+
+function v16TechnicalAssessmentFromAggregate(aggregate: AggregateReview) {
+  return {
+    correctness: aggregate.correctnessAssessment,
+    frameworkDependence: {
+      level: aggregate.comparatorProfile.frameworkConditionality,
+      explanation: aggregate.frameworkConditionalityAssessment,
+    },
+    hardToVaryAssessment: aggregate.hardToVaryAssessment,
+    strongestCaseForImportance: aggregate.strongestCaseForImportance,
+    strongestObjection: aggregate.strongestObjection,
+    assessmentSensitivity: aggregate.assessmentSensitivity,
+    whatWouldRaiseScore: aggregate.whatWouldRaiseScore,
+    whatWouldLowerScore: aggregate.whatWouldLowerScore,
+  };
+}
+
+function v16FailureAnalysisFromAggregate(aggregate: AggregateReview) {
+  return {
+    fatalObjectionPresent: aggregate.fatalObjectionPresent,
+    fatalObjectionAssessment: aggregate.fatalObjectionAssessment,
+    fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
+    paperFatalError: aggregate.paperFatalError,
+    contributionInventory: aggregate.contributionInventory,
+    survivingHighValueContributions: aggregate.survivingHighValueContributions,
+    failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
+    survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
+  };
+}
+
+function v16CanonicalReviewFromIndividual(review: IndividualReview, index?: number) {
+  return {
+    ...(typeof index === "number" ? { passNumber: index + 1 } : {}),
+    comparisonCohort: review.comparisonCohort,
+    localCohort: review.localCohort,
+    broadField: review.broadField,
+    specialtyField: review.specialtyField,
+    subfields: review.subfields,
+    paperType: review.paperType,
+    centralClaim: review.centralClaim,
+    scientificReview: review.scientificReview,
+    contributionArchetype: review.contributionArchetype,
+    inputStrengthScore: review.inputStrengthScore,
+    constructionStrengthScore: review.constructionStrengthScore,
+    outputStrengthScore: review.outputStrengthScore,
+    subscoreRationale: review.subscoreRationale,
+    inputConstructionOutputAssessment: v16IcoAssessmentOnly(review.inputConstructionOutputLedger),
+    technicalAssessment: v16TechnicalAssessmentFromIndividual(review),
+    failureAnalysis: review.failureAnalysis,
+    organicCohortProfile: v16OrganicCohortProfileOnly(review.organicCohortProfile),
+    intrinsicScore: review.scoreBand.median,
+    scoreConfidence: review.scoreConfidence,
+    scoreCappingReason: review.scoreCappingReason,
+    scoreAdjustmentReason: review.scoreAdjustmentReason,
+    bestClassification: review.bestClassification,
+  };
+}
+
+function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representativeReview: IndividualReview) {
+  return {
+    comparisonCohort: aggregate.finalComparisonCohort,
+    localCohort: aggregate.finalLocalCohort,
+    broadField: aggregate.finalBroadField,
+    specialtyField: aggregate.finalSpecialtyField,
+    subfields: representativeReview.subfields,
+    paperType: representativeReview.paperType,
+    centralClaim: aggregate.finalCentralClaim,
+    scientificReview: aggregate.scientificReview,
+    contributionArchetype: aggregate.contributionArchetype,
+    inputStrengthScore: aggregate.inputStrengthScore,
+    constructionStrengthScore: aggregate.constructionStrengthScore,
+    outputStrengthScore: aggregate.outputStrengthScore,
+    subscoreRationale: aggregate.subscoreRationale,
+    inputConstructionOutputAssessment: v16IcoAssessmentOnly(aggregate.inputConstructionOutputLedger),
+    technicalAssessment: v16TechnicalAssessmentFromAggregate(aggregate),
+    failureAnalysis: v16FailureAnalysisFromAggregate(aggregate),
+    organicCohortProfile: v16OrganicCohortProfileOnly(aggregate.comparatorProfile),
+    intrinsicScore: aggregate.finalScoreBand.median,
+    scoreConfidence: aggregate.finalScoreConfidence,
+    scoreCappingReason: aggregate.scoreCappingReason,
+    scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
+    bestClassification: aggregate.finalClassification,
+  };
+}
+
 function compactIndividualReviewForAdjudicator(review: IndividualReview, index: number) {
+  const canonical = v16CanonicalReviewFromIndividual(review, index);
   return {
     passNumber: index + 1,
-    score: review.scoreBand.median,
-    intrinsicScore: review.scoreBand.median,
+    score: canonical.intrinsicScore,
+    intrinsicScore: canonical.intrinsicScore,
     bestClassification: review.bestClassification,
     classification: review.bestClassification,
     comparisonCohort: review.comparisonCohort,
@@ -3745,22 +3905,10 @@ function compactIndividualReviewForAdjudicator(review: IndividualReview, index: 
     contributionArchetype: review.contributionArchetype,
     centralClaim: review.centralClaim,
     scientificReview: review.scientificReview,
-    inputConstructionOutputAssessment: v16IcoAssessmentOnly(review.inputConstructionOutputLedger),
-    organicCohortProfile: v15ComparatorProfileOnly((review as IndividualReview & { comparatorProfile?: ComparatorProfile }).comparatorProfile),
-    technicalAssessment: {
-      correctness: review.correctness,
-      frameworkDependence: review.frameworkConditionality,
-      hardToVaryAssessment: review.hardToVaryAssessment,
-      strongestCase: review.strongestCaseForImportance,
-      strongestObjection: review.strongestObjection,
-      assessmentSensitivity: review.assessmentSensitivity,
-      whatWouldRaiseScore: review.whatWouldRaiseScore,
-      whatWouldLowerScore: review.whatWouldLowerScore,
-    },
-    failureAnalysis: {
-      survivingContributionIfFlawed: review.survivingContributionIfFlawed,
-      manuscriptOriginalContribution: review.manuscriptOriginalContribution,
-    },
+    inputConstructionOutputAssessment: canonical.inputConstructionOutputAssessment,
+    organicCohortProfile: canonical.organicCohortProfile,
+    technicalAssessment: canonical.technicalAssessment,
+    failureAnalysis: canonical.failureAnalysis,
     inputStrengthScore: review.inputStrengthScore,
     constructionStrengthScore: review.constructionStrengthScore,
     outputStrengthScore: review.outputStrengthScore,
@@ -4575,130 +4723,97 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     firstComparisonCohort ||
     firstSpecialtyField ||
     firstBroadField;
-  const storedAggregate = compactAggregateForStorage(aggregate);
-  const storedComparatorCalibration = v15ComparatorCalibrationForStorage(aggregate.comparatorCalibration);
-  const storedAdjudication = v15AdjudicationForStorage(aggregate);
+  const canonicalReview = v16CanonicalReviewFromAggregate(aggregate, representativeReview);
   const storedIndividualReviews = result.individualReviews.map(compactIndividualReviewForStorage);
-  const publicScientificReview =
-    aggregate.scientificReview ||
-    aggregate.publicOneParagraphVerdict ||
-    representativeReview.scientificReview ||
-    representativeReview.oneParagraphVerdict ||
-    representativeReview.finalJudgment;
+  const comparatorCalibrationStatus = aggregate.comparatorCalibration.comparatorCalibrationStatus;
+  const rawCalibrationAdjustment = Number(aggregate.comparatorCalibration.calibrationAdjustment ?? 0);
+  const comparatorCalibrationApplied =
+    result.pipelineMode !== "benchmark-ingestion" &&
+    (comparatorCalibrationStatus === "applied" ||
+      comparatorCalibrationStatus === "weak" ||
+      (Number.isFinite(rawCalibrationAdjustment) && Math.abs(rawCalibrationAdjustment) > 0));
+  const canonicalCoverageLedger = {
+    reviewObjectVersion: REVIEW_OBJECT_VERSION,
+    schemaVersion: "v16.7",
+    promptVersion: REVIEW_PROMPT_VERSION,
+    generatedAt,
+    modelName: result.modelName,
+    passModel: GEMINI_PASS_MODEL,
+    adjudicatorModel: GEMINI_META_MODEL,
+    passCount: REVIEW_PASS_COUNT,
+    validPassCount: result.individualReviews.length,
+    pipelineMode: result.pipelineMode,
+    clusterVersion: "v16.7-canonical-ico",
+    benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
+    benchmarkSetVersion: result.pipelineMode === "benchmark-ingestion"
+      ? BENCHMARK_SET_VERSION
+      : aggregate.comparatorCalibration.benchmarkSetVersion,
+    comparatorCalibrationStatus,
+    ...(comparatorCalibrationApplied ? { calibrationAdjustment: rawCalibrationAdjustment } : {}),
+    extractionMethod,
+    pdfVisibleFallbackUsed,
+    blindingStrength,
+    usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
+    usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
+    ...canonicalReview,
+    finalScore: canonicalReview.intrinsicScore,
+    blindPassScores: aggregate.individualScores,
+    blindPassSpread: aggregate.scoreRange,
+    passDisagreement: aggregate.scoreRange,
+    scoreStability: aggregate.scoreStability,
+    adjudicatorStatus: aggregate.adjudicatorStatus,
+    diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
+    diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
+    scoringAnomaly: aggregate.scoringAnomaly,
+    blindPassReviews: storedIndividualReviews,
+    submissionSourceHash: null,
+  };
   return {
-    summary: aggregate.finalSummary || representativeReview.summary || representativeReview.oneParagraphVerdict,
-    correctness: aggregate.correctnessAssessment || representativeReview.correctness,
-    novelty: aggregate.novelty || representativeReview.novelty,
-    overallEvaluation: publicScientificReview,
+    summary: "",
+    correctness: "",
+    novelty: "",
+    overallEvaluation: "",
     score: aggregate.finalScoreBand.median,
     relatedWork: "",
     centralClaim: aggregate.finalCentralClaim || representativeReview.centralClaim || null,
-    establishedResults: toMarkdownList(aggregate.establishedResults) || null,
-    interpretiveClaims: toMarkdownList(aggregate.interpretiveClaims) || null,
-    speculativeClaims: toMarkdownList(aggregate.speculativeClaims) || null,
-    economy: aggregate.economy || null,
-    explanatoryTargetBreadth: aggregate.explanatoryTargetBreadth || null,
-    theorySpaceBreadth: aggregate.theorySpaceBreadth || null,
-    scopeDepth: aggregate.scopeDepth || null,
-    unifyingPower: aggregate.unifyingPower || null,
-    strongestCaseForImportance: aggregate.strongestCaseForImportance || null,
-    strongestObjection: aggregate.strongestObjection || null,
+    establishedResults: null,
+    interpretiveClaims: null,
+    speculativeClaims: null,
+    economy: null,
+    explanatoryTargetBreadth: null,
+    theorySpaceBreadth: null,
+    scopeDepth: null,
+    unifyingPower: null,
+    strongestCaseForImportance: null,
+    strongestObjection: null,
     decisiveCheck: null,
-    internalTechnicalTraction: aggregate.internalTechnicalTraction || null,
-    noveltyConfidence: String(aggregate.noveltyConfidence),
+    internalTechnicalTraction: null,
+    noveltyConfidence: null,
     intrinsicScientificMeritScore: null,
     explanatoryTargetBreadthScore: null,
     theorySpaceBreadthScore: null,
     breadthOfImpactScore: null,
     overallIntrinsicScore: aggregate.finalScoreBand.median,
     bestClassification: aggregateClassification,
-    finalJudgment: publicScientificReview,
-    coverageLedgerJson: JSON.stringify({
-      promptVersion: REVIEW_PROMPT_VERSION,
-      generatedAt,
-      modelName: result.modelName,
-      passModel: GEMINI_PASS_MODEL,
-      adjudicatorModel: GEMINI_META_MODEL,
-      comparatorCalibrationModel: GEMINI_CALIBRATION_MODEL,
-      passCount: REVIEW_PASS_COUNT,
-      validPassCount: result.individualReviews.length,
-      pipelineMode: result.pipelineMode,
-      schemaVersion: "v16.7",
-      clusterVersion: "v16.7-canonical-ico",
-      localCohort: aggregate.finalLocalCohort,
-      canonicalClusterLabel: null,
-      benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
-      benchmarkSetVersion: result.pipelineMode === "benchmark-ingestion" ? BENCHMARK_SET_VERSION : aggregate.comparatorCalibration.benchmarkSetVersion,
-      comparatorCalibrationStatus: aggregate.comparatorCalibration.comparatorCalibrationStatus,
-      extractionMethod,
-      pdfVisibleFallbackUsed,
-      blindingStrength,
-      usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL} ${GEMINI_CALIBRATION_MODEL}`),
-      usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL} ${GEMINI_CALIBRATION_MODEL}`),
-      contributionArchetype: storedAggregate.contributionArchetype,
-      inputConstructionOutputAssessment: storedAggregate.inputConstructionOutputAssessment,
-      technicalAssessment: storedAggregate.technicalAssessment,
-      failureAnalysis: storedAggregate.failureAnalysis,
-      scientificReview: publicScientificReview,
-      assessmentSensitivity: aggregate.assessmentSensitivity,
-      nearestComparators: aggregate.nearestComparators,
-      externalComparatorSuggestions: aggregate.externalComparatorSuggestions,
-      publicComparatorSummary: aggregate.publicComparatorSummary,
-      adminComparatorNotes: aggregate.adminComparatorNotes,
-      comparatorProfile: storedAggregate.comparatorProfile,
-      comparatorCalibration: result.pipelineMode === "benchmark-ingestion" ? null : storedComparatorCalibration,
-      explanatoryDeltaAssessment: result.pipelineMode === "benchmark-ingestion" ? null : storedComparatorCalibration.explanatoryDeltaAssessment,
-      comparatorsNeedingRecalibration: aggregate.comparatorCalibration.comparatorsNeedingRecalibration,
-      intrinsicScore: aggregate.finalScoreBand.median,
-      finalScore: aggregate.finalScoreBand.median,
-      blindPassScores: aggregate.individualScores,
-      adjudicatorStatus: aggregate.adjudicatorStatus,
-      adjudication: storedAdjudication,
-      reviewPassComparison: storedAdjudication,
-      blindPassReviews: storedIndividualReviews,
-      individualReviews: storedIndividualReviews,
-      fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
-      paperFatalError: aggregate.paperFatalError,
-      contributionInventory: aggregate.contributionInventory,
-      survivingHighValueContributions: aggregate.survivingHighValueContributions,
-      failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
-      survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
-      subscoreValidity: aggregate.subscoreValidity,
-      inputStrengthScore: aggregate.inputStrengthScore,
-      constructionStrengthScore: aggregate.constructionStrengthScore,
-      outputStrengthScore: aggregate.outputStrengthScore,
-      subscoreRationale: aggregate.subscoreRationale,
-      subscoreConsistencyWarning: aggregate.subscoreConsistencyWarning,
-      subscoreSaturationWarning: aggregate.subscoreSaturationWarning,
-      scoreCappingReason: aggregate.scoreCappingReason,
-      scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
-      diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
-      diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
-      scoringAnomaly: aggregate.scoringAnomaly,
-      contributionGroundingType: aggregate.contributionGroundingType || representativeReview.contributionGroundingType,
-      manuscriptOriginalContribution: aggregate.originalContributionAssessment || representativeReview.manuscriptOriginalContribution,
-      survivingContributionIfFlawed: aggregate.survivingContributionIfFlawed || representativeReview.survivingContributionIfFlawed,
-      finalComparisonCohort: comparisonCohort,
-      finalLocalCohort: aggregate.finalLocalCohort,
-      scoreStability: aggregate.scoreStability,
-    }),
+    finalJudgment: null,
+    coverageLedgerJson: JSON.stringify(canonicalCoverageLedger),
     thinkingText: result.thinkingText,
     comparisonCohort,
     broadField: aggregate.finalBroadField || representativeReview.broadField || firstBroadField,
     specialtyField: aggregate.finalSpecialtyField || representativeReview.specialtyField || firstSpecialtyField,
-    frameworkConditionalityLevel: representativeReview.frameworkConditionality.level,
-    frameworkConditionalityExplanation: aggregate.frameworkConditionalityAssessment || representativeReview.frameworkConditionality.explanation || null,
-    specialtyRelativeScore: aggregate.specialtyRelativeScore,
-    broadFieldRelativeScore: aggregate.broadFieldRelativeScore,
-    crossFieldConsequenceScore: aggregate.crossFieldConsequenceScore,
-    scoreBandLow: aggregate.finalScoreBand.low,
-    scoreBandMedian: aggregate.finalScoreBand.median,
-    scoreBandHigh: aggregate.finalScoreBand.high,
+    frameworkConditionalityLevel: null,
+    frameworkConditionalityExplanation: null,
+    specialtyRelativeScore: null,
+    broadFieldRelativeScore: null,
+    crossFieldConsequenceScore: null,
+    scoreBandLow: null,
+    scoreBandMedian: null,
+    scoreBandHigh: null,
     scoreConfidence: String(aggregate.finalScoreConfidence),
     scoreStability: aggregate.scoreStability,
-    publicVerdict: publicScientificReview || null,
+    publicVerdict: null,
     individualReviewsJson: JSON.stringify(storedIndividualReviews),
-    aggregateMetaJson: JSON.stringify(storedAggregate),
+    aggregateMetaJson: JSON.stringify(canonicalReview),
     passCount: REVIEW_PASS_COUNT,
     modelName: result.modelName,
     systemPrompt: result.systemPrompt,
