@@ -185,6 +185,42 @@ function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash
   return reviewValues;
 }
 
+function attachPaperIdToReviewAudit(reviewValues: Record<string, any>, paperId: string) {
+  const ledger = parseJsonObject(reviewValues.coverageLedgerJson ?? null) ?? {};
+  const passAudit = Array.isArray(ledger.passAudit)
+    ? ledger.passAudit.map((entry: any) => ({ ...entry, paperId }))
+    : [];
+  reviewValues.coverageLedgerJson = JSON.stringify({
+    ...ledger,
+    passAudit,
+  });
+  for (const entry of passAudit) {
+    logger.info(entry, "Review pipeline audit entry stored");
+  }
+  return reviewValues;
+}
+
+function compactPassAuditEntry(entry: any) {
+  return {
+    reviewRunId: typeof entry?.reviewRunId === "string" ? entry.reviewRunId : null,
+    paperId: typeof entry?.paperId === "string" ? entry.paperId : null,
+    role: typeof entry?.role === "string" ? entry.role : null,
+    promptVersion: typeof entry?.promptVersion === "string" ? entry.promptVersion : null,
+    promptHash: typeof entry?.promptHash === "string" ? entry.promptHash : null,
+    passNumber: typeof entry?.passNumber === "number" ? entry.passNumber : null,
+    model: typeof entry?.model === "string" ? entry.model : null,
+    requestId: typeof entry?.requestId === "string" ? entry.requestId : null,
+    cacheUsed: entry?.cacheUsed === true,
+    previousReviewUsed: entry?.previousReviewUsed === true,
+    comparatorContextIncluded: entry?.comparatorContextIncluded === true,
+    adjudicatorContextIncluded: entry?.adjudicatorContextIncluded === true,
+    inputTokenCount: typeof entry?.inputTokenCount === "number" ? entry.inputTokenCount : null,
+    outputTokenCount: typeof entry?.outputTokenCount === "number" ? entry.outputTokenCount : null,
+    score: typeof entry?.score === "number" ? entry.score : null,
+    classification: typeof entry?.classification === "string" ? entry.classification : null,
+  };
+}
+
 function submissionErrorMessage(err: unknown) {
   const message = err instanceof Error ? err.message : String(err);
   if (message && message !== "Error" && message !== "[object Object]") return message;
@@ -706,6 +742,8 @@ router.post("/papers/comparator-backfill", async (req, res) => {
 router.get("/papers/export", async (req, res) => {
   try {
     const includeSystemPrompt = req.query.includeSystemPrompt === "true";
+    const debugAudit = req.query.debugAudit === "true";
+    if (debugAudit && !requireAdmin(req, res)) return;
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
@@ -772,6 +810,11 @@ router.get("/papers/export", async (req, res) => {
             diagnosticBaselineDelta: coverageLedger.diagnosticBaselineDelta ?? null,
             comparatorCalibrationStatus: coverageLedger.comparatorCalibrationStatus ?? null,
             ...(comparatorCalibrationRan ? { calibrationAdjustment: coverageLedger.calibrationAdjustment ?? 0 } : {}),
+            ...(debugAudit ? {
+              passAudit: Array.isArray(coverageLedger.passAudit)
+                ? coverageLedger.passAudit.map(compactPassAuditEntry)
+                : [],
+            } : {}),
           },
           blindPassReviews,
         };
@@ -968,6 +1011,7 @@ router.get("/papers/export", async (req, res) => {
       promptVersion: REVIEW_PROMPT_VERSION,
       promptName: REVIEW_PROMPT_NAME,
       promptHash: REVIEW_PROMPT_HASH,
+      ...(debugAudit ? { debugAudit: true } : {}),
       ...(includeSystemPrompt ? { systemPrompt: LATEST_REVIEW_SYSTEM_INSTRUCTION } : {}),
       count: exported.length,
       papers: exported,
@@ -1081,7 +1125,10 @@ router.post("/papers", async (req, res) => {
     const reviewMode: ReviewPipelineMode = isAdmin ? requestedReviewMode : "normal-review";
     const sourceHash = sourceHashFor(source);
     const expectedModelName = expectedReviewModelName(reviewMode);
-    submissionKey = sourceHash ? `${req.user.id}:${expectedModelName}:${sourceHash}` : null;
+    const reuseExistingReview = source.reuseExistingReview === true || source.reuseExisting === true;
+    const forceFreshReview = source.forceFreshReview === true || source.forceFresh === true || reviewMode === "benchmark-ingestion";
+    const allowExistingReviewReuse = reuseExistingReview || !forceFreshReview;
+    submissionKey = allowExistingReviewReuse && sourceHash ? `${req.user.id}:${expectedModelName}:${sourceHash}` : null;
     if (submissionKey && recentSubmissions.has(submissionKey)) {
       res.json(await recentSubmissions.get(submissionKey));
       return;
@@ -1164,10 +1211,20 @@ router.post("/papers", async (req, res) => {
     // Step 1: extract real title and authors (before anonymous review)
     const metadata = await extractLatestMetadata(paperContent, metadataHints);
 
-    const existingBySource = sourceHash
+    const existingBySource = allowExistingReviewReuse && sourceHash
       ? await existingSourceSubmission(req.user.id, sourceHash, expectedModelName)
       : null;
     if (existingBySource?.review) {
+      logger.info({
+        paperId: existingBySource.paper.id,
+        promptVersion: REVIEW_PROMPT_VERSION,
+        promptHash: REVIEW_PROMPT_HASH,
+        cacheUsed: true,
+        previousReviewUsed: true,
+        reuseReason: "sourceHash",
+        comparatorContextIncluded: false,
+        adjudicatorContextIncluded: false,
+      }, "Reused existing review by source hash");
       if (resolveSubmission) resolveSubmission(existingBySource);
       if (submissionKey) {
         const key = submissionKey;
@@ -1177,13 +1234,25 @@ router.post("/papers", async (req, res) => {
       return;
     }
 
-    const existingByMetadata = await existingLogicalSubmission(
-      req.user.id,
-      metadata.title,
-      metadata.authors,
-      expectedModelName,
-    );
+    const existingByMetadata = allowExistingReviewReuse
+      ? await existingLogicalSubmission(
+          req.user.id,
+          metadata.title,
+          metadata.authors,
+          expectedModelName,
+        )
+      : null;
     if (existingByMetadata?.review) {
+      logger.info({
+        paperId: existingByMetadata.paper.id,
+        promptVersion: REVIEW_PROMPT_VERSION,
+        promptHash: REVIEW_PROMPT_HASH,
+        cacheUsed: true,
+        previousReviewUsed: true,
+        reuseReason: "metadata",
+        comparatorContextIncluded: false,
+        adjudicatorContextIncluded: false,
+      }, "Reused existing review by metadata");
       if (resolveSubmission) resolveSubmission(existingByMetadata);
       if (submissionKey) {
         const key = submissionKey;
@@ -1226,7 +1295,7 @@ router.post("/papers", async (req, res) => {
 
     const [review] = await db.insert(reviewsTable).values({
       paperId: paper.id,
-      ...reviewValues,
+      ...attachPaperIdToReviewAudit(reviewValues, paper.id),
     }).returning();
 
     const payload = { paper, review };

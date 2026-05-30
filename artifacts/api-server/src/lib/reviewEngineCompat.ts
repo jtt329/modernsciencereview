@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import {
   BENCHMARK_CALIBRATED_V15_FULL_PROMPT,
@@ -495,6 +495,7 @@ type AggregateReview = {
 };
 
 type MultiPassReviewResult = {
+  reviewRunId: string;
   modelName: string;
   pipelineMode: ReviewPipelineMode;
   systemPrompt: string;
@@ -503,6 +504,7 @@ type MultiPassReviewResult = {
   aggregate: AggregateReview;
   representativeReview: IndividualReview;
   thinkingText: string | null;
+  passAudit: ReviewRunAuditEntry[];
 };
 
 type IndividualPassResult = {
@@ -510,6 +512,26 @@ type IndividualPassResult = {
   thinkingText: string | null;
   index: number;
   modelName: string;
+  audit: ReviewRunAuditEntry;
+};
+
+type ReviewRunAuditEntry = {
+  reviewRunId: string;
+  paperId: string | null;
+  promptVersion: string;
+  promptHash: string;
+  role: "blind_pass_1" | "blind_pass_2" | "blind_pass_replacement" | "adjudicator" | "comparator_calibration";
+  passNumber: number | null;
+  model: string;
+  requestId: string | null;
+  cacheUsed: boolean;
+  previousReviewUsed: boolean;
+  comparatorContextIncluded: boolean;
+  adjudicatorContextIncluded: boolean;
+  inputTokenCount: number | null;
+  outputTokenCount: number | null;
+  score: number | null;
+  classification: string | null;
 };
 
 
@@ -3045,7 +3067,16 @@ async function callGemini(
       : null;
     const content = response.text;
     if (!content) throw new Error("No response from Gemini model.");
-    return { parsed: extractJson(content), thinkingText };
+    const usage = (response as any).usageMetadata ?? null;
+    return {
+      parsed: extractJson(content),
+      thinkingText,
+      requestId: (response as any).responseId ?? (response as any).id ?? null,
+      usage: {
+        inputTokenCount: typeof usage?.promptTokenCount === "number" ? usage.promptTokenCount : null,
+        outputTokenCount: typeof usage?.candidatesTokenCount === "number" ? usage.candidatesTokenCount : null,
+      },
+    };
   };
 
   try {
@@ -3067,8 +3098,9 @@ async function runIndividualPass(
   input: ReviewInput,
   _model: ReviewModel,
   index: number,
+  reviewRunId: string,
 ): Promise<IndividualPassResult> {
-  const { parsed, thinkingText } = await callGemini(
+  const { parsed, thinkingText, requestId, usage } = await callGemini(
     prompt,
     input,
     GEMINI_PASS_MODEL,
@@ -3086,6 +3118,24 @@ async function runIndividualPass(
     thinkingText,
     index,
     modelName: GEMINI_PASS_MODEL,
+    audit: {
+      reviewRunId,
+      paperId: null,
+      promptVersion: REVIEW_PROMPT_VERSION,
+      promptHash: REVIEW_PROMPT_HASH,
+      role: index < REVIEW_PASS_COUNT ? `blind_pass_${index + 1}` as "blind_pass_1" | "blind_pass_2" : "blind_pass_replacement",
+      passNumber: index + 1,
+      model: GEMINI_PASS_MODEL,
+      requestId,
+      cacheUsed: false,
+      previousReviewUsed: false,
+      comparatorContextIncluded: false,
+      adjudicatorContextIncluded: false,
+      inputTokenCount: usage.inputTokenCount,
+      outputTokenCount: usage.outputTokenCount,
+      score: review.scoreBand.median,
+      classification: review.bestClassification || null,
+    },
   };
 }
 
@@ -3093,11 +3143,12 @@ async function runPassWithGenerationRetries(
   prompt: string,
   input: ReviewInput,
   index: number,
+  reviewRunId: string,
 ): Promise<IndividualPassResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < PASS_GENERATION_ATTEMPTS; attempt += 1) {
     try {
-      return await runIndividualPass(prompt, input, "gemini", index);
+      return await runIndividualPass(prompt, input, "gemini", index, reviewRunId);
     } catch (reason) {
       lastError = reason;
       if (attempt < PASS_GENERATION_ATTEMPTS - 1) {
@@ -3106,21 +3157,6 @@ async function runPassWithGenerationRetries(
     }
   }
   throw new Error(`pass ${index + 1} failed after ${PASS_GENERATION_ATTEMPTS} generation attempts: ${errorMessage(lastError)}`);
-}
-
-function buildReplacementPassPrompt(basePrompt: string, failures: { reason: unknown; index: number }[]) {
-  const recentFailures = failures
-    .slice(-4)
-    .map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`)
-    .join("\n");
-
-  return `${basePrompt}
-
-RECOVERY INSTRUCTION FOR THIS REPLACEMENT PASS:
-Earlier independent pass attempts for this same manuscript failed validation or API parsing and were discarded:
-${recentFailures || "No detailed failure message was available."}
-
-Return only one valid JSON object matching the requested schema. Keep the review concise enough to fit in the response budget, but include the required scientific reasoning fields. Do not emit Markdown fences, prose outside JSON, trailing commentary, blank fields for the main review, or a score of 0 unless the reasoning explicitly establishes a paper-fatal failure with no substantial separable contribution surviving.`;
 }
 
 function pickRepresentativeReview(reviews: IndividualReview[], medianScore: number) {
@@ -4421,6 +4457,7 @@ async function generateMultiPassReview(
   promptOverride?: string,
   options: { selectComparatorContext?: ComparatorContextSelector; reviewMode?: ReviewPipelineMode } = {},
 ): Promise<MultiPassReviewResult> {
+  const reviewRunId = randomUUID();
   const reviewMode = options.reviewMode ?? DEFAULT_REVIEW_PIPELINE_MODE;
   const systemPrompt = withLatexMarkdownFormatting(promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION);
   const blindedContent = blindReviewInput(paperContent);
@@ -4431,7 +4468,7 @@ async function generateMultiPassReview(
 
   const initialPasses = await Promise.allSettled(
     Array.from({ length: REVIEW_PASS_COUNT }, (_unused, index) =>
-      runPassWithGenerationRetries(systemPrompt, blindedContent, index),
+      runPassWithGenerationRetries(systemPrompt, blindedContent, index, reviewRunId),
     ),
   );
 
@@ -4452,7 +4489,7 @@ async function generateMultiPassReview(
   const maxPassAttempts = REVIEW_PASS_COUNT + REPLACEMENT_PASS_ATTEMPTS;
   while (passResults.length < REVIEW_PASS_COUNT && extraIndex < maxPassAttempts) {
     try {
-      passResults.push(await runPassWithGenerationRetries(buildReplacementPassPrompt(systemPrompt, passFailures), blindedContent, extraIndex));
+      passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex, reviewRunId));
     } catch (reason) {
       passFailures.push({ reason, index: extraIndex });
       if (isDailyModelQuotaError(reason)) {
@@ -4468,6 +4505,29 @@ async function generateMultiPassReview(
   }
 
   const individualReviews = passResults.map((result) => result.review);
+  const blindPassHashes = new Set(passResults.map((result) => result.audit.promptHash));
+  if (blindPassHashes.size > 1 || (blindPassHashes.size === 1 && !blindPassHashes.has(REVIEW_PROMPT_HASH))) {
+    throw new Error("Review run invalid: blind pass prompt hashes differ from the active prompt hash.");
+  }
+  for (const result of passResults) {
+    logger.info({
+      reviewRunId,
+      promptVersion: result.audit.promptVersion,
+      promptHash: result.audit.promptHash,
+      passNumber: result.audit.passNumber,
+      role: result.audit.role,
+      model: result.audit.model,
+      requestId: result.audit.requestId,
+      cacheUsed: result.audit.cacheUsed,
+      previousReviewUsed: result.audit.previousReviewUsed,
+      comparatorContextIncluded: result.audit.comparatorContextIncluded,
+      adjudicatorContextIncluded: result.audit.adjudicatorContextIncluded,
+      inputTokenCount: result.audit.inputTokenCount,
+      outputTokenCount: result.audit.outputTokenCount,
+      score: result.audit.score,
+      classification: result.audit.classification,
+    }, "Blind review pass completed");
+  }
   for (const result of passResults) {
     if (result.thinkingText) {
       thinkingChunks.push(`Pass ${result.index + 1} (${result.modelName})\n${result.thinkingText}`);
@@ -4482,6 +4542,7 @@ async function generateMultiPassReview(
   let adjudicatorThinking: string | null = null;
   let aggregate: AggregateReview | null = null;
   let adjudicatorFailure: unknown = null;
+  let adjudicatorAudit: ReviewRunAuditEntry | null = null;
   if (passResults.length < REVIEW_PASS_COUNT) {
     aggregate = normalizeAggregateReview({
       finalIntrinsicReview: fallbackRepresentativeReview,
@@ -4531,9 +4592,30 @@ async function generateMultiPassReview(
               temperature: 0.15,
             },
           );
+          adjudicatorAudit = {
+            reviewRunId,
+            paperId: null,
+            promptVersion: REVIEW_PROMPT_VERSION,
+            promptHash: REVIEW_PROMPT_HASH,
+            role: "adjudicator",
+            passNumber: null,
+            model: GEMINI_META_MODEL,
+            requestId: adjudicatorResult.requestId,
+            cacheUsed: false,
+            previousReviewUsed: false,
+            comparatorContextIncluded: false,
+            adjudicatorContextIncluded: true,
+            inputTokenCount: adjudicatorResult.usage.inputTokenCount,
+            outputTokenCount: adjudicatorResult.usage.outputTokenCount,
+            score: null,
+            classification: null,
+          };
           adjudicatorThinking = adjudicatorResult.thinkingText;
           aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
           validateAggregateReview(aggregate);
+          adjudicatorAudit.score = aggregate.finalScoreBand.median;
+          adjudicatorAudit.classification = aggregate.finalClassification || null;
+          logger.info(adjudicatorAudit, "Blind adjudicator completed");
           break;
         } catch (reason) {
           adjudicatorFailure = reason;
@@ -4666,6 +4748,7 @@ async function generateMultiPassReview(
   thinkingChunks.push(aggregate.internalCalibrationNotes);
 
   return {
+    reviewRunId,
     modelName: expectedReviewModelName(reviewMode),
     pipelineMode: reviewMode,
     systemPrompt,
@@ -4674,6 +4757,10 @@ async function generateMultiPassReview(
     aggregate,
     representativeReview,
     thinkingText: thinkingChunks.length > 0 ? thinkingChunks.join("\n\n---\n\n") : null,
+    passAudit: [
+      ...passResults.map((result) => result.audit),
+      ...(adjudicatorAudit ? [adjudicatorAudit] : []),
+    ],
   };
 }
 
@@ -4766,6 +4853,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
   const canonicalCoverageLedger = {
     reviewObjectVersion: REVIEW_OBJECT_VERSION,
     schemaVersion: "v16.7",
+    reviewRunId: result.reviewRunId,
     promptVersion: REVIEW_PROMPT_VERSION,
     promptName: REVIEW_PROMPT_NAME,
     promptHash: REVIEW_PROMPT_HASH,
@@ -4799,6 +4887,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     diagnosticBaselineDelta: aggregate.diagnosticBaselineDelta,
     scoringAnomaly: aggregate.scoringAnomaly,
     blindPassReviews: storedIndividualReviews,
+    passAudit: result.passAudit,
     submissionSourceHash: null,
   };
   return {
