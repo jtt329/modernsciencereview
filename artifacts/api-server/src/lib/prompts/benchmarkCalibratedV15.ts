@@ -168,6 +168,8 @@ If a manuscript contains both failed and correct contributions, remove the faile
 
 A surviving contribution may be valuable if it is independently correct and present in the manuscript: for example, a method, theorem, derivation, calculation, diagnostic, representation, dataset, limited algebraic relation, or model-space analysis.
 
+A wrong interpretation does not by itself invalidate a correct equation, transformation, relation, or method. Credit any correct structure that is nontrivial, hard-to-vary, reusable, or independently explanatory; do not credit it if it is merely a trivial algebraic restatement with no demonstrated role inside the manuscript.
+
 Do not credit the manuscript for later corrected descendants, later field growth, or later results obtained by other papers. Later work may help reveal that a method was important, but the intrinsic score must still be based only on what this manuscript itself correctly established.
 
 A paper is paper-fatally flawed only when no substantial correct and separable scientific contribution survives.
