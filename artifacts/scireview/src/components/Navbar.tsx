@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { LogIn, LogOut, PlusCircle, User, BarChart2, Trash2, Download } from 'lucide-react';
+import { LogIn, LogOut, PlusCircle, User, BarChart2, Trash2, Download, FileSearch } from 'lucide-react';
 import { SITE_VERSION } from '../lib/version';
 
 interface NavbarProps {
@@ -13,9 +13,10 @@ interface NavbarProps {
   onDeleteAll: () => void;
   onPromptAnalysis: () => void;
   onDownloadAll: () => void;
+  onDownloadAudit: () => void;
 }
 
-export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onHowItWorks, onDeleteAll, onPromptAnalysis, onDownloadAll }: NavbarProps) {
+export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, onHowItWorks, onDeleteAll, onPromptAnalysis, onDownloadAll, onDownloadAudit }: NavbarProps) {
   return (
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -51,6 +52,16 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
                     >
                       <Download className="w-4 h-4" />
                       <span className="hidden sm:inline">Export</span>
+                    </motion.button>
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={onDownloadAudit}
+                      title="Download Pass Audit JSON"
+                      className="flex items-center gap-2 bg-cyan-50 border border-cyan-200 text-cyan-700 px-3 py-2 rounded-full font-medium text-sm shadow-sm hover:bg-cyan-100 transition-colors"
+                    >
+                      <FileSearch className="w-4 h-4" />
+                      <span className="hidden sm:inline">Audit</span>
                     </motion.button>
                     <motion.button
                       whileHover={{ scale: 1.02 }}

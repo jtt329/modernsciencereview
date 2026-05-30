@@ -413,8 +413,8 @@ export default function App() {
     setShowHowItWorks(false);
   };
 
-  const fetchPapersExport = async () => {
-    const res = await fetch('/api/papers/export', { credentials: 'include' });
+  const fetchPapersExport = async (debugAudit = false) => {
+    const res = await fetch(`/api/papers/export${debugAudit ? '?debugAudit=true' : ''}`, { credentials: 'include' });
     if (!res.ok) {
       const message = await res.text();
       throw new Error(message || `Export failed with status ${res.status}`);
@@ -438,6 +438,16 @@ export default function App() {
       downloadPapersExport(data);
     } catch (err: any) {
       window.alert(`Export failed: ${err.message}`);
+    }
+  };
+
+  const handleDownloadAudit = async () => {
+    if (!isAdmin) return;
+    try {
+      const data = await fetchPapersExport(true);
+      downloadPapersExport(data);
+    } catch (err: any) {
+      window.alert(`Audit export failed: ${err.message}`);
     }
   };
 
@@ -535,6 +545,7 @@ export default function App() {
         onDeleteAll={handleDeleteAll}
         onPromptAnalysis={() => setShowPromptAnalysis(true)}
         onDownloadAll={handleDownloadAll}
+        onDownloadAudit={handleDownloadAudit}
       />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
