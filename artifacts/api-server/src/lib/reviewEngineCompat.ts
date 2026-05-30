@@ -528,6 +528,9 @@ type ReviewRunAuditEntry = {
   previousReviewUsed: boolean;
   comparatorContextIncluded: boolean;
   adjudicatorContextIncluded: boolean;
+  calibrationContextIncluded: boolean;
+  textHash: string;
+  pdfHash: string | null;
   inputTokenCount: number | null;
   outputTokenCount: number | null;
   score: number | null;
@@ -2983,6 +2986,15 @@ function reviewInputText(input: ReviewInput) {
   return typeof input === "string" ? input : input.text;
 }
 
+function reviewInputAuditHashes(input: ReviewInput) {
+  const text = reviewInputText(input);
+  const pdfBase64 = typeof input === "string" ? "" : input.pdfBase64;
+  return {
+    textHash: createHash("sha256").update(text).digest("hex"),
+    pdfHash: pdfBase64 ? createHash("sha256").update(pdfBase64).digest("hex") : null,
+  };
+}
+
 function reviewExtractionMethod(input: ReviewInput) {
   return typeof input === "string" ? "text-extraction" : "gemini-native-pdf-fallback";
 }
@@ -3099,6 +3111,7 @@ async function runIndividualPass(
   _model: ReviewModel,
   index: number,
   reviewRunId: string,
+  inputAuditHashes: { textHash: string; pdfHash: string | null },
 ): Promise<IndividualPassResult> {
   const { parsed, thinkingText, requestId, usage } = await callGemini(
     prompt,
@@ -3131,6 +3144,9 @@ async function runIndividualPass(
       previousReviewUsed: false,
       comparatorContextIncluded: false,
       adjudicatorContextIncluded: false,
+      calibrationContextIncluded: false,
+      textHash: inputAuditHashes.textHash,
+      pdfHash: inputAuditHashes.pdfHash,
       inputTokenCount: usage.inputTokenCount,
       outputTokenCount: usage.outputTokenCount,
       score: review.scoreBand.median,
@@ -3144,11 +3160,12 @@ async function runPassWithGenerationRetries(
   input: ReviewInput,
   index: number,
   reviewRunId: string,
+  inputAuditHashes: { textHash: string; pdfHash: string | null },
 ): Promise<IndividualPassResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < PASS_GENERATION_ATTEMPTS; attempt += 1) {
     try {
-      return await runIndividualPass(prompt, input, "gemini", index, reviewRunId);
+      return await runIndividualPass(prompt, input, "gemini", index, reviewRunId, inputAuditHashes);
     } catch (reason) {
       lastError = reason;
       if (attempt < PASS_GENERATION_ATTEMPTS - 1) {
@@ -4461,6 +4478,7 @@ async function generateMultiPassReview(
   const reviewMode = options.reviewMode ?? DEFAULT_REVIEW_PIPELINE_MODE;
   const systemPrompt = withLatexMarkdownFormatting(promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION);
   const blindedContent = blindReviewInput(paperContent);
+  const inputAuditHashes = reviewInputAuditHashes(blindedContent);
   const thinkingChunks: string[] = [];
 
   const passResults: IndividualPassResult[] = [];
@@ -4468,7 +4486,7 @@ async function generateMultiPassReview(
 
   const initialPasses = await Promise.allSettled(
     Array.from({ length: REVIEW_PASS_COUNT }, (_unused, index) =>
-      runPassWithGenerationRetries(systemPrompt, blindedContent, index, reviewRunId),
+      runPassWithGenerationRetries(systemPrompt, blindedContent, index, reviewRunId, inputAuditHashes),
     ),
   );
 
@@ -4489,7 +4507,7 @@ async function generateMultiPassReview(
   const maxPassAttempts = REVIEW_PASS_COUNT + REPLACEMENT_PASS_ATTEMPTS;
   while (passResults.length < REVIEW_PASS_COUNT && extraIndex < maxPassAttempts) {
     try {
-      passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex, reviewRunId));
+      passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex, reviewRunId, inputAuditHashes));
     } catch (reason) {
       passFailures.push({ reason, index: extraIndex });
       if (isDailyModelQuotaError(reason)) {
@@ -4522,6 +4540,9 @@ async function generateMultiPassReview(
       previousReviewUsed: result.audit.previousReviewUsed,
       comparatorContextIncluded: result.audit.comparatorContextIncluded,
       adjudicatorContextIncluded: result.audit.adjudicatorContextIncluded,
+      calibrationContextIncluded: result.audit.calibrationContextIncluded,
+      textHash: result.audit.textHash,
+      pdfHash: result.audit.pdfHash,
       inputTokenCount: result.audit.inputTokenCount,
       outputTokenCount: result.audit.outputTokenCount,
       score: result.audit.score,
@@ -4605,6 +4626,9 @@ async function generateMultiPassReview(
             previousReviewUsed: false,
             comparatorContextIncluded: false,
             adjudicatorContextIncluded: true,
+            calibrationContextIncluded: false,
+            textHash: inputAuditHashes.textHash,
+            pdfHash: inputAuditHashes.pdfHash,
             inputTokenCount: adjudicatorResult.usage.inputTokenCount,
             outputTokenCount: adjudicatorResult.usage.outputTokenCount,
             score: null,
