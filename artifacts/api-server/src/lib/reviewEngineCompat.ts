@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { createHash } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import {
   BENCHMARK_CALIBRATED_V15_FULL_PROMPT,
@@ -531,6 +532,11 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V15_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V15_FULL_PROMPT);
+export const REVIEW_PROMPT_NAME = "v16.7 correctly established contribution";
+export const REVIEW_PROMPT_HASH = createHash("sha256")
+  .update(REVIEW_SYSTEM_INSTRUCTION)
+  .digest("hex")
+  .slice(0, 16);
 const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT);
 const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT);
 
@@ -689,15 +695,12 @@ const individualReviewJsonSchema = {
     "inputConstructionOutputAssessment",
     "technicalAssessment",
     "failureAnalysis",
-    "assessmentSensitivity",
     "inputStrengthScore",
     "constructionStrengthScore",
     "outputStrengthScore",
   ],
-  additionalProperties: true,
+  additionalProperties: false,
   properties: {
-    title: jsonString,
-    authorName: jsonString,
     comparisonCohort: jsonString,
     localCohort: jsonString,
     broadField: jsonString,
@@ -744,9 +747,6 @@ const individualReviewJsonSchema = {
         survivingContributionScoreBasis: jsonString,
       },
     },
-    assessmentSensitivity: jsonString,
-    whatWouldRaiseScore: jsonString,
-    whatWouldLowerScore: jsonString,
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
     outputStrengthScore: jsonNumber,
@@ -2625,6 +2625,20 @@ function normalizeArxivId(value?: string) {
   return match?.[0]?.replace(/v\d+$/i, "") || "";
 }
 
+function inferArxivFirstSubmissionMonth(arxivId?: string) {
+  const normalizedId = normalizeArxivId(arxivId);
+  if (!normalizedId) return "";
+  const oldStyle = normalizedId.match(/^[a-z-]+(?:\.[A-Z]{2})?\/(\d{2})(\d{2})\d{3}$/i);
+  const modern = normalizedId.match(/^(\d{2})(\d{2})\.\d{4,5}$/);
+  const match = oldStyle || modern;
+  if (!match) return "";
+  const yy = Number(match[1]);
+  const mm = Number(match[2]);
+  if (!Number.isFinite(yy) || !Number.isFinite(mm) || mm < 1 || mm > 12) return "";
+  const year = yy >= 91 ? 1900 + yy : 2000 + yy;
+  return `${year}-${String(mm).padStart(2, "0")}`;
+}
+
 const KNOWN_ARXIV_AUTHOR_OVERRIDES: Record<string, string[]> = {
   "astro-ph/0306438": ["Sean M. Carroll", "Vikram Duvvuri", "Mark Trodden", "Michael S. Turner"],
   "hep-th/0501055": ["Rong-Gen Cai", "Sang Pyo Kim"],
@@ -4173,6 +4187,23 @@ function normalizeExtractedDateMetadata(
   display: { displayedTitle: string; displayedAuthors: string[] },
 ): PaperDateMetadata {
   const metadata = defaultDateMetadata(display.displayedTitle, display.displayedAuthors);
+  const arxivId = asString(source.arxivId, metadata.arxivId);
+  const inferredArxivDate = inferArxivFirstSubmissionMonth(arxivId);
+  const arxivFirstSubmissionDate = asString(source.arxivFirstSubmissionDate, metadata.arxivFirstSubmissionDate) || inferredArxivDate;
+  const originalPublicationDateBestGuess =
+    asString(source.originalPublicationDateBestGuess, metadata.originalPublicationDateBestGuess) ||
+    asString(source.journalPublicationDate) ||
+    arxivFirstSubmissionDate;
+  const dateSource = asString(source.dateSource, "") ||
+    (inferredArxivDate ? "arXiv identifier" : metadata.dateSource);
+  const dateConfidence = Math.max(
+    asNumber(source.dateConfidence, metadata.dateConfidence, 0, 1),
+    inferredArxivDate ? 0.75 : 0,
+  );
+  const dateNotes = uniqueCleanStrings([
+    asString(source.dateNotes, metadata.dateNotes),
+    inferredArxivDate ? `Inferred first submission month ${inferredArxivDate} from arXiv identifier ${arxivId}.` : "",
+  ]).join(" ");
   return {
     rawExtractedTitle: asString(source.rawExtractedTitle, metadata.rawExtractedTitle),
     cleanedTitle: asString(source.cleanedTitle, source.displayedTitle ? asString(source.displayedTitle) : metadata.cleanedTitle) || metadata.cleanedTitle,
@@ -4183,17 +4214,17 @@ function normalizeExtractedDateMetadata(
     rawExtractedAuthors: asString(source.rawExtractedAuthors, metadata.rawExtractedAuthors),
     authorsConfidence: asNumber(source.authorsConfidence, metadata.authorsConfidence, 0, 1),
     authorsExtractionNotes: asString(source.authorsExtractionNotes, metadata.authorsExtractionNotes),
-    arxivId: asString(source.arxivId, metadata.arxivId),
+    arxivId,
     reportCodes: firstStringArray([source.reportCodes, metadata.reportCodes]),
     doi: asString(source.doi, metadata.doi),
     journalName: asString(source.journalName, metadata.journalName),
     journalPublicationDate: asString(source.journalPublicationDate, metadata.journalPublicationDate),
-    arxivFirstSubmissionDate: asString(source.arxivFirstSubmissionDate, metadata.arxivFirstSubmissionDate),
+    arxivFirstSubmissionDate,
     manuscriptDatePrintedOnPdf: asString(source.manuscriptDatePrintedOnPdf, metadata.manuscriptDatePrintedOnPdf),
-    originalPublicationDateBestGuess: asString(source.originalPublicationDateBestGuess, metadata.originalPublicationDateBestGuess),
-    dateSource: asString(source.dateSource, metadata.dateSource) || metadata.dateSource,
-    dateConfidence: asNumber(source.dateConfidence, metadata.dateConfidence, 0, 1),
-    dateNotes: asString(source.dateNotes, metadata.dateNotes),
+    originalPublicationDateBestGuess,
+    dateSource,
+    dateConfidence,
+    dateNotes,
   };
 }
 
@@ -4736,6 +4767,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     reviewObjectVersion: REVIEW_OBJECT_VERSION,
     schemaVersion: "v16.7",
     promptVersion: REVIEW_PROMPT_VERSION,
+    promptName: REVIEW_PROMPT_NAME,
+    promptHash: REVIEW_PROMPT_HASH,
     generatedAt,
     modelName: result.modelName,
     passModel: GEMINI_PASS_MODEL,

@@ -33,6 +33,7 @@ Rules:
 - Put the literal title as found in rawExtractedTitle, then put the public display title in cleanedTitle.
 - Strip arXiv identifiers, report codes, preprint numbers, journal labels, and filename prefixes from cleanedTitle. Preserve those codes in reportCodes/arxivId/doi when visible.
 - Return all paper authors visible in the manuscript in manuscript order. Omit affiliations, departments, emails, footnote markers, ORCID ids, and addresses.
+- If an arXiv identifier is visible, infer arxivFirstSubmissionDate when possible: old-style ids such as gr-qc/9504004 mean 1995-04, astro-ph/0306438 means 2003-06, and modern ids such as arXiv:2309.04110 mean 2023-09. Use that as originalPublicationDateBestGuess when no stronger publication date is visible.
 - If title or authors are genuinely unrecoverable, use "Unknown Title" or "Unknown Authors".
 - Do not use this metadata for blind scoring.`;
 
@@ -96,7 +97,7 @@ Practical rule:
 - If the manuscript introduces it as machinery used to produce later consequences, list it as an introduced construction.
 - If the manuscript presents it as a consequence produced by that machinery, list it as an output.
 
-For each primitive input, state its role, grounding, groundingQuality, fundamentality, fundamentalityLevel, frameworkDependence, frameworkDependenceLevel, and assessment. The role should be a concise explanation of how this input is used; the assessment should be a self-contained judgment of that particular input, not a fragment that depends on a separate section summary.
+For each primitive input, state its role, grounding, groundingQuality, fundamentality, fundamentalityLevel, frameworkDependence, frameworkDependenceLevel, and assessment. The role should be a concise explanation of how this input is used; the assessment should be a self-contained judgment of that particular input, not a fragment that depends on a separate section overview.
 
 For primitive inputs:
 - groundingQuality is a quality judgment: weak | moderate | strong.
@@ -159,7 +160,7 @@ Outputs should not be credited if they are:
 Correctly established contribution rule
 ---------------------------------------
 
-Score only what the manuscript correctly establishes. This rule applies uniformly to all papers; it is not a special penalty for speculative or failed-model papers.
+Score only what the manuscript correctly establishes.
 
 A failed claim, failed output, or failed construction receives no scientific-value credit. Do not give partial credit to a false conclusion merely because it was interesting, influential, or later repaired by other work.
 
@@ -184,16 +185,9 @@ Validation
 
 If a high-centrality output is invalid, the review must explicitly exclude that output from the score.
 
-If a central physical model, central construction, or central output fails, the final score must be based only on the correct surviving contributions. The failed part receives no scientific-value credit.
+If the final score remains above 75 after a central physical model fails, the review must identify a substantial correct contribution inside the manuscript that justifies the score independently of the failed model.
 
-If the final score remains above 75 after a central physical model, central construction, or central output fails, the review must explicitly identify:
-1. the substantial correct contribution inside the manuscript;
-2. why that contribution is independent of the failed claim, model, construction, or output;
-3. why the score is not crediting later repairs, later field growth, later influence, or descendant work.
-
-Do not justify a score above 75 using later influence, later field growth, "opened a field," "launched a model space," citation history, or descendant work. Justification must point to correct content actually present in the manuscript.
-
-This is a validation rule, not an automatic hard cap. A partially failed paper can still score highly if the surviving manuscript-contained contribution is independently major or field-shaping.
+Do not justify a score above 75 using later influence, later field growth, or descendant work. Justification must point to correct content actually present in the manuscript.
 
 Layer-specific generality
 -------------------------
@@ -285,12 +279,12 @@ Do not require a single decisive check. Many theoretical, mathematical, structur
 
 Instead, provide assessmentSensitivity: what kinds of evidence, derivation, counterexample, calculation, proof, empirical result, application, robustness test, or comparator result would most materially change the assessment. If there is no single decisive check, say so and list the most important classes of checks or extensions.
 
-Single-score output; no score bands
------------------------------------
+Single-score output
+-------------------
 
-Return one 0-100 intrinsicScore. Do not create low/median/high score bands. Score bands were an older uncertainty display and should not be generated in this prompt. Uncertainty is represented by two independent blind pass scores, their spread, review stability, scoreConfidence, scoreCappingReason, scoreAdjustmentReason, and assessmentSensitivity.
+Return one 0-100 intrinsicScore. Uncertainty should be expressed through scoreConfidence, scoreCappingReason, scoreAdjustmentReason, and assessmentSensitivity. The application separately tracks blind pass scores, spread, and stability.
 
-The adjudicator should audit the two blind pass reviews and select one adjudicator/final score. It should not manufacture an additional uncertainty band. If the score is uncertain, explain why in assessmentSensitivity or scoreAdjustmentReason rather than creating a band.
+Do not ask the model to generate uncertainty bands or alternate score objects.
 
 Anchored 0-100 intrinsic score
 ------------------------------
@@ -362,17 +356,15 @@ The local cohort should be the most natural research neighborhood for the manusc
 Scientific review
 -----------------
 
-Generate one coherent scientificReview field directly. Do not stitch together a summary and verdict.
-
-scientificReview should be verdict-led and then explanatory. It should usually be 1-3 concise paragraphs, or about 5-10 sentences when useful.
+Generate scientificReview directly as one coherent review. It should be verdict-led and explanatory. It should usually be 1-3 concise paragraphs, or about 5-10 sentences when useful.
 
 It should include:
 - the bottom-line assessment/classification;
 - the central reason for the score;
-- the input -> construction -> output logic;
+- the Input -> Construction -> Output logic;
 - the strongest limitation or caveat if important.
 
-It should not repeat the same claim in different wording. It should not mention author identity, citations, fame, or later influence.
+Do not repeat the same claim in different wording. Do not mention author identity, citations, fame, or later influence. In blinded prose, prefer "the manuscript" or "the paper" over "the author."
 
 When writing assessment fields, use coherent prose. Do not concatenate raw fragments.
 
@@ -380,16 +372,19 @@ Per-item assessments belong inside the item they assess. For example, each primi
 
 Section-level overallAssessment fields should be brief summaries of the section as a whole, usually one or two sentences. If the item-level assessments already say everything important, the section-level overallAssessment may be left empty or very short. For the output section especially, do not write a long top-level assessment that belongs above the output list; put output-specific judgments inside each output object's assessment field.
 
-In blinded prose, prefer "the manuscript" or "the paper" over "the author."
+Canonical response discipline
+-----------------------------
 
-Canonical public-object discipline
-----------------------------------
+Return exactly the JSON object specified below. Do not add extra top-level keys. Do not add alternate names for fields. Do not flatten nested objects. Do not create additional scoring fields, prose fields, or duplicate review objects.
 
-For this version, the public review object is intentionally minimal. Do not output legacy review fields such as summary, finalJudgment, oneParagraphVerdict, scoreBand, blindIntrinsicScoreBand, comparatorCalibratedFinalScoreBand, inputConstructionOutputLedger, outputValidity, specialtyRelativeScore, broadFieldRelativeScore, crossFieldConsequenceScore, or explanatoryDeltaAssessment.
+Use:
+- scientificReview as the only general prose review field.
+- inputConstructionOutputAssessment as the only Input -> Construction -> Output object.
+- technicalAssessment as the only technical assessment object.
+- failureAnalysis as the only failure/surviving-contribution object.
+- intrinsicScore as the only 0-100 score returned by the model.
 
-Use scientificReview as the only general review prose field. Use inputConstructionOutputAssessment as the only Input -> Construction -> Output object. Use technicalAssessment as the only home for correctness, framework dependence, hard-to-vary assessment, strongest case, strongest objection, assessment sensitivity, and score-raising/lowering conditions.
-
-Do not flatten technicalAssessment into top-level public fields. If the application later stores convenience aliases, those are implementation details and should not be generated by the model or used as the canonical public review.
+Enforce this shape directly. If a detail belongs inside one of the nested objects, put it there rather than duplicating it elsewhere.
 
 Review-pass storage note
 ------------------------
@@ -538,7 +533,7 @@ export const BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT = [
 
 You receive compact paper context and two independent blind review passes. Do not use comparator papers, author identity, publication dates, citation history, venue, fame, or later influence.
 
-Produce one final blind intrinsic review using exactly the same v16.7 canonical ICO JSON schema as the blind passes. Return one intrinsicScore, not a low/median/high scoreBand.
+Produce one final blind intrinsic review using exactly the same v16.7 canonical ICO JSON schema as the blind passes. Return one intrinsicScore using the canonical response shape.
 
 Do not merely average. Audit the two passes for correctness, input/construction/output roles, output validity, failed-claim handling, framework dependence, diagnostic subscore consistency, and whether the score and classification match the reasoning.
 
@@ -564,7 +559,7 @@ Assess explanatory delta over the nearest reviewed comparators using only the v1
 - localCohort / organicCohortProfile
 - intrinsicScore / final score and scoreAdjustmentReason
 
-Do not use fame, citation counts, venue, author identity, historical influence, or legacy v8-v15 fields.
+Do not use fame, citation counts, venue, author identity, historical influence, or non-canonical fields outside the supplied review/comparator profiles.
 
 If no adequate in-site comparator exists, set comparatorCalibrationStatus to "not_available" and do not adjust the score.
 

@@ -9,6 +9,8 @@ import {
   BENCHMARK_SET_VERSION,
   GEMINI_META_MODEL,
   REVIEW_FULL_PROMPT_SYSTEM,
+  REVIEW_PROMPT_HASH,
+  REVIEW_PROMPT_NAME,
   REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   buildPdfFallbackText,
@@ -483,6 +485,8 @@ router.get("/papers/system-prompt", (_req, res) => {
     prompt: LATEST_REVIEW_SYSTEM_INSTRUCTION,
     fullPromptSystem: REVIEW_FULL_PROMPT_SYSTEM,
     promptVersion: REVIEW_PROMPT_VERSION,
+    promptName: REVIEW_PROMPT_NAME,
+    promptHash: REVIEW_PROMPT_HASH,
     defaultReviewMode: "benchmark-ingestion",
     benchmarkSetVersion: BENCHMARK_SET_VERSION,
   });
@@ -699,8 +703,9 @@ router.post("/papers/comparator-backfill", async (req, res) => {
 });
 
 // GET /api/papers/export — download all reviews as structured JSON (model output only)
-router.get("/papers/export", async (_req, res) => {
+router.get("/papers/export", async (req, res) => {
   try {
+    const includeSystemPrompt = req.query.includeSystemPrompt === "true";
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
@@ -722,6 +727,8 @@ router.get("/papers/export", async (_req, res) => {
         const canonicalReview: Record<string, any> = {
           reviewObjectVersion: coverageLedger.reviewObjectVersion,
           promptVersion: coverageLedger.promptVersion ?? REVIEW_PROMPT_VERSION,
+          promptName: coverageLedger.promptName ?? REVIEW_PROMPT_NAME,
+          promptHash: coverageLedger.promptHash ?? REVIEW_PROMPT_HASH,
           pipelineMode: coverageLedger.pipelineMode ?? null,
           benchmarkSetCandidate: coverageLedger.benchmarkSetCandidate ?? false,
           benchmarkSetVersion: coverageLedger.benchmarkSetVersion ?? null,
@@ -894,7 +901,7 @@ router.get("/papers/export", async (_req, res) => {
             subscoreConsistencyWarning: coverageLedger?.subscoreConsistencyWarning ?? aggregate?.subscoreConsistencyWarning ?? adjudication?.subscoreConsistencyWarning ?? null,
             subscoreSaturationWarning: coverageLedger?.subscoreSaturationWarning ?? aggregate?.subscoreSaturationWarning ?? adjudication?.subscoreSaturationWarning ?? false,
           },
-          systemPrompt: r.systemPrompt,
+          ...(includeSystemPrompt ? { systemPrompt: r.systemPrompt } : {}),
           modelName: r.modelName,
           overallIntrinsicScore: r.overallIntrinsicScore,
           intrinsicScientificMeritScore: isV15Review || isCanonicalIcoReview ? undefined : r.intrinsicScientificMeritScore,
@@ -959,7 +966,9 @@ router.get("/papers/export", async (_req, res) => {
     res.json({
       exportedAt: new Date().toISOString(),
       promptVersion: REVIEW_PROMPT_VERSION,
-      systemPrompt: LATEST_REVIEW_SYSTEM_INSTRUCTION,
+      promptName: REVIEW_PROMPT_NAME,
+      promptHash: REVIEW_PROMPT_HASH,
+      ...(includeSystemPrompt ? { systemPrompt: LATEST_REVIEW_SYSTEM_INSTRUCTION } : {}),
       count: exported.length,
       papers: exported,
     });
