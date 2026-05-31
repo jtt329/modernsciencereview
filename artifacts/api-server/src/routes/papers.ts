@@ -219,6 +219,11 @@ function compactPassAuditEntry(entry: any) {
     pdfHash: typeof entry?.pdfHash === "string" ? entry.pdfHash : null,
     inputTokenCount: typeof entry?.inputTokenCount === "number" ? entry.inputTokenCount : null,
     outputTokenCount: typeof entry?.outputTokenCount === "number" ? entry.outputTokenCount : null,
+    inputStrengthScore: typeof entry?.inputStrengthScore === "number" ? entry.inputStrengthScore : null,
+    constructionStrengthScore: typeof entry?.constructionStrengthScore === "number" ? entry.constructionStrengthScore : null,
+    outputStrengthScore: typeof entry?.outputStrengthScore === "number" ? entry.outputStrengthScore : null,
+    rawDiagnosticScore: typeof entry?.rawDiagnosticScore === "number" ? entry.rawDiagnosticScore : null,
+    computedScore: typeof entry?.computedScore === "number" ? entry.computedScore : null,
     score: typeof entry?.score === "number" ? entry.score : null,
     classification: typeof entry?.classification === "string" ? entry.classification : null,
   };
@@ -754,7 +759,11 @@ router.get("/papers/export", async (req, res) => {
     const exported = papers.map(p => {
       const r = reviewMap.get(p.id);
       const coverageLedger = r ? parseJsonObject(r.coverageLedgerJson) : null;
-      if (r && coverageLedger?.reviewObjectVersion === "v16.7-canonical") {
+      const isCanonicalReview =
+        coverageLedger?.reviewObjectVersion === "v16.7-canonical" ||
+        coverageLedger?.reviewObjectVersion === "v17-diagnostic-only";
+      if (r && isCanonicalReview) {
+        const isV17 = coverageLedger?.reviewObjectVersion === "v17-diagnostic-only";
         const blindPassReviewsFromField = parseJsonArray((r as any).individualReviewsJson ?? null);
         const blindPassReviews = Array.isArray(coverageLedger.blindPassReviews)
           ? coverageLedger.blindPassReviews
@@ -785,6 +794,7 @@ router.get("/papers/export", async (req, res) => {
           centralClaim: coverageLedger.centralClaim ?? r.centralClaim ?? null,
           scientificReview: coverageLedger.scientificReview ?? null,
           contributionArchetype: coverageLedger.contributionArchetype ?? null,
+          scopeProfile: coverageLedger.scopeProfile ?? null,
           inputStrengthScore: coverageLedger.inputStrengthScore ?? null,
           constructionStrengthScore: coverageLedger.constructionStrengthScore ?? null,
           outputStrengthScore: coverageLedger.outputStrengthScore ?? null,
@@ -794,10 +804,20 @@ router.get("/papers/export", async (req, res) => {
           failureAnalysis: coverageLedger.failureAnalysis ?? null,
           organicCohortProfile: coverageLedger.organicCohortProfile ?? null,
           intrinsicScore: coverageLedger.intrinsicScore ?? coverageLedger.finalScore ?? r.overallIntrinsicScore ?? r.score ?? null,
-          scoreConfidence: coverageLedger.scoreConfidence ?? null,
-          scoreCappingReason: coverageLedger.scoreCappingReason ?? "",
-          scoreAdjustmentReason: coverageLedger.scoreAdjustmentReason ?? "",
-          bestClassification: coverageLedger.bestClassification ?? r.bestClassification ?? null,
+          rawDiagnosticScore: coverageLedger.rawDiagnosticScore ?? coverageLedger.rawFinalDiagnosticScore ?? null,
+          computedScore: coverageLedger.computedScore ?? coverageLedger.intrinsicScore ?? coverageLedger.finalScore ?? r.overallIntrinsicScore ?? r.score ?? null,
+          diagnosticScoreFormula: coverageLedger.diagnosticScoreFormula ?? null,
+          publicMagnitudeLabel: coverageLedger.publicMagnitudeLabel ?? coverageLedger.bestClassification ?? r.bestClassification ?? null,
+          diagnosticAssessmentConfidence: coverageLedger.diagnosticAssessmentConfidence ?? coverageLedger.scoreConfidence ?? null,
+          adjudicationRationale: coverageLedger.adjudicationRationale ?? null,
+          ...(isV17 ? {} : {
+            scoreConfidence: coverageLedger.scoreConfidence ?? null,
+            scoreCappingReason: coverageLedger.scoreCappingReason ?? "",
+            scoreAdjustmentReason: coverageLedger.scoreAdjustmentReason ?? "",
+          }),
+          ...(isV17 ? {} : {
+            bestClassification: coverageLedger.bestClassification ?? coverageLedger.publicMagnitudeLabel ?? r.bestClassification ?? null,
+          }),
           promptMetadata: {
             modelName: coverageLedger.modelName ?? r.modelName,
             passModel: coverageLedger.passModel ?? null,
@@ -811,6 +831,10 @@ router.get("/papers/export", async (req, res) => {
             adjudicatorStatus: coverageLedger.adjudicatorStatus ?? null,
             diagnosticBaselineScore: coverageLedger.diagnosticBaselineScore ?? null,
             diagnosticBaselineDelta: coverageLedger.diagnosticBaselineDelta ?? null,
+            rawFinalDiagnosticScore: coverageLedger.rawFinalDiagnosticScore ?? null,
+            finalInputStrengthScore: coverageLedger.finalInputStrengthScore ?? null,
+            finalConstructionStrengthScore: coverageLedger.finalConstructionStrengthScore ?? null,
+            finalOutputStrengthScore: coverageLedger.finalOutputStrengthScore ?? null,
             comparatorCalibrationStatus: coverageLedger.comparatorCalibrationStatus ?? null,
             ...(comparatorCalibrationRan ? { calibrationAdjustment: coverageLedger.calibrationAdjustment ?? 0 } : {}),
             ...(debugAudit ? {

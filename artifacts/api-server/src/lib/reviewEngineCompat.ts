@@ -2,12 +2,14 @@ import OpenAI from "openai";
 import { createHash, randomUUID } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import {
-  BENCHMARK_CALIBRATED_V15_FULL_PROMPT,
   BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT,
-  BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT,
-  BLIND_REVIEW_PASS_V15_PROMPT,
   DATE_METADATA_EXTRACTION_V15_PROMPT,
 } from "./prompts/benchmarkCalibratedV15";
+import {
+  BENCHMARK_CALIBRATED_V17_FULL_PROMPT,
+  BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT,
+  BLIND_REVIEW_PASS_V17_PROMPT,
+} from "./prompts/diagnosticOnlyV17";
 import { logger } from "./logger";
 
 export const GPT_MODEL = "gpt-5.4-pro";
@@ -84,6 +86,12 @@ type DiagnosticSubscoreValidity = Record<DiagnosticSubscoreKey, boolean>;
 type DiagnosticSubscoreRationale = Record<DiagnosticSubscoreKey, string>;
 
 const CLASSIFICATIONS = [
+  "transformative advance",
+  "major advance",
+  "significant contribution",
+  "strong contribution",
+  "substantial contribution",
+  "moderate contribution",
   "field-defining advance",
   "major specialty advance",
   "specialty advance",
@@ -187,6 +195,15 @@ type ScoreBand = {
 type ContributionArchetype = {
   primary: string;
   secondary: string;
+};
+
+type ScopeProfile = {
+  scopeLevel: string;
+  scopeExplanation: string;
+  frameworkDependence: {
+    level: FrameworkLevel;
+    explanation: string;
+  };
 };
 
 type NearestComparator = {
@@ -339,6 +356,7 @@ type IndividualReview = {
   subfields: string[];
   paperType: string;
   contributionArchetype: ContributionArchetype;
+  scopeProfile: ScopeProfile;
   organicCohortProfile: ComparatorProfile;
   summary: string;
   centralClaim: string;
@@ -397,6 +415,8 @@ type IndividualReview = {
   crossFieldConsequenceScore: number;
   scoreBand: ScoreBand;
   scoreConfidence: number;
+  diagnosticAssessmentConfidence: number;
+  adjudicationRationale: string;
   bestClassification: string;
   oneParagraphVerdict: string;
   finalJudgment: string;
@@ -412,6 +432,7 @@ type AggregateReview = {
   finalCentralClaim: string;
   scientificReview: string;
   contributionArchetype: ContributionArchetype;
+  scopeProfile: ScopeProfile;
   inputConstructionOutputLedger: InputConstructionOutputLedger;
   centralOutputDependency: CentralOutputDependency;
   outputValidityAssessment: OutputValidityAssessment;
@@ -490,6 +511,8 @@ type AggregateReview = {
   finalClassification: string;
   finalScoreBand: ScoreBand;
   finalScoreConfidence: number;
+  diagnosticAssessmentConfidence: number;
+  adjudicationRationale: string;
   publicOneParagraphVerdict: string;
   internalCalibrationNotes: string;
 };
@@ -533,14 +556,19 @@ type ReviewRunAuditEntry = {
   pdfHash: string | null;
   inputTokenCount: number | null;
   outputTokenCount: number | null;
+  inputStrengthScore: number | null;
+  constructionStrengthScore: number | null;
+  outputStrengthScore: number | null;
+  rawDiagnosticScore: number | null;
+  computedScore: number | null;
   score: number | null;
   classification: string | null;
 };
 
 
 
-export const REVIEW_PROMPT_VERSION = "v16.7-correctly-established-contribution";
-const REVIEW_OBJECT_VERSION = "v16.7-canonical";
+export const REVIEW_PROMPT_VERSION = "v17.0-diagnostic-only-computed-scoring";
+const REVIEW_OBJECT_VERSION = "v17-diagnostic-only";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -555,14 +583,14 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 
 
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V15_PROMPT);
-export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V15_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v16.7 correctly established contribution";
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V17_PROMPT);
+export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V17_FULL_PROMPT);
+export const REVIEW_PROMPT_NAME = "v17.0 diagnostic-only computed scoring";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
   .slice(0, 16);
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(BLIND_INTRINSIC_ADJUDICATOR_V15_PROMPT);
+const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT);
 const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT);
 
 const METADATA_PROMPT = `${DATE_METADATA_EXTRACTION_V15_PROMPT}
@@ -617,6 +645,15 @@ const contributionArchetypeJsonSchema = {
   properties: {
     primary: jsonString,
     secondary: jsonString,
+  },
+};
+const scopeProfileJsonSchema = {
+  type: "object",
+  required: ["scopeLevel", "scopeExplanation", "frameworkDependence"],
+  properties: {
+    scopeLevel: jsonString,
+    scopeExplanation: jsonString,
+    frameworkDependence: frameworkConditionalityJsonSchema,
   },
 };
 const ledgerOutputItemJsonSchema = {
@@ -713,16 +750,26 @@ const comparatorProfileJsonSchema = {
 const individualReviewJsonSchema = {
   type: "object",
   required: [
+    "comparisonCohort",
+    "localCohort",
+    "broadField",
+    "specialtyField",
+    "subfields",
+    "paperType",
     "centralClaim",
     "scientificReview",
-    "intrinsicScore",
-    "bestClassification",
+    "contributionArchetype",
+    "scopeProfile",
     "inputConstructionOutputAssessment",
     "technicalAssessment",
     "failureAnalysis",
+    "organicCohortProfile",
     "inputStrengthScore",
     "constructionStrengthScore",
     "outputStrengthScore",
+    "subscoreRationale",
+    "diagnosticAssessmentConfidence",
+    "adjudicationRationale",
   ],
   additionalProperties: false,
   properties: {
@@ -735,6 +782,7 @@ const individualReviewJsonSchema = {
     centralClaim: jsonString,
     scientificReview: jsonString,
     contributionArchetype: contributionArchetypeJsonSchema,
+    scopeProfile: scopeProfileJsonSchema,
     inputConstructionOutputAssessment: inputConstructionOutputAssessmentJsonSchema,
     organicCohortProfile: comparatorProfileJsonSchema,
     technicalAssessment: {
@@ -757,6 +805,8 @@ const individualReviewJsonSchema = {
         assessmentSensitivity: jsonString,
         whatWouldRaiseScore: jsonString,
         whatWouldLowerScore: jsonString,
+        whatWouldRaiseSubscores: jsonString,
+        whatWouldLowerSubscores: jsonString,
       },
     },
     failureAnalysis: {
@@ -769,13 +819,14 @@ const individualReviewJsonSchema = {
         fatalToSpecificClaimOnly: jsonBoolean,
         survivingHighValueContributions: jsonStringArray,
         failedClaimsExcludedFromScore: jsonStringArray,
+        failedClaimsExcludedFromAssessment: jsonStringArray,
         survivingContributionScoreBasis: jsonString,
+        survivingContributionAssessmentBasis: jsonString,
       },
     },
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
     outputStrengthScore: jsonNumber,
-    intrinsicScore: jsonNumber,
     subscoreRationale: {
       type: "object",
       additionalProperties: true,
@@ -785,10 +836,8 @@ const individualReviewJsonSchema = {
         outputStrengthScore: jsonString,
       },
     },
-    scoreConfidence: jsonNumber,
-    scoreCappingReason: jsonString,
-    scoreAdjustmentReason: jsonString,
-    bestClassification: jsonString,
+    diagnosticAssessmentConfidence: jsonNumber,
+    adjudicationRationale: jsonString,
   },
 };
 const metadataJsonSchema = {
@@ -1077,8 +1126,18 @@ function computeSubscoreSaturationWarning(
 
 function diagnosticBaselineScore(scores: number[]) {
   if (scores.length === 0) return 0;
+  return Math.round(rawDiagnosticScore(scores));
+}
+
+function rawDiagnosticScore(scores: number[]) {
+  if (scores.length === 0) return 0;
   const average = scores.reduce((sum, score) => sum + score, 0) / scores.length;
-  return Math.round(Math.max(0, Math.min(100, average * 10)));
+  return Math.max(0, Math.min(100, average * 10));
+}
+
+function scoreBandFromComputedScore(score: number): ScoreBand {
+  const safeScore = Math.round(Math.max(0, Math.min(100, score)));
+  return { low: safeScore, median: safeScore, high: safeScore };
 }
 
 function hasExplicitScoreAdjustmentReason(text: string) {
@@ -1302,6 +1361,25 @@ function normalizeContributionArchetype(value: unknown, fallback?: ContributionA
   return {
     primary: firstString([source.primary, source.main, source.type, source.contributionArchetype], fallback?.primary ?? ""),
     secondary: firstString([source.secondary, source.secondaryType], fallback?.secondary ?? ""),
+  };
+}
+
+function normalizeScopeProfile(value: unknown, fallback?: ScopeProfile): ScopeProfile {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const frameworkDependence = source.frameworkDependence && typeof source.frameworkDependence === "object"
+    ? (source.frameworkDependence as Record<string, unknown>)
+    : {};
+  return {
+    scopeLevel: firstString([source.scopeLevel, source.level], fallback?.scopeLevel ?? ""),
+    scopeExplanation: firstString([source.scopeExplanation, source.explanation, source.assessment], fallback?.scopeExplanation ?? ""),
+    frameworkDependence: {
+      level: normalizeFrameworkLevel(frameworkDependence.level ?? source.frameworkDependenceLevel ?? fallback?.frameworkDependence.level),
+      explanation: firstString([
+        frameworkDependence.explanation,
+        source.frameworkDependenceExplanation,
+        source.frameworkDependence,
+      ], fallback?.frameworkDependence.explanation ?? ""),
+    },
   };
 }
 
@@ -1814,12 +1892,12 @@ function normalizeComparatorCalibrationResult(
 }
 
 function classificationFallbackFromScore(score: number) {
-  if (score >= 95) return "field-defining advance";
-  if (score >= 90) return "major specialty advance";
-  if (score >= 85) return "specialty advance";
-  if (score >= 75) return "strong niche contribution";
-  if (score >= 65) return "niche contribution";
-  if (score >= 50) return "minor contribution";
+  if (score >= 95) return "transformative advance";
+  if (score >= 90) return "major advance";
+  if (score >= 80) return "significant contribution";
+  if (score >= 70) return "strong contribution";
+  if (score >= 60) return "substantial contribution";
+  if (score >= 50) return "moderate contribution";
   if (score >= 25) return "limited contribution";
   return "not yet convincing";
 }
@@ -1888,8 +1966,14 @@ function applyClassificationConsistency(
 function normalizeClassification(value: unknown) {
   const candidate = asString(value).toLowerCase().replace(/\s+/g, " ").trim();
   const aliases: Record<string, string> = {
-    "framework-defining advance": "major specialty advance",
-    "useful clarification": "minor contribution",
+    "field-defining advance": "transformative advance",
+    "framework-defining advance": "major advance",
+    "major specialty advance": "major advance",
+    "specialty advance": "significant contribution",
+    "strong niche contribution": "strong contribution",
+    "niche contribution": "substantial contribution",
+    "minor contribution": "moderate contribution",
+    "useful clarification": "moderate contribution",
     "elegant repackaging": "limited contribution",
   };
   if (aliases[candidate]) return aliases[candidate];
@@ -2146,6 +2230,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     },
   );
   const contributionArchetype = normalizeContributionArchetype(source.contributionArchetype);
+  const scopeProfile = normalizeScopeProfile(source.scopeProfile);
   const framework = source.frameworkConditionality && typeof source.frameworkConditionality === "object"
     ? (source.frameworkConditionality as Record<string, unknown>)
     : {};
@@ -2198,6 +2283,11 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
   ]));
   const outputReachScore = normalizeDiagnosticSubscore(firstNumberField(source, ["outputReachScore", "theorySpaceBreadthScore"]), outputStrengthScore);
   const generalizationBreadthScore = normalizeDiagnosticSubscore(firstNumberField(source, ["generalizationBreadthScore", "breadthOfImpactScore"]), outputStrengthScore);
+  const diagnosticScores = [inputStrengthScore, constructionStrengthScore, outputStrengthScore];
+  const rawComputedScore = rawDiagnosticScore(diagnosticScores);
+  const computedScore = diagnosticBaselineScore(diagnosticScores);
+  const computedScoreBand = scoreBandFromComputedScore(computedScore);
+  const computedClassification = classificationFallbackFromScore(computedScore);
 
   return {
     title: "anonymized manuscript",
@@ -2209,6 +2299,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     subfields: firstStringArray([source.subfields, source.subFields, source.sub_fields]),
     paperType: normalizedPaperType,
     contributionArchetype,
+    scopeProfile,
     organicCohortProfile: {
       localCohort: firstString([organicCohortProfile.localCohort, source.localCohort, source.comparisonCohort]),
       primaryCohort: firstString([organicCohortProfile.primaryCohort, organicCohortProfile.localCohort, source.localCohort, source.comparisonCohort]),
@@ -2379,8 +2470,8 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
       source.whatWouldChangeAssessment,
       source.decisiveCheck,
     ]),
-    whatWouldRaiseScore: firstString([technicalAssessment.whatWouldRaiseScore, source.whatWouldRaiseScore, source.raiseScore, source.scoreUpside]),
-    whatWouldLowerScore: firstString([technicalAssessment.whatWouldLowerScore, source.whatWouldLowerScore, source.lowerScore, source.scoreDownside]),
+    whatWouldRaiseScore: firstString([technicalAssessment.whatWouldRaiseSubscores, technicalAssessment.whatWouldRaiseScore, source.whatWouldRaiseSubscores, source.whatWouldRaiseScore, source.raiseScore, source.scoreUpside]),
+    whatWouldLowerScore: firstString([technicalAssessment.whatWouldLowerSubscores, technicalAssessment.whatWouldLowerScore, source.whatWouldLowerSubscores, source.whatWouldLowerScore, source.lowerScore, source.scoreDownside]),
     inputStrengthScore,
     constructionStrengthScore,
     outputStrengthScore,
@@ -2392,21 +2483,16 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     theorySpaceBreadthScore: normalizeDiagnosticSubscore(source.theorySpaceBreadthScore, outputReachScore),
     breadthOfImpactScore: normalizeDiagnosticSubscore(source.breadthOfImpactScore, generalizationBreadthScore),
     subscoreValidity,
-    scoreCappingReason: firstString([source.scoreCappingReason, source.score_capping_reason]),
-    scoreAdjustmentReason: firstString([source.scoreAdjustmentReason, source.score_adjustment_reason, source.scoreAdjustmentRationale]),
-    specialtyRelativeScore: normalizedSpecialtyScore,
-    broadFieldRelativeScore: Math.round(asNumber(source.broadFieldRelativeScore, 0, 0, 100)),
-    crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, 0, 0, 100)),
-    scoreBand: normalizedScoreBand,
-    scoreConfidence: asNumber(source.scoreConfidence, 0.9, 0, 1),
-    bestClassification: applyClassificationConsistency(alignedClassification, normalizedScoreBand.median, {
-      frameworkLevel: normalizedFrameworkLevel,
-      frameworkIndependence: normalizedFrameworkIndependence,
-      frameworkConditionality: frameworkConditionalityExplanation,
-      survivingContribution: normalizedSurvivingContribution,
-      paperType: normalizedPaperType,
-      manuscriptOriginalContribution: normalizedOriginalContribution,
-    }),
+    scoreCappingReason: "",
+    scoreAdjustmentReason: "",
+    specialtyRelativeScore: computedScore,
+    broadFieldRelativeScore: computedScore,
+    crossFieldConsequenceScore: computedScore,
+    scoreBand: computedScoreBand,
+    scoreConfidence: asNumber(source.diagnosticAssessmentConfidence, 0.9, 0, 1),
+    diagnosticAssessmentConfidence: asNumber(source.diagnosticAssessmentConfidence, 0.9, 0, 1),
+    adjudicationRationale: asString(source.adjudicationRationale),
+    bestClassification: computedClassification,
     oneParagraphVerdict: firstString([
       source.oneParagraphVerdict,
       source.publicVerdict,
@@ -2431,11 +2517,15 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
         source.survivingHighValueContributions,
       ]),
       failedClaimsExcludedFromScore: firstStringArray([
+        failureAnalysis.failedClaimsExcludedFromAssessment,
         failureAnalysis.failedClaimsExcludedFromScore,
+        source.failedClaimsExcludedFromAssessment,
         source.failedClaimsExcludedFromScore,
       ]),
       survivingContributionScoreBasis: firstString([
+        failureAnalysis.survivingContributionAssessmentBasis,
         failureAnalysis.survivingContributionScoreBasis,
+        source.survivingContributionAssessmentBasis,
         source.survivingContributionScoreBasis,
         source.survivingContributionIfFlawed,
       ]),
@@ -3149,6 +3239,11 @@ async function runIndividualPass(
       pdfHash: inputAuditHashes.pdfHash,
       inputTokenCount: usage.inputTokenCount,
       outputTokenCount: usage.outputTokenCount,
+      inputStrengthScore: review.inputStrengthScore,
+      constructionStrengthScore: review.constructionStrengthScore,
+      outputStrengthScore: review.outputStrengthScore,
+      rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(review)),
+      computedScore: review.scoreBand.median,
       score: review.scoreBand.median,
       classification: review.bestClassification || null,
     },
@@ -3255,6 +3350,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const aggregateFramework = source.frameworkConditionality && typeof source.frameworkConditionality === "object"
     ? (source.frameworkConditionality as Record<string, unknown>)
     : {};
+  const aggregateScopeProfile = normalizeScopeProfile(source.scopeProfile ?? root.scopeProfile, fallbackReview.scopeProfile);
   const aggregateOutputValidityAssessment = normalizeOutputValidityAssessment(
     source.outputValidityAssessment ?? root.outputValidityAssessment ?? source.outputValidity ?? root.outputValidity,
     fallbackReview.outputValidityAssessment,
@@ -3415,15 +3511,23 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   ]);
   const inventorySurvivors = survivingInventoryContributions(contributionInventory).map((item) => item.claimOrContribution);
   const failedClaimsExcludedFromScore = firstStringArray([
+    aggregateFailureAnalysis.failedClaimsExcludedFromAssessment,
     aggregateFailureAnalysis.failedClaimsExcludedFromScore,
+    root.failedClaimsExcludedFromAssessment,
     root.failedClaimsExcludedFromScore,
+    source.failedClaimsExcludedFromAssessment,
     source.failedClaimsExcludedFromScore,
+    adjudicationSource.failedClaimsExcludedFromAssessment,
     adjudicationSource.failedClaimsExcludedFromScore,
   ]);
   const survivingContributionScoreBasis = firstString([
+    aggregateFailureAnalysis.survivingContributionAssessmentBasis,
     aggregateFailureAnalysis.survivingContributionScoreBasis,
+    root.survivingContributionAssessmentBasis,
     root.survivingContributionScoreBasis,
+    source.survivingContributionAssessmentBasis,
     source.survivingContributionScoreBasis,
+    adjudicationSource.survivingContributionAssessmentBasis,
     adjudicationSource.survivingContributionScoreBasis,
   ]);
   const subscoreSaturationWarning =
@@ -3451,11 +3555,16 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
 
   const fatalCapText = scoreCappingFatalLanguage(scoreCappingReason);
   const adjudicationRepairNotes: string[] = [];
+  const aggregateDiagnosticScores = diagnosticSubscoreValues(aggregateSubscores);
   const diagnosticAverage =
-    diagnosticSubscoreValues(aggregateSubscores).reduce((sum, value) => sum + value, 0) /
-    diagnosticSubscoreValues(aggregateSubscores).length;
-  const baselineScore = diagnosticBaselineScore(diagnosticSubscoreValues(aggregateSubscores));
-  const baselineDelta = Math.round(finalScoreBand.median - baselineScore);
+    aggregateDiagnosticScores.reduce((sum, value) => sum + value, 0) /
+    aggregateDiagnosticScores.length;
+  const rawFinalDiagnosticScore = rawDiagnosticScore(aggregateDiagnosticScores);
+  const baselineScore = Math.round(rawFinalDiagnosticScore);
+  finalScoreBand = scoreBandFromComputedScore(baselineScore);
+  const baselineDelta = 0;
+  scoreCappingReason = "";
+  scoreAdjustmentReason = "";
 
   if (!fatalObjectionPresent && fatalCapText) {
     if (paperFatalError && !hasSubstantialSurvivingContribution) {
@@ -3495,8 +3604,8 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     throw new Error("Contradictory adjudication: paperFatalError is true even though high-value separable contributions survive.");
   }
 
-  let adjustedFinalClassification = finalClassification;
-  const fatalCapAllowed = paperFatalError || (fatalObjectionPresent && !hasSubstantialSurvivingContribution);
+  let adjustedFinalClassification = classificationFallbackFromScore(baselineScore);
+  const fatalCapAllowed = false;
   if (fatalCapAllowed && finalScoreBand.median > 15) {
     finalScoreBand = {
       low: Math.min(finalScoreBand.low, 15),
@@ -3562,6 +3671,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       source.summary,
     ]),
     contributionArchetype: normalizeContributionArchetype(source.contributionArchetype, fallbackReview.contributionArchetype),
+    scopeProfile: aggregateScopeProfile,
     inputConstructionOutputLedger: {
       primitiveInputs: normalizePrimitiveInputs([
         aggregateIcoInput.primitiveInputs,
@@ -3683,8 +3793,8 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       fallbackReview.assessmentSensitivity,
       source.decisiveCheck,
     ]),
-    whatWouldRaiseScore: asString(source.whatWouldRaiseScore ?? aggregateTechnicalAssessment.whatWouldRaiseScore, fallbackReview.whatWouldRaiseScore),
-    whatWouldLowerScore: asString(source.whatWouldLowerScore ?? aggregateTechnicalAssessment.whatWouldLowerScore, fallbackReview.whatWouldLowerScore),
+    whatWouldRaiseScore: asString(source.whatWouldRaiseSubscores ?? aggregateTechnicalAssessment.whatWouldRaiseSubscores ?? source.whatWouldRaiseScore ?? aggregateTechnicalAssessment.whatWouldRaiseScore, fallbackReview.whatWouldRaiseScore),
+    whatWouldLowerScore: asString(source.whatWouldLowerSubscores ?? aggregateTechnicalAssessment.whatWouldLowerSubscores ?? source.whatWouldLowerScore ?? aggregateTechnicalAssessment.whatWouldLowerScore, fallbackReview.whatWouldLowerScore),
     establishedResults: firstStringArray([source.establishedResults, fallbackReview.establishedResults]),
     interpretiveClaims: firstStringArray([source.interpretiveClaims, fallbackReview.interpretiveClaims]),
     speculativeClaims: firstStringArray([source.speculativeClaims, fallbackReview.speculativeClaims]),
@@ -3712,7 +3822,9 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     crossFieldConsequenceScore: Math.round(asNumber(source.crossFieldConsequenceScore, fallbackReview.crossFieldConsequenceScore, 0, 100)),
     finalClassification: adjustedFinalClassification,
     finalScoreBand,
-    finalScoreConfidence: asNumber(source.finalScoreConfidence ?? source.scoreConfidence, fallbackReview.scoreConfidence, 0, 1),
+    finalScoreConfidence: asNumber(source.diagnosticAssessmentConfidence ?? source.finalScoreConfidence ?? source.scoreConfidence, fallbackReview.scoreConfidence, 0, 1),
+    diagnosticAssessmentConfidence: asNumber(source.diagnosticAssessmentConfidence ?? source.finalScoreConfidence ?? source.scoreConfidence, fallbackReview.scoreConfidence, 0, 1),
+    adjudicationRationale: asString(source.adjudicationRationale ?? root.adjudicationRationale),
     publicOneParagraphVerdict: firstString([
       root.scientificReview,
       source.scientificReview,
@@ -3891,13 +4003,15 @@ function v16TechnicalAssessmentFromAggregate(aggregate: AggregateReview) {
 
 function v16FailureAnalysisFromAggregate(aggregate: AggregateReview) {
   return {
+    failureMode: aggregate.paperFatalError ? "paper-fatal error with no substantial surviving contribution" : "",
     fatalObjectionPresent: aggregate.fatalObjectionPresent,
     fatalObjectionAssessment: aggregate.fatalObjectionAssessment,
     fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
     paperFatalError: aggregate.paperFatalError,
-    contributionInventory: aggregate.contributionInventory,
     survivingHighValueContributions: aggregate.survivingHighValueContributions,
+    failedClaimsExcludedFromAssessment: aggregate.failedClaimsExcludedFromScore,
     failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
+    survivingContributionAssessmentBasis: aggregate.survivingContributionScoreBasis,
     survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
   };
 }
@@ -3914,6 +4028,7 @@ function v16CanonicalReviewFromIndividual(review: IndividualReview, index?: numb
     centralClaim: review.centralClaim,
     scientificReview: review.scientificReview,
     contributionArchetype: review.contributionArchetype,
+    scopeProfile: review.scopeProfile,
     inputStrengthScore: review.inputStrengthScore,
     constructionStrengthScore: review.constructionStrengthScore,
     outputStrengthScore: review.outputStrengthScore,
@@ -3922,10 +4037,12 @@ function v16CanonicalReviewFromIndividual(review: IndividualReview, index?: numb
     technicalAssessment: v16TechnicalAssessmentFromIndividual(review),
     failureAnalysis: review.failureAnalysis,
     organicCohortProfile: v16OrganicCohortProfileOnly(review.organicCohortProfile),
+    rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(review)),
+    computedScore: review.scoreBand.median,
     intrinsicScore: review.scoreBand.median,
-    scoreConfidence: review.scoreConfidence,
-    scoreCappingReason: review.scoreCappingReason,
-    scoreAdjustmentReason: review.scoreAdjustmentReason,
+    publicMagnitudeLabel: review.bestClassification,
+    diagnosticAssessmentConfidence: review.diagnosticAssessmentConfidence,
+    adjudicationRationale: review.adjudicationRationale,
     bestClassification: review.bestClassification,
   };
 }
@@ -3941,6 +4058,7 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
     centralClaim: aggregate.finalCentralClaim,
     scientificReview: aggregate.scientificReview,
     contributionArchetype: aggregate.contributionArchetype,
+    scopeProfile: aggregate.scopeProfile,
     inputStrengthScore: aggregate.inputStrengthScore,
     constructionStrengthScore: aggregate.constructionStrengthScore,
     outputStrengthScore: aggregate.outputStrengthScore,
@@ -3949,10 +4067,12 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
     technicalAssessment: v16TechnicalAssessmentFromAggregate(aggregate),
     failureAnalysis: v16FailureAnalysisFromAggregate(aggregate),
     organicCohortProfile: v16OrganicCohortProfileOnly(aggregate.comparatorProfile),
+    rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(aggregate)),
+    computedScore: aggregate.finalScoreBand.median,
     intrinsicScore: aggregate.finalScoreBand.median,
-    scoreConfidence: aggregate.finalScoreConfidence,
-    scoreCappingReason: aggregate.scoreCappingReason,
-    scoreAdjustmentReason: aggregate.scoreAdjustmentReason,
+    publicMagnitudeLabel: aggregate.finalClassification,
+    diagnosticAssessmentConfidence: aggregate.diagnosticAssessmentConfidence,
+    adjudicationRationale: aggregate.adjudicationRationale,
     bestClassification: aggregate.finalClassification,
   };
 }
@@ -3961,15 +4081,15 @@ function compactIndividualReviewForAdjudicator(review: IndividualReview, index: 
   const canonical = v16CanonicalReviewFromIndividual(review, index);
   return {
     passNumber: index + 1,
-    score: canonical.intrinsicScore,
-    intrinsicScore: canonical.intrinsicScore,
-    bestClassification: review.bestClassification,
-    classification: review.bestClassification,
+    passScore: canonical.computedScore,
+    rawDiagnosticScore: canonical.rawDiagnosticScore,
+    publicMagnitudeLabel: review.bestClassification,
     comparisonCohort: review.comparisonCohort,
     localCohort: review.localCohort,
     broadField: review.broadField,
     specialtyField: review.specialtyField,
     contributionArchetype: review.contributionArchetype,
+    scopeProfile: review.scopeProfile,
     centralClaim: review.centralClaim,
     scientificReview: review.scientificReview,
     inputConstructionOutputAssessment: canonical.inputConstructionOutputAssessment,
@@ -3981,15 +4101,20 @@ function compactIndividualReviewForAdjudicator(review: IndividualReview, index: 
     outputStrengthScore: review.outputStrengthScore,
     subscoreRationale: review.subscoreRationale,
     subscoreValidity: review.subscoreValidity,
-    scoreCappingReason: review.scoreCappingReason,
-    scoreAdjustmentReason: review.scoreAdjustmentReason,
   };
 }
 
 function compactIndividualReviewForStorage(review: IndividualReview, index: number) {
   return {
     ...compactIndividualReviewForAdjudicator(review, index),
+    score: review.scoreBand.median,
+    intrinsicScore: review.scoreBand.median,
+    computedScore: review.scoreBand.median,
+    bestClassification: review.bestClassification,
+    classification: review.bestClassification,
     scoreConfidence: review.scoreConfidence,
+    diagnosticAssessmentConfidence: review.diagnosticAssessmentConfidence,
+    adjudicationRationale: review.adjudicationRationale,
   };
 }
 
@@ -4119,13 +4244,14 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
 }
 
 function buildAdjudicatorInput(
-  _blindedContent: ReviewInput,
+  blindedContent: ReviewInput,
   reviews: IndividualReview[],
 ): ReviewInput {
   const compactPasses = reviews.map(compactIndividualReviewForAdjudicator);
   const text = JSON.stringify({
     adjudicatorInputNote:
-      "Raw manuscript text is intentionally omitted from the adjudicator payload. Use the blinded pass scientific reviews, v16.7 canonical input-construction-output assessments, diagnostic scores, objections, per-output assessments, and single intrinsic scores below.",
+      "Use the blinded manuscript and both independent v17 diagnostic-only blind passes. Resolve final Input Strength, Construction Strength, and Output Strength. Do not output a final 0-100 score, score band, score label, score cap, or score adjustment.",
+    blindedManuscriptText: reviewInputText(blindedContent).slice(0, 60000),
     manuscriptSummaryAndLedger: compactPasses.map((review) => ({
       passNumber: review.passNumber,
       centralClaim: review.centralClaim,
@@ -4602,7 +4728,7 @@ async function generateMultiPassReview(
         try {
           const retryInstruction = attempt === 0
             ? ""
-            : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a self-consistent adjudication. Anchor the final score to 10 x the average of inputStrengthScore, constructionStrengthScore, and outputStrengthScore. If the final score differs from that diagnostic baseline by more than 8 points, include a concrete scoreCappingReason or scoreAdjustmentReason based only on durable content in the manuscript. Do not use later influence, citation history, or "opened a field" language to raise the intrinsic score. Do not apply a paper-fatal cap unless paperFatalError is true, or fatalObjectionPresent is true and no high-value separable contribution survives.`;
+            : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a valid v17 diagnostic-only adjudication. Do not output intrinsicScore, scoreBand, bestClassification, scoreConfidence, scoreCappingReason, or scoreAdjustmentReason. Resolve only inputStrengthScore, constructionStrengthScore, outputStrengthScore, and the supporting canonical review fields.`;
           const adjudicatorResult = await callGemini(
             `${BLIND_INTRINSIC_ADJUDICATOR_PROMPT}${retryInstruction}`,
             buildAdjudicatorInput(blindedContent, individualReviews),
@@ -4631,12 +4757,22 @@ async function generateMultiPassReview(
             pdfHash: inputAuditHashes.pdfHash,
             inputTokenCount: adjudicatorResult.usage.inputTokenCount,
             outputTokenCount: adjudicatorResult.usage.outputTokenCount,
+            inputStrengthScore: null,
+            constructionStrengthScore: null,
+            outputStrengthScore: null,
+            rawDiagnosticScore: null,
+            computedScore: null,
             score: null,
             classification: null,
           };
           adjudicatorThinking = adjudicatorResult.thinkingText;
           aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
           validateAggregateReview(aggregate);
+          adjudicatorAudit.inputStrengthScore = aggregate.inputStrengthScore;
+          adjudicatorAudit.constructionStrengthScore = aggregate.constructionStrengthScore;
+          adjudicatorAudit.outputStrengthScore = aggregate.outputStrengthScore;
+          adjudicatorAudit.rawDiagnosticScore = rawDiagnosticScore(diagnosticSubscoreValues(aggregate));
+          adjudicatorAudit.computedScore = aggregate.finalScoreBand.median;
           adjudicatorAudit.score = aggregate.finalScoreBand.median;
           adjudicatorAudit.classification = aggregate.finalClassification || null;
           logger.info(adjudicatorAudit, "Blind adjudicator completed");
@@ -4876,7 +5012,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       (Number.isFinite(rawCalibrationAdjustment) && Math.abs(rawCalibrationAdjustment) > 0));
   const canonicalCoverageLedger = {
     reviewObjectVersion: REVIEW_OBJECT_VERSION,
-    schemaVersion: "v16.7",
+    schemaVersion: "v17.0",
     reviewRunId: result.reviewRunId,
     promptVersion: REVIEW_PROMPT_VERSION,
     promptName: REVIEW_PROMPT_NAME,
@@ -4888,7 +5024,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     passCount: REVIEW_PASS_COUNT,
     validPassCount: result.individualReviews.length,
     pipelineMode: result.pipelineMode,
-    clusterVersion: "v16.7-canonical-ico",
+    clusterVersion: "v17-diagnostic-only",
     benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
     benchmarkSetVersion: result.pipelineMode === "benchmark-ingestion"
       ? BENCHMARK_SET_VERSION
@@ -4902,6 +5038,12 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     ...canonicalReview,
     finalScore: canonicalReview.intrinsicScore,
+    diagnosticScoreFormula: "10 * average(inputStrengthScore, constructionStrengthScore, outputStrengthScore)",
+    rawFinalDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(aggregate)),
+    publicMagnitudeLabel: aggregate.finalClassification,
+    finalInputStrengthScore: aggregate.inputStrengthScore,
+    finalConstructionStrengthScore: aggregate.constructionStrengthScore,
+    finalOutputStrengthScore: aggregate.outputStrengthScore,
     blindPassScores: aggregate.individualScores,
     blindPassSpread: aggregate.scoreRange,
     passDisagreement: aggregate.scoreRange,
