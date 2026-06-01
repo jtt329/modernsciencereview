@@ -19,6 +19,7 @@ export interface PaperDateMetadata {
   dateSource?: string;
   dateConfidence?: number;
   dateNotes?: string;
+  metadataQaWarnings?: string[];
 }
 
 export interface Paper {

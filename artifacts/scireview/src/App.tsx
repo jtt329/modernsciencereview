@@ -32,6 +32,7 @@ interface PaperDateMetadata {
   dateSource?: string;
   dateConfidence?: number;
   dateNotes?: string;
+  metadataQaWarnings?: string[];
 }
 
 interface Paper {

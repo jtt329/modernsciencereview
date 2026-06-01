@@ -18,6 +18,7 @@ import {
   expectedReviewModelName,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
+  normalizePaperDisplayMetadata,
   normalizeReviewPipelineMode,
   recalibrateStoredAggregateWithComparators,
   v15ComparatorCalibrationForStorage,
@@ -756,7 +757,8 @@ router.get("/papers/export", async (req, res) => {
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
 
-    const exported = papers.map(p => {
+    const exported = papers.map(paperRecord => {
+      const p = normalizePaperDisplayMetadata(paperRecord);
       const r = reviewMap.get(p.id);
       const coverageLedger = r ? parseJsonObject(r.coverageLedgerJson) : null;
       const isCanonicalReview =
@@ -1052,7 +1054,8 @@ router.get("/papers/export", async (req, res) => {
 // GET /api/papers — list all papers
 router.get("/papers", async (req, res) => {
   try {
-    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)))
+      .map((paper) => normalizePaperDisplayMetadata(paper));
     const reviews = await db.select({
       paperId: reviewsTable.paperId,
       summary: reviewsTable.summary,
@@ -1086,7 +1089,7 @@ router.get("/papers/:id", async (req, res) => {
     if (!paper) { res.status(404).json({ error: "Paper not found" }); return; }
 
     const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
-    res.json({ paper, review: review || null });
+    res.json({ paper: normalizePaperDisplayMetadata(paper), review: review || null });
   } catch (err: any) {
     logger.error({ err }, "Error getting paper");
     res.status(500).json({ error: err.message });
