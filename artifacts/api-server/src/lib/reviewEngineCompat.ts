@@ -226,6 +226,13 @@ type ContributionInventoryItem = {
   notes: string;
 };
 
+type SurvivingCorrectContribution = {
+  contribution: string;
+  kind: "method" | "derivation" | "calculation" | "relation" | "output" | "interpretation" | "other";
+  valueLevel: "none" | "limited" | "moderate" | "high";
+  scoreRelevance: string;
+};
+
 type AdjudicationDetails = {
   adjudicatorStatus: AdjudicatorStatus;
   individualScores: number[];
@@ -240,7 +247,12 @@ type AdjudicationDetails = {
   contributionInventory: ContributionInventoryItem[];
   survivingHighValueContributions: string[];
   failedClaimsExcludedFromScore: string[];
+  failedConstructionsExcludedFromScore: string[];
+  failedOutputsExcludedFromScore: string[];
+  survivingCorrectContributions: SurvivingCorrectContribution[];
   survivingContributionScoreBasis: string;
+  scoreBasisAfterExcludingFailures: string;
+  overallCorrectnessSummary: string;
   calibrationAdjustments: string;
   subscoreConsistencyWarning: string;
   subscoreSaturationWarning: boolean;
@@ -251,13 +263,12 @@ type AdjudicationDetails = {
 };
 
 type ReviewFailureAnalysis = {
-  failureMode: string;
-  fatalObjectionPresent: boolean;
-  paperFatalError: boolean;
-  fatalToSpecificClaimOnly: boolean;
-  survivingHighValueContributions: string[];
   failedClaimsExcludedFromScore: string[];
-  survivingContributionScoreBasis: string;
+  failedConstructionsExcludedFromScore: string[];
+  failedOutputsExcludedFromScore: string[];
+  survivingCorrectContributions: SurvivingCorrectContribution[];
+  scoreBasisAfterExcludingFailures: string;
+  overallCorrectnessSummary: string;
 };
 
 type ComparatorProfile = {
@@ -502,7 +513,12 @@ type AggregateReview = {
   contributionInventory: ContributionInventoryItem[];
   survivingHighValueContributions: string[];
   failedClaimsExcludedFromScore: string[];
+  failedConstructionsExcludedFromScore: string[];
+  failedOutputsExcludedFromScore: string[];
+  survivingCorrectContributions: SurvivingCorrectContribution[];
   survivingContributionScoreBasis: string;
+  scoreBasisAfterExcludingFailures: string;
+  overallCorrectnessSummary: string;
   inputGroundingAssessment: string;
   inputFundamentalityAssessment: string;
   constructionAssessment: string;
@@ -894,17 +910,26 @@ const individualReviewJsonSchema = {
     },
     failureAnalysis: {
       type: "object",
-      additionalProperties: true,
+      additionalProperties: false,
       properties: {
-        failureMode: jsonString,
-        fatalObjectionPresent: jsonBoolean,
-        paperFatalError: jsonBoolean,
-        fatalToSpecificClaimOnly: jsonBoolean,
-        survivingHighValueContributions: jsonStringArray,
         failedClaimsExcludedFromScore: jsonStringArray,
-        failedClaimsExcludedFromAssessment: jsonStringArray,
-        survivingContributionScoreBasis: jsonString,
-        survivingContributionAssessmentBasis: jsonString,
+        failedConstructionsExcludedFromScore: jsonStringArray,
+        failedOutputsExcludedFromScore: jsonStringArray,
+        survivingCorrectContributions: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              contribution: jsonString,
+              kind: jsonString,
+              valueLevel: jsonString,
+              scoreRelevance: jsonString,
+            },
+          },
+        },
+        scoreBasisAfterExcludingFailures: jsonString,
+        overallCorrectnessSummary: jsonString,
       },
     },
     inputStrengthScore: jsonNumber,
@@ -1753,6 +1778,42 @@ function normalizeContributionInventory(value: unknown): ContributionInventoryIt
       } satisfies ContributionInventoryItem;
     })
     .filter(Boolean) as ContributionInventoryItem[];
+}
+
+function normalizeSurvivingCorrectContributions(value: unknown): SurvivingCorrectContribution[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      const contribution = firstString([source.contribution, source.claimOrContribution, source.claim, source.description]);
+      if (!contribution) return null;
+      const rawKind = asString(source.kind).toLowerCase().replace(/[\s-]+/g, "_");
+      const kind: SurvivingCorrectContribution["kind"] =
+        rawKind === "method" ||
+        rawKind === "derivation" ||
+        rawKind === "calculation" ||
+        rawKind === "relation" ||
+        rawKind === "output" ||
+        rawKind === "interpretation" ||
+        rawKind === "other"
+          ? rawKind
+          : "other";
+      const rawValue = asString(source.valueLevel ?? source.value).toLowerCase().replace(/[\s-]+/g, "_");
+      const valueLevel: SurvivingCorrectContribution["valueLevel"] =
+        rawValue === "none" ||
+        rawValue === "limited" ||
+        rawValue === "moderate" ||
+        rawValue === "high"
+          ? rawValue
+          : "limited";
+      return {
+        contribution,
+        kind,
+        valueLevel,
+        scoreRelevance: firstString([source.scoreRelevance, source.relevance, source.rationale, source.notes]),
+      } satisfies SurvivingCorrectContribution;
+    })
+    .filter(Boolean) as SurvivingCorrectContribution[];
 }
 
 function survivingInventoryContributions(inventory: ContributionInventoryItem[]) {
@@ -2620,26 +2681,26 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
       source.verdict,
     ]),
     failureAnalysis: {
-      failureMode: firstString([failureAnalysis.failureMode, source.failureMode]),
-      fatalObjectionPresent: asBoolean(failureAnalysis.fatalObjectionPresent ?? source.fatalObjectionPresent),
-      paperFatalError: asBoolean(failureAnalysis.paperFatalError ?? source.paperFatalError),
-      fatalToSpecificClaimOnly: asBoolean(failureAnalysis.fatalToSpecificClaimOnly ?? source.fatalToSpecificClaimOnly),
-      survivingHighValueContributions: firstStringArray([
-        failureAnalysis.survivingHighValueContributions,
-        source.survivingHighValueContributions,
-      ]),
       failedClaimsExcludedFromScore: firstStringArray([
-        failureAnalysis.failedClaimsExcludedFromAssessment,
         failureAnalysis.failedClaimsExcludedFromScore,
-        source.failedClaimsExcludedFromAssessment,
         source.failedClaimsExcludedFromScore,
       ]),
-      survivingContributionScoreBasis: firstString([
-        failureAnalysis.survivingContributionAssessmentBasis,
-        failureAnalysis.survivingContributionScoreBasis,
-        source.survivingContributionAssessmentBasis,
-        source.survivingContributionScoreBasis,
-        source.survivingContributionIfFlawed,
+      failedConstructionsExcludedFromScore: firstStringArray([
+        failureAnalysis.failedConstructionsExcludedFromScore,
+        source.failedConstructionsExcludedFromScore,
+      ]),
+      failedOutputsExcludedFromScore: firstStringArray([
+        failureAnalysis.failedOutputsExcludedFromScore,
+        source.failedOutputsExcludedFromScore,
+      ]),
+      survivingCorrectContributions: normalizeSurvivingCorrectContributions(failureAnalysis.survivingCorrectContributions),
+      scoreBasisAfterExcludingFailures: firstString([
+        failureAnalysis.scoreBasisAfterExcludingFailures,
+        source.scoreBasisAfterExcludingFailures,
+      ]),
+      overallCorrectnessSummary: firstString([
+        failureAnalysis.overallCorrectnessSummary,
+        source.overallCorrectnessSummary,
       ]),
     },
   };
@@ -3680,12 +3741,24 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const contributionInventory = normalizeContributionInventory(
     root.contributionInventory ?? source.contributionInventory ?? aggregateFailureAnalysis.contributionInventory ?? adjudicationSource.contributionInventory,
   );
-  const survivingHighValueContributions = firstStringArray([
+  const legacySurvivingHighValueContributions = firstStringArray([
     aggregateFailureAnalysis.survivingHighValueContributions,
     root.survivingHighValueContributions,
     source.survivingHighValueContributions,
     adjudicationSource.survivingHighValueContributions,
   ]);
+  const survivingCorrectContributions = [
+    ...normalizeSurvivingCorrectContributions(aggregateFailureAnalysis.survivingCorrectContributions),
+    ...legacySurvivingHighValueContributions.map((contribution) => ({
+      contribution,
+      kind: "other" as const,
+      valueLevel: "high" as const,
+      scoreRelevance: "",
+    })),
+  ].filter((item, index, array) =>
+    item.contribution &&
+    array.findIndex((candidate) => candidate.contribution === item.contribution) === index,
+  );
   const inventorySurvivors = survivingInventoryContributions(contributionInventory).map((item) => item.claimOrContribution);
   const failedClaimsExcludedFromScore = firstStringArray([
     aggregateFailureAnalysis.failedClaimsExcludedFromAssessment,
@@ -3697,45 +3770,50 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     adjudicationSource.failedClaimsExcludedFromAssessment,
     adjudicationSource.failedClaimsExcludedFromScore,
   ]);
-  const survivingContributionScoreBasis = firstString([
+  const failedConstructionsExcludedFromScore = firstStringArray([
+    aggregateFailureAnalysis.failedConstructionsExcludedFromScore,
+    root.failedConstructionsExcludedFromScore,
+    source.failedConstructionsExcludedFromScore,
+    adjudicationSource.failedConstructionsExcludedFromScore,
+  ]);
+  const failedOutputsExcludedFromScore = firstStringArray([
+    aggregateFailureAnalysis.failedOutputsExcludedFromScore,
+    root.failedOutputsExcludedFromScore,
+    source.failedOutputsExcludedFromScore,
+    adjudicationSource.failedOutputsExcludedFromScore,
+  ]);
+  const scoreBasisAfterExcludingFailures = firstString([
+    aggregateFailureAnalysis.scoreBasisAfterExcludingFailures,
     aggregateFailureAnalysis.survivingContributionAssessmentBasis,
     aggregateFailureAnalysis.survivingContributionScoreBasis,
+    root.scoreBasisAfterExcludingFailures,
     root.survivingContributionAssessmentBasis,
     root.survivingContributionScoreBasis,
+    source.scoreBasisAfterExcludingFailures,
     source.survivingContributionAssessmentBasis,
     source.survivingContributionScoreBasis,
+    adjudicationSource.scoreBasisAfterExcludingFailures,
     adjudicationSource.survivingContributionAssessmentBasis,
     adjudicationSource.survivingContributionScoreBasis,
+  ]);
+  const overallCorrectnessSummary = firstString([
+    aggregateFailureAnalysis.overallCorrectnessSummary,
+    root.overallCorrectnessSummary,
+    source.overallCorrectnessSummary,
+    adjudicationSource.overallCorrectnessSummary,
+    aggregateTechnicalAssessment.correctness,
   ]);
   const subscoreSaturationWarning =
     asBoolean(adjudicationSource.subscoreSaturationWarning) ||
     computeSubscoreSaturationWarning(diagnosticSubscoreValues(aggregateSubscores), aggregateSubscoreValidity);
-  let fatalObjectionPresent = asBoolean(
-    adjudicationSource.fatalObjectionPresent ?? aggregateFailureAnalysis.fatalObjectionPresent ?? root.fatalObjectionPresent ?? source.fatalObjectionPresent,
-  );
-  const fatalToSpecificClaimOnly = asBoolean(
-    adjudicationSource.fatalToSpecificClaimOnly ?? aggregateFailureAnalysis.fatalToSpecificClaimOnly ?? root.fatalToSpecificClaimOnly ?? source.fatalToSpecificClaimOnly,
-  );
-  let paperFatalError = asBoolean(
-    adjudicationSource.paperFatalError ?? aggregateFailureAnalysis.paperFatalError ?? root.paperFatalError ?? source.paperFatalError,
-  );
-  const fatalObjectionAssessment = asString(
-    adjudicationSource.fatalObjectionAssessment ?? root.fatalObjectionAssessment ?? source.fatalObjectionAssessment,
-  );
-  const survivingContribution = asString(source.survivingContributionIfFlawed, fallbackReview.survivingContributionIfFlawed);
-  const allSurvivingHighValueContributions = [...survivingHighValueContributions, ...inventorySurvivors]
+  const allSurvivingCorrectContributionTexts = [
+    ...survivingCorrectContributions.map((item) => item.contribution),
+    ...inventorySurvivors,
+  ]
     .filter((item, index, array) => item && array.indexOf(item) === index);
-  const hasSubstantialSurvivingContribution =
-    allSurvivingHighValueContributions.length > 0 ||
-    describesSubstantialSurvivingContribution(survivingContribution) ||
-    describesSubstantialSurvivingContribution(survivingContributionScoreBasis);
 
-  const fatalCapText = scoreCappingFatalLanguage(scoreCappingReason);
   const adjudicationRepairNotes: string[] = [];
   const aggregateDiagnosticScores = diagnosticSubscoreValues(aggregateSubscores);
-  const diagnosticAverage =
-    aggregateDiagnosticScores.reduce((sum, value) => sum + value, 0) /
-    aggregateDiagnosticScores.length;
   const rawFinalDiagnosticScore = rawDiagnosticScore(aggregateDiagnosticScores);
   const baselineScore = Math.round(rawFinalDiagnosticScore);
   finalScoreBand = scoreBandFromComputedScore(baselineScore);
@@ -3743,55 +3821,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   scoreCappingReason = "";
   scoreAdjustmentReason = "";
 
-  if (!fatalObjectionPresent && fatalCapText) {
-    if (paperFatalError && !hasSubstantialSurvivingContribution) {
-      fatalObjectionPresent = true;
-      adjudicationRepairNotes.push(
-        "Repaired inconsistent adjudication flags: scoreCappingReason and paperFatalError indicated a paper-fatal cap, but fatalObjectionPresent was false.",
-      );
-    } else {
-      scoreCappingReason = "";
-      adjudicationRepairNotes.push(
-        "Removed contradictory paper-fatal score-capping language because fatalObjectionPresent was false and the review did not establish a paper-fatal error.",
-      );
-    }
-  }
-
-  if (saysObjectionNotPaperFatal(fatalObjectionAssessment) && finalScoreBand.median < 30 && scoreCappingFatalLanguage(scoreCappingReason)) {
-    scoreCappingReason = "";
-    paperFatalError = false;
-    adjudicationRepairNotes.push(
-      "Removed paper-fatal cap language because fatalObjectionAssessment says the objection is not paper-fatal.",
-    );
-  }
-
-  if (usableScores.length >= 2 && usableScores.every((score) => score > 90) && diagnosticAverage > 9 && !fatalObjectionPresent && finalScoreBand.median < 50) {
-    throw new Error("Contradictory adjudication: high blind pass scores and high diagnostics were collapsed below 50 without a fatal objection.");
-  }
-
-  if (hasSubstantialSurvivingContribution && scoreCappingFatalLanguage(scoreCappingReason)) {
-    scoreCappingReason = "";
-    paperFatalError = false;
-    adjudicationRepairNotes.push(
-      "Removed paper-fatal cap language because the adjudication identified substantial surviving high-value contributions.",
-    );
-  }
-
-  if (paperFatalError && hasSubstantialSurvivingContribution) {
-    throw new Error("Contradictory adjudication: paperFatalError is true even though high-value separable contributions survive.");
-  }
-
-  let adjustedFinalClassification = classificationFallbackFromScore(baselineScore);
-  const fatalCapAllowed = false;
-  if (fatalCapAllowed && finalScoreBand.median > 15) {
-    finalScoreBand = {
-      low: Math.min(finalScoreBand.low, 15),
-      median: Math.min(finalScoreBand.median, 15),
-      high: Math.min(finalScoreBand.high, 15),
-    };
-    adjustedFinalClassification = "not yet convincing";
-    scoreCappingReason = scoreCappingReason || `Paper-fatal error with no substantial separable contribution surviving. ${fatalObjectionAssessment}`.trim();
-  }
+  const adjustedFinalClassification = classificationFallbackFromScore(baselineScore);
 
   const subscoreConsistencyWarning =
     firstString([adjudicationSource.subscoreConsistencyWarning, source.subscoreConsistencyWarning]) ||
@@ -3806,7 +3836,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   const scoreAdjustmentText = firstString([
     scoreCappingReason,
     scoreAdjustmentReason,
-    survivingContributionScoreBasis,
+    scoreBasisAfterExcludingFailures,
     asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments),
   ]);
   const scoringAnomaly = Math.abs(baselineDelta) > 12 && !hasExplicitScoreAdjustmentReason(scoreAdjustmentText)
@@ -3912,14 +3942,19 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       scoreStability,
       mainAgreements: firstStringArray([adjudicationSource.mainAgreements, source.mainAgreements]),
       mainDisagreements: firstStringArray([adjudicationSource.mainDisagreements, source.mainDisagreements]),
-      fatalObjectionPresent,
-      fatalObjectionAssessment,
-      fatalToSpecificClaimOnly,
-      paperFatalError,
+      fatalObjectionPresent: false,
+      fatalObjectionAssessment: "",
+      fatalToSpecificClaimOnly: false,
+      paperFatalError: false,
       contributionInventory,
-      survivingHighValueContributions: allSurvivingHighValueContributions,
+      survivingHighValueContributions: allSurvivingCorrectContributionTexts,
       failedClaimsExcludedFromScore,
-      survivingContributionScoreBasis,
+      failedConstructionsExcludedFromScore,
+      failedOutputsExcludedFromScore,
+      survivingCorrectContributions,
+      survivingContributionScoreBasis: scoreBasisAfterExcludingFailures,
+      scoreBasisAfterExcludingFailures,
+      overallCorrectnessSummary,
       calibrationAdjustments: asString(source.internalCalibrationNotes),
       subscoreConsistencyWarning,
       subscoreSaturationWarning,
@@ -3934,14 +3969,19 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     scoreStability,
     mainAgreements: firstStringArray([adjudicationSource.mainAgreements, source.mainAgreements]),
     mainDisagreements: firstStringArray([adjudicationSource.mainDisagreements, source.mainDisagreements]),
-    fatalObjectionPresent,
-    fatalObjectionAssessment,
-    fatalToSpecificClaimOnly,
-    paperFatalError,
+    fatalObjectionPresent: false,
+    fatalObjectionAssessment: "",
+    fatalToSpecificClaimOnly: false,
+    paperFatalError: false,
     contributionInventory,
-    survivingHighValueContributions: allSurvivingHighValueContributions,
+    survivingHighValueContributions: allSurvivingCorrectContributionTexts,
     failedClaimsExcludedFromScore,
-    survivingContributionScoreBasis,
+    failedConstructionsExcludedFromScore,
+    failedOutputsExcludedFromScore,
+    survivingCorrectContributions,
+    survivingContributionScoreBasis: scoreBasisAfterExcludingFailures,
+    scoreBasisAfterExcludingFailures,
+    overallCorrectnessSummary,
     inputGroundingAssessment: asString(source.inputGroundingAssessment ?? source.inputGrounding ?? aggregateIcoInput.assessment, fallbackReview.inputGrounding),
     inputFundamentalityAssessment: asString(source.inputFundamentalityAssessment ?? source.inputFundamentality ?? aggregateIcoInput.assessment, fallbackReview.inputFundamentality),
     constructionAssessment: asString(source.constructionAssessment ?? aggregateIcoConstruction.assessment, fallbackReview.constructionAssessment),
@@ -4181,16 +4221,12 @@ function v16TechnicalAssessmentFromAggregate(aggregate: AggregateReview) {
 
 function v16FailureAnalysisFromAggregate(aggregate: AggregateReview) {
   return {
-    failureMode: aggregate.paperFatalError ? "paper-fatal error with no substantial surviving contribution" : "",
-    fatalObjectionPresent: aggregate.fatalObjectionPresent,
-    fatalObjectionAssessment: aggregate.fatalObjectionAssessment,
-    fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
-    paperFatalError: aggregate.paperFatalError,
-    survivingHighValueContributions: aggregate.survivingHighValueContributions,
-    failedClaimsExcludedFromAssessment: aggregate.failedClaimsExcludedFromScore,
     failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
-    survivingContributionAssessmentBasis: aggregate.survivingContributionScoreBasis,
-    survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
+    failedConstructionsExcludedFromScore: aggregate.failedConstructionsExcludedFromScore,
+    failedOutputsExcludedFromScore: aggregate.failedOutputsExcludedFromScore,
+    survivingCorrectContributions: aggregate.survivingCorrectContributions,
+    scoreBasisAfterExcludingFailures: aggregate.scoreBasisAfterExcludingFailures,
+    overallCorrectnessSummary: aggregate.overallCorrectnessSummary,
   };
 }
 
@@ -4329,14 +4365,13 @@ function v15AdjudicationForStorage(aggregate: AggregateReview) {
     scoreStability: aggregate.scoreStability,
     mainAgreements: aggregate.mainAgreements,
     mainDisagreements: aggregate.mainDisagreements,
-    fatalObjectionPresent: aggregate.fatalObjectionPresent,
-    fatalObjectionAssessment: aggregate.fatalObjectionAssessment,
-    fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
-    paperFatalError: aggregate.paperFatalError,
     contributionInventory: aggregate.contributionInventory,
-    survivingHighValueContributions: aggregate.survivingHighValueContributions,
     failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
-    survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
+    failedConstructionsExcludedFromScore: aggregate.failedConstructionsExcludedFromScore,
+    failedOutputsExcludedFromScore: aggregate.failedOutputsExcludedFromScore,
+    survivingCorrectContributions: aggregate.survivingCorrectContributions,
+    scoreBasisAfterExcludingFailures: aggregate.scoreBasisAfterExcludingFailures,
+    overallCorrectnessSummary: aggregate.overallCorrectnessSummary,
     calibrationAdjustments: aggregate.adjudication.calibrationAdjustments,
     subscoreConsistencyWarning: aggregate.subscoreConsistencyWarning,
     subscoreSaturationWarning: aggregate.subscoreSaturationWarning,
@@ -4372,14 +4407,12 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
       whatWouldLowerScore: aggregate.whatWouldLowerScore,
     },
     failureAnalysis: {
-      fatalObjectionPresent: aggregate.fatalObjectionPresent,
-      fatalObjectionAssessment: aggregate.fatalObjectionAssessment,
-      fatalToSpecificClaimOnly: aggregate.fatalToSpecificClaimOnly,
-      paperFatalError: aggregate.paperFatalError,
-      contributionInventory: aggregate.contributionInventory,
-      survivingHighValueContributions: aggregate.survivingHighValueContributions,
       failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
-      survivingContributionScoreBasis: aggregate.survivingContributionScoreBasis,
+      failedConstructionsExcludedFromScore: aggregate.failedConstructionsExcludedFromScore,
+      failedOutputsExcludedFromScore: aggregate.failedOutputsExcludedFromScore,
+      survivingCorrectContributions: aggregate.survivingCorrectContributions,
+      scoreBasisAfterExcludingFailures: aggregate.scoreBasisAfterExcludingFailures,
+      overallCorrectnessSummary: aggregate.overallCorrectnessSummary,
     },
     nearestComparators: aggregate.nearestComparators,
     externalComparatorSuggestions: aggregate.externalComparatorSuggestions,

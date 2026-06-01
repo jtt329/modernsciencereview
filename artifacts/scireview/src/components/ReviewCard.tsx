@@ -643,15 +643,45 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ?? aggregateAdjudication?.failedClaimsExcludedFromScore
     ?? storedAggregate?.failedClaimsExcludedFromScore
     ?? [];
-  const survivingHighValueContributions = canonicalFailureAnalysis?.survivingHighValueContributions
+  const failedConstructionsExcludedFromScore = canonicalFailureAnalysis?.failedConstructionsExcludedFromScore
+    ?? parsedCoverage?.failedConstructionsExcludedFromScore
+    ?? aggregateAdjudication?.failedConstructionsExcludedFromScore
+    ?? storedAggregate?.failedConstructionsExcludedFromScore
+    ?? [];
+  const failedOutputsExcludedFromScore = canonicalFailureAnalysis?.failedOutputsExcludedFromScore
+    ?? parsedCoverage?.failedOutputsExcludedFromScore
+    ?? aggregateAdjudication?.failedOutputsExcludedFromScore
+    ?? storedAggregate?.failedOutputsExcludedFromScore
+    ?? [];
+  const rawSurvivingCorrectContributions = canonicalFailureAnalysis?.survivingCorrectContributions
+    ?? parsedCoverage?.survivingCorrectContributions
+    ?? aggregateAdjudication?.survivingCorrectContributions
+    ?? storedAggregate?.survivingCorrectContributions
+    ?? canonicalFailureAnalysis?.survivingHighValueContributions
     ?? parsedCoverage?.survivingHighValueContributions
     ?? aggregateAdjudication?.survivingHighValueContributions
     ?? storedAggregate?.survivingHighValueContributions
     ?? [];
-  const survivingContributionScoreBasis = canonicalFailureAnalysis?.survivingContributionScoreBasis
+  const survivingCorrectContributionLines = asArray(rawSurvivingCorrectContributions).map((item: any) => {
+    if (typeof item === 'string') return item;
+    const contribution = item?.contribution || item?.claimOrContribution || item?.description || '';
+    const valueLevel = item?.valueLevel ? ` (${String(item.valueLevel).replace(/_/g, ' ')})` : '';
+    const relevance = item?.scoreRelevance ? `: ${item.scoreRelevance}` : '';
+    return `${contribution}${valueLevel}${relevance}`.trim();
+  }).filter(Boolean);
+  const scoreBasisAfterExcludingFailures = canonicalFailureAnalysis?.scoreBasisAfterExcludingFailures
+    ?? parsedCoverage?.scoreBasisAfterExcludingFailures
+    ?? aggregateAdjudication?.scoreBasisAfterExcludingFailures
+    ?? storedAggregate?.scoreBasisAfterExcludingFailures
+    ?? canonicalFailureAnalysis?.survivingContributionScoreBasis
     ?? parsedCoverage?.survivingContributionScoreBasis
     ?? aggregateAdjudication?.survivingContributionScoreBasis
     ?? storedAggregate?.survivingContributionScoreBasis
+    ?? '';
+  const overallCorrectnessSummary = canonicalFailureAnalysis?.overallCorrectnessSummary
+    ?? parsedCoverage?.overallCorrectnessSummary
+    ?? aggregateAdjudication?.overallCorrectnessSummary
+    ?? storedAggregate?.overallCorrectnessSummary
     ?? '';
   const promptVersion = parsedCoverage?.promptVersion ?? storedAggregate?.promptVersion ?? '';
   const isV15Review = parsedCoverage?.schemaVersion === 'v15' || /^v15(?:\.|\b|-)/.test(String(promptVersion));
@@ -1346,21 +1376,36 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 )}
               </div>
 
-              {(scoreCappingReason || shouldShowScoreAdjustmentReason || asArray(failedClaimsExcludedFromScore).length > 0 || asArray(survivingHighValueContributions).length > 0 || hasText(survivingContributionScoreBasis) || (comparatorCalibrationApplied && (calibrationRationale || scoreGapAssessment || publicComparatorSummary))) && (
+              {(scoreCappingReason || shouldShowScoreAdjustmentReason || asArray(failedClaimsExcludedFromScore).length > 0 || asArray(failedConstructionsExcludedFromScore).length > 0 || asArray(failedOutputsExcludedFromScore).length > 0 || survivingCorrectContributionLines.length > 0 || hasText(scoreBasisAfterExcludingFailures) || hasText(overallCorrectnessSummary) || (comparatorCalibrationApplied && (calibrationRationale || scoreGapAssessment || publicComparatorSummary))) && (
                 <div className="space-y-3">
                   {asArray(failedClaimsExcludedFromScore).length > 0 && (
                     <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Claim(s) Excluded From Score" color="text-rose-300">
                       <Markdown>{listMarkdown(failedClaimsExcludedFromScore)}</Markdown>
                     </Section>
                   )}
-                  {asArray(survivingHighValueContributions).length > 0 && (
-                    <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Surviving High-Value Contribution(s)" color="text-emerald-300">
-                      <Markdown>{listMarkdown(survivingHighValueContributions)}</Markdown>
+                  {asArray(failedConstructionsExcludedFromScore).length > 0 && (
+                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Construction(s) Excluded From Score" color="text-rose-300">
+                      <Markdown>{listMarkdown(failedConstructionsExcludedFromScore)}</Markdown>
                     </Section>
                   )}
-                  {hasText(survivingContributionScoreBasis) && (
-                    <Section icon={<Shield className="w-4 h-4" />} label="Surviving Contribution Score Basis" color="text-cyan-300">
-                      <Markdown>{survivingContributionScoreBasis}</Markdown>
+                  {asArray(failedOutputsExcludedFromScore).length > 0 && (
+                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Output(s) Excluded From Score" color="text-rose-300">
+                      <Markdown>{listMarkdown(failedOutputsExcludedFromScore)}</Markdown>
+                    </Section>
+                  )}
+                  {survivingCorrectContributionLines.length > 0 && (
+                    <Section icon={<CheckCircle2 className="w-4 h-4" />} label="Surviving Correct Contribution(s)" color="text-emerald-300">
+                      <Markdown>{listMarkdown(survivingCorrectContributionLines)}</Markdown>
+                    </Section>
+                  )}
+                  {hasText(scoreBasisAfterExcludingFailures) && (
+                    <Section icon={<Shield className="w-4 h-4" />} label="Score Basis After Excluding Failures" color="text-cyan-300">
+                      <Markdown>{scoreBasisAfterExcludingFailures}</Markdown>
+                    </Section>
+                  )}
+                  {hasText(overallCorrectnessSummary) && (
+                    <Section icon={<Shield className="w-4 h-4" />} label="Overall Correctness Summary" color="text-cyan-300">
+                      <Markdown>{overallCorrectnessSummary}</Markdown>
                     </Section>
                   )}
                   {scoreCappingReason && (

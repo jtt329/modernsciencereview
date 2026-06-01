@@ -130,23 +130,23 @@ Score only what the manuscript correctly establishes.
 
 A failed claim, failed output, or failed construction receives no scientific-value credit. Do not give partial credit to a false conclusion merely because it was interesting, influential, or later repaired by other work.
 
-If a manuscript contains both failed and correct contributions, remove the failed parts from the value calculation and assess the surviving correct contributions on their own merits.
+If a manuscript contains both failed and correct contributions, remove the failed parts from the value calculation and score the surviving correct contributions on their own merits.
 
 A surviving contribution may be valuable if it is independently correct and present in the manuscript: for example, a method, theorem, derivation, calculation, diagnostic, representation, dataset, limited algebraic relation, or model-space analysis.
 
 A wrong interpretation does not by itself erase the value of a correct equation, relation, transformation, or method. Credit the correct structure when it is nontrivial, hard-to-vary, reusable, independently explanatory, or empirically/theoretically constraining. Do not give much credit if the surviving structure is merely a trivial algebraic restatement with no demonstrated role inside the manuscript.
 
-Do not credit the manuscript for later corrected descendants, later field growth, or later results obtained by other papers. Later work may help reveal that a method was important, but the intrinsic assessment must still be based only on what this manuscript itself correctly established.
+Do not credit the manuscript for later corrected descendants, later field growth, or later results obtained by other papers. Later work may help reveal that a method was important, but the intrinsic score must still be based only on what this manuscript itself correctly established.
 
-A paper is paper-fatally flawed only when no substantial correct and separable scientific contribution survives.
+If no substantial correct construction or output survives, assign very low or zero Construction Strength and Output Strength. The score should become low through the ICO diagnostics, not through a separate fatal-error category.
 
 For failed or partially failed papers, ask:
 1. Which claims, constructions, or outputs fail?
 2. Which claims, constructions, or outputs remain correct?
 3. What value do the surviving parts have if the failed parts are deleted?
-4. Is the assessment based only on those surviving correct parts?
+4. Are the Input, Construction, and Output scores based only on those surviving correct parts?
 
-If a central physical model is invalid, do not assess the paper as a correct model paper. Assess it only as whatever survives: a method paper, calculation paper, proof-of-concept paper, diagnostic paper, limited algebraic relation, or limited contribution.
+If a central physical model is invalid, do not score the paper as a correct model paper. Score it only as whatever survives: a method paper, calculation paper, proof-of-concept paper, diagnostic paper, limited relation paper, or low-value failed proposal.
 
 Validation
 ----------
@@ -282,7 +282,7 @@ Before finalizing the diagnostic assessment, explicitly consider:
 5. Which known laws, frameworks, datasets, or results are merely assumed, and which are genuinely earned as outputs or output-contexts?
 6. What new assumptions or constructions are added, and are they forced, natural, simple, independently motivated, hard to vary, and necessary?
 7. How framework-dependent is the result? What survives if the most framework-specific input or construction is false?
-8. How correct are the central outputs? Are any errors local and repairable, separable from the main contribution, or paper-fatal?
+8. How correct are the central outputs? Are any errors local and repairable, or separable from the main contribution?
 9. Is the assessment based only on correct contributions this manuscript itself establishes?
 10. How much explanatory compression does the manuscript achieve?
 11. Does it explain more with less, or merely rename/repackage?
@@ -402,13 +402,19 @@ Return valid JSON only with this structure:
     "whatWouldLowerSubscores": ""
   },
   "failureAnalysis": {
-    "failureMode": "none | local repairable error | failed claim/output with surviving contribution | failed central model/construction with surviving contribution | paper-fatal error with no substantial surviving contribution",
-    "fatalObjectionPresent": false,
-    "paperFatalError": false,
-    "fatalToSpecificClaimOnly": false,
-    "survivingHighValueContributions": [],
-    "failedClaimsExcludedFromAssessment": [],
-    "survivingContributionAssessmentBasis": ""
+    "failedClaimsExcludedFromScore": [],
+    "failedConstructionsExcludedFromScore": [],
+    "failedOutputsExcludedFromScore": [],
+    "survivingCorrectContributions": [
+      {
+        "contribution": "",
+        "kind": "method | derivation | calculation | relation | output | interpretation | other",
+        "valueLevel": "none | limited | moderate | high",
+        "scoreRelevance": ""
+      }
+    ],
+    "scoreBasisAfterExcludingFailures": "",
+    "overallCorrectnessSummary": ""
   },
   "organicCohortProfile": {
     "localCohort": "",
