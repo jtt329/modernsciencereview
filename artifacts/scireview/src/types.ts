@@ -192,6 +192,33 @@ export interface AIReview {
   scoreBandHigh?: number;
   scoreConfidence?: number;
   scoreStability?: string;
+  calibratedInputStrengthScore?: number | null;
+  calibratedConstructionStrengthScore?: number | null;
+  calibratedOutputStrengthScore?: number | null;
+  rawCalibratedScore?: number | null;
+  calibratedScore?: number | null;
+  calibrationRationale?: string | null;
+  diagnosticChanges?: Array<{
+    dimension?: string;
+    from?: number;
+    to?: number;
+    rationale?: string;
+  }>;
+  diagnosticComparatorCalibration?: {
+    comparatorCalibrationStatus?: string;
+    calibratedInputStrengthScore?: number | null;
+    calibratedConstructionStrengthScore?: number | null;
+    calibratedOutputStrengthScore?: number | null;
+    rawCalibratedScore?: number | null;
+    calibratedScore?: number | null;
+    calibrationRationale?: string | null;
+    diagnosticChanges?: Array<{
+      dimension?: string;
+      from?: number;
+      to?: number;
+      rationale?: string;
+    }>;
+  };
   blindPassScores?: number[];
   passDisagreement?: number;
   reviewPassComparison?: {

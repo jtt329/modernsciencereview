@@ -344,6 +344,10 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
   const aggregateFromField = review ? parseJsonObject((review as any).aggregateMetaJson ?? null) : null;
   const aggregate = parsed?.aggregate && typeof parsed.aggregate === "object" ? parsed.aggregate : null;
   const comparatorCalibration = parsed?.comparatorCalibration ?? aggregate?.comparatorCalibration ?? null;
+  const diagnosticComparatorCalibration =
+    parsed?.diagnosticComparatorCalibration ??
+    aggregate?.diagnosticComparatorCalibration ??
+    null;
   const contributionArchetype = parsed?.contributionArchetype ?? aggregate?.contributionArchetype ?? null;
   const comparatorProfile =
     parsed?.organicCohortProfile ??
@@ -376,15 +380,29 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
     classification: review?.bestClassification || aggregate?.finalClassification || null,
     localCohort: parsed?.localCohort || parsed?.finalLocalCohort || aggregate?.finalLocalCohort || aggregateFromField?.localCohort || aggregateFromField?.finalLocalCohort || comparatorProfile?.localCohort || null,
     comparisonCohort: parsed?.comparisonCohort || parsed?.finalComparisonCohort || aggregate?.finalComparisonCohort || null,
-    score: parsed?.intrinsicScore ?? parsed?.finalScore ?? comparatorCalibration?.finalPublicScoreBand?.median ?? review?.overallIntrinsicScore ?? review?.score ?? null,
+    score: parsed?.calibratedScore ?? parsed?.intrinsicScore ?? parsed?.finalScore ?? diagnosticComparatorCalibration?.calibratedScore ?? comparatorCalibration?.finalPublicScoreBand?.median ?? review?.overallIntrinsicScore ?? review?.score ?? null,
+    inputStrengthScore: parsed?.inputStrengthScore ?? aggregate?.inputStrengthScore ?? null,
+    constructionStrengthScore: parsed?.constructionStrengthScore ?? aggregate?.constructionStrengthScore ?? null,
+    outputStrengthScore: parsed?.outputStrengthScore ?? aggregate?.outputStrengthScore ?? null,
+    rawDiagnosticScore: parsed?.rawDiagnosticScore ?? parsed?.rawFinalDiagnosticScore ?? null,
+    computedScore: parsed?.computedScore ?? parsed?.intrinsicScore ?? parsed?.finalScore ?? null,
+    calibratedInputStrengthScore: parsed?.calibratedInputStrengthScore ?? diagnosticComparatorCalibration?.calibratedInputStrengthScore ?? null,
+    calibratedConstructionStrengthScore: parsed?.calibratedConstructionStrengthScore ?? diagnosticComparatorCalibration?.calibratedConstructionStrengthScore ?? null,
+    calibratedOutputStrengthScore: parsed?.calibratedOutputStrengthScore ?? diagnosticComparatorCalibration?.calibratedOutputStrengthScore ?? null,
+    rawCalibratedScore: parsed?.rawCalibratedScore ?? diagnosticComparatorCalibration?.rawCalibratedScore ?? null,
+    calibratedScore: parsed?.calibratedScore ?? diagnosticComparatorCalibration?.calibratedScore ?? null,
+    scopeProfile: parsed?.scopeProfile ?? aggregate?.scopeProfile ?? null,
+    organicCohortProfile: parsed?.organicCohortProfile ?? comparatorProfile ?? null,
+    failureMode: parsed?.failureAnalysis?.failureMode ?? aggregate?.failureAnalysis?.failureMode ?? null,
     frameworkConditionality: parsed?.technicalAssessment?.frameworkDependence?.level || parsed?.frameworkConditionalityLevel || comparatorProfile?.frameworkConditionality || null,
+    frameworkDependence: parsed?.technicalAssessment?.frameworkDependence ?? null,
     comparatorSearchSummary: comparatorProfile?.comparatorSearchSummary || null,
     canonicalClusterLabel: parsed?.canonicalClusterLabel || parsed?.benchmarkCluster?.canonicalClusterLabel || aggregate?.canonicalClusterLabel || aggregateFromField?.canonicalClusterLabel || null,
     clusterVersion: parsed?.clusterVersion || aggregate?.clusterVersion || aggregateFromField?.clusterVersion || null,
     clusterFeatureTags: safeStringArray(comparatorProfile?.clusterFeatureTags),
     benchmarkSetCandidate: Boolean(parsed?.benchmarkSetCandidate),
     benchmarkSetVersion: parsed?.benchmarkSetVersion || comparatorCalibration?.benchmarkSetVersion || null,
-    comparatorCalibrationStatus: parsed?.comparatorCalibrationStatus || comparatorCalibration?.comparatorCalibrationStatus || null,
+    comparatorCalibrationStatus: parsed?.comparatorCalibrationStatus || diagnosticComparatorCalibration?.comparatorCalibrationStatus || comparatorCalibration?.comparatorCalibrationStatus || null,
     calibratedScoreBand: comparatorCalibration?.finalPublicScoreBand ?? aggregate?.finalScoreBand ?? aggregateFromField?.finalScoreBand ?? null,
     explanatoryDeltaAssessment: parsed?.explanatoryDeltaAssessment || comparatorCalibration?.explanatoryDeltaAssessment || null,
   };
@@ -436,6 +454,10 @@ async function selectComparatorContextForProfile(
         metadata.localCohort,
         metadata.canonicalClusterLabel,
         metadata.clusterFeatureTags.join(" "),
+        metadata.scopeProfile ? JSON.stringify(metadata.scopeProfile) : "",
+        metadata.frameworkDependence ? JSON.stringify(metadata.frameworkDependence) : "",
+        metadata.failureMode,
+        [metadata.inputStrengthScore, metadata.constructionStrengthScore, metadata.outputStrengthScore].join(" "),
         metadata.inputConstructionOutputLedger?.primitiveInputs.join(" "),
         metadata.inputConstructionOutputLedger?.introducedConstructions.join(" "),
         metadata.inputConstructionOutputLedger?.outputs.map((item: any) => item.output).join(" "),
@@ -465,7 +487,22 @@ async function selectComparatorContextForProfile(
           centralClaim: metadata.centralClaim ? String(metadata.centralClaim).slice(0, 900) : null,
           summary: metadata.summary ? String(metadata.summary).slice(0, 900) : null,
           inputConstructionOutputLedger: metadata.inputConstructionOutputLedger as any,
+          inputConstructionOutputAssessment: metadata.inputConstructionOutputLedger as any,
+          scopeProfile: metadata.scopeProfile,
+          organicCohortProfile: metadata.organicCohortProfile,
+          inputStrengthScore: metadata.inputStrengthScore,
+          constructionStrengthScore: metadata.constructionStrengthScore,
+          outputStrengthScore: metadata.outputStrengthScore,
+          rawDiagnosticScore: metadata.rawDiagnosticScore,
+          computedScore: metadata.computedScore,
+          calibratedInputStrengthScore: metadata.calibratedInputStrengthScore,
+          calibratedConstructionStrengthScore: metadata.calibratedConstructionStrengthScore,
+          calibratedOutputStrengthScore: metadata.calibratedOutputStrengthScore,
+          rawCalibratedScore: metadata.rawCalibratedScore,
+          calibratedScore: metadata.calibratedScore,
+          failureMode: metadata.failureMode,
           frameworkConditionality: metadata.frameworkConditionality,
+          frameworkDependence: metadata.frameworkDependence,
           comparatorSearchSummary: metadata.comparatorSearchSummary,
           benchmarkSetVersion: metadata.benchmarkSetVersion,
           comparatorCalibrationStatus: metadata.comparatorCalibrationStatus,
@@ -669,64 +706,94 @@ router.post("/papers/comparator-backfill", async (req, res) => {
 
       const coverageLedger = parseJsonObject(review.coverageLedgerJson);
       const aggregateMeta = parseJsonObject((review as any).aggregateMetaJson ?? null);
-      const aggregate = aggregateMeta ?? coverageLedger?.aggregate ?? null;
+      const aggregate = coverageLedger?.aggregate ?? aggregateMeta ?? coverageLedger ?? null;
+      const aggregateAny = aggregate && typeof aggregate === "object" ? aggregate as Record<string, any> : null;
       const promptVersion = coverageLedger?.promptVersion ?? "";
       const benchmarkSetCandidate = Boolean(coverageLedger?.benchmarkSetCandidate);
-      if (promptVersion !== REVIEW_PROMPT_VERSION || !aggregate?.comparatorProfile || (!includeAll && !benchmarkSetCandidate)) {
+      const profileSource = aggregateAny?.comparatorProfile ?? aggregateAny?.organicCohortProfile ?? coverageLedger?.organicCohortProfile ?? null;
+      if (promptVersion !== REVIEW_PROMPT_VERSION || !profileSource || (!includeAll && !benchmarkSetCandidate)) {
         skipped += 1;
         continue;
       }
 
       try {
         const profileForSelection = {
-          ...aggregate.comparatorProfile,
-          localCohort: coverageLedger?.finalLocalCohort || coverageLedger?.localCohort || aggregate.comparatorProfile.localCohort,
+          ...profileSource,
+          localCohort: coverageLedger?.finalLocalCohort || coverageLedger?.localCohort || profileSource.localCohort,
+          primaryCohort: profileSource.primaryCohort || coverageLedger?.comparisonCohort || coverageLedger?.localCohort,
+	          adjacentBroadCohort: profileSource.adjacentBroadCohort || coverageLedger?.broadField,
+	          primitiveInputs: profileSource.primitiveInputs ?? safeStringArray((coverageLedger?.inputConstructionOutputAssessment as any)?.input?.primitiveInputs),
+	          introducedConstructions: profileSource.introducedConstructions ?? safeStringArray((coverageLedger?.inputConstructionOutputAssessment as any)?.construction?.introducedConstructions),
+	          outputs: profileSource.outputs ?? safeStringArray((coverageLedger?.inputConstructionOutputAssessment as any)?.output?.outputs),
           clusterFeatureTags: [
-            ...safeStringArray(aggregate.comparatorProfile.clusterFeatureTags),
+            ...safeStringArray(profileSource.clusterFeatureTags),
             coverageLedger?.canonicalClusterLabel,
           ].filter(Boolean),
         };
-        const comparatorContext = await selectComparatorContextForProfile(profileForSelection, paper.id);
-        const { aggregate: updatedAggregate, thinkingText } = await recalibrateStoredAggregateWithComparators(
-          aggregate,
-          comparatorContext,
-        );
-        const versionedAggregate = {
-          ...updatedAggregate,
-          comparatorCalibration: {
-            ...updatedAggregate.comparatorCalibration,
-            benchmarkSetVersion,
-          },
-        };
-        const storedVersionedAggregate = compactAggregateForStorage(versionedAggregate);
-        const storedComparatorCalibration = v15ComparatorCalibrationForStorage(versionedAggregate.comparatorCalibration);
-        const updatedCoverageLedger = {
-          ...coverageLedger,
-          nearestComparators: storedVersionedAggregate.nearestComparators,
-          externalComparatorSuggestions: storedVersionedAggregate.externalComparatorSuggestions,
-          publicComparatorSummary: storedVersionedAggregate.publicComparatorSummary,
-          adminComparatorNotes: storedVersionedAggregate.adminComparatorNotes,
-          comparatorProfile: storedVersionedAggregate.comparatorProfile,
-          comparatorCalibration: storedComparatorCalibration,
-          comparatorCalibrationStatus: storedComparatorCalibration.comparatorCalibrationStatus,
-          explanatoryDeltaAssessment: storedComparatorCalibration.explanatoryDeltaAssessment,
-          comparatorsNeedingRecalibration: storedComparatorCalibration.comparatorsNeedingRecalibration,
-          blindIntrinsicScoreBand: storedVersionedAggregate.blindIntrinsicScoreBand,
-          comparatorCalibratedFinalScoreBand: storedVersionedAggregate.finalScoreBand,
-          aggregate: storedVersionedAggregate,
-          finalComparisonCohort: storedVersionedAggregate.finalComparisonCohort,
-          scoreStability: storedVersionedAggregate.scoreStability,
+	        const comparatorContext = await selectComparatorContextForProfile(profileForSelection, paper.id);
+	        const { aggregate: updatedAggregate, thinkingText } = await recalibrateStoredAggregateWithComparators(
+	          aggregate,
+	          comparatorContext,
+	        );
+	        const updatedAggregateAny = updatedAggregate && typeof updatedAggregate === "object" ? updatedAggregate as Record<string, any> : {};
+	        const diagnosticCalibration = updatedAggregateAny.diagnosticComparatorCalibration ?? null;
+	        const versionedAggregate = updatedAggregateAny.finalScoreBand ? {
+	          ...updatedAggregateAny,
+	          comparatorCalibration: {
+	            ...updatedAggregateAny.comparatorCalibration,
+	            benchmarkSetVersion,
+	          },
+	        } : updatedAggregateAny;
+	        const storedVersionedAggregate = updatedAggregateAny.finalScoreBand
+	          ? compactAggregateForStorage(versionedAggregate as any)
+	          : versionedAggregate;
+	        const storedVersionedAggregateAny = storedVersionedAggregate && typeof storedVersionedAggregate === "object"
+	          ? storedVersionedAggregate as Record<string, any>
+	          : {};
+	        const storedComparatorCalibration = updatedAggregateAny.comparatorCalibration
+	          ? v15ComparatorCalibrationForStorage(updatedAggregateAny.comparatorCalibration)
+	          : null;
+	        const updatedCoverageLedger = {
+	          ...coverageLedger,
+	          nearestComparators: storedVersionedAggregateAny.nearestComparators ?? coverageLedger?.nearestComparators ?? [],
+	          externalComparatorSuggestions: storedVersionedAggregateAny.externalComparatorSuggestions ?? coverageLedger?.externalComparatorSuggestions ?? [],
+	          publicComparatorSummary: storedVersionedAggregateAny.publicComparatorSummary ?? diagnosticCalibration?.calibrationRationale ?? coverageLedger?.publicComparatorSummary ?? "",
+	          adminComparatorNotes: storedVersionedAggregateAny.adminComparatorNotes ?? "Diagnostic comparator backfill completed.",
+	          ...(storedVersionedAggregateAny.comparatorProfile ? { comparatorProfile: storedVersionedAggregateAny.comparatorProfile } : {}),
+	          ...(storedComparatorCalibration ? { comparatorCalibration: storedComparatorCalibration } : {}),
+          diagnosticComparatorCalibration: diagnosticCalibration,
+          comparatorCalibrationStatus: diagnosticCalibration?.comparatorCalibrationStatus ?? storedComparatorCalibration?.comparatorCalibrationStatus ?? "insufficient_comparators",
+          comparatorRunId: diagnosticCalibration?.comparatorRunId ?? null,
+          comparatorModel: diagnosticCalibration?.comparatorModel ?? null,
+          comparatorPromptHash: diagnosticCalibration?.comparatorPromptHash ?? null,
+          comparatorIds: diagnosticCalibration?.comparatorIds ?? comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+          comparatorRetrievalMethod: diagnosticCalibration?.comparatorRetrievalMethod ?? "canonical-profile-token-overlap-k8",
+          comparatorContextIncluded: comparatorContext.length > 0,
+          calibrationContextIncluded: diagnosticCalibration?.calibrationContextIncluded ?? false,
+          calibratedInputStrengthScore: diagnosticCalibration?.calibratedInputStrengthScore ?? null,
+          calibratedConstructionStrengthScore: diagnosticCalibration?.calibratedConstructionStrengthScore ?? null,
+          calibratedOutputStrengthScore: diagnosticCalibration?.calibratedOutputStrengthScore ?? null,
+          rawCalibratedScore: diagnosticCalibration?.rawCalibratedScore ?? null,
+          calibratedScore: diagnosticCalibration?.calibratedScore ?? null,
+          diagnosticChanges: diagnosticCalibration?.diagnosticChanges ?? [],
+          calibrationRationale: diagnosticCalibration?.calibrationRationale ?? "",
           benchmarkSetCandidate: true,
           benchmarkSetVersion,
           backfilledAt: new Date().toISOString(),
         };
-        const finalScore = versionedAggregate.finalScoreBand.median;
-        await db.update(reviewsTable)
-          .set({
-            score: finalScore,
-            overallIntrinsicScore: finalScore,
-            bestClassification: versionedAggregate.finalClassification,
-            finalJudgment: versionedAggregate.publicOneParagraphVerdict,
+	        const finalScore =
+	          diagnosticCalibration?.calibratedScore ??
+	          (versionedAggregate as any)?.finalScoreBand?.median ??
+	          coverageLedger?.intrinsicScore ??
+	          coverageLedger?.finalScore ??
+	          review.overallIntrinsicScore ??
+	          review.score;
+	        await db.update(reviewsTable)
+	          .set({
+	            score: finalScore,
+	            overallIntrinsicScore: finalScore,
+	            bestClassification: (versionedAggregate as any)?.finalClassification ?? review.bestClassification,
+	            finalJudgment: (versionedAggregate as any)?.publicOneParagraphVerdict ?? review.finalJudgment,
             coverageLedgerJson: JSON.stringify(updatedCoverageLedger),
             thinkingText: [review.thinkingText, thinkingText].filter(Boolean).join("\n\n---\n\n") || review.thinkingText,
           })
@@ -774,8 +841,7 @@ router.get("/papers/export", async (req, res) => {
             : [];
         const comparatorCalibrationRan =
           coverageLedger.comparatorCalibrationStatus === "applied" ||
-          coverageLedger.comparatorCalibrationStatus === "weak" ||
-          (typeof coverageLedger.calibrationAdjustment === "number" && coverageLedger.calibrationAdjustment !== 0);
+          coverageLedger.comparatorCalibrationStatus === "weak";
         const canonicalReview: Record<string, any> = {
           reviewObjectVersion: coverageLedger.reviewObjectVersion,
           promptVersion: coverageLedger.promptVersion ?? REVIEW_PROMPT_VERSION,
@@ -808,6 +874,13 @@ router.get("/papers/export", async (req, res) => {
           intrinsicScore: coverageLedger.intrinsicScore ?? coverageLedger.finalScore ?? r.overallIntrinsicScore ?? r.score ?? null,
           rawDiagnosticScore: coverageLedger.rawDiagnosticScore ?? coverageLedger.rawFinalDiagnosticScore ?? null,
           computedScore: coverageLedger.computedScore ?? coverageLedger.intrinsicScore ?? coverageLedger.finalScore ?? r.overallIntrinsicScore ?? r.score ?? null,
+          calibratedInputStrengthScore: comparatorCalibrationRan ? coverageLedger.calibratedInputStrengthScore ?? null : null,
+          calibratedConstructionStrengthScore: comparatorCalibrationRan ? coverageLedger.calibratedConstructionStrengthScore ?? null : null,
+          calibratedOutputStrengthScore: comparatorCalibrationRan ? coverageLedger.calibratedOutputStrengthScore ?? null : null,
+          rawCalibratedScore: comparatorCalibrationRan ? coverageLedger.rawCalibratedScore ?? null : null,
+          calibratedScore: comparatorCalibrationRan ? coverageLedger.calibratedScore ?? null : null,
+          diagnosticChanges: comparatorCalibrationRan ? coverageLedger.diagnosticChanges ?? [] : [],
+          calibrationRationale: comparatorCalibrationRan ? coverageLedger.calibrationRationale ?? "" : "",
           diagnosticScoreFormula: coverageLedger.diagnosticScoreFormula ?? null,
           publicMagnitudeLabel: coverageLedger.publicMagnitudeLabel ?? coverageLedger.bestClassification ?? r.bestClassification ?? null,
           diagnosticAssessmentConfidence: coverageLedger.diagnosticAssessmentConfidence ?? coverageLedger.scoreConfidence ?? null,
@@ -838,7 +911,13 @@ router.get("/papers/export", async (req, res) => {
             finalConstructionStrengthScore: coverageLedger.finalConstructionStrengthScore ?? null,
             finalOutputStrengthScore: coverageLedger.finalOutputStrengthScore ?? null,
             comparatorCalibrationStatus: coverageLedger.comparatorCalibrationStatus ?? null,
-            ...(comparatorCalibrationRan ? { calibrationAdjustment: coverageLedger.calibrationAdjustment ?? 0 } : {}),
+            comparatorRunId: comparatorCalibrationRan ? coverageLedger.comparatorRunId ?? null : null,
+            comparatorModel: comparatorCalibrationRan ? coverageLedger.comparatorModel ?? null : null,
+            comparatorPromptHash: comparatorCalibrationRan ? coverageLedger.comparatorPromptHash ?? null : null,
+            comparatorIds: comparatorCalibrationRan ? coverageLedger.comparatorIds ?? [] : [],
+            comparatorRetrievalMethod: comparatorCalibrationRan ? coverageLedger.comparatorRetrievalMethod ?? null : null,
+            comparatorContextIncluded: coverageLedger.comparatorContextIncluded ?? false,
+            calibrationContextIncluded: coverageLedger.calibrationContextIncluded ?? false,
             ...(debugAudit ? {
               passAudit: Array.isArray(coverageLedger.passAudit)
                 ? coverageLedger.passAudit.map(compactPassAuditEntry)
@@ -869,6 +948,10 @@ router.get("/papers/export", async (req, res) => {
         coverageLedger?.comparatorCalibration ??
         aggregate?.comparatorCalibration ??
         null;
+      const diagnosticComparatorCalibration =
+        coverageLedger?.diagnosticComparatorCalibration ??
+        aggregate?.diagnosticComparatorCalibration ??
+        null;
       const adjudication =
         coverageLedger?.adjudication ??
         aggregate?.adjudication ??
@@ -878,10 +961,18 @@ router.get("/papers/export", async (req, res) => {
         coverageLedger?.comparatorProfile ??
         aggregate?.comparatorProfile ??
         null;
+      const calibratedScore =
+        typeof coverageLedger?.calibratedScore === "number"
+          ? coverageLedger.calibratedScore
+          : typeof diagnosticComparatorCalibration?.calibratedScore === "number"
+            ? diagnosticComparatorCalibration.calibratedScore
+            : null;
       const finalScoreBand =
-        coverageLedger?.comparatorCalibratedFinalScoreBand ??
-        aggregate?.finalScoreBand ??
-        null;
+        calibratedScore != null
+          ? { low: calibratedScore, median: calibratedScore, high: calibratedScore }
+          : coverageLedger?.comparatorCalibratedFinalScoreBand ??
+            aggregate?.finalScoreBand ??
+            null;
       const inputConstructionOutputLedger =
         coverageLedger?.inputConstructionOutputAssessment ??
         coverageLedger?.inputConstructionOutputLedger ??
@@ -892,18 +983,20 @@ router.get("/papers/export", async (req, res) => {
         coverageLedger?.schemaVersion === "v15" ||
         String(coverageLedger?.promptVersion ?? "").startsWith("v15");
       const isCanonicalIcoReview =
-        /^v16(?:\.|\b|-)/.test(String(coverageLedger?.schemaVersion ?? "")) ||
-        /^v16(?:\.|\b|-)/.test(String(coverageLedger?.promptVersion ?? ""));
+        /^v(?:16|17)(?:\.|\b|-)/.test(String(coverageLedger?.schemaVersion ?? "")) ||
+        /^v(?:16|17)(?:\.|\b|-)/.test(String(coverageLedger?.promptVersion ?? ""));
       const comparatorCalibrationStatus =
         coverageLedger?.comparatorCalibrationStatus ??
+        diagnosticComparatorCalibration?.comparatorCalibrationStatus ??
         comparatorCalibration?.comparatorCalibrationStatus ??
         null;
       const calibrationAdjustment = Number(comparatorCalibration?.calibrationAdjustment ?? 0);
       const comparatorCalibrationApplied = Boolean(
-        comparatorCalibration &&
-          (comparatorCalibrationStatus === "applied" ||
-            comparatorCalibrationStatus === "weak" ||
-            (Number.isFinite(calibrationAdjustment) && Math.abs(calibrationAdjustment) > 0)),
+        (calibratedScore != null &&
+          (comparatorCalibrationStatus === "applied" || comparatorCalibrationStatus === "weak")) ||
+          (comparatorCalibration &&
+            Number.isFinite(calibrationAdjustment) &&
+            Math.abs(calibrationAdjustment) > 0),
       );
       const visibleComparatorCalibration = comparatorCalibrationApplied ? comparatorCalibration : null;
       const centralOutputDependency =
@@ -945,9 +1038,16 @@ router.get("/papers/export", async (req, res) => {
           passDisagreement: adjudication?.passDisagreement ?? adjudication?.scoreRange ?? aggregate?.passDisagreement ?? null,
           scoreStability: adjudication?.scoreStability ?? aggregate?.scoreStability ?? coverageLedger?.scoreStability ?? null,
           adjudicatorRating: aggregate?.adjudicatorRating ?? coverageLedger?.adjudicatorRating ?? coverageLedger?.blindIntrinsicScoreBand?.median ?? null,
-          comparatorCalibrationStatus,
-          calibrationAdjustment: comparatorCalibrationApplied ? comparatorCalibration?.calibrationAdjustment ?? null : null,
-          finalCalibratedScore: finalScoreBand?.median ?? r.overallIntrinsicScore ?? r.score ?? null,
+	          comparatorCalibrationStatus,
+	          calibrationAdjustment: comparatorCalibrationApplied ? comparatorCalibration?.calibrationAdjustment ?? null : null,
+	          finalCalibratedScore: finalScoreBand?.median ?? r.overallIntrinsicScore ?? r.score ?? null,
+	          calibratedInputStrengthScore: comparatorCalibrationApplied ? coverageLedger?.calibratedInputStrengthScore ?? diagnosticComparatorCalibration?.calibratedInputStrengthScore ?? null : null,
+	          calibratedConstructionStrengthScore: comparatorCalibrationApplied ? coverageLedger?.calibratedConstructionStrengthScore ?? diagnosticComparatorCalibration?.calibratedConstructionStrengthScore ?? null : null,
+	          calibratedOutputStrengthScore: comparatorCalibrationApplied ? coverageLedger?.calibratedOutputStrengthScore ?? diagnosticComparatorCalibration?.calibratedOutputStrengthScore ?? null : null,
+	          rawCalibratedScore: comparatorCalibrationApplied ? coverageLedger?.rawCalibratedScore ?? diagnosticComparatorCalibration?.rawCalibratedScore ?? null : null,
+	          calibratedScore: comparatorCalibrationApplied ? calibratedScore : null,
+	          diagnosticChanges: comparatorCalibrationApplied ? coverageLedger?.diagnosticChanges ?? diagnosticComparatorCalibration?.diagnosticChanges ?? [] : [],
+	          calibrationRationale: comparatorCalibrationApplied ? coverageLedger?.calibrationRationale ?? diagnosticComparatorCalibration?.calibrationRationale ?? "" : "",
           localCohort: coverageLedger?.finalLocalCohort ?? coverageLedger?.localCohort ?? aggregate?.finalLocalCohort ?? comparatorProfile?.localCohort ?? null,
           inputStrengthScore: coverageLedger?.inputStrengthScore ?? aggregate?.inputStrengthScore ?? null,
           constructionStrengthScore: coverageLedger?.constructionStrengthScore ?? aggregate?.constructionStrengthScore ?? null,

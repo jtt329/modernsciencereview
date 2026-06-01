@@ -2,7 +2,6 @@ import OpenAI from "openai";
 import { createHash, randomUUID } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import {
-  BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT,
   DATE_METADATA_EXTRACTION_V15_PROMPT,
 } from "./prompts/benchmarkCalibratedV15";
 import {
@@ -307,6 +306,36 @@ type ComparatorCalibration = {
   confidence: number;
 };
 
+type DiagnosticScoreKey =
+  | "inputStrengthScore"
+  | "constructionStrengthScore"
+  | "outputStrengthScore";
+
+type DiagnosticChange = {
+  dimension: DiagnosticScoreKey;
+  from: number;
+  to: number;
+  rationale: string;
+};
+
+type DiagnosticComparatorCalibration = {
+  comparatorCalibrationStatus: ComparatorCalibrationStatus;
+  comparatorRunId: string | null;
+  comparatorModel: string | null;
+  comparatorPromptHash: string | null;
+  comparatorIds: string[];
+  comparatorRetrievalMethod: string;
+  comparatorContextIncluded: boolean;
+  calibrationContextIncluded: boolean;
+  calibratedInputStrengthScore: number | null;
+  calibratedConstructionStrengthScore: number | null;
+  calibratedOutputStrengthScore: number | null;
+  rawCalibratedScore: number | null;
+  calibratedScore: number | null;
+  calibrationRationale: string;
+  diagnosticChanges: DiagnosticChange[];
+};
+
 type ExternalComparatorSuggestion = {
   title: string;
   reasonToAdd: string;
@@ -331,9 +360,24 @@ export type ReviewComparatorContextItem = {
   centralClaim?: string | null;
   summary?: string | null;
   inputConstructionOutputLedger?: InputConstructionOutputLedger | null;
+  inputConstructionOutputAssessment?: unknown;
+  scopeProfile?: unknown;
+  organicCohortProfile?: unknown;
+  inputStrengthScore?: number | null;
+  constructionStrengthScore?: number | null;
+  outputStrengthScore?: number | null;
+  rawDiagnosticScore?: number | null;
+  computedScore?: number | null;
+  calibratedInputStrengthScore?: number | null;
+  calibratedConstructionStrengthScore?: number | null;
+  calibratedOutputStrengthScore?: number | null;
+  rawCalibratedScore?: number | null;
+  calibratedScore?: number | null;
+  failureMode?: string | null;
   centralOutputDependency?: CentralOutputDependency | null;
   outputValidityAssessment?: OutputValidityAssessment | null;
   frameworkConditionality?: FrameworkLevel | string | null;
+  frameworkDependence?: unknown;
   comparatorSearchSummary?: string | null;
   benchmarkSetVersion?: string | null;
   comparatorCalibrationStatus?: string | null;
@@ -442,6 +486,7 @@ type AggregateReview = {
   adminComparatorNotes: string;
   comparatorProfile: ComparatorProfile;
   comparatorCalibration: ComparatorCalibration;
+  diagnosticComparatorCalibration?: DiagnosticComparatorCalibration | null;
   blindIntrinsicScoreBand: ScoreBand;
   adjudication: AdjudicationDetails;
   adjudicatorStatus: AdjudicatorStatus;
@@ -591,7 +636,45 @@ export const REVIEW_PROMPT_HASH = createHash("sha256")
   .digest("hex")
   .slice(0, 16);
 const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT);
-const BENCHMARK_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(BENCHMARK_COMPARATOR_CALIBRATION_V15_PROMPT);
+const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(`
+You are the separate post-intrinsic comparator calibrator for Modern Science Review.
+
+You do not perform the blind review. You do not adjudicate the blind passes. You receive a target paper's completed intrinsic canonical review profile and the nearest reviewed comparator profiles.
+
+Your task is only to check whether the target's three diagnostic scores are calibrated consistently against nearby reviewed papers:
+- inputStrengthScore
+- constructionStrengthScore
+- outputStrengthScore
+
+Compare the target against the provided comparators. Consider:
+- whether input scores are consistent for similarly firm or weak inputs;
+- whether construction scores are consistent for similarly forced, fragile, reusable, or ad hoc constructions;
+- whether output scores are consistent for similarly central, valid, invalid, broad, narrow, or framework-dependent outputs;
+- whether framework dependence is treated consistently;
+- whether failed outputs and surviving correct contributions are treated consistently.
+
+You may adjust only those three diagnostic scores. Use 0.5-point increments on the 0-10 scale. Do not output a free final score. Do not output a direct score adjustment. The application computes any public 0-100 score from the calibrated diagnostics.
+
+Return exactly this JSON object:
+{
+  "calibratedInputStrengthScore": number,
+  "calibratedConstructionStrengthScore": number,
+  "calibratedOutputStrengthScore": number,
+  "calibrationRationale": string,
+  "diagnosticChanges": [
+    {
+      "dimension": "inputStrengthScore | constructionStrengthScore | outputStrengthScore",
+      "from": number,
+      "to": number,
+      "rationale": string
+    }
+  ]
+}
+`);
+const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT_HASH = createHash("sha256")
+  .update(DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT)
+  .digest("hex")
+  .slice(0, 16);
 
 const METADATA_PROMPT = `${DATE_METADATA_EXTRACTION_V15_PROMPT}
 
@@ -1072,10 +1155,14 @@ function asOptionalNumber(value: unknown, min?: number, max?: number) {
   return max != null ? Math.min(max, minSafe) : minSafe;
 }
 
+function roundToNearestHalf(value: number) {
+  return Math.round(Math.max(0, Math.min(10, value)) * 2) / 2;
+}
+
 function normalizeDiagnosticSubscore(value: unknown, fallback?: number) {
   const explicit = asOptionalNumber(value, 0, 10);
-  if (explicit != null) return Math.round(explicit);
-  return Math.round(Math.max(0, Math.min(10, fallback ?? 0)));
+  if (explicit != null) return roundToNearestHalf(explicit);
+  return roundToNearestHalf(fallback ?? 0);
 }
 
 function firstNumberField(source: Record<string, unknown>, keys: string[]) {
@@ -1768,6 +1855,30 @@ function defaultComparatorCalibration(
     },
     comparatorsNeedingRecalibration: [],
     confidence: 0.5,
+  };
+}
+
+function defaultDiagnosticComparatorCalibration(
+  status: ComparatorCalibrationStatus,
+  rationale: string,
+  comparatorIds: string[] = [],
+): DiagnosticComparatorCalibration {
+  return {
+    comparatorCalibrationStatus: status,
+    comparatorRunId: null,
+    comparatorModel: null,
+    comparatorPromptHash: null,
+    comparatorIds,
+    comparatorRetrievalMethod: "canonical-profile-token-overlap-k8",
+    comparatorContextIncluded: comparatorIds.length > 0,
+    calibrationContextIncluded: false,
+    calibratedInputStrengthScore: null,
+    calibratedConstructionStrengthScore: null,
+    calibratedOutputStrengthScore: null,
+    rawCalibratedScore: null,
+    calibratedScore: null,
+    calibrationRationale: rationale,
+    diagnosticChanges: [],
   };
 }
 
@@ -3792,6 +3903,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     adminComparatorNotes: "",
     comparatorProfile: normalizeComparatorProfile(comparatorProfileSource, fallbackReview),
     comparatorCalibration: defaultComparatorCalibration(finalScoreBand, adjustedFinalClassification, "No comparator calibration pass has run yet."),
+    diagnosticComparatorCalibration: defaultDiagnosticComparatorCalibration("not_run", "No comparator calibration pass has run yet."),
     blindIntrinsicScoreBand: finalScoreBand,
     adjudication: {
       adjudicatorStatus: "success",
@@ -4275,6 +4387,7 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
     adminComparatorNotes: aggregate.adminComparatorNotes,
     comparatorProfile: v15ComparatorProfileOnly(aggregate.comparatorProfile),
     comparatorCalibration: v15ComparatorCalibrationForStorage(aggregate.comparatorCalibration),
+    diagnosticComparatorCalibration: aggregate.diagnosticComparatorCalibration ?? null,
     blindIntrinsicScoreBand: aggregate.blindIntrinsicScoreBand,
     adjudicatorStatus: aggregate.adjudicatorStatus,
     adjudication: v15AdjudicationForStorage(aggregate),
@@ -4400,6 +4513,263 @@ function buildComparatorCalibrationInput(
     comparatorProfile: v15ComparatorProfileOnly(aggregate.comparatorProfile),
     candidateComparatorProfiles,
   }, null, 2);
+}
+
+function canonicalDiagnosticProfileFromAggregate(aggregate: AggregateReview) {
+  return {
+    comparisonCohort: aggregate.finalComparisonCohort,
+    localCohort: aggregate.finalLocalCohort,
+    broadField: aggregate.finalBroadField,
+    specialtyField: aggregate.finalSpecialtyField,
+    centralClaim: aggregate.finalCentralClaim,
+    scientificReview: aggregate.scientificReview,
+    contributionArchetype: aggregate.contributionArchetype,
+    scopeProfile: aggregate.scopeProfile,
+    inputConstructionOutputAssessment: v16IcoAssessmentOnly(aggregate.inputConstructionOutputLedger),
+    technicalAssessment: v16TechnicalAssessmentFromAggregate(aggregate),
+    failureAnalysis: v16FailureAnalysisFromAggregate(aggregate),
+    organicCohortProfile: v16OrganicCohortProfileOnly(aggregate.comparatorProfile),
+    inputStrengthScore: aggregate.inputStrengthScore,
+    constructionStrengthScore: aggregate.constructionStrengthScore,
+    outputStrengthScore: aggregate.outputStrengthScore,
+    rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(aggregate)),
+    computedScore: aggregate.blindIntrinsicScoreBand.median,
+    bestClassification: aggregate.finalClassification,
+  };
+}
+
+function canonicalDiagnosticProfileFromUnknown(input: unknown) {
+  const source = input && typeof input === "object" ? (input as Record<string, any>) : {};
+  const inputScore = normalizeDiagnosticSubscore(source.inputStrengthScore ?? source.finalInputStrengthScore);
+  const constructionScore = normalizeDiagnosticSubscore(source.constructionStrengthScore ?? source.finalConstructionStrengthScore);
+  const outputScore = normalizeDiagnosticSubscore(source.outputStrengthScore ?? source.finalOutputStrengthScore);
+  return {
+    comparisonCohort: source.comparisonCohort ?? source.finalComparisonCohort ?? null,
+    localCohort: source.localCohort ?? source.finalLocalCohort ?? null,
+    broadField: source.broadField ?? source.finalBroadField ?? null,
+    specialtyField: source.specialtyField ?? source.finalSpecialtyField ?? null,
+    subfields: Array.isArray(source.subfields) ? source.subfields : [],
+    centralClaim: source.centralClaim ?? source.finalCentralClaim ?? null,
+    scientificReview: source.scientificReview ?? null,
+    contributionArchetype: source.contributionArchetype ?? null,
+    scopeProfile: source.scopeProfile ?? null,
+    inputConstructionOutputAssessment: source.inputConstructionOutputAssessment ?? source.inputConstructionOutputLedger ?? null,
+    technicalAssessment: source.technicalAssessment ?? null,
+    failureAnalysis: source.failureAnalysis ?? null,
+    organicCohortProfile: source.organicCohortProfile ?? source.comparatorProfile ?? null,
+    inputStrengthScore: inputScore,
+    constructionStrengthScore: constructionScore,
+    outputStrengthScore: outputScore,
+    rawDiagnosticScore: rawDiagnosticScore([inputScore, constructionScore, outputScore]),
+    computedScore: Math.round(rawDiagnosticScore([inputScore, constructionScore, outputScore])),
+    bestClassification: source.bestClassification ?? source.publicMagnitudeLabel ?? null,
+  };
+}
+
+function compactComparatorProfileForCalibration(candidate: ReviewComparatorContextItem, index: number) {
+  const scores = [
+    normalizeDiagnosticSubscore(candidate.inputStrengthScore),
+    normalizeDiagnosticSubscore(candidate.constructionStrengthScore),
+    normalizeDiagnosticSubscore(candidate.outputStrengthScore),
+  ];
+  return {
+    comparatorId: candidate.comparatorId || `C${index + 1}`,
+    paperId: candidate.sitePaperId,
+    title: candidate.title,
+    field: candidate.field,
+    subfields: candidate.subfields,
+    comparisonCohort: candidate.comparisonCohort,
+    localCohort: candidate.localCohort,
+    classification: candidate.classification,
+    score: candidate.score,
+    intrinsicScore: candidate.computedScore ?? candidate.score,
+    inputStrengthScore: scores[0],
+    constructionStrengthScore: scores[1],
+    outputStrengthScore: scores[2],
+    rawDiagnosticScore: candidate.rawDiagnosticScore ?? rawDiagnosticScore(scores),
+    calibratedInputStrengthScore: candidate.calibratedInputStrengthScore ?? null,
+    calibratedConstructionStrengthScore: candidate.calibratedConstructionStrengthScore ?? null,
+    calibratedOutputStrengthScore: candidate.calibratedOutputStrengthScore ?? null,
+    calibratedScore: candidate.calibratedScore ?? null,
+    centralClaim: candidate.centralClaim,
+    summary: candidate.summary,
+    contributionArchetype: candidate.contributionArchetype,
+    scopeProfile: candidate.scopeProfile,
+    inputConstructionOutputAssessment: candidate.inputConstructionOutputAssessment ?? candidate.inputConstructionOutputLedger,
+    frameworkDependence: candidate.frameworkDependence ?? candidate.frameworkConditionality,
+    failureMode: candidate.failureMode,
+    organicCohortProfile: candidate.organicCohortProfile,
+    comparatorSearchSummary: candidate.comparatorSearchSummary,
+  };
+}
+
+function buildDiagnosticComparatorCalibrationInput(
+  targetProfile: Record<string, unknown>,
+  comparatorContext: ReviewComparatorContextItem[],
+): string {
+  return JSON.stringify({
+    calibrationStage: "post_intrinsic_diagnostic_only",
+    instruction:
+      "Compare the target intrinsic diagnostic profile to the nearest comparator profiles. Adjust only inputStrengthScore, constructionStrengthScore, and outputStrengthScore if needed. Do not output a final score or additive adjustment.",
+    targetPaper: targetProfile,
+    nearestComparators: comparatorContext.map(compactComparatorProfileForCalibration),
+  }, null, 2);
+}
+
+function normalizeDiagnosticChanges(value: unknown, before: Record<DiagnosticScoreKey, number>, after: Record<DiagnosticScoreKey, number>) {
+  const allowed = new Set<DiagnosticScoreKey>(["inputStrengthScore", "constructionStrengthScore", "outputStrengthScore"]);
+  const parsed = Array.isArray(value)
+    ? value.map((item) => {
+        const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+        const dimension = asString(source.dimension) as DiagnosticScoreKey;
+        if (!allowed.has(dimension)) return null;
+        return {
+          dimension,
+          from: normalizeDiagnosticSubscore(source.from, before[dimension]),
+          to: normalizeDiagnosticSubscore(source.to, after[dimension]),
+          rationale: asString(source.rationale),
+        } satisfies DiagnosticChange;
+      }).filter(Boolean) as DiagnosticChange[]
+    : [];
+  if (parsed.length > 0) return parsed;
+  return (Array.from(allowed) as DiagnosticScoreKey[])
+    .filter((dimension) => before[dimension] !== after[dimension])
+    .map((dimension) => ({
+      dimension,
+      from: before[dimension],
+      to: after[dimension],
+      rationale: "Comparator calibration adjusted this diagnostic score for consistency with nearest reviewed papers.",
+    }));
+}
+
+function normalizeDiagnosticComparatorCalibrationResult(
+  input: unknown,
+  targetScores: Record<DiagnosticScoreKey, number>,
+  comparatorContext: ReviewComparatorContextItem[],
+  comparatorRunId: string,
+): DiagnosticComparatorCalibration {
+  const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const calibratedScores: Record<DiagnosticScoreKey, number> = {
+    inputStrengthScore: normalizeDiagnosticSubscore(source.calibratedInputStrengthScore, targetScores.inputStrengthScore),
+    constructionStrengthScore: normalizeDiagnosticSubscore(source.calibratedConstructionStrengthScore, targetScores.constructionStrengthScore),
+    outputStrengthScore: normalizeDiagnosticSubscore(source.calibratedOutputStrengthScore, targetScores.outputStrengthScore),
+  };
+  const rawCalibrated = rawDiagnosticScore([
+    calibratedScores.inputStrengthScore,
+    calibratedScores.constructionStrengthScore,
+    calibratedScores.outputStrengthScore,
+  ]);
+  return {
+    comparatorCalibrationStatus: "applied",
+    comparatorRunId,
+    comparatorModel: GEMINI_CALIBRATION_MODEL,
+    comparatorPromptHash: DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT_HASH,
+    comparatorIds: comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+    comparatorRetrievalMethod: "canonical-profile-token-overlap-k8",
+    comparatorContextIncluded: true,
+    calibrationContextIncluded: true,
+    calibratedInputStrengthScore: calibratedScores.inputStrengthScore,
+    calibratedConstructionStrengthScore: calibratedScores.constructionStrengthScore,
+    calibratedOutputStrengthScore: calibratedScores.outputStrengthScore,
+    rawCalibratedScore: rawCalibrated,
+    calibratedScore: Math.round(rawCalibrated),
+    calibrationRationale: asString(source.calibrationRationale, "Comparator calibration completed."),
+    diagnosticChanges: normalizeDiagnosticChanges(source.diagnosticChanges, targetScores, calibratedScores),
+  };
+}
+
+async function runDiagnosticComparatorCalibration(
+  targetProfile: Record<string, unknown>,
+  comparatorContext: ReviewComparatorContextItem[],
+  inputAuditHashes?: { textHash: string; pdfHash: string | null },
+): Promise<{ calibration: DiagnosticComparatorCalibration; audit: ReviewRunAuditEntry; thinkingText: string | null }> {
+  const targetScores: Record<DiagnosticScoreKey, number> = {
+    inputStrengthScore: normalizeDiagnosticSubscore(targetProfile.inputStrengthScore),
+    constructionStrengthScore: normalizeDiagnosticSubscore(targetProfile.constructionStrengthScore),
+    outputStrengthScore: normalizeDiagnosticSubscore(targetProfile.outputStrengthScore),
+  };
+  const comparatorRunId = randomUUID();
+  const { parsed, thinkingText, requestId, usage } = await callGemini(
+    DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT,
+    buildDiagnosticComparatorCalibrationInput(targetProfile, comparatorContext),
+    GEMINI_CALIBRATION_MODEL,
+    {
+      maxOutputTokens: 8192,
+      includeThoughts: false,
+      temperature: 0.1,
+    },
+  );
+  const calibration = normalizeDiagnosticComparatorCalibrationResult(parsed, targetScores, comparatorContext, comparatorRunId);
+  const audit: ReviewRunAuditEntry = {
+    reviewRunId: comparatorRunId,
+    paperId: null,
+    promptVersion: REVIEW_PROMPT_VERSION,
+    promptHash: DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT_HASH,
+    role: "comparator_calibration",
+    passNumber: null,
+    model: GEMINI_CALIBRATION_MODEL,
+    requestId,
+    cacheUsed: false,
+    previousReviewUsed: false,
+    comparatorContextIncluded: true,
+    adjudicatorContextIncluded: false,
+    calibrationContextIncluded: true,
+    textHash: inputAuditHashes?.textHash ?? "",
+    pdfHash: inputAuditHashes?.pdfHash ?? null,
+    inputTokenCount: usage.inputTokenCount,
+    outputTokenCount: usage.outputTokenCount,
+    inputStrengthScore: calibration.calibratedInputStrengthScore,
+    constructionStrengthScore: calibration.calibratedConstructionStrengthScore,
+    outputStrengthScore: calibration.calibratedOutputStrengthScore,
+    rawDiagnosticScore: calibration.rawCalibratedScore,
+    computedScore: calibration.calibratedScore,
+    score: calibration.calibratedScore,
+    classification: null,
+  };
+  return { calibration, audit, thinkingText };
+}
+
+function applyDiagnosticComparatorCalibration(
+  aggregate: AggregateReview,
+  calibration: DiagnosticComparatorCalibration,
+): AggregateReview {
+  if (calibration.comparatorCalibrationStatus !== "applied" || calibration.calibratedScore == null) {
+    return { ...aggregate, diagnosticComparatorCalibration: calibration };
+  }
+  const finalScoreBand = scoreBandFromComputedScore(calibration.calibratedScore);
+  return {
+    ...aggregate,
+    diagnosticComparatorCalibration: calibration,
+    finalScoreBand,
+    finalClassification: alignClassificationToScore(aggregate.finalClassification, finalScoreBand.median),
+    finalScoreConfidence: aggregate.finalScoreConfidence,
+    internalCalibrationNotes: [
+      aggregate.internalCalibrationNotes,
+      calibration.calibrationRationale,
+    ].filter(Boolean).join("\n\n"),
+  };
+}
+
+export async function recalibrateCanonicalReviewWithComparators(
+  canonicalReview: unknown,
+  comparatorContext: ReviewComparatorContextItem[],
+) {
+  if (comparatorContext.length < 3) {
+    return {
+      calibration: defaultDiagnosticComparatorCalibration(
+        "insufficient_comparators",
+        "Comparator backfill did not find enough nearest reviewed comparators.",
+        comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+      ),
+      thinkingText: null,
+    };
+  }
+  const targetProfile = canonicalDiagnosticProfileFromUnknown(canonicalReview);
+  const { calibration, thinkingText } = await runDiagnosticComparatorCalibration(targetProfile, comparatorContext);
+  return {
+    calibration,
+    thinkingText: thinkingText ? `Comparator calibration (${GEMINI_CALIBRATION_MODEL})\n${thinkingText}` : null,
+  };
 }
 
 function defaultDateMetadata(displayedTitle: string, displayedAuthors: string[]): PaperDateMetadata {
@@ -5064,81 +5434,103 @@ async function generateMultiPassReview(
   if (!aggregate) {
     throw new Error("Review failed: no aggregate adjudication could be produced.");
   }
+  let aggregateReview: AggregateReview = aggregate;
+  const comparatorAuditEntries: ReviewRunAuditEntry[] = [];
   const comparatorContext = reviewMode === "normal-review" && options.selectComparatorContext
-    ? await options.selectComparatorContext(aggregate.comparatorProfile, aggregate)
+    ? await options.selectComparatorContext(aggregateReview.comparatorProfile, aggregateReview)
     : [];
   if (reviewMode === "benchmark-ingestion") {
-    aggregate = {
-      ...aggregate,
+    aggregateReview = {
+      ...aggregateReview,
       comparatorCalibration: defaultComparatorCalibration(
-        aggregate.blindIntrinsicScoreBand,
-        aggregate.finalClassification,
+        aggregateReview.blindIntrinsicScoreBand,
+        aggregateReview.finalClassification,
         "Benchmark ingestion mode stores the blind intrinsic profile only. Comparator calibration is run later by benchmark backfill.",
         "not_run_benchmark_ingestion",
       ),
-      finalScoreBand: aggregate.blindIntrinsicScoreBand,
+      diagnosticComparatorCalibration: defaultDiagnosticComparatorCalibration(
+        "not_run_benchmark_ingestion",
+        "Benchmark ingestion mode stores the blind intrinsic profile only. Comparator calibration is run later by benchmark backfill.",
+      ),
+      finalScoreBand: aggregateReview.blindIntrinsicScoreBand,
       adminComparatorNotes: "Benchmark ingestion mode: comparator calibration not run.",
     };
-  } else if (comparatorContext.length === 0) {
-    aggregate = {
-      ...aggregate,
+  } else if (comparatorContext.length < 3) {
+    aggregateReview = {
+      ...aggregateReview,
       comparatorCalibration: defaultComparatorCalibration(
-        aggregate.blindIntrinsicScoreBand,
-        aggregate.finalClassification,
-        "No sufficiently close benchmark comparators were available; public score falls back to the blind intrinsic score.",
-        "unavailable",
+        aggregateReview.blindIntrinsicScoreBand,
+        aggregateReview.finalClassification,
+        "Not enough sufficiently close benchmark comparators were available; public score falls back to the intrinsic score.",
+        "insufficient_comparators",
       ),
-      finalScoreBand: aggregate.blindIntrinsicScoreBand,
-      adminComparatorNotes: "Comparator calibration unavailable: no close benchmark comparators found.",
+      diagnosticComparatorCalibration: defaultDiagnosticComparatorCalibration(
+        "insufficient_comparators",
+        "Not enough sufficiently close benchmark comparators were available; public score falls back to the intrinsic score.",
+        comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+      ),
+      finalScoreBand: aggregateReview.blindIntrinsicScoreBand,
+      adminComparatorNotes: "Comparator calibration unavailable: fewer than 3 close benchmark comparators found.",
     };
   } else {
     try {
-      const { parsed: calibrationParsed, thinkingText: calibrationThinking } = await callGemini(
-        BENCHMARK_COMPARATOR_CALIBRATION_PROMPT,
-        buildComparatorCalibrationInput(aggregate, comparatorContext),
-        GEMINI_CALIBRATION_MODEL,
-        { maxOutputTokens: 8192, includeThoughts: false },
+      const targetProfile = canonicalDiagnosticProfileFromAggregate(aggregateReview);
+      const { calibration, audit, thinkingText: calibrationThinking } = await runDiagnosticComparatorCalibration(
+        targetProfile,
+        comparatorContext,
+        inputAuditHashes,
       );
-      const calibration = normalizeComparatorCalibrationResult(calibrationParsed, aggregate, comparatorContext);
-      aggregate = {
-        ...aggregate,
-        comparatorCalibration: calibration.comparatorCalibration,
-        nearestComparators: calibration.nearestComparators,
-        externalComparatorSuggestions: calibration.externalComparatorSuggestions,
-        publicComparatorSummary: calibration.publicComparatorSummary,
-        adminComparatorNotes: calibration.adminComparatorNotes,
-        finalScoreBand: calibration.comparatorCalibration.finalPublicScoreBand,
-        finalClassification: calibration.comparatorCalibration.finalClassification,
-        finalScoreConfidence: calibration.comparatorCalibration.confidence,
-        scoreCappingReason: calibration.comparatorCalibration.scoreCappingReason || aggregate.scoreCappingReason,
-        internalCalibrationNotes: [
-          aggregate.internalCalibrationNotes,
-          calibration.comparatorCalibration.calibrationRationale,
-          calibration.adminComparatorNotes,
-        ].filter(Boolean).join("\n\n"),
+      comparatorAuditEntries.push(audit);
+      aggregateReview = applyDiagnosticComparatorCalibration(aggregateReview, calibration);
+      aggregateReview = {
+        ...aggregateReview,
+        comparatorCalibration: defaultComparatorCalibration(
+          aggregateReview.blindIntrinsicScoreBand,
+          aggregateReview.finalClassification,
+          calibration.calibrationRationale,
+          "applied",
+        ),
+        nearestComparators: comparatorContext.map((candidate, index) => ({
+          comparatorId: candidate.comparatorId || `C${index + 1}`,
+          paperTitle: candidate.title,
+          relationship: "similar",
+          whyComparable: candidate.comparatorSearchSummary || "Selected by canonical review-profile similarity.",
+          keyDifference: "",
+          relativeAssessment: "similar",
+          relativeScoreJudgment: "similar_quality",
+          scoreGapJustification: "",
+          sitePaperId: candidate.sitePaperId,
+        })),
+        publicComparatorSummary: calibration.calibrationRationale,
+        adminComparatorNotes: "Diagnostic-only comparator calibration ran after intrinsic adjudication.",
       };
       if (calibrationThinking) {
         thinkingChunks.push(`Comparator calibration (${GEMINI_CALIBRATION_MODEL})\n${calibrationThinking}`);
       }
     } catch (reason) {
-      aggregate = {
-        ...aggregate,
+      aggregateReview = {
+        ...aggregateReview,
         comparatorCalibration: defaultComparatorCalibration(
-          aggregate.blindIntrinsicScoreBand,
-          aggregate.finalClassification,
+          aggregateReview.blindIntrinsicScoreBand,
+          aggregateReview.finalClassification,
           `Comparator calibration failed; public score falls back to the blind intrinsic score. ${errorMessage(reason)}`,
           "failed",
+        ),
+        diagnosticComparatorCalibration: defaultDiagnosticComparatorCalibration(
+          "failed",
+          `Comparator calibration failed; public score falls back to the intrinsic score. ${errorMessage(reason)}`,
+          comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
         ),
         adminComparatorNotes: `Comparator calibration failed: ${errorMessage(reason)}`,
       };
       thinkingChunks.push(`Comparator calibration failed\n${errorMessage(reason)}`);
     }
   }
-  const representativeReview = pickRepresentativeReview(individualReviews, aggregate.finalScoreBand.median);
+  const representativeReview = pickRepresentativeReview(individualReviews, aggregateReview.finalScoreBand.median);
   if (adjudicatorThinking) {
     thinkingChunks.push(`Adjudicator (${GEMINI_META_MODEL})\n${adjudicatorThinking}`);
   }
-  thinkingChunks.push(aggregate.internalCalibrationNotes);
+  thinkingChunks.push(aggregateReview.internalCalibrationNotes);
 
   return {
     reviewRunId,
@@ -5147,12 +5539,13 @@ async function generateMultiPassReview(
     systemPrompt,
     blindedContent,
     individualReviews,
-    aggregate,
+    aggregate: aggregateReview,
     representativeReview,
     thinkingText: thinkingChunks.length > 0 ? thinkingChunks.join("\n\n---\n\n") : null,
     passAudit: [
       ...passResults.map((result) => result.audit),
       ...(adjudicatorAudit ? [adjudicatorAudit] : []),
+      ...comparatorAuditEntries,
     ],
   };
 }
@@ -5165,47 +5558,62 @@ export async function recalibrateStoredAggregateWithComparators(
     ? (aggregateInput as AggregateReview)
     : null;
   if (!aggregate?.comparatorProfile || !aggregate?.blindIntrinsicScoreBand) {
-    throw new Error("Review aggregate is missing v9 comparator profile or blind intrinsic score band.");
+    const fallback = await recalibrateCanonicalReviewWithComparators(aggregateInput, comparatorContext);
+    return {
+      aggregate: {
+        ...(aggregateInput && typeof aggregateInput === "object" ? aggregateInput as Record<string, unknown> : {}),
+        diagnosticComparatorCalibration: fallback.calibration,
+      },
+      thinkingText: fallback.thinkingText,
+    };
   }
 
-  if (comparatorContext.length === 0) {
+  if (comparatorContext.length < 3) {
+    const diagnosticComparatorCalibration = defaultDiagnosticComparatorCalibration(
+      "insufficient_comparators",
+      "Comparator backfill did not find enough nearest reviewed comparators; score remains intrinsic.",
+      comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+    );
     const updatedAggregate: AggregateReview = {
       ...aggregate,
       comparatorCalibration: defaultComparatorCalibration(
         aggregate.blindIntrinsicScoreBand,
         aggregate.finalClassification,
-        "Comparator backfill could not find close benchmark comparators; score remains blind-intrinsic.",
-        "unavailable",
+        diagnosticComparatorCalibration.calibrationRationale,
+        "insufficient_comparators",
       ),
+      diagnosticComparatorCalibration,
       finalScoreBand: aggregate.blindIntrinsicScoreBand,
-      adminComparatorNotes: "Comparator backfill unavailable: no close benchmark comparators found.",
+      adminComparatorNotes: "Comparator backfill unavailable: fewer than 3 close benchmark comparators found.",
     };
     return { aggregate: updatedAggregate, thinkingText: null };
   }
 
-  const { parsed: calibrationParsed, thinkingText } = await callGemini(
-    BENCHMARK_COMPARATOR_CALIBRATION_PROMPT,
-    buildComparatorCalibrationInput(aggregate, comparatorContext),
-    GEMINI_CALIBRATION_MODEL,
-    { maxOutputTokens: 8192, includeThoughts: false },
+  const { calibration, thinkingText } = await runDiagnosticComparatorCalibration(
+    canonicalDiagnosticProfileFromAggregate(aggregate),
+    comparatorContext,
   );
-  const calibration = normalizeComparatorCalibrationResult(calibrationParsed, aggregate, comparatorContext);
   const updatedAggregate: AggregateReview = {
-    ...aggregate,
-    comparatorCalibration: calibration.comparatorCalibration,
-    nearestComparators: calibration.nearestComparators,
-    externalComparatorSuggestions: calibration.externalComparatorSuggestions,
-    publicComparatorSummary: calibration.publicComparatorSummary,
-    adminComparatorNotes: calibration.adminComparatorNotes,
-    finalScoreBand: calibration.comparatorCalibration.finalPublicScoreBand,
-    finalClassification: calibration.comparatorCalibration.finalClassification,
-    finalScoreConfidence: calibration.comparatorCalibration.confidence,
-    scoreCappingReason: calibration.comparatorCalibration.scoreCappingReason || aggregate.scoreCappingReason,
-    internalCalibrationNotes: [
-      aggregate.internalCalibrationNotes,
-      calibration.comparatorCalibration.calibrationRationale,
-      calibration.adminComparatorNotes,
-    ].filter(Boolean).join("\n\n"),
+    ...applyDiagnosticComparatorCalibration(aggregate, calibration),
+    comparatorCalibration: defaultComparatorCalibration(
+      aggregate.blindIntrinsicScoreBand,
+      aggregate.finalClassification,
+      calibration.calibrationRationale,
+      "applied",
+    ),
+    nearestComparators: comparatorContext.map((candidate, index) => ({
+      comparatorId: candidate.comparatorId || `C${index + 1}`,
+      paperTitle: candidate.title,
+      relationship: "similar",
+      whyComparable: candidate.comparatorSearchSummary || "Selected by canonical review-profile similarity.",
+      keyDifference: "",
+      relativeAssessment: "similar",
+      relativeScoreJudgment: "similar_quality",
+      scoreGapJustification: "",
+      sitePaperId: candidate.sitePaperId,
+    })),
+    publicComparatorSummary: calibration.calibrationRationale,
+    adminComparatorNotes: "Diagnostic-only comparator backfill ran after intrinsic adjudication.",
   };
 
   return {
@@ -5236,13 +5644,16 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     firstBroadField;
   const canonicalReview = v16CanonicalReviewFromAggregate(aggregate, representativeReview);
   const storedIndividualReviews = result.individualReviews.map(compactIndividualReviewForStorage);
-  const comparatorCalibrationStatus = aggregate.comparatorCalibration.comparatorCalibrationStatus;
-  const rawCalibrationAdjustment = Number(aggregate.comparatorCalibration.calibrationAdjustment ?? 0);
+  const diagnosticCalibration = aggregate.diagnosticComparatorCalibration ??
+    defaultDiagnosticComparatorCalibration("not_run", "No comparator calibration pass has run yet.");
+  const comparatorCalibrationStatus = diagnosticCalibration.comparatorCalibrationStatus;
   const comparatorCalibrationApplied =
     result.pipelineMode !== "benchmark-ingestion" &&
-    (comparatorCalibrationStatus === "applied" ||
-      comparatorCalibrationStatus === "weak" ||
-      (Number.isFinite(rawCalibrationAdjustment) && Math.abs(rawCalibrationAdjustment) > 0));
+    comparatorCalibrationStatus === "applied" &&
+    typeof diagnosticCalibration.calibratedScore === "number";
+  const publicScore = comparatorCalibrationApplied
+    ? diagnosticCalibration.calibratedScore as number
+    : canonicalReview.intrinsicScore;
   const canonicalCoverageLedger = {
     reviewObjectVersion: REVIEW_OBJECT_VERSION,
     schemaVersion: "v17.0",
@@ -5261,17 +5672,32 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
     benchmarkSetVersion: result.pipelineMode === "benchmark-ingestion"
       ? BENCHMARK_SET_VERSION
-      : aggregate.comparatorCalibration.benchmarkSetVersion,
+      : BENCHMARK_SET_VERSION,
     comparatorCalibrationStatus,
-    ...(comparatorCalibrationApplied ? { calibrationAdjustment: rawCalibrationAdjustment } : {}),
+    comparatorRunId: diagnosticCalibration.comparatorRunId,
+    comparatorModel: diagnosticCalibration.comparatorModel,
+    comparatorPromptHash: diagnosticCalibration.comparatorPromptHash,
+    comparatorIds: diagnosticCalibration.comparatorIds,
+    comparatorRetrievalMethod: diagnosticCalibration.comparatorRetrievalMethod,
+    comparatorContextIncluded: diagnosticCalibration.comparatorContextIncluded,
+    calibrationContextIncluded: diagnosticCalibration.calibrationContextIncluded,
+    calibratedInputStrengthScore: diagnosticCalibration.calibratedInputStrengthScore,
+    calibratedConstructionStrengthScore: diagnosticCalibration.calibratedConstructionStrengthScore,
+    calibratedOutputStrengthScore: diagnosticCalibration.calibratedOutputStrengthScore,
+    rawCalibratedScore: diagnosticCalibration.rawCalibratedScore,
+    calibratedScore: diagnosticCalibration.calibratedScore,
+    diagnosticChanges: diagnosticCalibration.diagnosticChanges,
+    calibrationRationale: diagnosticCalibration.calibrationRationale,
     extractionMethod,
     pdfVisibleFallbackUsed,
     blindingStrength,
     usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     ...canonicalReview,
-    finalScore: canonicalReview.intrinsicScore,
+    finalScore: publicScore,
     diagnosticScoreFormula: "10 * average(inputStrengthScore, constructionStrengthScore, outputStrengthScore)",
+    rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(aggregate)),
+    computedScore: canonicalReview.intrinsicScore,
     rawFinalDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(aggregate)),
     publicMagnitudeLabel: aggregate.finalClassification,
     finalInputStrengthScore: aggregate.inputStrengthScore,
@@ -5294,7 +5720,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     correctness: "",
     novelty: "",
     overallEvaluation: "",
-    score: aggregate.finalScoreBand.median,
+    score: publicScore,
     relatedWork: "",
     centralClaim: aggregate.finalCentralClaim || representativeReview.centralClaim || null,
     establishedResults: null,
@@ -5314,7 +5740,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     explanatoryTargetBreadthScore: null,
     theorySpaceBreadthScore: null,
     breadthOfImpactScore: null,
-    overallIntrinsicScore: aggregate.finalScoreBand.median,
+    overallIntrinsicScore: publicScore,
     bestClassification: aggregateClassification,
     finalJudgment: null,
     coverageLedgerJson: JSON.stringify(canonicalCoverageLedger),

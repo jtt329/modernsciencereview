@@ -478,22 +478,46 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   );
   const aggregateScoreBand = storedAggregate?.finalScoreBand ?? null;
   const comparatorCalibration = parsedCoverage?.comparatorCalibration ?? storedAggregate?.comparatorCalibration ?? null;
-  const comparatorCalibratedFinalScoreBand = parsedCoverage?.comparatorCalibratedFinalScoreBand
-    ?? comparatorCalibration?.finalPublicScoreBand
-    ?? aggregateScoreBand
-    ?? null;
+  const diagnosticComparatorCalibration =
+    parsedCoverage?.diagnosticComparatorCalibration ??
+    storedAggregate?.diagnosticComparatorCalibration ??
+    null;
+  const calibratedScore =
+    typeof parsedCoverage?.calibratedScore === 'number'
+      ? parsedCoverage.calibratedScore
+      : typeof diagnosticComparatorCalibration?.calibratedScore === 'number'
+        ? diagnosticComparatorCalibration.calibratedScore
+        : null;
+  const comparatorCalibratedFinalScoreBand = calibratedScore != null
+    ? { low: calibratedScore, median: calibratedScore, high: calibratedScore }
+    : parsedCoverage?.comparatorCalibratedFinalScoreBand
+      ?? comparatorCalibration?.finalPublicScoreBand
+      ?? aggregateScoreBand
+      ?? null;
   const calibrationAdjustment = typeof comparatorCalibration?.calibrationAdjustment === 'number'
     ? comparatorCalibration.calibrationAdjustment
     : null;
-  const calibrationRationale = comparatorCalibration?.calibrationRationale ?? '';
+  const calibrationRationale =
+    parsedCoverage?.calibrationRationale ??
+    diagnosticComparatorCalibration?.calibrationRationale ??
+    comparatorCalibration?.calibrationRationale ??
+    '';
+  const diagnosticChanges =
+    Array.isArray(parsedCoverage?.diagnosticChanges)
+      ? parsedCoverage.diagnosticChanges
+      : Array.isArray(diagnosticComparatorCalibration?.diagnosticChanges)
+        ? diagnosticComparatorCalibration.diagnosticChanges
+        : [];
   const scoreGapAssessment = comparatorCalibration?.scoreGapAssessment ?? '';
   const comparatorCalibrationStatus =
     parsedCoverage?.comparatorCalibrationStatus ??
+    diagnosticComparatorCalibration?.comparatorCalibrationStatus ??
     comparatorCalibration?.comparatorCalibrationStatus ??
-    (calibrationAdjustment != null ? 'applied' : 'unavailable');
+    (calibratedScore != null ? 'applied' : 'unavailable');
   const comparatorCalibrationApplied =
-    comparatorCalibrationStatus === 'applied' ||
-    comparatorCalibrationStatus === 'weak';
+    (comparatorCalibrationStatus === 'applied' ||
+      comparatorCalibrationStatus === 'weak') &&
+    calibratedScore != null;
   const explanatoryDeltaAssessment = comparatorCalibrationApplied
     ? parsedCoverage?.explanatoryDeltaAssessment ??
       comparatorCalibration?.explanatoryDeltaAssessment ??
@@ -584,10 +608,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     ? 'Insufficient data'
     : `${scoreSpread} ${scoreSpread === 1 ? 'point' : 'points'}`;
   const adjustmentLabel = comparatorCalibrationApplied
-    ? `${(calibrationAdjustment ?? 0) > 0 ? '+' : ''}${calibrationAdjustment ?? 0}`
+    ? 'diagnostics calibrated'
     : 'not applied';
   const scorePathCaption = comparatorCalibrationApplied
-    ? 'Comparator-calibrated anchored scientific merit score.'
+    ? 'Comparator-calibrated score computed from calibrated Input / Construction / Output diagnostics.'
     : 'Comparator calibration not yet run.';
   const showCalibrationAdjustment =
     comparatorCalibrationApplied ||
@@ -944,7 +968,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               )}
               <div className="flex flex-wrap gap-3 text-xs text-slate-400">
                 {!comparatorCalibrationApplied && <span>{scorePathCaption}</span>}
-                {showCalibrationAdjustment && <span>Calibration adjustment: {adjustmentLabel}</span>}
+                {showCalibrationAdjustment && (
+                  <span>{comparatorCalibrationApplied ? 'Comparator diagnostics calibrated' : `Calibration adjustment: ${adjustmentLabel}`}</span>
+                )}
               </div>
             </div>
           </div>
@@ -1292,6 +1318,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <p className="text-[10px] font-black text-emerald-300 uppercase tracking-widest">Final Score</p>
                   <p className="text-sm font-black text-white mt-1">{finalScore}</p>
                 </div>
+                {comparatorCalibrationApplied && (
+                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">Intrinsic Score</p>
+                    <p className="text-sm font-black text-white mt-1">{parsedCoverage?.intrinsicScore ?? parsedCoverage?.computedScore ?? review.overallIntrinsicScore ?? review.score}</p>
+                  </div>
+                )}
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass Scores</p>
                   <p className="text-sm font-black text-white mt-1">{blindPassScores.length ? blindPassScores.join(', ') : 'Not stored'}</p>
@@ -1348,6 +1380,19 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {comparatorCalibrationApplied && calibrationRationale && (
                     <Section icon={<Shield className="w-4 h-4" />} label="Calibration Rationale" color="text-cyan-300">
                       <Markdown>{calibrationRationale}</Markdown>
+                    </Section>
+                  )}
+                  {comparatorCalibrationApplied && diagnosticChanges.length > 0 && (
+                    <Section icon={<TrendingUp className="w-4 h-4" />} label="Diagnostic Changes" color="text-sky-300">
+                      <Markdown>
+                        {diagnosticChanges.map((change: any) => {
+                          const label = String(change.dimension ?? '')
+                            .replace('inputStrengthScore', 'Input Strength')
+                            .replace('constructionStrengthScore', 'Construction Strength')
+                            .replace('outputStrengthScore', 'Output Strength');
+                          return `- ${label}: ${change.from} -> ${change.to}${change.rationale ? ` - ${change.rationale}` : ''}`;
+                        }).join('\n')}
+                      </Markdown>
                     </Section>
                   )}
                   {comparatorCalibrationApplied && scoreGapAssessment && (
