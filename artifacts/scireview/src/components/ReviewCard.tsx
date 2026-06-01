@@ -514,6 +514,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     diagnosticComparatorCalibration?.comparatorCalibrationStatus ??
     comparatorCalibration?.comparatorCalibrationStatus ??
     (calibratedScore != null ? 'applied' : 'unavailable');
+  const calibrationMode =
+    parsedCoverage?.calibrationMode ??
+    diagnosticComparatorCalibration?.calibrationMode ??
+    (calibratedScore != null ? 'target_only' : 'none');
+  const calibrationVersion =
+    parsedCoverage?.calibrationVersion ??
+    diagnosticComparatorCalibration?.calibrationVersion ??
+    null;
   const comparatorCalibrationApplied =
     (comparatorCalibrationStatus === 'applied' ||
       comparatorCalibrationStatus === 'weak') &&
@@ -1365,6 +1373,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
                   <p className="text-[10px] font-black text-cyan-300 uppercase tracking-widest">Comparator Status</p>
                   <p className="text-sm font-black text-white mt-1 capitalize">{String(comparatorCalibrationStatus).replace(/_/g, ' ')}</p>
+                  {calibrationMode && calibrationMode !== 'none' && (
+                    <p className="text-[11px] font-bold text-slate-300 mt-1">
+                      {String(calibrationMode).replace(/_/g, ' ')}
+                      {calibrationVersion ? ` · ${calibrationVersion}` : ''}
+                    </p>
+                  )}
                 </div>
                 {(isAdmin || adjudicatorFallbackActive) && (
                   <div className={`bg-slate-950/30 border rounded-xl p-3 ${adjudicatorFallbackActive ? 'border-rose-300/30' : 'border-white/10'}`}>

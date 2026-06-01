@@ -192,6 +192,16 @@ export interface AIReview {
   scoreBandHigh?: number;
   scoreConfidence?: number;
   scoreStability?: string;
+  intrinsicInputStrengthScore?: number | null;
+  intrinsicConstructionStrengthScore?: number | null;
+  intrinsicOutputStrengthScore?: number | null;
+  intrinsicScore?: number | null;
+  calibrationMode?: string | null;
+  calibrationVersion?: string | null;
+  comparatorIds?: string[];
+  targetOnly?: boolean | null;
+  existingPapersModified?: boolean | null;
+  modifiedPaperIds?: string[];
   calibratedInputStrengthScore?: number | null;
   calibratedConstructionStrengthScore?: number | null;
   calibratedOutputStrengthScore?: number | null;
@@ -206,6 +216,12 @@ export interface AIReview {
   }>;
   diagnosticComparatorCalibration?: {
     comparatorCalibrationStatus?: string;
+    calibrationMode?: string | null;
+    calibrationVersion?: string | null;
+    comparatorIds?: string[];
+    targetOnly?: boolean | null;
+    existingPapersModified?: boolean | null;
+    modifiedPaperIds?: string[];
     calibratedInputStrengthScore?: number | null;
     calibratedConstructionStrengthScore?: number | null;
     calibratedOutputStrengthScore?: number | null;

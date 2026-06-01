@@ -77,6 +77,7 @@ type ComparatorCalibrationStatus =
   | "insufficient_comparators"
   | "not_run_benchmark_ingestion"
   | "failed";
+type CalibrationMode = "none" | "target_only" | "backfill_cluster" | "affected_neighborhood";
 type DiagnosticSubscoreKey =
   | "inputStrengthScore"
   | "constructionStrengthScore"
@@ -331,11 +332,16 @@ type DiagnosticChange = {
 
 type DiagnosticComparatorCalibration = {
   comparatorCalibrationStatus: ComparatorCalibrationStatus;
+  calibrationMode: CalibrationMode;
+  calibrationVersion: string;
   comparatorRunId: string | null;
   comparatorModel: string | null;
   comparatorPromptHash: string | null;
   comparatorIds: string[];
   comparatorRetrievalMethod: string;
+  targetOnly: boolean;
+  existingPapersModified: boolean;
+  modifiedPaperIds: string[];
   comparatorContextIncluded: boolean;
   calibrationContextIncluded: boolean;
   calibratedInputStrengthScore: number | null;
@@ -613,6 +619,11 @@ type ReviewRunAuditEntry = {
   comparatorContextIncluded: boolean;
   adjudicatorContextIncluded: boolean;
   calibrationContextIncluded: boolean;
+  calibrationMode?: CalibrationMode;
+  calibrationVersion?: string | null;
+  targetOnly?: boolean;
+  existingPapersModified?: boolean;
+  modifiedPaperIds?: string[];
   textHash: string;
   pdfHash: string | null;
   inputTokenCount: number | null;
@@ -657,6 +668,14 @@ You are the separate post-intrinsic comparator calibrator for Modern Science Rev
 
 You do not perform the blind review. You do not adjudicate the blind passes. You receive a target paper's completed intrinsic canonical review profile and the nearest reviewed comparator profiles.
 
+There are two calibration modes:
+
+1. target_only
+This mode is used when a new paper is uploaded after a benchmark exists. You may adjust only the target paper's diagnostic scores. Do not modify, reinterpret, or rescore the comparator papers. The benchmark remains fixed while scoring the target paper.
+
+2. backfill_cluster or affected_neighborhood
+This mode is an explicit admin backfill job. It may update the current paper being processed as part of a cluster or neighborhood recalibration version. Existing comparator papers may be separately processed by the same admin job, but each call returns calibration only for the target paper in that call.
+
 Your task is only to check whether the target's three diagnostic scores are calibrated consistently against nearby reviewed papers:
 - inputStrengthScore
 - constructionStrengthScore
@@ -668,6 +687,10 @@ Compare the target against the provided comparators. Consider:
 - whether output scores are consistent for similarly central, valid, invalid, broad, narrow, or framework-dependent outputs;
 - whether framework dependence is treated consistently;
 - whether failed outputs and surviving correct contributions are treated consistently.
+
+A prior paper may receive modest calibrated credit when it contains a correct equation, relation, transformation, method, or calculation that a later nearby paper shows to be structurally meaningful. Credit only the correct relation actually present in the prior paper. Do not credit the prior paper for the later paper's construction, framework, unification, or outputs.
+
+This can raise Output Strength or Construction Strength modestly if justified, but should not transform a weak intrinsic paper into a major contribution unless the prior paper itself already established major correct structure.
 
 You may adjust only those three diagnostic scores. Use 0.5-point increments on the 0-10 scale, including 0. Do not treat 1 as a minimum score. Do not output a free final score. Do not output a direct score adjustment. The application computes any public 0-100 score from the calibrated diagnostics.
 
@@ -1923,14 +1946,22 @@ function defaultDiagnosticComparatorCalibration(
   status: ComparatorCalibrationStatus,
   rationale: string,
   comparatorIds: string[] = [],
+  calibrationMode: CalibrationMode = "none",
+  modifiedPaperIds: string[] = [],
 ): DiagnosticComparatorCalibration {
+  const existingPapersModified = calibrationMode === "backfill_cluster" || calibrationMode === "affected_neighborhood";
   return {
     comparatorCalibrationStatus: status,
+    calibrationMode,
+    calibrationVersion: calibrationMode === "none" ? "" : BENCHMARK_SET_VERSION,
     comparatorRunId: null,
     comparatorModel: null,
     comparatorPromptHash: null,
     comparatorIds,
     comparatorRetrievalMethod: "canonical-profile-token-overlap-k8",
+    targetOnly: calibrationMode === "target_only",
+    existingPapersModified,
+    modifiedPaperIds: existingPapersModified ? modifiedPaperIds : [],
     comparatorContextIncluded: comparatorIds.length > 0,
     calibrationContextIncluded: false,
     calibratedInputStrengthScore: null,
@@ -4639,11 +4670,16 @@ function compactComparatorProfileForCalibration(candidate: ReviewComparatorConte
 function buildDiagnosticComparatorCalibrationInput(
   targetProfile: Record<string, unknown>,
   comparatorContext: ReviewComparatorContextItem[],
+  calibrationMode: CalibrationMode,
 ): string {
   return JSON.stringify({
     calibrationStage: "post_intrinsic_diagnostic_only",
-    instruction:
-      "Compare the target intrinsic diagnostic profile to the nearest comparator profiles. Adjust only inputStrengthScore, constructionStrengthScore, and outputStrengthScore if needed. Do not output a final score or additive adjustment.",
+    calibrationMode,
+    targetOnly: calibrationMode === "target_only",
+    existingPapersModified: calibrationMode === "backfill_cluster" || calibrationMode === "affected_neighborhood",
+    instruction: calibrationMode === "target_only"
+      ? "Compare the target intrinsic diagnostic profile to the nearest fixed comparator profiles. Adjust only the target paper's inputStrengthScore, constructionStrengthScore, and outputStrengthScore if needed. Do not modify, reinterpret, or rescore the comparator papers. Do not output a final score or additive adjustment."
+      : "Compare the target intrinsic diagnostic profile to the nearest comparator profiles as part of an explicit admin backfill or affected-neighborhood calibration job. Return calibrated diagnostics only for this target paper call; other papers must be processed by their own calls. Do not output a final score or additive adjustment.",
     targetPaper: targetProfile,
     nearestComparators: comparatorContext.map(compactComparatorProfileForCalibration),
   }, null, 2);
@@ -4680,8 +4716,11 @@ function normalizeDiagnosticComparatorCalibrationResult(
   targetScores: Record<DiagnosticScoreKey, number>,
   comparatorContext: ReviewComparatorContextItem[],
   comparatorRunId: string,
+  calibrationMode: CalibrationMode,
+  modifiedPaperIds: string[] = [],
 ): DiagnosticComparatorCalibration {
   const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  const existingPapersModified = calibrationMode === "backfill_cluster" || calibrationMode === "affected_neighborhood";
   const calibratedScores: Record<DiagnosticScoreKey, number> = {
     inputStrengthScore: normalizeDiagnosticSubscore(source.calibratedInputStrengthScore, targetScores.inputStrengthScore),
     constructionStrengthScore: normalizeDiagnosticSubscore(source.calibratedConstructionStrengthScore, targetScores.constructionStrengthScore),
@@ -4694,11 +4733,16 @@ function normalizeDiagnosticComparatorCalibrationResult(
   ]);
   return {
     comparatorCalibrationStatus: "applied",
+    calibrationMode,
+    calibrationVersion: BENCHMARK_SET_VERSION,
     comparatorRunId,
     comparatorModel: GEMINI_CALIBRATION_MODEL,
     comparatorPromptHash: DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT_HASH,
     comparatorIds: comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
     comparatorRetrievalMethod: "canonical-profile-token-overlap-k8",
+    targetOnly: calibrationMode === "target_only",
+    existingPapersModified,
+    modifiedPaperIds: existingPapersModified ? modifiedPaperIds : [],
     comparatorContextIncluded: true,
     calibrationContextIncluded: true,
     calibratedInputStrengthScore: calibratedScores.inputStrengthScore,
@@ -4715,6 +4759,8 @@ async function runDiagnosticComparatorCalibration(
   targetProfile: Record<string, unknown>,
   comparatorContext: ReviewComparatorContextItem[],
   inputAuditHashes?: { textHash: string; pdfHash: string | null },
+  calibrationMode: CalibrationMode = "target_only",
+  modifiedPaperIds: string[] = [],
 ): Promise<{ calibration: DiagnosticComparatorCalibration; audit: ReviewRunAuditEntry; thinkingText: string | null }> {
   const targetScores: Record<DiagnosticScoreKey, number> = {
     inputStrengthScore: normalizeDiagnosticSubscore(targetProfile.inputStrengthScore),
@@ -4724,7 +4770,7 @@ async function runDiagnosticComparatorCalibration(
   const comparatorRunId = randomUUID();
   const { parsed, thinkingText, requestId, usage } = await callGemini(
     DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT,
-    buildDiagnosticComparatorCalibrationInput(targetProfile, comparatorContext),
+    buildDiagnosticComparatorCalibrationInput(targetProfile, comparatorContext, calibrationMode),
     GEMINI_CALIBRATION_MODEL,
     {
       maxOutputTokens: 8192,
@@ -4732,7 +4778,7 @@ async function runDiagnosticComparatorCalibration(
       temperature: 0.1,
     },
   );
-  const calibration = normalizeDiagnosticComparatorCalibrationResult(parsed, targetScores, comparatorContext, comparatorRunId);
+  const calibration = normalizeDiagnosticComparatorCalibrationResult(parsed, targetScores, comparatorContext, comparatorRunId, calibrationMode, modifiedPaperIds);
   const audit: ReviewRunAuditEntry = {
     reviewRunId: comparatorRunId,
     paperId: null,
@@ -4747,6 +4793,11 @@ async function runDiagnosticComparatorCalibration(
     comparatorContextIncluded: true,
     adjudicatorContextIncluded: false,
     calibrationContextIncluded: true,
+    calibrationMode,
+    calibrationVersion: BENCHMARK_SET_VERSION,
+    targetOnly: calibration.targetOnly,
+    existingPapersModified: calibration.existingPapersModified,
+    modifiedPaperIds: calibration.modifiedPaperIds,
     textHash: inputAuditHashes?.textHash ?? "",
     pdfHash: inputAuditHashes?.pdfHash ?? null,
     inputTokenCount: usage.inputTokenCount,
@@ -4786,6 +4837,8 @@ function applyDiagnosticComparatorCalibration(
 export async function recalibrateCanonicalReviewWithComparators(
   canonicalReview: unknown,
   comparatorContext: ReviewComparatorContextItem[],
+  calibrationMode: CalibrationMode = "backfill_cluster",
+  modifiedPaperIds: string[] = [],
 ) {
   if (comparatorContext.length < 3) {
     return {
@@ -4793,12 +4846,20 @@ export async function recalibrateCanonicalReviewWithComparators(
         "insufficient_comparators",
         "Comparator backfill did not find enough nearest reviewed comparators.",
         comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+        calibrationMode,
+        modifiedPaperIds,
       ),
       thinkingText: null,
     };
   }
   const targetProfile = canonicalDiagnosticProfileFromUnknown(canonicalReview);
-  const { calibration, thinkingText } = await runDiagnosticComparatorCalibration(targetProfile, comparatorContext);
+  const { calibration, thinkingText } = await runDiagnosticComparatorCalibration(
+    targetProfile,
+    comparatorContext,
+    undefined,
+    calibrationMode,
+    modifiedPaperIds,
+  );
   return {
     calibration,
     thinkingText: thinkingText ? `Comparator calibration (${GEMINI_CALIBRATION_MODEL})\n${thinkingText}` : null,
@@ -5484,6 +5545,8 @@ async function generateMultiPassReview(
       diagnosticComparatorCalibration: defaultDiagnosticComparatorCalibration(
         "not_run_benchmark_ingestion",
         "Benchmark ingestion mode stores the blind intrinsic profile only. Comparator calibration is run later by benchmark backfill.",
+        [],
+        "none",
       ),
       finalScoreBand: aggregateReview.blindIntrinsicScoreBand,
       adminComparatorNotes: "Benchmark ingestion mode: comparator calibration not run.",
@@ -5501,6 +5564,7 @@ async function generateMultiPassReview(
         "insufficient_comparators",
         "Not enough sufficiently close benchmark comparators were available; public score falls back to the intrinsic score.",
         comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+        "target_only",
       ),
       finalScoreBand: aggregateReview.blindIntrinsicScoreBand,
       adminComparatorNotes: "Comparator calibration unavailable: fewer than 3 close benchmark comparators found.",
@@ -5512,6 +5576,7 @@ async function generateMultiPassReview(
         targetProfile,
         comparatorContext,
         inputAuditHashes,
+        "target_only",
       );
       comparatorAuditEntries.push(audit);
       aggregateReview = applyDiagnosticComparatorCalibration(aggregateReview, calibration);
@@ -5553,6 +5618,7 @@ async function generateMultiPassReview(
           "failed",
           `Comparator calibration failed; public score falls back to the intrinsic score. ${errorMessage(reason)}`,
           comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+          "target_only",
         ),
         adminComparatorNotes: `Comparator calibration failed: ${errorMessage(reason)}`,
       };
@@ -5586,12 +5652,14 @@ async function generateMultiPassReview(
 export async function recalibrateStoredAggregateWithComparators(
   aggregateInput: unknown,
   comparatorContext: ReviewComparatorContextItem[],
+  calibrationMode: CalibrationMode = "backfill_cluster",
+  modifiedPaperIds: string[] = [],
 ) {
   const aggregate = aggregateInput && typeof aggregateInput === "object"
     ? (aggregateInput as AggregateReview)
     : null;
   if (!aggregate?.comparatorProfile || !aggregate?.blindIntrinsicScoreBand) {
-    const fallback = await recalibrateCanonicalReviewWithComparators(aggregateInput, comparatorContext);
+    const fallback = await recalibrateCanonicalReviewWithComparators(aggregateInput, comparatorContext, calibrationMode, modifiedPaperIds);
     return {
       aggregate: {
         ...(aggregateInput && typeof aggregateInput === "object" ? aggregateInput as Record<string, unknown> : {}),
@@ -5606,6 +5674,8 @@ export async function recalibrateStoredAggregateWithComparators(
       "insufficient_comparators",
       "Comparator backfill did not find enough nearest reviewed comparators; score remains intrinsic.",
       comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
+      calibrationMode,
+      modifiedPaperIds,
     );
     const updatedAggregate: AggregateReview = {
       ...aggregate,
@@ -5625,6 +5695,9 @@ export async function recalibrateStoredAggregateWithComparators(
   const { calibration, thinkingText } = await runDiagnosticComparatorCalibration(
     canonicalDiagnosticProfileFromAggregate(aggregate),
     comparatorContext,
+    undefined,
+    calibrationMode,
+    modifiedPaperIds,
   );
   const updatedAggregate: AggregateReview = {
     ...applyDiagnosticComparatorCalibration(aggregate, calibration),
@@ -5707,11 +5780,16 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
       ? BENCHMARK_SET_VERSION
       : BENCHMARK_SET_VERSION,
     comparatorCalibrationStatus,
+    calibrationMode: diagnosticCalibration.calibrationMode,
+    calibrationVersion: diagnosticCalibration.calibrationVersion,
     comparatorRunId: diagnosticCalibration.comparatorRunId,
     comparatorModel: diagnosticCalibration.comparatorModel,
     comparatorPromptHash: diagnosticCalibration.comparatorPromptHash,
     comparatorIds: diagnosticCalibration.comparatorIds,
     comparatorRetrievalMethod: diagnosticCalibration.comparatorRetrievalMethod,
+    targetOnly: diagnosticCalibration.targetOnly,
+    existingPapersModified: diagnosticCalibration.existingPapersModified,
+    modifiedPaperIds: diagnosticCalibration.modifiedPaperIds,
     comparatorContextIncluded: diagnosticCalibration.comparatorContextIncluded,
     calibrationContextIncluded: diagnosticCalibration.calibrationContextIncluded,
     calibratedInputStrengthScore: diagnosticCalibration.calibratedInputStrengthScore,
@@ -5726,6 +5804,10 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     blindingStrength,
     usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
+    intrinsicInputStrengthScore: canonicalReview.inputStrengthScore,
+    intrinsicConstructionStrengthScore: canonicalReview.constructionStrengthScore,
+    intrinsicOutputStrengthScore: canonicalReview.outputStrengthScore,
+    intrinsicScore: canonicalReview.intrinsicScore,
     ...canonicalReview,
     finalScore: publicScore,
     diagnosticScoreFormula: "10 * average(inputStrengthScore, constructionStrengthScore, outputStrengthScore)",

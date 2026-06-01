@@ -216,6 +216,11 @@ function compactPassAuditEntry(entry: any) {
     comparatorContextIncluded: entry?.comparatorContextIncluded === true,
     adjudicatorContextIncluded: entry?.adjudicatorContextIncluded === true,
     calibrationContextIncluded: entry?.calibrationContextIncluded === true,
+    calibrationMode: typeof entry?.calibrationMode === "string" ? entry.calibrationMode : null,
+    calibrationVersion: typeof entry?.calibrationVersion === "string" ? entry.calibrationVersion : null,
+    targetOnly: entry?.targetOnly === true,
+    existingPapersModified: entry?.existingPapersModified === true,
+    modifiedPaperIds: Array.isArray(entry?.modifiedPaperIds) ? entry.modifiedPaperIds.filter((id: unknown) => typeof id === "string") : [],
     textHash: typeof entry?.textHash === "string" ? entry.textHash : null,
     pdfHash: typeof entry?.pdfHash === "string" ? entry.pdfHash : null,
     inputTokenCount: typeof entry?.inputTokenCount === "number" ? entry.inputTokenCount : null,
@@ -693,11 +698,16 @@ router.post("/papers/comparator-backfill", async (req, res) => {
       typeof req.body?.benchmarkSetVersion === "string" && req.body.benchmarkSetVersion.trim()
         ? req.body.benchmarkSetVersion.trim()
         : BENCHMARK_SET_VERSION;
+    const calibrationMode =
+      req.body?.calibrationMode === "affected_neighborhood"
+        ? "affected_neighborhood"
+        : "backfill_cluster";
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map((review) => [review.paperId, review]));
     let updated = 0;
     let skipped = 0;
+    const modifiedPaperIds: string[] = [];
     const errors: { paperId: string; title: string; error: string }[] = [];
 
     for (const paper of papers) {
@@ -734,6 +744,8 @@ router.post("/papers/comparator-backfill", async (req, res) => {
 	        const { aggregate: updatedAggregate, thinkingText } = await recalibrateStoredAggregateWithComparators(
 	          aggregate,
 	          comparatorContext,
+            calibrationMode,
+            [paper.id],
 	        );
 	        const updatedAggregateAny = updatedAggregate && typeof updatedAggregate === "object" ? updatedAggregate as Record<string, any> : {};
 	        const diagnosticCalibration = updatedAggregateAny.diagnosticComparatorCalibration ?? null;
@@ -763,11 +775,16 @@ router.post("/papers/comparator-backfill", async (req, res) => {
 	          ...(storedComparatorCalibration ? { comparatorCalibration: storedComparatorCalibration } : {}),
           diagnosticComparatorCalibration: diagnosticCalibration,
           comparatorCalibrationStatus: diagnosticCalibration?.comparatorCalibrationStatus ?? storedComparatorCalibration?.comparatorCalibrationStatus ?? "insufficient_comparators",
+          calibrationMode: diagnosticCalibration?.calibrationMode ?? calibrationMode,
+          calibrationVersion: diagnosticCalibration?.calibrationVersion ?? benchmarkSetVersion,
           comparatorRunId: diagnosticCalibration?.comparatorRunId ?? null,
           comparatorModel: diagnosticCalibration?.comparatorModel ?? null,
           comparatorPromptHash: diagnosticCalibration?.comparatorPromptHash ?? null,
           comparatorIds: diagnosticCalibration?.comparatorIds ?? comparatorContext.map((candidate, index) => candidate.comparatorId || `C${index + 1}`),
           comparatorRetrievalMethod: diagnosticCalibration?.comparatorRetrievalMethod ?? "canonical-profile-token-overlap-k8",
+          targetOnly: diagnosticCalibration?.targetOnly ?? false,
+          existingPapersModified: diagnosticCalibration?.existingPapersModified ?? true,
+          modifiedPaperIds: diagnosticCalibration?.modifiedPaperIds ?? [paper.id],
           comparatorContextIncluded: comparatorContext.length > 0,
           calibrationContextIncluded: diagnosticCalibration?.calibrationContextIncluded ?? false,
           calibratedInputStrengthScore: diagnosticCalibration?.calibratedInputStrengthScore ?? null,
@@ -798,16 +815,17 @@ router.post("/papers/comparator-backfill", async (req, res) => {
             thinkingText: [review.thinkingText, thinkingText].filter(Boolean).join("\n\n---\n\n") || review.thinkingText,
           })
           .where(eq(reviewsTable.id, review.id));
-        await db.update(papersTable)
-          .set({ score: finalScore })
-          .where(eq(papersTable.id, paper.id));
-        updated += 1;
+	        await db.update(papersTable)
+	          .set({ score: finalScore })
+	          .where(eq(papersTable.id, paper.id));
+	        updated += 1;
+        modifiedPaperIds.push(paper.id);
       } catch (err: any) {
         errors.push({ paperId: paper.id, title: paper.title, error: err?.message ?? String(err) });
       }
     }
 
-    res.json({ updated, skipped, errors });
+    res.json({ updated, skipped, errors, benchmarkSetVersion, calibrationMode, modifiedPaperIds });
   } catch (err: any) {
     logger.error({ err }, "Comparator backfill failed");
     res.status(500).json({ error: err.message });
@@ -871,6 +889,9 @@ router.get("/papers/export", async (req, res) => {
           technicalAssessment: coverageLedger.technicalAssessment ?? null,
           failureAnalysis: coverageLedger.failureAnalysis ?? null,
           organicCohortProfile: coverageLedger.organicCohortProfile ?? null,
+          intrinsicInputStrengthScore: coverageLedger.intrinsicInputStrengthScore ?? coverageLedger.inputStrengthScore ?? null,
+          intrinsicConstructionStrengthScore: coverageLedger.intrinsicConstructionStrengthScore ?? coverageLedger.constructionStrengthScore ?? null,
+          intrinsicOutputStrengthScore: coverageLedger.intrinsicOutputStrengthScore ?? coverageLedger.outputStrengthScore ?? null,
           intrinsicScore: coverageLedger.intrinsicScore ?? coverageLedger.finalScore ?? r.overallIntrinsicScore ?? r.score ?? null,
           rawDiagnosticScore: coverageLedger.rawDiagnosticScore ?? coverageLedger.rawFinalDiagnosticScore ?? null,
           computedScore: coverageLedger.computedScore ?? coverageLedger.intrinsicScore ?? coverageLedger.finalScore ?? r.overallIntrinsicScore ?? r.score ?? null,
@@ -881,6 +902,12 @@ router.get("/papers/export", async (req, res) => {
           calibratedScore: comparatorCalibrationRan ? coverageLedger.calibratedScore ?? null : null,
           diagnosticChanges: comparatorCalibrationRan ? coverageLedger.diagnosticChanges ?? [] : [],
           calibrationRationale: comparatorCalibrationRan ? coverageLedger.calibrationRationale ?? "" : "",
+          calibrationMode: coverageLedger.calibrationMode ?? "none",
+          calibrationVersion: coverageLedger.calibrationVersion ?? null,
+          comparatorIds: coverageLedger.comparatorIds ?? [],
+          targetOnly: coverageLedger.targetOnly ?? false,
+          existingPapersModified: coverageLedger.existingPapersModified ?? false,
+          modifiedPaperIds: coverageLedger.modifiedPaperIds ?? [],
           diagnosticScoreFormula: coverageLedger.diagnosticScoreFormula ?? null,
           publicMagnitudeLabel: coverageLedger.publicMagnitudeLabel ?? coverageLedger.bestClassification ?? r.bestClassification ?? null,
           diagnosticAssessmentConfidence: coverageLedger.diagnosticAssessmentConfidence ?? coverageLedger.scoreConfidence ?? null,
@@ -911,6 +938,8 @@ router.get("/papers/export", async (req, res) => {
             finalConstructionStrengthScore: coverageLedger.finalConstructionStrengthScore ?? null,
             finalOutputStrengthScore: coverageLedger.finalOutputStrengthScore ?? null,
             comparatorCalibrationStatus: coverageLedger.comparatorCalibrationStatus ?? null,
+            calibrationMode: coverageLedger.calibrationMode ?? "none",
+            calibrationVersion: coverageLedger.calibrationVersion ?? null,
             comparatorRunId: comparatorCalibrationRan ? coverageLedger.comparatorRunId ?? null : null,
             comparatorModel: comparatorCalibrationRan ? coverageLedger.comparatorModel ?? null : null,
             comparatorPromptHash: comparatorCalibrationRan ? coverageLedger.comparatorPromptHash ?? null : null,
@@ -1037,10 +1066,15 @@ router.get("/papers/export", async (req, res) => {
           blindPassScores: adjudication?.individualScores ?? aggregate?.individualScores ?? [],
           passDisagreement: adjudication?.passDisagreement ?? adjudication?.scoreRange ?? aggregate?.passDisagreement ?? null,
           scoreStability: adjudication?.scoreStability ?? aggregate?.scoreStability ?? coverageLedger?.scoreStability ?? null,
-          adjudicatorRating: aggregate?.adjudicatorRating ?? coverageLedger?.adjudicatorRating ?? coverageLedger?.blindIntrinsicScoreBand?.median ?? null,
-	          comparatorCalibrationStatus,
-	          calibrationAdjustment: comparatorCalibrationApplied ? comparatorCalibration?.calibrationAdjustment ?? null : null,
-	          finalCalibratedScore: finalScoreBand?.median ?? r.overallIntrinsicScore ?? r.score ?? null,
+	          adjudicatorRating: aggregate?.adjudicatorRating ?? coverageLedger?.adjudicatorRating ?? coverageLedger?.blindIntrinsicScoreBand?.median ?? null,
+		          comparatorCalibrationStatus,
+		          calibrationMode: coverageLedger?.calibrationMode ?? diagnosticComparatorCalibration?.calibrationMode ?? (comparatorCalibrationApplied ? "target_only" : "none"),
+		          calibrationVersion: coverageLedger?.calibrationVersion ?? diagnosticComparatorCalibration?.calibrationVersion ?? null,
+		          targetOnly: coverageLedger?.targetOnly ?? diagnosticComparatorCalibration?.targetOnly ?? comparatorCalibrationApplied,
+		          existingPapersModified: coverageLedger?.existingPapersModified ?? diagnosticComparatorCalibration?.existingPapersModified ?? false,
+		          modifiedPaperIds: coverageLedger?.modifiedPaperIds ?? diagnosticComparatorCalibration?.modifiedPaperIds ?? [],
+		          calibrationAdjustment: comparatorCalibrationApplied ? comparatorCalibration?.calibrationAdjustment ?? null : null,
+		          finalCalibratedScore: finalScoreBand?.median ?? r.overallIntrinsicScore ?? r.score ?? null,
 	          calibratedInputStrengthScore: comparatorCalibrationApplied ? coverageLedger?.calibratedInputStrengthScore ?? diagnosticComparatorCalibration?.calibratedInputStrengthScore ?? null : null,
 	          calibratedConstructionStrengthScore: comparatorCalibrationApplied ? coverageLedger?.calibratedConstructionStrengthScore ?? diagnosticComparatorCalibration?.calibratedConstructionStrengthScore ?? null : null,
 	          calibratedOutputStrengthScore: comparatorCalibrationApplied ? coverageLedger?.calibratedOutputStrengthScore ?? diagnosticComparatorCalibration?.calibratedOutputStrengthScore ?? null : null,
@@ -1049,6 +1083,10 @@ router.get("/papers/export", async (req, res) => {
 	          diagnosticChanges: comparatorCalibrationApplied ? coverageLedger?.diagnosticChanges ?? diagnosticComparatorCalibration?.diagnosticChanges ?? [] : [],
 	          calibrationRationale: comparatorCalibrationApplied ? coverageLedger?.calibrationRationale ?? diagnosticComparatorCalibration?.calibrationRationale ?? "" : "",
           localCohort: coverageLedger?.finalLocalCohort ?? coverageLedger?.localCohort ?? aggregate?.finalLocalCohort ?? comparatorProfile?.localCohort ?? null,
+          intrinsicInputStrengthScore: coverageLedger?.intrinsicInputStrengthScore ?? coverageLedger?.inputStrengthScore ?? aggregate?.inputStrengthScore ?? null,
+          intrinsicConstructionStrengthScore: coverageLedger?.intrinsicConstructionStrengthScore ?? coverageLedger?.constructionStrengthScore ?? aggregate?.constructionStrengthScore ?? null,
+          intrinsicOutputStrengthScore: coverageLedger?.intrinsicOutputStrengthScore ?? coverageLedger?.outputStrengthScore ?? aggregate?.outputStrengthScore ?? null,
+          intrinsicScore: coverageLedger?.intrinsicScore ?? coverageLedger?.computedScore ?? r.overallIntrinsicScore ?? r.score ?? null,
           inputStrengthScore: coverageLedger?.inputStrengthScore ?? aggregate?.inputStrengthScore ?? null,
           constructionStrengthScore: coverageLedger?.constructionStrengthScore ?? aggregate?.constructionStrengthScore ?? null,
           outputStrengthScore: coverageLedger?.outputStrengthScore ?? aggregate?.outputStrengthScore ?? null,
