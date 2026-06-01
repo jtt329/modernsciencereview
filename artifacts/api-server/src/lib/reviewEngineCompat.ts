@@ -653,7 +653,7 @@ Compare the target against the provided comparators. Consider:
 - whether framework dependence is treated consistently;
 - whether failed outputs and surviving correct contributions are treated consistently.
 
-You may adjust only those three diagnostic scores. Use 0.5-point increments on the 0-10 scale. Do not output a free final score. Do not output a direct score adjustment. The application computes any public 0-100 score from the calibrated diagnostics.
+You may adjust only those three diagnostic scores. Use 0.5-point increments on the 0-10 scale, including 0. Do not treat 1 as a minimum score. Do not output a free final score. Do not output a direct score adjustment. The application computes any public 0-100 score from the calibrated diagnostics.
 
 Return exactly this JSON object:
 {

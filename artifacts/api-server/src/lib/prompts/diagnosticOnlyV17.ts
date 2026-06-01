@@ -157,6 +157,37 @@ If a central physical model fails, identify any substantial correct contribution
 
 Do not justify high diagnostic subscores using later influence, later field growth, or descendant work. Justification must point to correct content actually present in the manuscript.
 
+Diagnostic subscore floor
+-------------------------
+
+Diagnostic subscores run from 0 to 10 in 0.5 increments.
+
+Use 0 when no correct, relevant, manuscript-contained contribution survives on that diagnostic dimension.
+
+Use 0.5-1 when almost nothing survives: at most a confused fragment, unusable gesture, or severely invalid construction/output.
+
+Use 1.5-2.5 when there is a very weak but real surviving contribution, such as a correct but trivial algebraic relation, limited calculation, or minor technical observation.
+
+Use 3-4 for limited but recognizable contribution.
+
+Use higher values only when the dimension has real scientific, explanatory, technical, empirical, or methodological strength.
+
+Do not treat 1 as the minimum. It is a real score meaning "almost none."
+
+Input Strength should not simply rate the prestige or importance of background theories named by the manuscript. It should rate the grounding, relevance, and correct use of the primitive inputs as deployed in the manuscript's contribution chain.
+
+If a manuscript cites strong inputs but fundamentally misinterprets or misuses them, Input Strength should be reduced.
+
+If a manuscript uses strong inputs correctly but produces only a weak construction/output, Input Strength may remain high while Construction Strength and Output Strength remain low.
+
+A wrong interpretation does not erase a correct equation, relation, transformation, or method. Credit correct surviving structure when it is nontrivial, reusable, hard-to-vary, independently explanatory, or later interpretable inside a stronger framework. Do not give much credit if the surviving structure is merely a trivial algebraic restatement with no demonstrated role inside the manuscript.
+
+Examples:
+- A fully failed paper with no correct construction or output may have constructionStrengthScore = 0 and outputStrengthScore = 0.
+- A paper that cites strong physics but misuses it badly may also have low inputStrengthScore.
+- A paper that correctly derives a limited algebraic relation from strong inputs may have high inputStrengthScore, low-but-nonzero constructionStrengthScore, and low-but-nonzero outputStrengthScore.
+- For such a paper, scores like 8 / 2 / 2 should compute to 40. If the system believes the paper should be lower, it must lower the diagnostics themselves, not apply a final-score override.
+
 Layer-specific generality
 -------------------------
 
@@ -180,7 +211,7 @@ Hard-to-vary structure matters. Ask whether each introduced construction is forc
 Diagnostic subscores
 --------------------
 
-Use these three 0-10 diagnostic subscores as the only quantitative judgments you return. Assign them independently from the Input -> Construction -> Output assessment. Do not try to infer, optimize, or reverse-engineer a final 0-100 score.
+Use these three 0-10 diagnostic subscores, in 0.5 increments, as the only quantitative judgments you return. Zero is allowed. Assign them independently from the Input -> Construction -> Output assessment. Do not try to infer, optimize, or reverse-engineer a final 0-100 score.
 
 1. inputStrengthScore
    Display label: Input Strength.
@@ -203,7 +234,7 @@ Subscore calibration:
 - 9: rare, exceptional strength with strong depth and support.
 - 10: truly outstanding and potentially field-shaping on that diagnostic dimension.
 
-Use the full range. Do not default missing subscores to 10. If a subscore is uncertain, assign the best estimate and explain uncertainty.
+Use the full range, including 0. Do not default missing subscores to 10. Do not clamp weak dimensions upward to 1. If a subscore is uncertain, assign the best estimate and explain uncertainty.
 
 If all three diagnostic subscores are 9 or 10, the manuscript should be genuinely exceptional on all three dimensions. Do not output 10/10 across all three diagnostic subscores unless the manuscript is genuinely outstanding in input strength, construction strength, and output strength.
 
