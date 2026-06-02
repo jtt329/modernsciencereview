@@ -3631,6 +3631,19 @@ Return exactly this JSON object:
   "estimatedPageCount": null
 }`;
 
+const PDF_EXTRACTION_FALLBACK_PLAIN_TEXT_PROMPT = String.raw`You are an extraction step, not a scientific reviewer.
+
+Read the attached scientific manuscript PDF and return clean manuscript text for a later blinded review.
+
+Rules:
+- Return plain text only, not JSON and not Markdown fences.
+- Preserve scientific content, section headings, equations, definitions, derivations, tables when text-readable, and references/bibliography markers.
+- Omit or redact title, author names, affiliations, emails, venue/journal metadata, acknowledgments that identify authors, and date/citation/reception signals when possible.
+- Do not evaluate the paper.
+- Do not summarize the paper.
+- Do not add content that is not present in the PDF.
+- If a page or equation is unreadable, include a short bracketed note such as [unreadable equation] at that location.`;
+
 export async function extractManuscriptTextFromPdfForReview(input: {
   pdfBase64: string;
   mimeType?: string;
@@ -3640,24 +3653,46 @@ export async function extractManuscriptTextFromPdfForReview(input: {
     input.textHint?.trim(),
     "Extract the full manuscript text from the attached PDF for later blinded review.",
   ].filter(Boolean).join("\n\n");
-  const response = await callGemini(
-    PDF_EXTRACTION_FALLBACK_PROMPT,
-    {
-      text: promptText,
-      pdfBase64: input.pdfBase64,
-      mimeType: input.mimeType || "application/pdf",
-    },
-    GEMINI_METADATA_MODEL,
-    { maxOutputTokens: 65536, temperature: 0 },
-  );
-  const parsed = response.parsed && typeof response.parsed === "object"
-    ? response.parsed as Record<string, unknown>
-    : {};
-  return {
-    manuscriptText: firstString([parsed.manuscriptText]),
-    extractionNotes: firstStringArray([parsed.extractionNotes]),
-    estimatedPageCount: asOptionalNumber(parsed.estimatedPageCount, 0) ?? null,
+  const reviewInput = {
+    text: promptText,
+    pdfBase64: input.pdfBase64,
+    mimeType: input.mimeType || "application/pdf",
   };
+  try {
+    const response = await callGemini(
+      PDF_EXTRACTION_FALLBACK_PROMPT,
+      reviewInput,
+      GEMINI_METADATA_MODEL,
+      { maxOutputTokens: 65536, temperature: 0 },
+    );
+    const parsed = response.parsed && typeof response.parsed === "object"
+      ? response.parsed as Record<string, unknown>
+      : {};
+    return {
+      manuscriptText: firstString([parsed.manuscriptText]),
+      extractionNotes: firstStringArray([parsed.extractionNotes]),
+      estimatedPageCount: asOptionalNumber(parsed.estimatedPageCount, 0) ?? null,
+    };
+  } catch (error) {
+    logger.warn({
+      err: error,
+      errorMessage: errorMessage(error),
+      model: GEMINI_METADATA_MODEL,
+    }, "Structured PDF extraction fallback failed; retrying as plain text");
+    const response = await callGeminiPlainText(
+      PDF_EXTRACTION_FALLBACK_PLAIN_TEXT_PROMPT,
+      reviewInput,
+      GEMINI_METADATA_MODEL,
+      { maxOutputTokens: 65536, temperature: 0 },
+    );
+    return {
+      manuscriptText: response.text,
+      extractionNotes: [
+        "Structured PDF extraction JSON failed; plain-text PDF extraction fallback was used.",
+      ],
+      estimatedPageCount: null,
+    };
+  }
 }
 
 async function callGpt(prompt: string, input: ReviewInput) {
@@ -3728,6 +3763,36 @@ async function callGemini(
     }
     throw error;
   }
+}
+
+async function callGeminiPlainText(
+  prompt: string,
+  input: ReviewInput,
+  geminiModel = GEMINI_METADATA_MODEL,
+  options?: { maxOutputTokens?: number; temperature?: number },
+) {
+  return withModelRetries(geminiModel, async () => {
+    const response = await geminiAI.models.generateContent({
+      model: geminiModel,
+      contents: [{ role: "user", parts: reviewInputParts(input) }],
+      config: {
+        systemInstruction: prompt,
+        temperature: options?.temperature ?? 0,
+        maxOutputTokens: options?.maxOutputTokens ?? 32768,
+      } as any,
+    });
+    const text = response.text?.trim();
+    if (!text) throw new Error("No plain-text response from Gemini model.");
+    const usage = (response as any).usageMetadata ?? null;
+    return {
+      text,
+      requestId: (response as any).responseId ?? (response as any).id ?? null,
+      usage: {
+        inputTokenCount: typeof usage?.promptTokenCount === "number" ? usage.promptTokenCount : null,
+        outputTokenCount: typeof usage?.candidatesTokenCount === "number" ? usage.candidatesTokenCount : null,
+      },
+    };
+  });
 }
 
 async function runModel(prompt: string, input: ReviewInput, model: ReviewModel, geminiModel = GEMINI_META_MODEL) {

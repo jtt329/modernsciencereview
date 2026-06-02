@@ -9,4 +9,7 @@ export interface ReviewSource {
   fileName?: string;
   pdfUrl?: string;
   displayPdf?: boolean;
+  forceFreshReview?: boolean;
+  reuseExistingReview?: boolean;
+  pdfVisibleFallback?: boolean;
 }

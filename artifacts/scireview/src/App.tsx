@@ -296,6 +296,7 @@ export default function App() {
       window.history.pushState({}, '', paperPath(data.paper.id));
       setSelectedPaperId(data.paper.id);
     }
+    return data;
   };
 
   const handleLikePaper = async (paperId: string, e: React.MouseEvent) => {

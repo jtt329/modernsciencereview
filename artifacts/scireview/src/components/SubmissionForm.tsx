@@ -5,7 +5,7 @@ import { useDropzone } from 'react-dropzone';
 import { ReviewSource, ReviewModel, ReviewMode } from '../services/reviewService';
 
 interface SubmissionFormProps {
-  onSubmit: (source: ReviewSource, skipSelect?: boolean) => Promise<void>;
+  onSubmit: (source: ReviewSource, skipSelect?: boolean) => Promise<any>;
   onClose: () => void;
   isAdmin?: boolean;
 }
@@ -15,6 +15,10 @@ interface QueuedFile {
   file: File;
   status: 'pending' | 'processing' | 'done' | 'error';
   error?: string;
+  attempt?: any;
+  manualText?: string;
+  showManualText?: boolean;
+  usePdfVisibleFallback?: boolean;
 }
 
 const MAX_QUEUED_PDFS = 50;
@@ -88,6 +92,29 @@ function stageLabel(stageName: string | null | undefined) {
   }
 }
 
+function failureStatusLabel(value: string | null | undefined) {
+  switch (value) {
+    case 'completed':
+      return 'Completed';
+    case 'failed_extraction_truncated':
+      return 'Extraction truncated';
+    case 'failed_pdf_fallback_json':
+      return 'PDF fallback helper JSON failed';
+    case 'failed_review_json':
+      return 'Review JSON failed';
+    case 'failed_validation':
+      return 'Validation failed';
+    case 'retryable':
+      return 'Retryable';
+    case 'needs_manual_repair':
+      return 'Needs manual repair';
+    case 'superseded':
+      return 'Superseded';
+    default:
+      return value || '';
+  }
+}
+
 function shortAttemptError(message: string) {
   const withoutRetryNoise = message
     .replace(/For more information on this error, head to:\s*https?:\/\/\S+/gi, '')
@@ -105,12 +132,13 @@ function friendlySubmissionError(err: unknown) {
   }
   if (attempt && typeof attempt === 'object') {
     const stage = stageLabel(attempt.stageName);
+    const failureStatus = failureStatusLabel(attempt.failureStatus);
     const suffix = attempt.retryable ? ' Retryable.' : '';
     const helperPrefix = attempt.stageType === 'helper' ? `${stage} failed` : `${stage} failed`;
     if (/json/i.test(message) || /bad escaped character/i.test(message)) {
-      return `${helperPrefix}: JSON parse failed: ${shortAttemptError(message)}.${suffix}`;
+      return `${failureStatus ? `${failureStatus}: ` : ''}${helperPrefix}: JSON parse failed: ${shortAttemptError(message)}.${suffix}`;
     }
-    return `${helperPrefix}: ${shortAttemptError(message)}.${suffix}`;
+    return `${failureStatus ? `${failureStatus}: ` : ''}${helperPrefix}: ${shortAttemptError(message)}.${suffix}`;
   }
   if (!isDailyQuotaError(err)) return message;
   const retryText = (err as any)?.retryAfterText || message.match(/retry in\s*([^.;]+)/i)?.[1]?.trim();
@@ -213,8 +241,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
     for (let attempt = 0; attempt <= SUBMISSION_RETRY_DELAYS_MS.length; attempt++) {
       try {
         setFileStatus(qf.id, { status: 'processing', error: attempt > 0 ? `Retry ${attempt + 1} in progress...` : undefined });
-        await onSubmit(source, skipSelectAfterSubmit);
-        return;
+        return await onSubmit(source, skipSelectAfterSubmit);
       } catch (err) {
         lastError = err;
         const message = errorMessage(err);
@@ -274,15 +301,18 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
         if (batchHalted) return;
         setFileStatus(qf.id, { status: 'processing', error: undefined });
         try {
-          const base64 = await readFileAsBase64(qf.file);
+          const manualText = qf.manualText?.trim();
+          const base64 = manualText ? '' : await readFileAsBase64(qf.file);
           await submitWithRetries(
             qf,
-            { type: 'pdf', data: base64, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl },
+            manualText
+              ? { type: 'text', data: manualText, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }
+              : { type: 'pdf', data: base64, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl, pdfVisibleFallback: qf.usePdfVisibleFallback },
             skipSelectAfterSubmit,
           );
           done++;
           setDoneCount(done);
-          setFileStatus(qf.id, { status: 'done', error: undefined });
+          setFileStatus(qf.id, { status: 'done', error: undefined, attempt: undefined });
         } catch (err: any) {
           failures++;
           const message = friendlySubmissionError(err);
@@ -290,7 +320,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
             batchHalted = true;
             haltMessage = message;
           }
-          setFileStatus(qf.id, { status: 'error', error: message });
+          setFileStatus(qf.id, { status: 'error', error: message, attempt: err?.attempt });
         }
       };
 
@@ -462,36 +492,77 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
                   {files.map(qf => (
                     <div
                       key={qf.id}
-                      className={`flex items-center gap-3 p-3 rounded-xl border text-sm ${
+                      className={`p-3 rounded-xl border text-sm ${
                         qf.status === 'done' ? 'bg-emerald-50 border-emerald-200' :
                         qf.status === 'error' ? 'bg-rose-50 border-rose-200' :
                         qf.status === 'processing' ? 'bg-indigo-50 border-indigo-200' :
                         'bg-slate-50 border-slate-200'
                       }`}
                     >
-                      {qf.status === 'processing' ? (
-                        <Loader2 className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />
-                      ) : qf.status === 'done' ? (
-                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
-                      ) : qf.status === 'error' ? (
-                        <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
-                      ) : (
-                        <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
-                        {qf.status === 'processing' && (
-                          <p className="text-xs text-indigo-500 break-words">{qf.error || reviewModeCopy[effectiveReviewMode].processing}</p>
+                      <div className="flex items-center gap-3">
+                        {qf.status === 'processing' ? (
+                          <Loader2 className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />
+                        ) : qf.status === 'done' ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        ) : qf.status === 'error' ? (
+                          <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                        ) : (
+                          <FileText className="w-4 h-4 text-slate-400 shrink-0" />
                         )}
-                        {qf.status === 'error' && <p className="text-xs text-rose-600 break-words">{qf.error}</p>}
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
+                          {qf.status === 'processing' && (
+                            <p className="text-xs text-indigo-500 break-words">{qf.error || reviewModeCopy[effectiveReviewMode].processing}</p>
+                          )}
+                          {qf.status === 'error' && <p className="text-xs text-rose-600 break-words">{qf.error}</p>}
+                        </div>
+                        <span className="text-[10px] text-slate-400 font-bold shrink-0">
+                          {(qf.file.size / 1024 / 1024).toFixed(1)} MB
+                        </span>
+                        {!isSubmitting && qf.status === 'pending' && (
+                          <button onClick={() => removeFile(qf.id)} className="p-1 hover:bg-slate-200 rounded-lg transition-colors shrink-0">
+                            <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+                          </button>
+                        )}
                       </div>
-                      <span className="text-[10px] text-slate-400 font-bold shrink-0">
-                        {(qf.file.size / 1024 / 1024).toFixed(1)} MB
-                      </span>
-                      {!isSubmitting && qf.status === 'pending' && (
-                        <button onClick={() => removeFile(qf.id)} className="p-1 hover:bg-slate-200 rounded-lg transition-colors shrink-0">
-                          <Trash2 className="w-3.5 h-3.5 text-slate-400" />
-                        </button>
+                      {qf.status === 'error' && qf.attempt && (
+                        <div className="mt-3 ml-7 rounded-xl border border-rose-100 bg-white/70 p-3 text-xs text-slate-600 space-y-1">
+                          <p><span className="font-black text-slate-500">Status:</span> {failureStatusLabel(qf.attempt.failureStatus)}</p>
+                          <p><span className="font-black text-slate-500">Failed stage:</span> {stageLabel(qf.attempt.stageName)}</p>
+                          <p><span className="font-black text-slate-500">Extraction:</span> {qf.attempt.extractionCompletenessStatus || 'not recorded'}</p>
+                          <p><span className="font-black text-slate-500">PDF fallback:</span> {qf.attempt.pdfFallbackAttempted ? 'attempted' : 'not attempted'}{qf.attempt.fallbackSucceeded ? ', succeeded' : ''}</p>
+                          <p><span className="font-black text-slate-500">Scientific scoring:</span> {qf.attempt.scientificScoringAttempted ? 'attempted' : 'not attempted'}</p>
+                          {isAdmin && (
+                            <div className="mt-2 flex flex-wrap gap-3">
+                              <button
+                                type="button"
+                                className="text-xs font-black text-indigo-600 hover:text-indigo-800"
+                                onClick={() => setFileStatus(qf.id, { showManualText: !qf.showManualText })}
+                              >
+                                {qf.showManualText ? 'Hide manual extracted text repair' : 'Paste manual extracted text for retry'}
+                              </button>
+                              <button
+                                type="button"
+                                className={`text-xs font-black ${qf.usePdfVisibleFallback ? 'text-amber-700' : 'text-slate-500 hover:text-amber-700'}`}
+                                onClick={() => setFileStatus(qf.id, { usePdfVisibleFallback: !qf.usePdfVisibleFallback })}
+                              >
+                                {qf.usePdfVisibleFallback ? 'PDF-visible last resort enabled' : 'Use PDF-visible last resort on retry'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {isAdmin && qf.showManualText && (
+                        <div className="mt-3 ml-7 space-y-2">
+                          <textarea
+                            value={qf.manualText || ''}
+                            onChange={(event) => setFileStatus(qf.id, { manualText: event.target.value })}
+                            disabled={isSubmitting}
+                            placeholder="Paste clean extracted manuscript text here. It will still be blinded before benchmark review."
+                            className="w-full min-h-[140px] rounded-xl border border-indigo-200 bg-white p-3 text-xs font-mono text-slate-700 outline-none focus:ring-2 focus:ring-indigo-300"
+                          />
+                          <p className="text-[11px] font-semibold text-slate-500">Retry will use this text instead of PDF extraction for this file.</p>
+                        </div>
                       )}
                     </div>
                   ))}

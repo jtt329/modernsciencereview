@@ -117,6 +117,9 @@ export const reviewAttemptsTable = pgTable("review_attempts", {
   pdfVisibleFallbackUsed: integer("pdf_visible_fallback_used").notNull().default(0),
   fallbackSucceeded: integer("fallback_succeeded").notNull().default(0),
   reviewStatus: varchar("review_status"),
+  failureStatus: varchar("failure_status"),
+  scientificScoringAttempted: integer("scientific_scoring_attempted").notNull().default(0),
+  debugPayload: jsonb("debug_payload").$type<Record<string, unknown> | null>(),
   retryable: integer("retryable").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

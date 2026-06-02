@@ -30,6 +30,7 @@ import {
   type ReviewPipelineMode,
   type ReviewComparatorContextItem,
   type ReviewModel,
+  type ReviewInput,
   type ExtractionCompletenessReport,
 } from "../lib/reviewEngineCompat";
 import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
@@ -87,6 +88,9 @@ interface ReviewAttemptRecord {
   pdfVisibleFallbackUsed: boolean;
   fallbackSucceeded: boolean;
   reviewStatus: string | null;
+  failureStatus: string | null;
+  scientificScoringAttempted: boolean;
+  debugPayload: Record<string, unknown> | null;
   retryable: boolean;
   createdAt: string;
 }
@@ -110,6 +114,8 @@ interface ReviewAttemptContext {
   pdfVisibleFallbackUsed: boolean;
   fallbackSucceeded: boolean;
   reviewStatus: string | null;
+  scientificScoringAttempted: boolean;
+  debugPayload: Record<string, unknown> | null;
 }
 
 const failedReviewAttempts: ReviewAttemptRecord[] = [];
@@ -124,6 +130,9 @@ function setAttemptStage(
   context.stageName = stageName;
   context.stageType = stageType;
   context.model = model;
+  if (stageType === "scientific_review") {
+    context.scientificScoringAttempted = true;
+  }
 }
 
 function updateAttemptExtractionContext(context: ReviewAttemptContext, report: ExtractionCompletenessReport | null) {
@@ -169,6 +178,32 @@ function isRetryableAttemptError(message: string, statusCode: number | null) {
   return /bad escaped character|could not parse|json|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
 }
 
+function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" | "stageType" | "errorMessage" | "reviewStatus" | "extractionCompletenessStatus" | "retryable">) {
+  const message = record.errorMessage || "";
+  if (record.stageName === "pdf_fallback_extraction" && /json|bad escaped character|parse/i.test(message)) {
+    return "failed_pdf_fallback_json";
+  }
+  if (
+    (record.stageType === "scientific_review" || record.stageName === "json_parse") &&
+    /json|bad escaped character|parse/i.test(message)
+  ) {
+    return "failed_review_json";
+  }
+  if (
+    record.reviewStatus === "invalid_extraction_truncated" ||
+    record.extractionCompletenessStatus === "weak" ||
+    record.extractionCompletenessStatus === "possibly_truncated" ||
+    record.extractionCompletenessStatus === "truncated" ||
+    record.extractionCompletenessStatus === "failed"
+  ) {
+    return "failed_extraction_truncated";
+  }
+  if (record.stageName === "review_validation" || /validation|missing|required|invalid/i.test(message)) {
+    return "failed_validation";
+  }
+  return record.retryable ? "retryable" : "needs_manual_repair";
+}
+
 function toDbBool(value: boolean) {
   return value ? 1 : 0;
 }
@@ -196,6 +231,9 @@ function reviewAttemptInsertValues(record: ReviewAttemptRecord): typeof reviewAt
     pdfVisibleFallbackUsed: toDbBool(record.pdfVisibleFallbackUsed),
     fallbackSucceeded: toDbBool(record.fallbackSucceeded),
     reviewStatus: record.reviewStatus,
+    failureStatus: record.failureStatus,
+    scientificScoringAttempted: toDbBool(record.scientificScoringAttempted),
+    debugPayload: record.debugPayload,
     retryable: toDbBool(record.retryable),
   };
 }
@@ -223,6 +261,16 @@ function reviewAttemptRecordFromRow(row: typeof reviewAttemptsTable.$inferSelect
     pdfVisibleFallbackUsed: row.pdfVisibleFallbackUsed === 1,
     fallbackSucceeded: row.fallbackSucceeded === 1,
     reviewStatus: row.reviewStatus,
+    failureStatus: row.failureStatus ?? failureStatusForAttempt({
+      stageName: row.stageName as ReviewAttemptStageName,
+      stageType: row.stageType as ReviewAttemptStageType,
+      errorMessage: row.errorMessage,
+      reviewStatus: row.reviewStatus,
+      extractionCompletenessStatus: row.extractionCompletenessStatus,
+      retryable: row.retryable === 1,
+    }),
+    scientificScoringAttempted: row.scientificScoringAttempted === 1,
+    debugPayload: row.debugPayload ?? null,
     retryable: row.retryable === 1,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : new Date(row.createdAt).toISOString(),
   };
@@ -257,9 +305,13 @@ async function recordFailedReviewAttempt(context: ReviewAttemptContext, err: unk
     pdfVisibleFallbackUsed: classified.pdfVisibleFallbackUsed,
     fallbackSucceeded: classified.fallbackSucceeded,
     reviewStatus: classified.reviewStatus ?? ((err as any)?.reviewStatus ?? null),
+    failureStatus: null,
+    scientificScoringAttempted: classified.scientificScoringAttempted,
+    debugPayload: classified.debugPayload,
     retryable: isRetryableAttemptError(message, statusCode),
     createdAt: new Date().toISOString(),
   };
+  record.failureStatus = failureStatusForAttempt(record);
   failedReviewAttempts.unshift(record);
   failedReviewAttempts.splice(MAX_FAILED_REVIEW_ATTEMPTS);
   try {
@@ -386,7 +438,7 @@ async function existingSourceSubmission(authorId: string, sourceHash: string, mo
   return null;
 }
 
-function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash: string | null) {
+function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash: string | null, reviewMode: ReviewPipelineMode) {
   const ledger = parseJsonObject(reviewValues.coverageLedgerJson ?? null) ?? {};
   reviewValues.coverageLedgerJson = JSON.stringify({
     ...ledger,
@@ -396,10 +448,50 @@ function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash
       passGenerationAttempts: Number(process.env.SCIREVIEW_PASS_GENERATION_ATTEMPTS || 1),
       replacementPassAttempts: Number(process.env.SCIREVIEW_REPLACEMENT_PASS_ATTEMPTS || 1),
       automaticWholePaperBrowserRetries: 0,
-      saveFallbackWhenAtLeastOnePassSucceeds: true,
+      saveFallbackWhenAtLeastOnePassSucceeds: reviewMode !== "benchmark-ingestion",
     },
   });
   return reviewValues;
+}
+
+function benchmarkCompletionIssue(reviewValues: Record<string, any>) {
+  const ledger = parseJsonObject(reviewValues.coverageLedgerJson ?? null);
+  if (!ledger) return "Review ledger was not saved.";
+  const passAudit = Array.isArray(ledger.passAudit) ? ledger.passAudit : [];
+  const blindPassAudit = passAudit.filter((entry: any) => /^blind_pass_[12]$/.test(String(entry?.role ?? "")));
+  const adjudicatorAudit = passAudit.find((entry: any) => entry?.role === "adjudicator");
+  const textHashes = new Set(blindPassAudit.map((entry: any) => entry?.textHash).filter(Boolean));
+  const pdfHashes = new Set(blindPassAudit.map((entry: any) => entry?.pdfHash ?? ""));
+  const invalidQuality = [
+    ledger.reviewInputQuality,
+    ...(Array.isArray(ledger.blindPassReviews) ? ledger.blindPassReviews.map((pass: any) => pass?.reviewInputQuality) : []),
+  ].some((quality: any) => quality?.shouldInvalidateReview === true);
+
+  if (ledger.extractionCompletenessStatus !== "complete") {
+    return `Extraction completeness status is ${ledger.extractionCompletenessStatus ?? "unknown"}.`;
+  }
+  if (ledger.reviewInputSnapshot?.extractionCompletenessStatus && ledger.reviewInputSnapshot.extractionCompletenessStatus !== "complete") {
+    return `Review input snapshot extraction status is ${ledger.reviewInputSnapshot.extractionCompletenessStatus}.`;
+  }
+  if (Number(ledger.validPassCount ?? 0) !== 2 || blindPassAudit.length !== 2) {
+    return `Expected 2 valid blind passes but found ${ledger.validPassCount ?? blindPassAudit.length}.`;
+  }
+  if (ledger.adjudicatorStatus !== "success") {
+    return `Adjudicator status is ${ledger.adjudicatorStatus ?? "unknown"}.`;
+  }
+  if (!adjudicatorAudit) {
+    return "Adjudicator audit entry is missing.";
+  }
+  if (textHashes.size !== 1 || pdfHashes.size > 1) {
+    return "Blind-pass input hashes do not match.";
+  }
+  if (adjudicatorAudit?.textHash && textHashes.size === 1 && !textHashes.has(adjudicatorAudit.textHash)) {
+    return "Adjudicator input hash does not match the blind-pass input hash.";
+  }
+  if (invalidQuality) {
+    return "A blind pass or adjudicator flagged truncated review input.";
+  }
+  return null;
 }
 
 function attachPaperIdToReviewAudit(reviewValues: Record<string, any>, paperId: string) {
@@ -524,6 +616,34 @@ function extractionErrorPayload(report: ExtractionCompletenessReport) {
 
 function cleanExtractedManuscriptText(text: string) {
   return (text || "").replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
+}
+
+function textEdgeSnippets(text: string) {
+  return {
+    first2000: text.slice(0, 2000),
+    last2000: text.slice(Math.max(0, text.length - 2000)),
+  };
+}
+
+function updateAttemptInputDebugPayload(
+  context: ReviewAttemptContext,
+  text: string,
+  report: ExtractionCompletenessReport | null,
+  extra: Record<string, unknown> = {},
+) {
+  const snippets = textEdgeSnippets(text || "");
+  context.debugPayload = {
+    ...context.debugPayload,
+    ...extra,
+    extractedTextCharCount: text.length,
+    extractedTextTokenCount: Math.ceil(text.length / 4),
+    extractedTextFirst2000: snippets.first2000,
+    extractedTextLast2000: snippets.last2000,
+    extractionCompletenessStatus: report?.extractionCompletenessStatus ?? context.extractionCompletenessStatus,
+    extractionWarnings: report?.extractionWarnings ?? context.extractionWarnings,
+    estimatedPdfPageCount: report?.estimatedPdfPageCount ?? null,
+    extractedPageCount: report?.extractedPageCount ?? null,
+  };
 }
 
 async function repairPdfExtractionIfNeeded(options: {
@@ -928,6 +1048,51 @@ router.get("/papers/system-prompt", (_req, res) => {
     defaultReviewMode: "benchmark-ingestion",
     benchmarkSetVersion: BENCHMARK_SET_VERSION,
   });
+});
+
+// GET /api/admin/review-attempts — admin repair lane for failed/retryable submissions
+router.get("/admin/review-attempts", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 200), 1), MAX_FAILED_REVIEW_ATTEMPTS);
+    const rows = await db.select().from(reviewAttemptsTable).orderBy(desc(reviewAttemptsTable.createdAt)).limit(limit);
+    res.json({
+      attempts: rows.map(reviewAttemptRecordFromRow),
+      repairOptions: [
+        "retry_normal_extraction",
+        "retry_pdf_fallback",
+        "upload_cleaner_pdf",
+        "submit_manual_extracted_text",
+        "pdf_visible_last_resort",
+      ],
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Error listing review attempts");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/admin/review-attempts/:id/supersede — mark an old failed attempt as superseded
+router.patch("/admin/review-attempts/:id/supersede", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const [updated] = await db.update(reviewAttemptsTable)
+      .set({
+        reviewStatus: "superseded",
+        failureStatus: "superseded",
+        retryable: 0,
+      })
+      .where(eq(reviewAttemptsTable.id, req.params.id))
+      .returning();
+    if (!updated) {
+      res.status(404).json({ error: "Review attempt not found" });
+      return;
+    }
+    res.json({ attempt: reviewAttemptRecordFromRow(updated) });
+  } catch (err: any) {
+    logger.error({ err }, "Error superseding review attempt");
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/papers/benchmark-clusters — admin-only organic clustering before comparator backfill
@@ -1724,7 +1889,7 @@ router.post("/papers", async (req, res) => {
     const sourceHash = sourceHashFor(source);
     const expectedModelName = expectedReviewModelName(reviewMode);
     const reuseExistingReview = source.reuseExistingReview === true || source.reuseExisting === true;
-    const forceFreshReview = source.forceFreshReview === true || source.forceFresh === true || reviewMode === "benchmark-ingestion";
+    const forceFreshReview = source.forceFreshReview === true || source.forceFresh === true;
     const allowExistingReviewReuse = reuseExistingReview || !forceFreshReview;
     submissionKey = allowExistingReviewReuse && sourceHash ? `${req.user.id}:${expectedModelName}:${sourceHash}` : null;
     if (submissionKey && recentSubmissions.has(submissionKey)) {
@@ -1766,6 +1931,8 @@ router.post("/papers", async (req, res) => {
       pdfVisibleFallbackUsed: false,
       fallbackSucceeded: false,
       reviewStatus: null,
+      scientificScoringAttempted: false,
+      debugPayload: null,
     };
 
     if (source.type === "pdf") {
@@ -1784,6 +1951,7 @@ router.post("/papers", async (req, res) => {
         extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
       });
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
       attemptContext.pdfFallbackAttempted = extractionCompleteness.extractionCompletenessStatus !== "complete";
       if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
       const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
@@ -1793,6 +1961,7 @@ router.post("/papers", async (req, res) => {
       attemptContext.fallbackSucceeded = repaired.fallbackUsed && extractionCompleteness.extractionCompletenessStatus === "complete";
       attemptContext.pdfVisibleFallbackUsed = false;
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
     } else if (source.type === "url") {
       const url = source.data?.trim();
       if (!url) { res.status(400).json({ error: "A valid URL is required." }); return; }
@@ -1819,6 +1988,7 @@ router.post("/papers", async (req, res) => {
         extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
       });
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
       attemptContext.pdfFallbackAttempted = extractionCompleteness.extractionCompletenessStatus !== "complete";
       if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
       const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
@@ -1828,6 +1998,7 @@ router.post("/papers", async (req, res) => {
       attemptContext.fallbackSucceeded = repaired.fallbackUsed && extractionCompleteness.extractionCompletenessStatus === "complete";
       attemptContext.pdfVisibleFallbackUsed = false;
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
       submittedPdfUrl = url;
     } else {
       setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
@@ -1835,18 +2006,38 @@ router.post("/papers", async (req, res) => {
       metadataExtractionText = paperContent;
       extractionCompleteness = assessExtractionCompleteness(paperContent);
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { manualTextSupplied: source.type === "text" });
     }
     // Strip null bytes and non-printable control characters that break JSON serialisation
     paperContent = cleanExtractedManuscriptText(paperContent);
     metadataExtractionText = cleanExtractedManuscriptText(metadataExtractionText || paperContent);
     extractionCompleteness ??= assessExtractionCompleteness(paperContent);
     updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+    updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
+    const usePdfVisibleLastResort = isAdmin &&
+      source.pdfVisibleFallback === true &&
+      Boolean(metadataHints.pdfBase64);
     setAttemptStage(attemptContext, "extraction_quality_check", "validation", null);
-    if (extractionCompleteness.extractionCompletenessStatus !== "complete") {
+    if (extractionCompleteness.extractionCompletenessStatus !== "complete" && !usePdfVisibleLastResort) {
       attemptContext.reviewStatus = "invalid_extraction_truncated";
       const attempt = await recordFailedReviewAttempt(attemptContext, new Error("Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback."));
       res.status(422).json({ ...extractionErrorPayload(extractionCompleteness), attempt });
       return;
+    }
+    if (usePdfVisibleLastResort && extractionCompleteness.extractionCompletenessStatus !== "complete") {
+      attemptContext.pdfVisibleFallbackUsed = true;
+      extractionCompleteness = {
+        ...extractionCompleteness,
+        extractionCompletenessStatus: "complete",
+        extractionWarnings: [
+          ...extractionCompleteness.extractionWarnings,
+          "Admin selected PDF-visible last-resort review after text extraction remained incomplete. Blinding strength is lower.",
+        ],
+      };
+      updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
+        pdfVisibleFallbackRequested: true,
+      });
     }
 
     // Step 1: extract real title and authors (before anonymous review)
@@ -1906,13 +2097,33 @@ router.post("/papers", async (req, res) => {
 
     // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
     setAttemptStage(attemptContext, "blind_pass_1", "scientific_review", GEMINI_PASS_MODEL);
+    const reviewInput: ReviewInput = usePdfVisibleLastResort && metadataHints.pdfBase64
+      ? {
+          text: paperContent,
+          pdfBase64: metadataHints.pdfBase64,
+          mimeType: metadataHints.mimeType || "application/pdf",
+        }
+      : paperContent;
     const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(
-      paperContent,
+      reviewInput,
       selectedModel,
       undefined,
       { selectComparatorContext, reviewMode, extractionCompleteness },
     );
-    addSubmissionCostControls(reviewValues, sourceHash);
+    addSubmissionCostControls(reviewValues, sourceHash, reviewMode);
+    setAttemptStage(attemptContext, "review_validation", "validation", null);
+    if (reviewMode === "benchmark-ingestion") {
+      const issue = benchmarkCompletionIssue(reviewValues);
+      if (issue) {
+        attemptContext.reviewStatus = /extraction|truncated/i.test(issue)
+          ? "invalid_extraction_truncated"
+          : "failed_validation";
+        const err: any = new Error(`Benchmark review incomplete: ${issue}`);
+        err.statusCode = 422;
+        err.reviewStatus = attemptContext.reviewStatus;
+        throw err;
+      }
+    }
 
     const submitterName = [req.user.firstName, req.user.lastName].filter(Boolean).join(" ") || req.user.email || "Anonymous";
 
@@ -1956,11 +2167,13 @@ router.post("/papers", async (req, res) => {
     const message = submissionErrorMessage(err);
     const explicitStatusCode = typeof err?.statusCode === "number" ? err.statusCode : null;
     const attempt = attemptContext ? await recordFailedReviewAttempt(attemptContext, err) : null;
-    if (explicitStatusCode === 422 || err?.reviewStatus === "invalid_extraction_truncated") {
+    if (explicitStatusCode === 422 || err?.reviewStatus === "invalid_extraction_truncated" || err?.reviewStatus === "failed_validation") {
       res.status(422).json({
         error: message,
         transient: false,
-        reviewStatus: "invalid_extraction_truncated",
+        reviewStatus: err?.reviewStatus ?? "failed_validation",
+        extractionCompletenessStatus: attempt?.extractionCompletenessStatus ?? undefined,
+        extractionWarnings: attempt?.extractionWarnings ?? undefined,
         ...(attempt ? { attempt } : {}),
       });
       return;
