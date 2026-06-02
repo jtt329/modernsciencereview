@@ -95,9 +95,37 @@ export const likesTable = pgTable("likes", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [unique("unique_like").on(t.userId, t.targetId)]);
 
+export const reviewAttemptsTable = pgTable("review_attempts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => usersTable.id),
+  paperId: varchar("paper_id").references(() => papersTable.id, { onDelete: "set null" }),
+  fileName: text("file_name"),
+  reviewRunId: varchar("review_run_id"),
+  stageName: varchar("stage_name").notNull(),
+  stageType: varchar("stage_type").notNull(),
+  model: varchar("model"),
+  promptVersion: varchar("prompt_version"),
+  promptHash: varchar("prompt_hash"),
+  requestId: varchar("request_id"),
+  errorMessage: text("error_message").notNull(),
+  rawErrorCode: varchar("raw_error_code"),
+  retryCount: integer("retry_count").notNull().default(0),
+  extractionCompletenessStatus: varchar("extraction_completeness_status"),
+  extractionWarnings: jsonb("extraction_warnings").$type<string[]>().default([]),
+  extractionRetryAttempted: integer("extraction_retry_attempted").notNull().default(0),
+  pdfFallbackAttempted: integer("pdf_fallback_attempted").notNull().default(0),
+  pdfVisibleFallbackUsed: integer("pdf_visible_fallback_used").notNull().default(0),
+  fallbackSucceeded: integer("fallback_succeeded").notNull().default(0),
+  reviewStatus: varchar("review_status"),
+  retryable: integer("retryable").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Paper = typeof papersTable.$inferSelect;
 export type InsertPaper = typeof papersTable.$inferInsert;
 export type Review = typeof reviewsTable.$inferSelect;
 export type InsertReview = typeof reviewsTable.$inferInsert;
 export type Comment = typeof commentsTable.$inferSelect;
 export type InsertComment = typeof commentsTable.$inferInsert;
+export type ReviewAttempt = typeof reviewAttemptsTable.$inferSelect;
+export type InsertReviewAttempt = typeof reviewAttemptsTable.$inferInsert;

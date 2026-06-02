@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, papersTable, reviewsTable, commentsTable, likesTable } from "@workspace/db";
+import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable } from "@workspace/db";
 import { eq, desc, and } from "drizzle-orm";
 import { createHash } from "crypto";
 import OpenAI from "openai";
@@ -169,7 +169,66 @@ function isRetryableAttemptError(message: string, statusCode: number | null) {
   return /bad escaped character|could not parse|json|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
 }
 
-function recordFailedReviewAttempt(context: ReviewAttemptContext, err: unknown): ReviewAttemptRecord {
+function toDbBool(value: boolean) {
+  return value ? 1 : 0;
+}
+
+function reviewAttemptInsertValues(record: ReviewAttemptRecord): typeof reviewAttemptsTable.$inferInsert {
+  return {
+    id: record.attemptId,
+    userId: record.userId,
+    paperId: record.paperId,
+    fileName: record.fileName,
+    reviewRunId: record.reviewRunId,
+    stageName: record.stageName,
+    stageType: record.stageType,
+    model: record.model,
+    promptVersion: record.promptVersion,
+    promptHash: record.promptHash,
+    requestId: record.requestId,
+    errorMessage: record.errorMessage,
+    rawErrorCode: record.rawErrorCode == null ? null : String(record.rawErrorCode),
+    retryCount: record.retryCount,
+    extractionCompletenessStatus: record.extractionCompletenessStatus,
+    extractionWarnings: record.extractionWarnings,
+    extractionRetryAttempted: toDbBool(record.extractionRetryAttempted),
+    pdfFallbackAttempted: toDbBool(record.pdfFallbackAttempted),
+    pdfVisibleFallbackUsed: toDbBool(record.pdfVisibleFallbackUsed),
+    fallbackSucceeded: toDbBool(record.fallbackSucceeded),
+    reviewStatus: record.reviewStatus,
+    retryable: toDbBool(record.retryable),
+  };
+}
+
+function reviewAttemptRecordFromRow(row: typeof reviewAttemptsTable.$inferSelect): ReviewAttemptRecord {
+  return {
+    attemptId: row.id,
+    userId: row.userId,
+    paperId: row.paperId,
+    fileName: row.fileName,
+    reviewRunId: row.reviewRunId,
+    stageName: row.stageName as ReviewAttemptStageName,
+    stageType: row.stageType as ReviewAttemptStageType,
+    model: row.model,
+    promptVersion: row.promptVersion,
+    promptHash: row.promptHash,
+    requestId: row.requestId,
+    errorMessage: row.errorMessage,
+    rawErrorCode: row.rawErrorCode,
+    retryCount: row.retryCount,
+    extractionCompletenessStatus: row.extractionCompletenessStatus,
+    extractionWarnings: Array.isArray(row.extractionWarnings) ? row.extractionWarnings : [],
+    extractionRetryAttempted: row.extractionRetryAttempted === 1,
+    pdfFallbackAttempted: row.pdfFallbackAttempted === 1,
+    pdfVisibleFallbackUsed: row.pdfVisibleFallbackUsed === 1,
+    fallbackSucceeded: row.fallbackSucceeded === 1,
+    reviewStatus: row.reviewStatus,
+    retryable: row.retryable === 1,
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : new Date(row.createdAt).toISOString(),
+  };
+}
+
+async function recordFailedReviewAttempt(context: ReviewAttemptContext, err: unknown): Promise<ReviewAttemptRecord> {
   const message = submissionErrorMessage(err);
   const classified = classifyAttemptFromError(context, err, message);
   const statusCode = typeof (err as any)?.statusCode === "number" ? (err as any).statusCode : null;
@@ -203,6 +262,11 @@ function recordFailedReviewAttempt(context: ReviewAttemptContext, err: unknown):
   };
   failedReviewAttempts.unshift(record);
   failedReviewAttempts.splice(MAX_FAILED_REVIEW_ATTEMPTS);
+  try {
+    await db.insert(reviewAttemptsTable).values(reviewAttemptInsertValues(record));
+  } catch (insertErr) {
+    logger.error({ err: insertErr, attempt: record }, "Failed to persist review attempt");
+  }
   logger.error(record, "Review attempt failed");
   return record;
 }
@@ -1129,6 +1193,15 @@ router.get("/papers/export", async (req, res) => {
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
+    const persistedFailedAttempts = includeFailedAttempts
+      ? (await db.select().from(reviewAttemptsTable).orderBy(desc(reviewAttemptsTable.createdAt)).limit(MAX_FAILED_REVIEW_ATTEMPTS))
+          .map(reviewAttemptRecordFromRow)
+      : [];
+    const failedAttemptsForExport = includeFailedAttempts
+      ? Array.from(new Map([...persistedFailedAttempts, ...failedReviewAttempts].map((attempt) => [attempt.attemptId, attempt])).values())
+          .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+          .slice(0, MAX_FAILED_REVIEW_ATTEMPTS)
+      : [];
 
     const exported = papers.map(paperRecord => {
       const p = normalizePaperDisplayMetadata(paperRecord);
@@ -1470,7 +1543,7 @@ router.get("/papers/export", async (req, res) => {
       promptHash: REVIEW_PROMPT_HASH,
       ...(debugAudit ? { debugAudit: true } : {}),
       ...(includeSystemPrompt ? { systemPrompt: LATEST_REVIEW_SYSTEM_INSTRUCTION } : {}),
-      ...(includeFailedAttempts ? { failedAttempts: failedReviewAttempts } : {}),
+      ...(includeFailedAttempts ? { failedAttempts: failedAttemptsForExport } : {}),
       count: exported.length,
       papers: exported,
     });
@@ -1771,7 +1844,7 @@ router.post("/papers", async (req, res) => {
     setAttemptStage(attemptContext, "extraction_quality_check", "validation", null);
     if (extractionCompleteness.extractionCompletenessStatus !== "complete") {
       attemptContext.reviewStatus = "invalid_extraction_truncated";
-      const attempt = recordFailedReviewAttempt(attemptContext, new Error("Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback."));
+      const attempt = await recordFailedReviewAttempt(attemptContext, new Error("Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback."));
       res.status(422).json({ ...extractionErrorPayload(extractionCompleteness), attempt });
       return;
     }
@@ -1882,7 +1955,7 @@ router.post("/papers", async (req, res) => {
     logger.error({ err }, "Error creating paper");
     const message = submissionErrorMessage(err);
     const explicitStatusCode = typeof err?.statusCode === "number" ? err.statusCode : null;
-    const attempt = attemptContext ? recordFailedReviewAttempt(attemptContext, err) : null;
+    const attempt = attemptContext ? await recordFailedReviewAttempt(attemptContext, err) : null;
     if (explicitStatusCode === 422 || err?.reviewStatus === "invalid_extraction_truncated") {
       res.status(422).json({
         error: message,
