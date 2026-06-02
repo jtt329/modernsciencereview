@@ -202,6 +202,47 @@ function attachPaperIdToReviewAudit(reviewValues: Record<string, any>, paperId: 
   return reviewValues;
 }
 
+function buildReviewInsertValues(
+  paperId: string,
+  reviewValues: Record<string, any>,
+): typeof reviewsTable.$inferInsert {
+  const audited = attachPaperIdToReviewAudit(reviewValues, paperId);
+  return {
+    paperId,
+    summary: String(audited.summary ?? ""),
+    correctness: String(audited.correctness ?? ""),
+    novelty: String(audited.novelty ?? ""),
+    overallEvaluation: String(audited.overallEvaluation ?? ""),
+    score: typeof audited.score === "number" ? audited.score : 0,
+    relatedWork: String(audited.relatedWork ?? ""),
+    centralClaim: audited.centralClaim ?? null,
+    establishedResults: audited.establishedResults ?? null,
+    interpretiveClaims: audited.interpretiveClaims ?? null,
+    speculativeClaims: audited.speculativeClaims ?? null,
+    economy: audited.economy ?? null,
+    scopeDepth: audited.scopeDepth ?? null,
+    unifyingPower: audited.unifyingPower ?? null,
+    strongestCaseForImportance: audited.strongestCaseForImportance ?? null,
+    strongestObjection: audited.strongestObjection ?? null,
+    decisiveCheck: audited.decisiveCheck ?? null,
+    internalTechnicalTraction: audited.internalTechnicalTraction ?? null,
+    noveltyConfidence: audited.noveltyConfidence ?? null,
+    explanatoryTargetBreadth: audited.explanatoryTargetBreadth ?? null,
+    theorySpaceBreadth: audited.theorySpaceBreadth ?? null,
+    intrinsicScientificMeritScore: audited.intrinsicScientificMeritScore ?? null,
+    explanatoryTargetBreadthScore: audited.explanatoryTargetBreadthScore ?? null,
+    theorySpaceBreadthScore: audited.theorySpaceBreadthScore ?? null,
+    breadthOfImpactScore: audited.breadthOfImpactScore ?? null,
+    overallIntrinsicScore: audited.overallIntrinsicScore ?? null,
+    bestClassification: audited.bestClassification ?? null,
+    finalJudgment: audited.finalJudgment ?? null,
+    coverageLedgerJson: audited.coverageLedgerJson ?? null,
+    thinkingText: audited.thinkingText ?? null,
+    modelName: String(audited.modelName ?? ""),
+    systemPrompt: String(audited.systemPrompt ?? ""),
+  };
+}
+
 function compactPassAuditEntry(entry: any) {
   return {
     reviewRunId: typeof entry?.reviewRunId === "string" ? entry.reviewRunId : null,
@@ -1624,10 +1665,7 @@ router.post("/papers", async (req, res) => {
       throw insertErr;
     }
 
-    const [review] = await db.insert(reviewsTable).values({
-      paperId: paper.id,
-      ...attachPaperIdToReviewAudit(reviewValues, paper.id),
-    }).returning();
+    const [review] = await db.insert(reviewsTable).values(buildReviewInsertValues(paper.id, reviewValues)).returning();
 
     const payload = { paper, review };
     if (resolveSubmission) resolveSubmission(payload);

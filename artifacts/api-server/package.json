@@ -11,6 +11,7 @@
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
     "start": "pnpm --filter @workspace/db push-force && node --enable-source-maps ./dist/index.mjs",
+    "pretypecheck": "pnpm -w run typecheck:libs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

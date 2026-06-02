@@ -6,10 +6,14 @@ const root = process.cwd();
 const promptPath = join(root, "artifacts/api-server/src/lib/prompts/diagnosticOnlyV17.ts");
 const enginePath = join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts");
 const routesPath = join(root, "artifacts/api-server/src/routes/papers.ts");
+const apiPackagePath = join(root, "artifacts/api-server/package.json");
+const pdfParseTypesPath = join(root, "artifacts/api-server/src/types/pdf-parse.d.ts");
 
 const promptSource = readFileSync(promptPath, "utf8");
 const engineSource = readFileSync(enginePath, "utf8");
 const routesSource = readFileSync(routesPath, "utf8");
+const apiPackageSource = readFileSync(apiPackagePath, "utf8");
+const pdfParseTypesSource = readFileSync(pdfParseTypesPath, "utf8");
 
 function extractRawConst(source, name) {
   const marker = `export const ${name} = String.raw\``;
@@ -91,6 +95,9 @@ assert.match(engineSource, /calibrationContextIncluded: false/);
 assert.match(engineSource, /reviewInputAuditHashes\(blindedContent\)/);
 assert.match(engineSource, /textHash: inputAuditHashes\.textHash/);
 assert.match(engineSource, /pdfHash: inputAuditHashes\.pdfHash/);
+assert.match(engineSource, /cacheUsed: false/);
+assert.match(engineSource, /previousReviewUsed: false/);
+assert.match(engineSource, /adjudicatorContextIncluded: false/);
 assert.match(engineSource, /blindPassTextHashes/);
 assert.match(engineSource, /Blind pass input hashes diverged/);
 assert.match(engineSource, /assessExtractionCompleteness/);
@@ -98,13 +105,28 @@ assert.match(engineSource, /ExtractionCompletenessStatus = "complete" \| "weak" 
 assert.match(engineSource, /rawExtractedTextFirst2000/);
 assert.match(engineSource, /blindedReviewTextLast2000/);
 assert.match(engineSource, /invalid_extraction_truncated/);
+assert.match(engineSource, /reviewQualityRequiresInvalidation/);
+assert.match(engineSource, /throw invalidExtractionError\(invalidPass\.reviewInputQuality\.truncationEvidence/);
+assert.match(engineSource, /throw invalidExtractionError\(aggregate\.reviewInputQuality\.truncationEvidence/);
 assert.match(engineSource, /extractManuscriptTextFromPdfForReview/);
 
+assert.match(apiPackageSource, /"pretypecheck": "pnpm -w run typecheck:libs"/);
+assert.match(pdfParseTypesSource, /declare module "pdf-parse"/);
+assert.match(pdfParseTypesSource, /text: string/);
+assert.match(pdfParseTypesSource, /numpages: number/);
+assert.match(pdfParseTypesSource, /metadata\?: unknown/);
+
+assert.match(routesSource, /buildReviewInsertValues/);
+assert.match(routesSource, /typeof reviewsTable\.\$inferInsert/);
+assert.match(routesSource, /db\.insert\(reviewsTable\)\.values\(buildReviewInsertValues/);
 assert.match(routesSource, /repairPdfExtractionIfNeeded/);
 assert.match(routesSource, /extractionCompleteness\.extractionCompletenessStatus !== "complete"/);
 assert.match(routesSource, /\/admin\/papers\/:id\/review-input\/:kind/);
 assert.match(routesSource, /\/admin\/reviews\/extraction-qa-scan/);
 assert.match(routesSource, /debugAudit/);
+assert.match(routesSource, /if \(debugAudit && !requireAdmin\(req, res\)\) return/);
+assert.match(routesSource, /rawExtractedTextDownloadUrl/);
+assert.match(routesSource, /blindedReviewTextDownloadUrl/);
 
 const comparatorPromptStart = engineSource.indexOf("const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT");
 assert.notEqual(comparatorPromptStart, -1, "comparator calibration prompt missing");
