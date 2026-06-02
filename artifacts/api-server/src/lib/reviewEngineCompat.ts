@@ -272,6 +272,37 @@ type ReviewFailureAnalysis = {
   overallCorrectnessSummary: string;
 };
 
+type ReviewInputQuality = {
+  appearsTruncated: boolean;
+  truncationEvidence: string;
+  missingSectionsSuspected: string[];
+  shouldInvalidateReview: boolean;
+};
+
+export type ExtractionCompletenessStatus = "complete" | "weak" | "possibly_truncated" | "truncated" | "failed";
+
+export type ExtractionCompletenessReport = {
+  extractionCompletenessStatus: ExtractionCompletenessStatus;
+  extractionWarnings: string[];
+  estimatedPdfPageCount: number | null;
+  extractedPageCount: number | null;
+  extractedTextCharCount: number;
+  extractedTextTokenCount: number;
+  rawExtractedTextHash: string;
+};
+
+type ReviewInputSnapshot = ExtractionCompletenessReport & {
+  rawExtractedTextFirst2000: string;
+  rawExtractedTextLast2000: string;
+  blindedReviewTextHash: string;
+  blindedReviewTextCharCount: number;
+  blindedReviewTextTokenCount: number;
+  blindedReviewTextFirst2000: string;
+  blindedReviewTextLast2000: string;
+  rawExtractedText: string;
+  blindedReviewText: string;
+};
+
 type ComparatorProfile = {
   localCohort: string;
   primaryCohort: string;
@@ -482,6 +513,7 @@ type IndividualReview = {
   oneParagraphVerdict: string;
   finalJudgment: string;
   failureAnalysis: ReviewFailureAnalysis;
+  reviewInputQuality: ReviewInputQuality;
 };
 
 type AggregateReview = {
@@ -582,6 +614,7 @@ type AggregateReview = {
   adjudicationRationale: string;
   publicOneParagraphVerdict: string;
   internalCalibrationNotes: string;
+  reviewInputQuality: ReviewInputQuality;
 };
 
 type MultiPassReviewResult = {
@@ -595,6 +628,8 @@ type MultiPassReviewResult = {
   representativeReview: IndividualReview;
   thinkingText: string | null;
   passAudit: ReviewRunAuditEntry[];
+  reviewInputSnapshot: ReviewInputSnapshot;
+  extractionCompleteness: ExtractionCompletenessReport;
 };
 
 type IndividualPassResult = {
@@ -639,8 +674,8 @@ type ReviewRunAuditEntry = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v17.0-diagnostic-only-computed-scoring";
-const REVIEW_OBJECT_VERSION = "v17-diagnostic-only";
+export const REVIEW_PROMPT_VERSION = "v17.1-computed-ico-halfpoint";
+const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -657,7 +692,7 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V17_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V17_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v17.0 diagnostic-only computed scoring";
+export const REVIEW_PROMPT_NAME = "v17.1 computed ICO half-point";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -833,7 +868,6 @@ const inputConstructionOutputAssessmentJsonSchema = {
       required: ["overallAssessment", "primitiveInputs"],
       properties: {
         overallAssessment: jsonString,
-        assessment: jsonString,
         primitiveInputs: { type: "array", items: primitiveInputItemJsonSchema },
       },
     },
@@ -842,7 +876,6 @@ const inputConstructionOutputAssessmentJsonSchema = {
       required: ["overallAssessment", "introducedConstructions"],
       properties: {
         overallAssessment: jsonString,
-        assessment: jsonString,
         introducedConstructions: { type: "array", items: introducedConstructionItemJsonSchema },
       },
     },
@@ -851,7 +884,6 @@ const inputConstructionOutputAssessmentJsonSchema = {
       required: ["overallAssessment", "whyOutputsMatter", "outputs"],
       properties: {
         overallAssessment: jsonString,
-        assessment: jsonString,
         whyOutputsMatter: jsonString,
         outputs: { type: "array", items: ledgerOutputItemJsonSchema },
       },
@@ -867,6 +899,17 @@ const comparatorProfileJsonSchema = {
     adjacentBroadCohort: jsonString,
     clusterFeatureTags: jsonStringArray,
     comparatorSearchSummary: jsonString,
+  },
+};
+const reviewInputQualityJsonSchema = {
+  type: "object",
+  required: ["appearsTruncated", "truncationEvidence", "missingSectionsSuspected", "shouldInvalidateReview"],
+  additionalProperties: false,
+  properties: {
+    appearsTruncated: jsonBoolean,
+    truncationEvidence: jsonString,
+    missingSectionsSuspected: jsonStringArray,
+    shouldInvalidateReview: jsonBoolean,
   },
 };
 const individualReviewJsonSchema = {
@@ -885,6 +928,7 @@ const individualReviewJsonSchema = {
     "inputConstructionOutputAssessment",
     "technicalAssessment",
     "failureAnalysis",
+    "reviewInputQuality",
     "organicCohortProfile",
     "inputStrengthScore",
     "constructionStrengthScore",
@@ -935,9 +979,9 @@ const individualReviewJsonSchema = {
       type: "object",
       additionalProperties: false,
       properties: {
-        failedClaimsExcludedFromScore: jsonStringArray,
-        failedConstructionsExcludedFromScore: jsonStringArray,
-        failedOutputsExcludedFromScore: jsonStringArray,
+        failedClaimsExcludedFromDiagnostics: jsonStringArray,
+        failedConstructionsExcludedFromDiagnostics: jsonStringArray,
+        failedOutputsExcludedFromDiagnostics: jsonStringArray,
         survivingCorrectContributions: {
           type: "array",
           items: {
@@ -955,6 +999,7 @@ const individualReviewJsonSchema = {
         overallCorrectnessSummary: jsonString,
       },
     },
+    reviewInputQuality: reviewInputQualityJsonSchema,
     inputStrengthScore: jsonNumber,
     constructionStrengthScore: jsonNumber,
     outputStrengthScore: jsonNumber,
@@ -1368,6 +1413,158 @@ function firstStringArray(values: unknown[]) {
     if (items.length > 0) return items;
   }
   return [];
+}
+
+function approximateTokenCount(text: string) {
+  return Math.ceil((text || "").length / 4);
+}
+
+function sha256Text(text: string) {
+  return createHash("sha256").update(text || "").digest("hex");
+}
+
+function textSnippetFirst(text: string, length = 2000) {
+  return (text || "").slice(0, length);
+}
+
+function textSnippetLast(text: string, length = 2000) {
+  const safe = text || "";
+  return safe.slice(Math.max(0, safe.length - length));
+}
+
+function normalizeSectionNeedle(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+export function assessExtractionCompleteness(
+  text: string,
+  options: { estimatedPdfPageCount?: number | null; extractedPageCount?: number | null } = {},
+): ExtractionCompletenessReport {
+  const cleanText = stripControlChars(text || "").trim();
+  const lower = cleanText.toLowerCase();
+  const estimatedPdfPageCount = typeof options.estimatedPdfPageCount === "number" ? options.estimatedPdfPageCount : null;
+  const extractedPageCount = typeof options.extractedPageCount === "number" ? options.extractedPageCount : null;
+  const warnings: string[] = [];
+  const charCount = cleanText.length;
+
+  if (charCount < 50) warnings.push("Parser returned almost no readable manuscript text.");
+  if (charCount < 2000) warnings.push("Extracted manuscript text is very short.");
+  if (estimatedPdfPageCount && estimatedPdfPageCount >= 6 && charCount < estimatedPdfPageCount * 900) {
+    warnings.push(`Extracted text is short for an estimated ${estimatedPdfPageCount}-page PDF.`);
+  }
+  if (estimatedPdfPageCount && extractedPageCount && extractedPageCount < Math.max(2, Math.floor(estimatedPdfPageCount * 0.65))) {
+    warnings.push(`Extracted page count ${extractedPageCount} is much lower than estimated PDF page count ${estimatedPdfPageCount}.`);
+  }
+  if (/^\s*(abstract|introduction)\b/i.test(cleanText) && !/\b(section|references|bibliography|appendix)\b/i.test(cleanText.slice(2000))) {
+    warnings.push("Extracted text appears limited to early abstract/introduction material.");
+  }
+  if (!/\b(references|bibliography)\b/i.test(cleanText) && estimatedPdfPageCount && estimatedPdfPageCount >= 6) {
+    warnings.push("Extracted text lacks a references/bibliography marker for a multi-page PDF.");
+  }
+  const tail = cleanText.slice(-600).trim();
+  if (tail && !/[.!?}\]\)]\s*$/.test(tail) && !/\b(references|bibliography)\b/i.test(tail)) {
+    warnings.push("Extracted text appears to end mid-sentence or mid-section.");
+  }
+  const tocMatch = cleanText.slice(0, 5000).match(/\b(table of contents|contents)\b([\s\S]{0,3000})/i);
+  if (tocMatch) {
+    const sectionCandidates = tocMatch[2]
+      .split(/\n+/)
+      .map((line) => line.replace(/^\s*\d+(?:\.\d+)*\s+/, "").replace(/\s+\d+\s*$/, "").trim())
+      .filter((line) => line.length >= 6 && line.length <= 80)
+      .slice(0, 8);
+    const missing = sectionCandidates.filter((section) => !lower.includes(normalizeSectionNeedle(section)));
+    if (missing.length >= Math.min(3, sectionCandidates.length)) {
+      warnings.push(`Several table-of-contents sections are absent from extracted text: ${missing.slice(0, 4).join(", ")}.`);
+    }
+  }
+
+  let status: ExtractionCompletenessStatus = "complete";
+  if (charCount < 50) {
+    status = "failed";
+  } else if (warnings.some((warning) => /almost no|much lower|limited to early|end mid-sentence|absent/.test(warning))) {
+    status = warnings.length >= 2 ? "truncated" : "possibly_truncated";
+  } else if (warnings.length > 0) {
+    status = "weak";
+  }
+
+  return {
+    extractionCompletenessStatus: status,
+    extractionWarnings: warnings,
+    estimatedPdfPageCount,
+    extractedPageCount,
+    extractedTextCharCount: charCount,
+    extractedTextTokenCount: approximateTokenCount(cleanText),
+    rawExtractedTextHash: sha256Text(cleanText),
+  };
+}
+
+const TRUNCATION_SIGNAL_PATTERN =
+  /\b(truncated|severely truncated|provided text is truncated|manuscript ends abruptly|only abstract|only introduction|missing derivations|missing central sections|full paper not available|sections are missing|derivations are missing|incomplete text|provided manuscript text is incomplete)\b/i;
+
+function normalizeReviewInputQuality(value: unknown, reasoningText = ""): ReviewInputQuality {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  const evidence = firstString([source.truncationEvidence]);
+  const missingSections = firstStringArray([source.missingSectionsSuspected]);
+  const textSignal = TRUNCATION_SIGNAL_PATTERN.test(reasoningText);
+  const appearsTruncated = source.appearsTruncated === true || textSignal;
+  const shouldInvalidateReview = source.shouldInvalidateReview === true || (
+    textSignal &&
+    /score limited|score.*missing|lower.*because|cannot score|invalid/i.test(reasoningText)
+  );
+  return {
+    appearsTruncated,
+    truncationEvidence: evidence || (textSignal ? "Review text contains truncation or missing-section language." : ""),
+    missingSectionsSuspected: missingSections,
+    shouldInvalidateReview,
+  };
+}
+
+function reviewQualityRequiresInvalidation(review: { reviewInputQuality?: ReviewInputQuality; scientificReview?: string; paperType?: string; correctness?: string; outputValidity?: string; constructionAssessment?: string; inputConstructionOutputLedger?: InputConstructionOutputLedger; technicalAssessment?: unknown }) {
+  if (review.reviewInputQuality?.shouldInvalidateReview) return true;
+  const text = [
+    review.scientificReview,
+    review.paperType,
+    review.correctness,
+    review.outputValidity,
+    review.constructionAssessment,
+    review.inputConstructionOutputLedger?.assessment,
+    review.inputConstructionOutputLedger?.outputOverallAssessment,
+    review.inputConstructionOutputLedger?.outputs?.map((output) => [output.output, output.support, output.validity, output.assessment].join(" ")).join(" "),
+    typeof review.technicalAssessment === "string" ? review.technicalAssessment : "",
+  ].filter(Boolean).join("\n");
+  return TRUNCATION_SIGNAL_PATTERN.test(text) && /score|output strength|derivation|section|missing|incomplete/i.test(text);
+}
+
+function invalidExtractionError(reason: string) {
+  const error = new Error(`Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback. ${reason}`.trim());
+  (error as Error & { statusCode?: number; reviewStatus?: string }).statusCode = 422;
+  (error as Error & { statusCode?: number; reviewStatus?: string }).reviewStatus = "invalid_extraction_truncated";
+  return error;
+}
+
+function buildReviewInputSnapshot(
+  rawInput: ReviewInput,
+  blindedInput: ReviewInput,
+  extractionCompleteness?: ExtractionCompletenessReport,
+): ReviewInputSnapshot {
+  const rawText = stripControlChars(reviewInputText(rawInput)).trim();
+  const blindedText = stripControlChars(reviewInputText(blindedInput)).trim();
+  const completeness = extractionCompleteness ?? assessExtractionCompleteness(rawText);
+  return {
+    ...completeness,
+    rawExtractedTextHash: sha256Text(rawText),
+    extractedTextCharCount: rawText.length,
+    extractedTextTokenCount: approximateTokenCount(rawText),
+    rawExtractedTextFirst2000: textSnippetFirst(rawText),
+    rawExtractedTextLast2000: textSnippetLast(rawText),
+    blindedReviewTextHash: sha256Text(blindedText),
+    blindedReviewTextCharCount: blindedText.length,
+    blindedReviewTextTokenCount: approximateTokenCount(blindedText),
+    blindedReviewTextFirst2000: textSnippetFirst(blindedText),
+    blindedReviewTextLast2000: textSnippetLast(blindedText),
+    rawExtractedText: rawText,
+    blindedReviewText: blindedText,
+  };
 }
 
 function itemText(value: unknown, keys: string[]) {
@@ -2492,6 +2689,15 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
   const computedScore = diagnosticBaselineScore(diagnosticScores);
   const computedScoreBand = scoreBandFromComputedScore(computedScore);
   const computedClassification = classificationFallbackFromScore(computedScore);
+  const modelReasoningText = [
+    source.scientificReview,
+    source.paperType,
+    technicalAssessment.correctness,
+    icoOutput.overallAssessment,
+    failureAnalysis.overallCorrectnessSummary,
+    failureAnalysis.scoreBasisAfterExcludingFailures,
+  ].filter(Boolean).join("\n");
+  const reviewInputQuality = normalizeReviewInputQuality(source.reviewInputQuality, modelReasoningText);
 
   return {
     title: "anonymized manuscript",
@@ -2713,15 +2919,21 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     ]),
     failureAnalysis: {
       failedClaimsExcludedFromScore: firstStringArray([
+        failureAnalysis.failedClaimsExcludedFromDiagnostics,
         failureAnalysis.failedClaimsExcludedFromScore,
+        source.failedClaimsExcludedFromDiagnostics,
         source.failedClaimsExcludedFromScore,
       ]),
       failedConstructionsExcludedFromScore: firstStringArray([
+        failureAnalysis.failedConstructionsExcludedFromDiagnostics,
         failureAnalysis.failedConstructionsExcludedFromScore,
+        source.failedConstructionsExcludedFromDiagnostics,
         source.failedConstructionsExcludedFromScore,
       ]),
       failedOutputsExcludedFromScore: firstStringArray([
+        failureAnalysis.failedOutputsExcludedFromDiagnostics,
         failureAnalysis.failedOutputsExcludedFromScore,
+        source.failedOutputsExcludedFromDiagnostics,
         source.failedOutputsExcludedFromScore,
       ]),
       survivingCorrectContributions: normalizeSurvivingCorrectContributions(failureAnalysis.survivingCorrectContributions),
@@ -2734,6 +2946,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
         source.overallCorrectnessSummary,
       ]),
     },
+    reviewInputQuality,
   };
 }
 
@@ -2788,6 +3001,10 @@ function validateIndividualReview(review: IndividualReview) {
 
   if (!review.scientificReview.trim()) {
     throw new Error("Generated review was missing a scientific review.");
+  }
+
+  if (reviewQualityRequiresInvalidation(review)) {
+    throw invalidExtractionError(review.reviewInputQuality.truncationEvidence || "A blind pass reported incomplete or truncated review input.");
   }
 
   if (!review.centralClaim.trim()) {
@@ -3390,6 +3607,54 @@ export function buildPdfFallbackText(hints: MetadataHints) {
   ].filter(Boolean).join("\n");
 }
 
+const PDF_EXTRACTION_FALLBACK_PROMPT = String.raw`You are an extraction step, not a scientific reviewer.
+
+Read the attached scientific manuscript PDF and return clean manuscript text for a later blinded review.
+
+Rules:
+- Preserve scientific content, section headings, equations, definitions, derivations, tables when text-readable, and references/bibliography markers.
+- Omit or redact title, author names, affiliations, emails, venue/journal metadata, acknowledgments that identify authors, and date/citation/reception signals when possible.
+- Do not evaluate the paper.
+- Do not summarize the paper.
+- Do not add content that is not present in the PDF.
+- If a page or equation is unreadable, include a short bracketed note such as [unreadable equation] at that location.
+
+Return exactly this JSON object:
+{
+  "manuscriptText": "",
+  "extractionNotes": [],
+  "estimatedPageCount": null
+}`;
+
+export async function extractManuscriptTextFromPdfForReview(input: {
+  pdfBase64: string;
+  mimeType?: string;
+  textHint?: string;
+}) {
+  const promptText = [
+    input.textHint?.trim(),
+    "Extract the full manuscript text from the attached PDF for later blinded review.",
+  ].filter(Boolean).join("\n\n");
+  const response = await callGemini(
+    PDF_EXTRACTION_FALLBACK_PROMPT,
+    {
+      text: promptText,
+      pdfBase64: input.pdfBase64,
+      mimeType: input.mimeType || "application/pdf",
+    },
+    GEMINI_METADATA_MODEL,
+    { maxOutputTokens: 65536, temperature: 0 },
+  );
+  const parsed = response.parsed && typeof response.parsed === "object"
+    ? response.parsed as Record<string, unknown>
+    : {};
+  return {
+    manuscriptText: firstString([parsed.manuscriptText]),
+    extractionNotes: firstStringArray([parsed.extractionNotes]),
+    estimatedPageCount: asOptionalNumber(parsed.estimatedPageCount, 0) ?? null,
+  };
+}
+
 async function callGpt(prompt: string, input: ReviewInput) {
   if (typeof input !== "string") {
     throw new Error("OpenAI review currently requires extractable PDF text. Try the Gemini review pipeline for this PDF.");
@@ -3792,25 +4057,37 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   );
   const inventorySurvivors = survivingInventoryContributions(contributionInventory).map((item) => item.claimOrContribution);
   const failedClaimsExcludedFromScore = firstStringArray([
+    aggregateFailureAnalysis.failedClaimsExcludedFromDiagnostics,
     aggregateFailureAnalysis.failedClaimsExcludedFromAssessment,
     aggregateFailureAnalysis.failedClaimsExcludedFromScore,
+    root.failedClaimsExcludedFromDiagnostics,
     root.failedClaimsExcludedFromAssessment,
     root.failedClaimsExcludedFromScore,
+    source.failedClaimsExcludedFromDiagnostics,
     source.failedClaimsExcludedFromAssessment,
     source.failedClaimsExcludedFromScore,
+    adjudicationSource.failedClaimsExcludedFromDiagnostics,
     adjudicationSource.failedClaimsExcludedFromAssessment,
     adjudicationSource.failedClaimsExcludedFromScore,
   ]);
   const failedConstructionsExcludedFromScore = firstStringArray([
+    aggregateFailureAnalysis.failedConstructionsExcludedFromDiagnostics,
     aggregateFailureAnalysis.failedConstructionsExcludedFromScore,
+    root.failedConstructionsExcludedFromDiagnostics,
     root.failedConstructionsExcludedFromScore,
+    source.failedConstructionsExcludedFromDiagnostics,
     source.failedConstructionsExcludedFromScore,
+    adjudicationSource.failedConstructionsExcludedFromDiagnostics,
     adjudicationSource.failedConstructionsExcludedFromScore,
   ]);
   const failedOutputsExcludedFromScore = firstStringArray([
+    aggregateFailureAnalysis.failedOutputsExcludedFromDiagnostics,
     aggregateFailureAnalysis.failedOutputsExcludedFromScore,
+    root.failedOutputsExcludedFromDiagnostics,
     root.failedOutputsExcludedFromScore,
+    source.failedOutputsExcludedFromDiagnostics,
     source.failedOutputsExcludedFromScore,
+    adjudicationSource.failedOutputsExcludedFromDiagnostics,
     adjudicationSource.failedOutputsExcludedFromScore,
   ]);
   const scoreBasisAfterExcludingFailures = firstString([
@@ -3876,6 +4153,19 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   if (!scoreAdjustmentReason && Math.abs(baselineDelta) > 8 && hasExplicitScoreAdjustmentReason(scoreAdjustmentText)) {
     scoreAdjustmentReason = scoreAdjustmentText;
   }
+  const aggregateReasoningText = [
+    root.scientificReview,
+    source.scientificReview,
+    source.paperType,
+    aggregateTechnicalAssessment.correctness,
+    aggregateIcoOutputOverallAssessment,
+    overallCorrectnessSummary,
+    scoreBasisAfterExcludingFailures,
+  ].filter(Boolean).join("\n");
+  const reviewInputQuality = normalizeReviewInputQuality(
+    root.reviewInputQuality ?? source.reviewInputQuality,
+    aggregateReasoningText,
+  );
 
   return {
     finalComparisonCohort: asString(source.finalComparisonCohort ?? source.comparisonCohort, fallbackReview.comparisonCohort),
@@ -4089,6 +4379,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments, `${GEMINI_META_MODEL} adjudicator reviewed the manuscript and both independent ${GEMINI_PASS_MODEL} passes.`),
       ...adjudicationRepairNotes,
     ].filter(Boolean).join("\n\n"),
+    reviewInputQuality,
   };
 }
 
@@ -4127,6 +4418,10 @@ function validateAggregateReview(review: AggregateReview) {
 
   if (review.scoringAnomaly.trim()) {
     throw new Error(review.scoringAnomaly);
+  }
+
+  if (reviewQualityRequiresInvalidation(review)) {
+    throw invalidExtractionError(review.reviewInputQuality.truncationEvidence || "The adjudicator reported incomplete or truncated review input.");
   }
 }
 
@@ -4252,12 +4547,23 @@ function v16TechnicalAssessmentFromAggregate(aggregate: AggregateReview) {
 
 function v16FailureAnalysisFromAggregate(aggregate: AggregateReview) {
   return {
-    failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
-    failedConstructionsExcludedFromScore: aggregate.failedConstructionsExcludedFromScore,
-    failedOutputsExcludedFromScore: aggregate.failedOutputsExcludedFromScore,
+    failedClaimsExcludedFromDiagnostics: aggregate.failedClaimsExcludedFromScore,
+    failedConstructionsExcludedFromDiagnostics: aggregate.failedConstructionsExcludedFromScore,
+    failedOutputsExcludedFromDiagnostics: aggregate.failedOutputsExcludedFromScore,
     survivingCorrectContributions: aggregate.survivingCorrectContributions,
     scoreBasisAfterExcludingFailures: aggregate.scoreBasisAfterExcludingFailures,
     overallCorrectnessSummary: aggregate.overallCorrectnessSummary,
+  };
+}
+
+function v17FailureAnalysisFromIndividual(review: IndividualReview) {
+  return {
+    failedClaimsExcludedFromDiagnostics: review.failureAnalysis.failedClaimsExcludedFromScore,
+    failedConstructionsExcludedFromDiagnostics: review.failureAnalysis.failedConstructionsExcludedFromScore,
+    failedOutputsExcludedFromDiagnostics: review.failureAnalysis.failedOutputsExcludedFromScore,
+    survivingCorrectContributions: review.failureAnalysis.survivingCorrectContributions,
+    scoreBasisAfterExcludingFailures: review.failureAnalysis.scoreBasisAfterExcludingFailures,
+    overallCorrectnessSummary: review.failureAnalysis.overallCorrectnessSummary,
   };
 }
 
@@ -4280,7 +4586,8 @@ function v16CanonicalReviewFromIndividual(review: IndividualReview, index?: numb
     subscoreRationale: review.subscoreRationale,
     inputConstructionOutputAssessment: v16IcoAssessmentOnly(review.inputConstructionOutputLedger),
     technicalAssessment: v16TechnicalAssessmentFromIndividual(review),
-    failureAnalysis: review.failureAnalysis,
+    failureAnalysis: v17FailureAnalysisFromIndividual(review),
+    reviewInputQuality: review.reviewInputQuality,
     organicCohortProfile: v16OrganicCohortProfileOnly(review.organicCohortProfile),
     rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(review)),
     computedScore: review.scoreBand.median,
@@ -4311,6 +4618,7 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
     inputConstructionOutputAssessment: v16IcoAssessmentOnly(aggregate.inputConstructionOutputLedger),
     technicalAssessment: v16TechnicalAssessmentFromAggregate(aggregate),
     failureAnalysis: v16FailureAnalysisFromAggregate(aggregate),
+    reviewInputQuality: aggregate.reviewInputQuality,
     organicCohortProfile: v16OrganicCohortProfileOnly(aggregate.comparatorProfile),
     rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(aggregate)),
     computedScore: aggregate.finalScoreBand.median,
@@ -4438,9 +4746,9 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
       whatWouldLowerScore: aggregate.whatWouldLowerScore,
     },
     failureAnalysis: {
-      failedClaimsExcludedFromScore: aggregate.failedClaimsExcludedFromScore,
-      failedConstructionsExcludedFromScore: aggregate.failedConstructionsExcludedFromScore,
-      failedOutputsExcludedFromScore: aggregate.failedOutputsExcludedFromScore,
+      failedClaimsExcludedFromDiagnostics: aggregate.failedClaimsExcludedFromScore,
+      failedConstructionsExcludedFromDiagnostics: aggregate.failedConstructionsExcludedFromScore,
+      failedOutputsExcludedFromDiagnostics: aggregate.failedOutputsExcludedFromScore,
       survivingCorrectContributions: aggregate.survivingCorrectContributions,
       scoreBasisAfterExcludingFailures: aggregate.scoreBasisAfterExcludingFailures,
       overallCorrectnessSummary: aggregate.overallCorrectnessSummary,
@@ -5295,13 +5603,17 @@ async function generateMultiPassReview(
   paperContent: ReviewInput,
   _model: ReviewModel,
   promptOverride?: string,
-  options: { selectComparatorContext?: ComparatorContextSelector; reviewMode?: ReviewPipelineMode } = {},
+  options: { selectComparatorContext?: ComparatorContextSelector; reviewMode?: ReviewPipelineMode; extractionCompleteness?: ExtractionCompletenessReport } = {},
 ): Promise<MultiPassReviewResult> {
   const reviewRunId = randomUUID();
   const reviewMode = options.reviewMode ?? DEFAULT_REVIEW_PIPELINE_MODE;
   const systemPrompt = withLatexMarkdownFormatting(promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION);
   const blindedContent = blindReviewInput(paperContent);
   const inputAuditHashes = reviewInputAuditHashes(blindedContent);
+  const reviewInputSnapshot = buildReviewInputSnapshot(paperContent, blindedContent, options.extractionCompleteness);
+  if (reviewInputSnapshot.extractionCompletenessStatus !== "complete") {
+    throw invalidExtractionError(`Extraction completeness status is ${reviewInputSnapshot.extractionCompletenessStatus}: ${reviewInputSnapshot.extractionWarnings.join("; ")}`);
+  }
   const thinkingChunks: string[] = [];
 
   const passResults: IndividualPassResult[] = [];
@@ -5346,9 +5658,18 @@ async function generateMultiPassReview(
   }
 
   const individualReviews = passResults.map((result) => result.review);
+  const invalidPass = individualReviews.find((review) => reviewQualityRequiresInvalidation(review));
+  if (invalidPass) {
+    throw invalidExtractionError(invalidPass.reviewInputQuality.truncationEvidence || "A blind pass reported truncated or incomplete manuscript input.");
+  }
   const blindPassHashes = new Set(passResults.map((result) => result.audit.promptHash));
   if (blindPassHashes.size > 1 || (blindPassHashes.size === 1 && !blindPassHashes.has(REVIEW_PROMPT_HASH))) {
     throw new Error("Review run invalid: blind pass prompt hashes differ from the active prompt hash.");
+  }
+  const blindPassTextHashes = new Set(passResults.map((result) => result.audit.textHash));
+  const blindPassPdfHashes = new Set(passResults.map((result) => result.audit.pdfHash ?? ""));
+  if (blindPassTextHashes.size > 1 || blindPassPdfHashes.size > 1) {
+    throw invalidExtractionError("Blind pass input hashes diverged; rerun from one canonical extraction snapshot.");
   }
   for (const result of passResults) {
     logger.info({
@@ -5528,6 +5849,9 @@ async function generateMultiPassReview(
   if (!aggregate) {
     throw new Error("Review failed: no aggregate adjudication could be produced.");
   }
+  if (reviewQualityRequiresInvalidation(aggregate)) {
+    throw invalidExtractionError(aggregate.reviewInputQuality.truncationEvidence || "The adjudicator reported truncated or incomplete manuscript input.");
+  }
   let aggregateReview: AggregateReview = aggregate;
   const comparatorAuditEntries: ReviewRunAuditEntry[] = [];
   const comparatorContext = reviewMode === "normal-review" && options.selectComparatorContext
@@ -5646,6 +5970,8 @@ async function generateMultiPassReview(
       ...(adjudicatorAudit ? [adjudicatorAudit] : []),
       ...comparatorAuditEntries,
     ],
+    reviewInputSnapshot,
+    extractionCompleteness: reviewInputSnapshot,
   };
 }
 
@@ -5762,7 +6088,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     : canonicalReview.intrinsicScore;
   const canonicalCoverageLedger = {
     reviewObjectVersion: REVIEW_OBJECT_VERSION,
-    schemaVersion: "v17.0",
+    schemaVersion: "v17.1",
     reviewRunId: result.reviewRunId,
     promptVersion: REVIEW_PROMPT_VERSION,
     promptName: REVIEW_PROMPT_NAME,
@@ -5774,7 +6100,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     passCount: REVIEW_PASS_COUNT,
     validPassCount: result.individualReviews.length,
     pipelineMode: result.pipelineMode,
-    clusterVersion: "v17-diagnostic-only",
+    clusterVersion: "v17.1-diagnostic-only-halfpoint",
     benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
     benchmarkSetVersion: result.pipelineMode === "benchmark-ingestion"
       ? BENCHMARK_SET_VERSION
@@ -5800,6 +6126,16 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     diagnosticChanges: diagnosticCalibration.diagnosticChanges,
     calibrationRationale: diagnosticCalibration.calibrationRationale,
     extractionMethod,
+    extractionCompletenessStatus: result.reviewInputSnapshot.extractionCompletenessStatus,
+    extractionWarnings: result.reviewInputSnapshot.extractionWarnings,
+    reviewStatus: "complete",
+    reviewInputSnapshot: result.reviewInputSnapshot,
+    rawExtractedTextHash: result.reviewInputSnapshot.rawExtractedTextHash,
+    blindedReviewTextHash: result.reviewInputSnapshot.blindedReviewTextHash,
+    extractedTextCharCount: result.reviewInputSnapshot.extractedTextCharCount,
+    extractedTextTokenCount: result.reviewInputSnapshot.extractedTextTokenCount,
+    estimatedPdfPageCount: result.reviewInputSnapshot.estimatedPdfPageCount,
+    extractedPageCount: result.reviewInputSnapshot.extractedPageCount,
     pdfVisibleFallbackUsed,
     blindingStrength,
     usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
@@ -5807,7 +6143,6 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     intrinsicInputStrengthScore: canonicalReview.inputStrengthScore,
     intrinsicConstructionStrengthScore: canonicalReview.constructionStrengthScore,
     intrinsicOutputStrengthScore: canonicalReview.outputStrengthScore,
-    intrinsicScore: canonicalReview.intrinsicScore,
     ...canonicalReview,
     finalScore: publicScore,
     diagnosticScoreFormula: "10 * average(inputStrengthScore, constructionStrengthScore, outputStrengthScore)",
@@ -5886,7 +6221,7 @@ export async function generateCompatReview(
   paperContent: ReviewInput,
   model: ReviewModel,
   promptOverride?: string,
-  options: { selectComparatorContext?: ComparatorContextSelector; reviewMode?: ReviewPipelineMode } = {},
+  options: { selectComparatorContext?: ComparatorContextSelector; reviewMode?: ReviewPipelineMode; extractionCompleteness?: ExtractionCompletenessReport } = {},
 ) {
   const result = await generateMultiPassReview(paperContent, model, promptOverride, options);
   const aggregate = result.aggregate;

@@ -1,7 +1,7 @@
-// Canonical v17.0 diagnostic-only prompt stages.
+// Canonical v17.1 diagnostic-only prompt stages.
 // The model returns diagnostic judgments only; app code computes public scores.
 
-export const BLIND_REVIEW_PASS_V17_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v17.0 DIAGNOSTIC-ONLY COMPUTED SCORING
+export const BLIND_REVIEW_PASS_V17_1_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v17.1 COMPUTED ICO HALF-POINT
 ================================================================================
 
 You are reviewing an anonymous scientific manuscript from its contents alone.
@@ -157,6 +157,15 @@ If a central physical model fails, identify any substantial correct contribution
 
 Do not justify high diagnostic subscores using later influence, later field growth, or descendant work. Justification must point to correct content actually present in the manuscript.
 
+Review input quality
+--------------------
+
+The review input should contain the full blinded manuscript. If the provided manuscript text appears truncated, incomplete, or limited to only the abstract/introduction, report that in reviewInputQuality.
+
+Set reviewInputQuality.shouldInvalidateReview to true if the manuscript appears truncated enough that a scientific score would mainly reflect missing extraction rather than the paper itself. Do not lower Output Strength merely because extraction omitted central derivations or sections; mark the review input invalid instead.
+
+Common evidence includes: the manuscript ends abruptly, central derivations are missing from the provided text, the full paper is not available, only abstract/introduction text is present, later sections are referenced but absent, or the review would need to score the paper low because the provided text is incomplete.
+
 Diagnostic subscore floor
 -------------------------
 
@@ -290,18 +299,6 @@ Before finalizing the diagnostic assessment, explicitly consider:
 13. What kinds of evidence, derivations, counterexamples, robustness tests, or applications would most materially change the assessment?
 14. Does the manuscript earn its diagnostic assessment without relying on sympathy for any particular framework or research program?
 
-Adjudicator addendum
---------------------
-
-When acting as the adjudicator, read the manuscript and the two completed blind-pass reviews. Do not output a 0-100 final score. Do not output a public magnitude label. Your job is to resolve disagreements in the diagnostic assessment.
-
-For the adjudicator response:
-- decide the final inputStrengthScore, constructionStrengthScore, and outputStrengthScore;
-- explain which blind-pass diagnostic judgments you accepted, rejected, or synthesized;
-- preserve the same JSON structure below;
-- use scientificReview to give the final coherent review;
-- use assessmentSensitivity and failureAnalysis to explain uncertainty and failure/surviving-contribution logic.
-
 Return valid JSON only with this structure:
 
 {
@@ -336,7 +333,6 @@ Return valid JSON only with this structure:
   "inputConstructionOutputAssessment": {
     "input": {
       "overallAssessment": "",
-      "assessment": "",
       "primitiveInputs": [
         {
           "input": "",
@@ -353,7 +349,6 @@ Return valid JSON only with this structure:
     },
     "construction": {
       "overallAssessment": "",
-      "assessment": "",
       "introducedConstructions": [
         {
           "construction": "",
@@ -371,7 +366,6 @@ Return valid JSON only with this structure:
     },
     "output": {
       "overallAssessment": "",
-      "assessment": "",
       "whyOutputsMatter": "",
       "outputs": [
         {
@@ -402,9 +396,9 @@ Return valid JSON only with this structure:
     "whatWouldLowerSubscores": ""
   },
   "failureAnalysis": {
-    "failedClaimsExcludedFromScore": [],
-    "failedConstructionsExcludedFromScore": [],
-    "failedOutputsExcludedFromScore": [],
+    "failedClaimsExcludedFromDiagnostics": [],
+    "failedConstructionsExcludedFromDiagnostics": [],
+    "failedOutputsExcludedFromDiagnostics": [],
     "survivingCorrectContributions": [
       {
         "contribution": "",
@@ -415,6 +409,12 @@ Return valid JSON only with this structure:
     ],
     "scoreBasisAfterExcludingFailures": "",
     "overallCorrectnessSummary": ""
+  },
+  "reviewInputQuality": {
+    "appearsTruncated": false,
+    "truncationEvidence": "",
+    "missingSectionsSuspected": [],
+    "shouldInvalidateReview": false
   },
   "organicCohortProfile": {
     "localCohort": "",
@@ -445,9 +445,30 @@ Formatting instructions for mathematical notation:
 - Do not leave TeX or equation-like expressions bare in prose. For example, write "$S = A/(4G)$", not "S = A/(4G)".
 - Because the answer must be JSON, escape every LaTeX backslash as a double backslash inside strings.`;
 
-export const BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT = BLIND_REVIEW_PASS_V17_PROMPT;
+export const INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM = String.raw`Adjudicator instructions
+------------------------
+
+You are acting as the intrinsic adjudicator.
+
+Read:
+- the blinded manuscript;
+- Blind Pass 1;
+- Blind Pass 2.
+
+Resolve disagreements in the Input / Construction / Output diagnostics. Output the final diagnostic subscores and adjudicationRationale using the same JSON schema. Do not output a 0-100 final score. Do not output a public magnitude label. Do not receive, request, or use comparator papers, comparator scores, benchmark calibration context, or any post-intrinsic calibration context.
+
+If either blind pass credibly reports that the manuscript text was truncated, incomplete, or missing central derivations due to extraction, mark reviewInputQuality.shouldInvalidateReview as true and explain the extraction problem. Do not resolve extraction incompleteness by lowering Output Strength.`;
+
+export const INTRINSIC_ADJUDICATOR_V17_1_PROMPT = [
+  BLIND_REVIEW_PASS_V17_1_PROMPT,
+  INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM,
+].join("\n\n");
+
+export const BLIND_REVIEW_PASS_V17_PROMPT = BLIND_REVIEW_PASS_V17_1_PROMPT;
+export const BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT = INTRINSIC_ADJUDICATOR_V17_1_PROMPT;
 
 export const BENCHMARK_CALIBRATED_V17_FULL_PROMPT = [
-  "SCIReview Prompt System v17.0 diagnostic-only computed scoring",
-  BLIND_REVIEW_PASS_V17_PROMPT,
+  "SCIReview Prompt System v17.1 computed ICO half-point",
+  BLIND_REVIEW_PASS_V17_1_PROMPT,
+  INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM,
 ].join("\n\n");

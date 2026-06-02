@@ -646,19 +646,31 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     parsedCoverage?.failureAnalysis ??
     storedAggregate?.failureAnalysis ??
     {};
-  const failedClaimsExcludedFromScore = canonicalFailureAnalysis?.failedClaimsExcludedFromScore
+  const failedClaimsExcludedFromScore = canonicalFailureAnalysis?.failedClaimsExcludedFromDiagnostics
+    ?? canonicalFailureAnalysis?.failedClaimsExcludedFromScore
+    ?? parsedCoverage?.failedClaimsExcludedFromDiagnostics
     ?? parsedCoverage?.failedClaimsExcludedFromScore
+    ?? aggregateAdjudication?.failedClaimsExcludedFromDiagnostics
     ?? aggregateAdjudication?.failedClaimsExcludedFromScore
+    ?? storedAggregate?.failedClaimsExcludedFromDiagnostics
     ?? storedAggregate?.failedClaimsExcludedFromScore
     ?? [];
-  const failedConstructionsExcludedFromScore = canonicalFailureAnalysis?.failedConstructionsExcludedFromScore
+  const failedConstructionsExcludedFromScore = canonicalFailureAnalysis?.failedConstructionsExcludedFromDiagnostics
+    ?? canonicalFailureAnalysis?.failedConstructionsExcludedFromScore
+    ?? parsedCoverage?.failedConstructionsExcludedFromDiagnostics
     ?? parsedCoverage?.failedConstructionsExcludedFromScore
+    ?? aggregateAdjudication?.failedConstructionsExcludedFromDiagnostics
     ?? aggregateAdjudication?.failedConstructionsExcludedFromScore
+    ?? storedAggregate?.failedConstructionsExcludedFromDiagnostics
     ?? storedAggregate?.failedConstructionsExcludedFromScore
     ?? [];
-  const failedOutputsExcludedFromScore = canonicalFailureAnalysis?.failedOutputsExcludedFromScore
+  const failedOutputsExcludedFromScore = canonicalFailureAnalysis?.failedOutputsExcludedFromDiagnostics
+    ?? canonicalFailureAnalysis?.failedOutputsExcludedFromScore
+    ?? parsedCoverage?.failedOutputsExcludedFromDiagnostics
     ?? parsedCoverage?.failedOutputsExcludedFromScore
+    ?? aggregateAdjudication?.failedOutputsExcludedFromDiagnostics
     ?? aggregateAdjudication?.failedOutputsExcludedFromScore
+    ?? storedAggregate?.failedOutputsExcludedFromDiagnostics
     ?? storedAggregate?.failedOutputsExcludedFromScore
     ?? [];
   const rawSurvivingCorrectContributions = canonicalFailureAnalysis?.survivingCorrectContributions
@@ -1393,17 +1405,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               {(scoreCappingReason || shouldShowScoreAdjustmentReason || asArray(failedClaimsExcludedFromScore).length > 0 || asArray(failedConstructionsExcludedFromScore).length > 0 || asArray(failedOutputsExcludedFromScore).length > 0 || survivingCorrectContributionLines.length > 0 || hasText(scoreBasisAfterExcludingFailures) || hasText(overallCorrectnessSummary) || (comparatorCalibrationApplied && (calibrationRationale || scoreGapAssessment || publicComparatorSummary))) && (
                 <div className="space-y-3">
                   {asArray(failedClaimsExcludedFromScore).length > 0 && (
-                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Claim(s) Excluded From Score" color="text-rose-300">
+                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Claim(s) Excluded From Diagnostics" color="text-rose-300">
                       <Markdown>{listMarkdown(failedClaimsExcludedFromScore)}</Markdown>
                     </Section>
                   )}
                   {asArray(failedConstructionsExcludedFromScore).length > 0 && (
-                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Construction(s) Excluded From Score" color="text-rose-300">
+                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Construction(s) Excluded From Diagnostics" color="text-rose-300">
                       <Markdown>{listMarkdown(failedConstructionsExcludedFromScore)}</Markdown>
                     </Section>
                   )}
                   {asArray(failedOutputsExcludedFromScore).length > 0 && (
-                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Output(s) Excluded From Score" color="text-rose-300">
+                    <Section icon={<AlertTriangle className="w-4 h-4" />} label="Failed Output(s) Excluded From Diagnostics" color="text-rose-300">
                       <Markdown>{listMarkdown(failedOutputsExcludedFromScore)}</Markdown>
                     </Section>
                   )}

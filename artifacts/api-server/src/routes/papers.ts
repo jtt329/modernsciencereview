@@ -13,9 +13,10 @@ import {
   REVIEW_PROMPT_NAME,
   REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
-  buildPdfFallbackText,
+  assessExtractionCompleteness,
   compactAggregateForStorage,
   expectedReviewModelName,
+  extractManuscriptTextFromPdfForReview,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
   normalizePaperDisplayMetadata,
@@ -25,8 +26,8 @@ import {
   type ComparatorContextSelector,
   type ReviewPipelineMode,
   type ReviewComparatorContextItem,
-  type ReviewInput,
   type ReviewModel,
+  type ExtractionCompletenessReport,
 } from "../lib/reviewEngineCompat";
 import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
 
@@ -233,6 +234,100 @@ function compactPassAuditEntry(entry: any) {
     score: typeof entry?.score === "number" ? entry.score : null,
     classification: typeof entry?.classification === "string" ? entry.classification : null,
   };
+}
+
+function compactReviewInputSnapshot(snapshot: any, paperId: string) {
+  if (!snapshot || typeof snapshot !== "object") return null;
+  return {
+    rawExtractedTextHash: typeof snapshot.rawExtractedTextHash === "string" ? snapshot.rawExtractedTextHash : null,
+    blindedReviewTextHash: typeof snapshot.blindedReviewTextHash === "string" ? snapshot.blindedReviewTextHash : null,
+    extractedTextCharCount: typeof snapshot.extractedTextCharCount === "number" ? snapshot.extractedTextCharCount : null,
+    extractedTextTokenCount: typeof snapshot.extractedTextTokenCount === "number" ? snapshot.extractedTextTokenCount : null,
+    estimatedPdfPageCount: typeof snapshot.estimatedPdfPageCount === "number" ? snapshot.estimatedPdfPageCount : null,
+    extractedPageCount: typeof snapshot.extractedPageCount === "number" ? snapshot.extractedPageCount : null,
+    extractionCompletenessStatus: typeof snapshot.extractionCompletenessStatus === "string" ? snapshot.extractionCompletenessStatus : null,
+    extractionWarnings: Array.isArray(snapshot.extractionWarnings) ? snapshot.extractionWarnings.filter((item: unknown) => typeof item === "string") : [],
+    rawExtractedTextFirst2000: typeof snapshot.rawExtractedTextFirst2000 === "string" ? snapshot.rawExtractedTextFirst2000 : "",
+    rawExtractedTextLast2000: typeof snapshot.rawExtractedTextLast2000 === "string" ? snapshot.rawExtractedTextLast2000 : "",
+    blindedReviewTextFirst2000: typeof snapshot.blindedReviewTextFirst2000 === "string" ? snapshot.blindedReviewTextFirst2000 : "",
+    blindedReviewTextLast2000: typeof snapshot.blindedReviewTextLast2000 === "string" ? snapshot.blindedReviewTextLast2000 : "",
+    rawExtractedTextDownloadUrl: `/api/admin/papers/${paperId}/review-input/raw`,
+    blindedReviewTextDownloadUrl: `/api/admin/papers/${paperId}/review-input/blinded`,
+  };
+}
+
+function extractionErrorPayload(report: ExtractionCompletenessReport) {
+  return {
+    error: "Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback.",
+    transient: false,
+    reviewStatus: "invalid_extraction_truncated",
+    extractionCompletenessStatus: report.extractionCompletenessStatus,
+    extractionWarnings: report.extractionWarnings,
+  };
+}
+
+function cleanExtractedManuscriptText(text: string) {
+  return (text || "").replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
+}
+
+async function repairPdfExtractionIfNeeded(options: {
+  report: ExtractionCompletenessReport;
+  text: string;
+  metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string; pdfBase64?: string; mimeType?: string };
+}) {
+  if (options.report.extractionCompletenessStatus === "complete") {
+    return { text: options.text, report: options.report, fallbackUsed: false };
+  }
+  if (!options.metadataHints.pdfBase64) {
+    return { text: options.text, report: options.report, fallbackUsed: false };
+  }
+
+  logger.warn({
+    extractionCompletenessStatus: options.report.extractionCompletenessStatus,
+    extractionWarnings: options.report.extractionWarnings,
+    fileName: options.metadataHints.fileName,
+  }, "Retrying weak PDF text extraction with Gemini PDF extraction fallback");
+
+  const fallback = await extractManuscriptTextFromPdfForReview({
+    pdfBase64: options.metadataHints.pdfBase64,
+    mimeType: options.metadataHints.mimeType,
+    textHint: [
+      options.metadataHints.fileName ? `Filename hint: ${options.metadataHints.fileName}` : "",
+      options.metadataHints.pdfTitle ? `Embedded PDF title hint: ${options.metadataHints.pdfTitle}` : "",
+      options.metadataHints.pdfAuthor ? `Embedded PDF author hint: ${options.metadataHints.pdfAuthor}` : "",
+    ].filter(Boolean).join("\n"),
+  });
+  const repairedText = cleanExtractedManuscriptText(fallback.manuscriptText);
+  const repairedReport = assessExtractionCompleteness(repairedText, {
+    estimatedPdfPageCount: fallback.estimatedPageCount ?? options.report.estimatedPdfPageCount,
+    extractedPageCount: fallback.estimatedPageCount ?? options.report.extractedPageCount,
+  });
+  return {
+    text: repairedText,
+    report: {
+      ...repairedReport,
+      extractionWarnings: [
+        ...repairedReport.extractionWarnings,
+        ...fallback.extractionNotes.map((note) => `Gemini PDF extraction note: ${note}`),
+      ],
+    },
+    fallbackUsed: true,
+  };
+}
+
+function truncationIndicatorMatches(value: unknown) {
+  const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
+  const indicators = [
+    "truncated",
+    "missing derivations",
+    "provided text",
+    "incomplete text",
+    "manuscript ends abruptly",
+    "only abstract",
+    "only introduction",
+    "full paper not available",
+  ];
+  return indicators.filter((indicator) => text.toLowerCase().includes(indicator));
 }
 
 function submissionErrorMessage(err: unknown) {
@@ -846,11 +941,12 @@ router.get("/papers/export", async (req, res) => {
       const p = normalizePaperDisplayMetadata(paperRecord);
       const r = reviewMap.get(p.id);
       const coverageLedger = r ? parseJsonObject(r.coverageLedgerJson) : null;
+      const reviewObjectVersion = String(coverageLedger?.reviewObjectVersion ?? "");
       const isCanonicalReview =
         coverageLedger?.reviewObjectVersion === "v16.7-canonical" ||
-        coverageLedger?.reviewObjectVersion === "v17-diagnostic-only";
-      if (r && isCanonicalReview) {
-        const isV17 = coverageLedger?.reviewObjectVersion === "v17-diagnostic-only";
+        reviewObjectVersion.startsWith("v17");
+      if (r && coverageLedger && isCanonicalReview) {
+        const isV17 = reviewObjectVersion.startsWith("v17");
         const blindPassReviewsFromField = parseJsonArray((r as any).individualReviewsJson ?? null);
         const blindPassReviews = Array.isArray(coverageLedger.blindPassReviews)
           ? coverageLedger.blindPassReviews
@@ -869,6 +965,8 @@ router.get("/papers/export", async (req, res) => {
           benchmarkSetCandidate: coverageLedger.benchmarkSetCandidate ?? false,
           benchmarkSetVersion: coverageLedger.benchmarkSetVersion ?? null,
           extractionMethod: coverageLedger.extractionMethod ?? null,
+          extractionCompletenessStatus: coverageLedger.extractionCompletenessStatus ?? null,
+          extractionWarnings: coverageLedger.extractionWarnings ?? [],
           pdfVisibleFallbackUsed: coverageLedger.pdfVisibleFallbackUsed ?? false,
           blindingStrength: coverageLedger.blindingStrength ?? "strong",
           comparisonCohort: coverageLedger.comparisonCohort ?? null,
@@ -951,6 +1049,7 @@ router.get("/papers/export", async (req, res) => {
               passAudit: Array.isArray(coverageLedger.passAudit)
                 ? coverageLedger.passAudit.map(compactPassAuditEntry)
                 : [],
+              reviewInputSnapshot: compactReviewInputSnapshot(coverageLedger.reviewInputSnapshot, p.id),
             } : {}),
           },
           blindPassReviews,
@@ -1098,9 +1197,9 @@ router.get("/papers/export", async (req, res) => {
           diagnosticBaselineDelta: coverageLedger?.diagnosticBaselineDelta ?? adjudication?.diagnosticBaselineDelta ?? aggregate?.diagnosticBaselineDelta ?? null,
           scoreAdjustmentReason: coverageLedger?.scoreAdjustmentReason ?? adjudication?.scoreAdjustmentReason ?? aggregate?.scoreAdjustmentReason ?? null,
           scoringAnomaly: coverageLedger?.scoringAnomaly ?? adjudication?.scoringAnomaly ?? aggregate?.scoringAnomaly ?? null,
-          failedClaimsExcludedFromScore: coverageLedger?.failureAnalysis?.failedClaimsExcludedFromScore ?? coverageLedger?.failedClaimsExcludedFromScore ?? adjudication?.failedClaimsExcludedFromScore ?? aggregate?.failedClaimsExcludedFromScore ?? [],
-          failedConstructionsExcludedFromScore: coverageLedger?.failureAnalysis?.failedConstructionsExcludedFromScore ?? coverageLedger?.failedConstructionsExcludedFromScore ?? adjudication?.failedConstructionsExcludedFromScore ?? aggregate?.failedConstructionsExcludedFromScore ?? [],
-          failedOutputsExcludedFromScore: coverageLedger?.failureAnalysis?.failedOutputsExcludedFromScore ?? coverageLedger?.failedOutputsExcludedFromScore ?? adjudication?.failedOutputsExcludedFromScore ?? aggregate?.failedOutputsExcludedFromScore ?? [],
+          failedClaimsExcludedFromDiagnostics: coverageLedger?.failureAnalysis?.failedClaimsExcludedFromDiagnostics ?? coverageLedger?.failureAnalysis?.failedClaimsExcludedFromScore ?? coverageLedger?.failedClaimsExcludedFromDiagnostics ?? coverageLedger?.failedClaimsExcludedFromScore ?? adjudication?.failedClaimsExcludedFromDiagnostics ?? adjudication?.failedClaimsExcludedFromScore ?? aggregate?.failedClaimsExcludedFromDiagnostics ?? aggregate?.failedClaimsExcludedFromScore ?? [],
+          failedConstructionsExcludedFromDiagnostics: coverageLedger?.failureAnalysis?.failedConstructionsExcludedFromDiagnostics ?? coverageLedger?.failureAnalysis?.failedConstructionsExcludedFromScore ?? coverageLedger?.failedConstructionsExcludedFromDiagnostics ?? coverageLedger?.failedConstructionsExcludedFromScore ?? adjudication?.failedConstructionsExcludedFromDiagnostics ?? adjudication?.failedConstructionsExcludedFromScore ?? aggregate?.failedConstructionsExcludedFromDiagnostics ?? aggregate?.failedConstructionsExcludedFromScore ?? [],
+          failedOutputsExcludedFromDiagnostics: coverageLedger?.failureAnalysis?.failedOutputsExcludedFromDiagnostics ?? coverageLedger?.failureAnalysis?.failedOutputsExcludedFromScore ?? coverageLedger?.failedOutputsExcludedFromDiagnostics ?? coverageLedger?.failedOutputsExcludedFromScore ?? adjudication?.failedOutputsExcludedFromDiagnostics ?? adjudication?.failedOutputsExcludedFromScore ?? aggregate?.failedOutputsExcludedFromDiagnostics ?? aggregate?.failedOutputsExcludedFromScore ?? [],
           survivingCorrectContributions: coverageLedger?.failureAnalysis?.survivingCorrectContributions ?? coverageLedger?.survivingCorrectContributions ?? adjudication?.survivingCorrectContributions ?? aggregate?.survivingCorrectContributions ?? [],
           scoreBasisAfterExcludingFailures: coverageLedger?.failureAnalysis?.scoreBasisAfterExcludingFailures ?? coverageLedger?.scoreBasisAfterExcludingFailures ?? adjudication?.scoreBasisAfterExcludingFailures ?? aggregate?.scoreBasisAfterExcludingFailures ?? null,
           overallCorrectnessSummary: coverageLedger?.failureAnalysis?.overallCorrectnessSummary ?? coverageLedger?.overallCorrectnessSummary ?? adjudication?.overallCorrectnessSummary ?? aggregate?.overallCorrectnessSummary ?? null,
@@ -1218,6 +1317,71 @@ router.get("/papers", async (req, res) => {
   }
 });
 
+router.get("/admin/papers/:id/review-input/:kind", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const kind = req.params.kind;
+    if (kind !== "raw" && kind !== "blinded") {
+      res.status(400).json({ error: "kind must be raw or blinded" });
+      return;
+    }
+    const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, req.params.id));
+    if (!review) { res.status(404).json({ error: "Review not found" }); return; }
+    const ledger = parseJsonObject(review.coverageLedgerJson);
+    const snapshot = ledger?.reviewInputSnapshot && typeof ledger.reviewInputSnapshot === "object"
+      ? ledger.reviewInputSnapshot as Record<string, unknown>
+      : null;
+    const text = kind === "raw"
+      ? snapshot?.rawExtractedText
+      : snapshot?.blindedReviewText;
+    if (typeof text !== "string") {
+      res.status(404).json({ error: "Review input snapshot not stored for this review" });
+      return;
+    }
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.send(text);
+  } catch (err: any) {
+    logger.error({ err }, "Error downloading review input snapshot");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/admin/reviews/extraction-qa-scan", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const papers = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt));
+    const reviews = await db.select().from(reviewsTable);
+    const paperById = new Map(papers.map((paper) => [paper.id, paper]));
+    const flagged = reviews.flatMap((review) => {
+      const paper = paperById.get(review.paperId);
+      const ledger = parseJsonObject(review.coverageLedgerJson);
+      const haystack = {
+        scientificReview: ledger?.scientificReview,
+        paperType: ledger?.paperType,
+        technicalAssessment: ledger?.technicalAssessment,
+        failureAnalysis: ledger?.failureAnalysis,
+        blindPassReviews: ledger?.blindPassReviews,
+        thinkingText: review.thinkingText,
+      };
+      const indicators = truncationIndicatorMatches(haystack);
+      if (indicators.length === 0) return [];
+      return [{
+        paperId: review.paperId,
+        reviewId: review.id,
+        title: paper?.title ?? null,
+        indicators,
+        shouldRerun: true,
+        extractionCompletenessStatus: ledger?.extractionCompletenessStatus ?? null,
+        extractionWarnings: ledger?.extractionWarnings ?? [],
+      }];
+    });
+    res.json({ scanned: reviews.length, flagged });
+  } catch (err: any) {
+    logger.error({ err }, "Error scanning extraction QA");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/papers/:id — get paper with review
 router.get("/papers/:id", async (req, res) => {
   try {
@@ -1307,7 +1471,8 @@ router.post("/papers", async (req, res) => {
     }
 
     let paperContent: string;
-    let reviewInput: ReviewInput | null = null;
+    let metadataExtractionText: string;
+    let extractionCompleteness: ExtractionCompletenessReport | null = null;
     let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
     const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
     const selectedModel: ReviewModel = "gemini";
@@ -1323,19 +1488,15 @@ router.post("/papers", async (req, res) => {
       metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
       metadataHints.pdfBase64 = source.data;
       metadataHints.mimeType = "application/pdf";
-      paperContent = parsed.text;
-      if (!paperContent || paperContent.trim().length < 50) {
-        if (selectedModel !== "gemini") {
-          res.status(400).json({ error: "Could not extract readable text from PDF. Try submitting as raw text instead." });
-          return;
-        }
-        paperContent = buildPdfFallbackText(metadataHints);
-        reviewInput = {
-          text: paperContent,
-          pdfBase64: source.data,
-          mimeType: "application/pdf",
-        };
-      }
+      paperContent = cleanExtractedManuscriptText(parsed.text);
+      metadataExtractionText = paperContent;
+      extractionCompleteness = assessExtractionCompleteness(paperContent, {
+        estimatedPdfPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
+        extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
+      });
+      const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
+      paperContent = repaired.text;
+      extractionCompleteness = repaired.report;
     } else if (source.type === "url") {
       const url = source.data?.trim();
       if (!url) { res.status(400).json({ error: "A valid URL is required." }); return; }
@@ -1354,28 +1515,32 @@ router.post("/papers", async (req, res) => {
       metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
       metadataHints.pdfBase64 = buffer.toString("base64");
       metadataHints.mimeType = "application/pdf";
-      paperContent = parsed.text;
-      if (!paperContent || paperContent.trim().length < 50) {
-        if (selectedModel !== "gemini") {
-          res.status(400).json({ error: "Could not extract readable text from the linked PDF. Try submitting as raw text instead." });
-          return;
-        }
-        paperContent = buildPdfFallbackText(metadataHints);
-        reviewInput = {
-          text: paperContent,
-          pdfBase64: buffer.toString("base64"),
-          mimeType: "application/pdf",
-        };
-      }
+      paperContent = cleanExtractedManuscriptText(parsed.text);
+      metadataExtractionText = paperContent;
+      extractionCompleteness = assessExtractionCompleteness(paperContent, {
+        estimatedPdfPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
+        extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
+      });
+      const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
+      paperContent = repaired.text;
+      extractionCompleteness = repaired.report;
       submittedPdfUrl = url;
     } else {
-      paperContent = source.data;
+      paperContent = cleanExtractedManuscriptText(source.data);
+      metadataExtractionText = paperContent;
+      extractionCompleteness = assessExtractionCompleteness(paperContent);
     }
     // Strip null bytes and non-printable control characters that break JSON serialisation
-    paperContent = paperContent.replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
+    paperContent = cleanExtractedManuscriptText(paperContent);
+    metadataExtractionText = cleanExtractedManuscriptText(metadataExtractionText || paperContent);
+    extractionCompleteness ??= assessExtractionCompleteness(paperContent);
+    if (extractionCompleteness.extractionCompletenessStatus !== "complete") {
+      res.status(422).json(extractionErrorPayload(extractionCompleteness));
+      return;
+    }
 
     // Step 1: extract real title and authors (before anonymous review)
-    const metadata = await extractLatestMetadata(paperContent, metadataHints);
+    const metadata = await extractLatestMetadata(metadataExtractionText || paperContent, metadataHints);
 
     const existingBySource = allowExistingReviewReuse && sourceHash
       ? await existingSourceSubmission(req.user.id, sourceHash, expectedModelName)
@@ -1430,10 +1595,10 @@ router.post("/papers", async (req, res) => {
 
     // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
     const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(
-      reviewInput ?? paperContent,
+      paperContent,
       selectedModel,
       undefined,
-      { selectComparatorContext, reviewMode },
+      { selectComparatorContext, reviewMode, extractionCompleteness },
     );
     addSubmissionCostControls(reviewValues, sourceHash);
 
@@ -1478,13 +1643,22 @@ router.post("/papers", async (req, res) => {
     }
     logger.error({ err }, "Error creating paper");
     const message = submissionErrorMessage(err);
+    const explicitStatusCode = typeof err?.statusCode === "number" ? err.statusCode : null;
+    if (explicitStatusCode === 422 || err?.reviewStatus === "invalid_extraction_truncated") {
+      res.status(422).json({
+        error: message,
+        transient: false,
+        reviewStatus: "invalid_extraction_truncated",
+      });
+      return;
+    }
     const quotaExhausted =
       /daily request quota reached|generate_requests_per_model_per_day|per_model_per_day|please retry in|exceeded your current quota/i.test(message);
     const transient =
       !quotaExhausted &&
       /transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
     const retryAfterText = message.match(/retry in\s*([^.;]+)/i)?.[1]?.trim() ?? null;
-    res.status(quotaExhausted ? 429 : transient ? 503 : 500).json({
+    res.status(explicitStatusCode ?? (quotaExhausted ? 429 : transient ? 503 : 500)).json({
       error: message,
       transient,
       quotaExhausted,
