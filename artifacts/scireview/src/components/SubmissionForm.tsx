@@ -60,8 +60,58 @@ function isDailyQuotaError(err: unknown) {
     /daily request quota reached|generate_requests_per_model_per_day|per_model_per_day|please retry in|exceeded your current quota/i.test(message);
 }
 
+function stageLabel(stageName: string | null | undefined) {
+  switch (stageName) {
+    case 'metadata_extraction':
+    case 'title_author_extraction':
+      return 'Metadata helper';
+    case 'pdf_text_extraction':
+      return 'PDF text extraction';
+    case 'pdf_fallback_extraction':
+      return 'PDF fallback extraction helper';
+    case 'extraction_quality_check':
+      return 'Extraction quality check';
+    case 'blind_pass_1':
+      return 'Blind pass 1';
+    case 'blind_pass_2':
+      return 'Blind pass 2';
+    case 'adjudicator':
+      return 'Adjudicator';
+    case 'json_parse':
+      return 'JSON parse';
+    case 'review_validation':
+      return 'Review validation';
+    case 'save_review':
+      return 'Save review';
+    default:
+      return stageName || 'Review attempt';
+  }
+}
+
+function shortAttemptError(message: string) {
+  const withoutRetryNoise = message
+    .replace(/For more information on this error, head to:\s*https?:\/\/\S+/gi, '')
+    .replace(/To monitor your current usage, head to:\s*https?:\/\/\S+/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return withoutRetryNoise.length > 220 ? `${withoutRetryNoise.slice(0, 217)}...` : withoutRetryNoise;
+}
+
 function friendlySubmissionError(err: unknown) {
   const message = errorMessage(err);
+  const attempt = (err as any)?.attempt;
+  if (attempt?.reviewStatus === 'invalid_extraction_truncated' || (err as any)?.reviewStatus === 'invalid_extraction_truncated') {
+    return 'Extraction invalid: manuscript text appears truncated. Retry with improved extraction or PDF fallback.';
+  }
+  if (attempt && typeof attempt === 'object') {
+    const stage = stageLabel(attempt.stageName);
+    const suffix = attempt.retryable ? ' Retryable.' : '';
+    const helperPrefix = attempt.stageType === 'helper' ? `${stage} failed` : `${stage} failed`;
+    if (/json/i.test(message) || /bad escaped character/i.test(message)) {
+      return `${helperPrefix}: JSON parse failed: ${shortAttemptError(message)}.${suffix}`;
+    }
+    return `${helperPrefix}: ${shortAttemptError(message)}.${suffix}`;
+  }
   if (!isDailyQuotaError(err)) return message;
   const retryText = (err as any)?.retryAfterText || message.match(/retry in\s*([^.;]+)/i)?.[1]?.trim();
   const retrySuffix = retryText ? ` Google says to retry in ${retryText}.` : '';

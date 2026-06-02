@@ -8,6 +8,8 @@ import { logger } from "../lib/logger";
 import {
   BENCHMARK_SET_VERSION,
   GEMINI_META_MODEL,
+  GEMINI_METADATA_MODEL,
+  GEMINI_PASS_MODEL,
   REVIEW_FULL_PROMPT_SYSTEM,
   REVIEW_PROMPT_HASH,
   REVIEW_PROMPT_NAME,
@@ -21,6 +23,7 @@ import {
   generateCompatReview,
   normalizePaperDisplayMetadata,
   normalizeReviewPipelineMode,
+  parseGeminiJsonResponse,
   recalibrateStoredAggregateWithComparators,
   v15ComparatorCalibrationForStorage,
   type ComparatorContextSelector,
@@ -47,6 +50,163 @@ const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "
 const router = Router();
 const recentSubmissions = new Map<string, Promise<{ paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }>>();
 
+type ReviewAttemptStageName =
+  | "metadata_extraction"
+  | "title_author_extraction"
+  | "pdf_text_extraction"
+  | "pdf_fallback_extraction"
+  | "extraction_quality_check"
+  | "blind_pass_1"
+  | "blind_pass_2"
+  | "adjudicator"
+  | "json_parse"
+  | "review_validation"
+  | "save_review";
+
+type ReviewAttemptStageType = "extraction" | "helper" | "scientific_review" | "validation" | "storage";
+
+interface ReviewAttemptRecord {
+  attemptId: string;
+  userId: string | null;
+  paperId: string | null;
+  fileName: string | null;
+  reviewRunId: string | null;
+  stageName: ReviewAttemptStageName;
+  stageType: ReviewAttemptStageType;
+  model: string | null;
+  promptVersion: string | null;
+  promptHash: string | null;
+  requestId: string | null;
+  errorMessage: string;
+  rawErrorCode: string | number | null;
+  retryCount: number;
+  extractionCompletenessStatus: string | null;
+  extractionWarnings: string[];
+  extractionRetryAttempted: boolean;
+  pdfFallbackAttempted: boolean;
+  pdfVisibleFallbackUsed: boolean;
+  fallbackSucceeded: boolean;
+  reviewStatus: string | null;
+  retryable: boolean;
+  createdAt: string;
+}
+
+interface ReviewAttemptContext {
+  userId: string | null;
+  paperId: string | null;
+  fileName: string | null;
+  reviewRunId: string | null;
+  stageName: ReviewAttemptStageName;
+  stageType: ReviewAttemptStageType;
+  model: string | null;
+  promptVersion: string | null;
+  promptHash: string | null;
+  requestId: string | null;
+  retryCount: number;
+  extractionCompletenessStatus: string | null;
+  extractionWarnings: string[];
+  extractionRetryAttempted: boolean;
+  pdfFallbackAttempted: boolean;
+  pdfVisibleFallbackUsed: boolean;
+  fallbackSucceeded: boolean;
+  reviewStatus: string | null;
+}
+
+const failedReviewAttempts: ReviewAttemptRecord[] = [];
+const MAX_FAILED_REVIEW_ATTEMPTS = 500;
+
+function setAttemptStage(
+  context: ReviewAttemptContext,
+  stageName: ReviewAttemptStageName,
+  stageType: ReviewAttemptStageType,
+  model: string | null = context.model,
+) {
+  context.stageName = stageName;
+  context.stageType = stageType;
+  context.model = model;
+}
+
+function updateAttemptExtractionContext(context: ReviewAttemptContext, report: ExtractionCompletenessReport | null) {
+  if (!report) return;
+  context.extractionCompletenessStatus = report.extractionCompletenessStatus;
+  context.extractionWarnings = report.extractionWarnings;
+}
+
+function rawErrorCode(err: any): string | number | null {
+  return err?.code ?? err?.status ?? err?.statusCode ?? err?.cause?.code ?? err?.cause?.status ?? null;
+}
+
+function retryCountFromErrorMessage(message: string) {
+  const explicit = message.match(/failed after\s+(\d+)\s+attempts/i)?.[1];
+  if (explicit) return Number(explicit);
+  const attempts = [...message.matchAll(/attempt\s+(\d+)/gi)].map((match) => Number(match[1])).filter(Number.isFinite);
+  return attempts.length ? Math.max(...attempts) : 0;
+}
+
+function classifyAttemptFromError(context: ReviewAttemptContext, err: unknown, message: string): ReviewAttemptContext {
+  const next = { ...context };
+  if (/pass\s*1|blind[_ -]?pass[_ -]?1/i.test(message)) {
+    setAttemptStage(next, "blind_pass_1", "scientific_review", GEMINI_PASS_MODEL);
+  } else if (/pass\s*2|blind[_ -]?pass[_ -]?2/i.test(message)) {
+    setAttemptStage(next, "blind_pass_2", "scientific_review", GEMINI_PASS_MODEL);
+  } else if (/adjudicat/i.test(message)) {
+    setAttemptStage(next, "adjudicator", "scientific_review", GEMINI_META_MODEL);
+  } else if (/bad escaped character|could not parse|did not contain valid json|invalid json|json/i.test(message)) {
+    next.stageName = context.stageName === "metadata_extraction" || context.stageName === "title_author_extraction" || context.stageName === "pdf_fallback_extraction"
+      ? context.stageName
+      : "json_parse";
+    next.stageType = context.stageType === "scientific_review" ? "scientific_review" : "helper";
+  } else if ((err as any)?.reviewStatus === "invalid_extraction_truncated" || /truncated|extraction/i.test(message)) {
+    setAttemptStage(next, "extraction_quality_check", "extraction", null);
+    next.reviewStatus = "invalid_extraction_truncated";
+  }
+  return next;
+}
+
+function isRetryableAttemptError(message: string, statusCode: number | null) {
+  if (statusCode === 422 || /invalid_extraction_truncated/i.test(message)) return true;
+  if ([429, 500, 502, 503, 504].includes(statusCode ?? 0)) return true;
+  return /bad escaped character|could not parse|json|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
+}
+
+function recordFailedReviewAttempt(context: ReviewAttemptContext, err: unknown): ReviewAttemptRecord {
+  const message = submissionErrorMessage(err);
+  const classified = classifyAttemptFromError(context, err, message);
+  const statusCode = typeof (err as any)?.statusCode === "number" ? (err as any).statusCode : null;
+  const record: ReviewAttemptRecord = {
+    attemptId: createHash("sha256")
+      .update(`${classified.userId ?? ""}\0${classified.fileName ?? ""}\0${classified.stageName}\0${message}\0${Date.now()}`)
+      .digest("hex")
+      .slice(0, 16),
+    userId: classified.userId,
+    paperId: classified.paperId,
+    fileName: classified.fileName,
+    reviewRunId: classified.reviewRunId,
+    stageName: classified.stageName,
+    stageType: classified.stageType,
+    model: classified.model,
+    promptVersion: classified.promptVersion,
+    promptHash: classified.promptHash,
+    requestId: classified.requestId,
+    errorMessage: message,
+    rawErrorCode: rawErrorCode(err),
+    retryCount: classified.retryCount || retryCountFromErrorMessage(message),
+    extractionCompletenessStatus: classified.extractionCompletenessStatus,
+    extractionWarnings: classified.extractionWarnings,
+    extractionRetryAttempted: classified.extractionRetryAttempted,
+    pdfFallbackAttempted: classified.pdfFallbackAttempted,
+    pdfVisibleFallbackUsed: classified.pdfVisibleFallbackUsed,
+    fallbackSucceeded: classified.fallbackSucceeded,
+    reviewStatus: classified.reviewStatus ?? ((err as any)?.reviewStatus ?? null),
+    retryable: isRetryableAttemptError(message, statusCode),
+    createdAt: new Date().toISOString(),
+  };
+  failedReviewAttempts.unshift(record);
+  failedReviewAttempts.splice(MAX_FAILED_REVIEW_ATTEMPTS);
+  logger.error(record, "Review attempt failed");
+  return record;
+}
+
 function parseJsonObject(value: string | null): Record<string, any> | null {
   if (!value) return null;
   try {
@@ -69,19 +229,10 @@ function parseJsonArray(value: string | null): any[] | null {
 
 function extractJsonValue(text: string): any {
   try {
-    return JSON.parse(text);
-  } catch {}
-  const objectStart = text.indexOf("{");
-  const objectEnd = text.lastIndexOf("}");
-  if (objectStart >= 0 && objectEnd > objectStart) {
-    return JSON.parse(text.slice(objectStart, objectEnd + 1));
+    return parseGeminiJsonResponse(text);
+  } catch (err: any) {
+    throw new Error(`Model response did not contain valid JSON: ${err?.message ?? String(err)}`);
   }
-  const arrayStart = text.indexOf("[");
-  const arrayEnd = text.lastIndexOf("]");
-  if (arrayStart >= 0 && arrayEnd > arrayStart) {
-    return JSON.parse(text.slice(arrayStart, arrayEnd + 1));
-  }
-  throw new Error("Model response did not contain valid JSON.");
 }
 
 function sourceHashFor(source: any): string | null {
@@ -973,6 +1124,7 @@ router.get("/papers/export", async (req, res) => {
   try {
     const includeSystemPrompt = req.query.includeSystemPrompt === "true";
     const debugAudit = req.query.debugAudit === "true";
+    const includeFailedAttempts = debugAudit && req.query.includeFailedAttempts === "true";
     if (debugAudit && !requireAdmin(req, res)) return;
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
@@ -1318,6 +1470,7 @@ router.get("/papers/export", async (req, res) => {
       promptHash: REVIEW_PROMPT_HASH,
       ...(debugAudit ? { debugAudit: true } : {}),
       ...(includeSystemPrompt ? { systemPrompt: LATEST_REVIEW_SYSTEM_INSTRUCTION } : {}),
+      ...(includeFailedAttempts ? { failedAttempts: failedReviewAttempts } : {}),
       count: exported.length,
       papers: exported,
     });
@@ -1488,6 +1641,7 @@ router.post("/papers", async (req, res) => {
   let submissionKey: string | null = null;
   let resolveSubmission: ((value: { paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }) => void) | undefined;
   let rejectSubmission: ((reason?: unknown) => void) | undefined;
+  let attemptContext: ReviewAttemptContext | null = null;
   try {
     const { source } = req.body;
     if (!source?.type || !source?.data) { res.status(400).json({ error: "source.type and source.data are required" }); return; }
@@ -1520,8 +1674,29 @@ router.post("/papers", async (req, res) => {
     const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string; pdfBase64?: string; mimeType?: string } = {
       fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
     };
+    attemptContext = {
+      userId: req.user.id,
+      paperId: null,
+      fileName: metadataHints.fileName ?? null,
+      reviewRunId: null,
+      stageName: "pdf_text_extraction",
+      stageType: "extraction",
+      model: null,
+      promptVersion: REVIEW_PROMPT_VERSION,
+      promptHash: REVIEW_PROMPT_HASH,
+      requestId: null,
+      retryCount: 0,
+      extractionCompletenessStatus: null,
+      extractionWarnings: [],
+      extractionRetryAttempted: false,
+      pdfFallbackAttempted: false,
+      pdfVisibleFallbackUsed: false,
+      fallbackSucceeded: false,
+      reviewStatus: null,
+    };
 
     if (source.type === "pdf") {
+      setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
       const buffer = Buffer.from(source.data, "base64");
       const pdfParse = (await import("pdf-parse")).default;
       const parsed = await pdfParse(buffer);
@@ -1535,15 +1710,23 @@ router.post("/papers", async (req, res) => {
         estimatedPdfPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
         extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
       });
+      updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      attemptContext.pdfFallbackAttempted = extractionCompleteness.extractionCompletenessStatus !== "complete";
+      if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
       const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
       paperContent = repaired.text;
+      metadataExtractionText = paperContent;
       extractionCompleteness = repaired.report;
+      attemptContext.fallbackSucceeded = repaired.fallbackUsed && extractionCompleteness.extractionCompletenessStatus === "complete";
+      attemptContext.pdfVisibleFallbackUsed = false;
+      updateAttemptExtractionContext(attemptContext, extractionCompleteness);
     } else if (source.type === "url") {
       const url = source.data?.trim();
       if (!url) { res.status(400).json({ error: "A valid URL is required." }); return; }
       try { new URL(url); } catch { res.status(400).json({ error: "Invalid URL." }); return; }
       const fetchResp = await fetch(url);
       if (!fetchResp.ok) {
+        setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
         res.status(400).json({ error: `Could not fetch PDF from URL (${fetchResp.status}). Make sure it is a direct link to a publicly accessible PDF.` });
         return;
       }
@@ -1562,25 +1745,39 @@ router.post("/papers", async (req, res) => {
         estimatedPdfPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
         extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
       });
+      updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      attemptContext.pdfFallbackAttempted = extractionCompleteness.extractionCompletenessStatus !== "complete";
+      if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
       const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
       paperContent = repaired.text;
+      metadataExtractionText = paperContent;
       extractionCompleteness = repaired.report;
+      attemptContext.fallbackSucceeded = repaired.fallbackUsed && extractionCompleteness.extractionCompletenessStatus === "complete";
+      attemptContext.pdfVisibleFallbackUsed = false;
+      updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       submittedPdfUrl = url;
     } else {
+      setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
       paperContent = cleanExtractedManuscriptText(source.data);
       metadataExtractionText = paperContent;
       extractionCompleteness = assessExtractionCompleteness(paperContent);
+      updateAttemptExtractionContext(attemptContext, extractionCompleteness);
     }
     // Strip null bytes and non-printable control characters that break JSON serialisation
     paperContent = cleanExtractedManuscriptText(paperContent);
     metadataExtractionText = cleanExtractedManuscriptText(metadataExtractionText || paperContent);
     extractionCompleteness ??= assessExtractionCompleteness(paperContent);
+    updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+    setAttemptStage(attemptContext, "extraction_quality_check", "validation", null);
     if (extractionCompleteness.extractionCompletenessStatus !== "complete") {
-      res.status(422).json(extractionErrorPayload(extractionCompleteness));
+      attemptContext.reviewStatus = "invalid_extraction_truncated";
+      const attempt = recordFailedReviewAttempt(attemptContext, new Error("Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback."));
+      res.status(422).json({ ...extractionErrorPayload(extractionCompleteness), attempt });
       return;
     }
 
     // Step 1: extract real title and authors (before anonymous review)
+    setAttemptStage(attemptContext, "metadata_extraction", "helper", GEMINI_METADATA_MODEL);
     const metadata = await extractLatestMetadata(metadataExtractionText || paperContent, metadataHints);
 
     const existingBySource = allowExistingReviewReuse && sourceHash
@@ -1635,6 +1832,7 @@ router.post("/papers", async (req, res) => {
     }
 
     // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
+    setAttemptStage(attemptContext, "blind_pass_1", "scientific_review", GEMINI_PASS_MODEL);
     const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(
       paperContent,
       selectedModel,
@@ -1647,6 +1845,7 @@ router.post("/papers", async (req, res) => {
 
     let paper: typeof papersTable.$inferSelect;
     try {
+      setAttemptStage(attemptContext, "save_review", "storage", null);
       [paper] = await db.insert(papersTable).values({
         title: metadata.title,
         content: (source.type === "pdf" || source.type === "url") ? `[PDF] ${metadata.title}` : paperContent,
@@ -1665,6 +1864,7 @@ router.post("/papers", async (req, res) => {
       throw insertErr;
     }
 
+    attemptContext.paperId = paper.id;
     const [review] = await db.insert(reviewsTable).values(buildReviewInsertValues(paper.id, reviewValues)).returning();
 
     const payload = { paper, review };
@@ -1682,11 +1882,13 @@ router.post("/papers", async (req, res) => {
     logger.error({ err }, "Error creating paper");
     const message = submissionErrorMessage(err);
     const explicitStatusCode = typeof err?.statusCode === "number" ? err.statusCode : null;
+    const attempt = attemptContext ? recordFailedReviewAttempt(attemptContext, err) : null;
     if (explicitStatusCode === 422 || err?.reviewStatus === "invalid_extraction_truncated") {
       res.status(422).json({
         error: message,
         transient: false,
         reviewStatus: "invalid_extraction_truncated",
+        ...(attempt ? { attempt } : {}),
       });
       return;
     }
@@ -1701,6 +1903,7 @@ router.post("/papers", async (req, res) => {
       transient,
       quotaExhausted,
       retryAfterText,
+      ...(attempt ? { attempt } : {}),
     });
   }
 });

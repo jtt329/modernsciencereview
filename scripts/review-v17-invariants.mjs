@@ -6,12 +6,16 @@ const root = process.cwd();
 const promptPath = join(root, "artifacts/api-server/src/lib/prompts/diagnosticOnlyV17.ts");
 const enginePath = join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts");
 const routesPath = join(root, "artifacts/api-server/src/routes/papers.ts");
+const appPath = join(root, "artifacts/scireview/src/App.tsx");
+const submissionFormPath = join(root, "artifacts/scireview/src/components/SubmissionForm.tsx");
 const apiPackagePath = join(root, "artifacts/api-server/package.json");
 const pdfParseTypesPath = join(root, "artifacts/api-server/src/types/pdf-parse.d.ts");
 
 const promptSource = readFileSync(promptPath, "utf8");
 const engineSource = readFileSync(enginePath, "utf8");
 const routesSource = readFileSync(routesPath, "utf8");
+const appSource = readFileSync(appPath, "utf8");
+const submissionFormSource = readFileSync(submissionFormPath, "utf8");
 const apiPackageSource = readFileSync(apiPackagePath, "utf8");
 const pdfParseTypesSource = readFileSync(pdfParseTypesPath, "utf8");
 
@@ -109,6 +113,7 @@ assert.match(engineSource, /reviewQualityRequiresInvalidation/);
 assert.match(engineSource, /throw invalidExtractionError\(invalidPass\.reviewInputQuality\.truncationEvidence/);
 assert.match(engineSource, /throw invalidExtractionError\(aggregate\.reviewInputQuality\.truncationEvidence/);
 assert.match(engineSource, /extractManuscriptTextFromPdfForReview/);
+assert.match(engineSource, /export function parseGeminiJsonResponse/);
 
 assert.match(apiPackageSource, /"pretypecheck": "pnpm -w run typecheck:libs"/);
 assert.match(pdfParseTypesSource, /declare module "pdf-parse"/);
@@ -127,6 +132,24 @@ assert.match(routesSource, /debugAudit/);
 assert.match(routesSource, /if \(debugAudit && !requireAdmin\(req, res\)\) return/);
 assert.match(routesSource, /rawExtractedTextDownloadUrl/);
 assert.match(routesSource, /blindedReviewTextDownloadUrl/);
+assert.match(routesSource, /parseGeminiJsonResponse\(text\)/);
+assert.match(routesSource, /failedReviewAttempts/);
+assert.match(routesSource, /includeFailedAttempts/);
+assert.match(routesSource, /recordFailedReviewAttempt/);
+assert.match(routesSource, /stageName: ReviewAttemptStageName/);
+assert.match(routesSource, /metadata_extraction/);
+assert.match(routesSource, /blind_pass_1/);
+assert.match(routesSource, /adjudicator/);
+assert.match(routesSource, /GEMINI_METADATA_MODEL/);
+assert.match(routesSource, /GEMINI_PASS_MODEL/);
+assert.match(routesSource, /attempt \? \{ attempt \}/);
+
+assert.match(appSource, /error\.attempt = data\.attempt/);
+assert.match(appSource, /includeFailedAttempts=true/);
+assert.match(submissionFormSource, /stageLabel/);
+assert.match(submissionFormSource, /Metadata helper/);
+assert.match(submissionFormSource, /JSON parse failed/);
+assert.match(submissionFormSource, /Extraction invalid: manuscript text appears truncated/);
 
 const comparatorPromptStart = engineSource.indexOf("const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT");
 assert.notEqual(comparatorPromptStart, -1, "comparator calibration prompt missing");

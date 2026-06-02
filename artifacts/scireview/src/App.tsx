@@ -132,11 +132,19 @@ async function apiFetch(path: string, options?: RequestInit) {
       transient?: boolean;
       quotaExhausted?: boolean;
       retryAfterText?: string | null;
+      attempt?: unknown;
+      reviewStatus?: string | null;
+      extractionCompletenessStatus?: string | null;
+      extractionWarnings?: string[];
     };
     error.status = res.status;
     error.quotaExhausted = Boolean(data.quotaExhausted);
     error.retryAfterText = data.retryAfterText || null;
     error.transient = !error.quotaExhausted && (Boolean(data.transient) || [500, 502, 503, 504].includes(res.status));
+    error.attempt = data.attempt;
+    error.reviewStatus = data.reviewStatus || null;
+    error.extractionCompletenessStatus = data.extractionCompletenessStatus || null;
+    error.extractionWarnings = Array.isArray(data.extractionWarnings) ? data.extractionWarnings : [];
     throw error;
   }
   return res.json();
@@ -415,7 +423,7 @@ export default function App() {
   };
 
   const fetchPapersExport = async (debugAudit = false) => {
-    const res = await fetch(`/api/papers/export${debugAudit ? '?debugAudit=true' : ''}`, { credentials: 'include' });
+    const res = await fetch(`/api/papers/export${debugAudit ? '?debugAudit=true&includeFailedAttempts=true' : ''}`, { credentials: 'include' });
     if (!res.ok) {
       const message = await res.text();
       throw new Error(message || `Export failed with status ${res.status}`);

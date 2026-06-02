@@ -762,6 +762,7 @@ Rules:
 - If the author line uses superscripts, bullets, footnotes, or line breaks, strip the markers and preserve all author names.
 - Do not invent authors that are not visible in the manuscript. If only some names are visible, return the visible names.
 - If title or authors are genuinely not recoverable, use "Unknown Title" or "Unknown Authors".
+- Use plain text in every metadata field. Do not include LaTeX or mathematical notation unless it is literally part of the title.
 
 Return a JSON object with exactly these fields:
 - rawExtractedTitle: string
@@ -2461,6 +2462,10 @@ function extractJson(raw: string): unknown {
   }
 
   throw new Error("Could not parse model response as JSON.");
+}
+
+export function parseGeminiJsonResponse(raw: string): unknown {
+  return extractJson(raw);
 }
 
 function extractFirstJsonObject(value: string) {
