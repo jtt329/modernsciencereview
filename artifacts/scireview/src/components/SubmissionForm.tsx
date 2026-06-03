@@ -28,6 +28,7 @@ const MAX_QUEUED_PDFS = 50;
 const BATCH_CONCURRENCY = 2;
 const SUBMISSION_RETRY_DELAYS_MS: number[] = [];
 const FRONTEND_PAGE_LOADED_AT = new Date().toISOString();
+const RUNTIME_POLL_INTERVAL_MS = 5_000;
 
 function makeClientId(prefix: string) {
   const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -204,6 +205,37 @@ async function fetchReviewRuntime() {
   return response.json();
 }
 
+function runtimeProcessStartedAt(runtimeInfo: any) {
+  const processStartedAt = runtimeInfo?.build?.processStartedAt;
+  return typeof processStartedAt === 'string' && processStartedAt ? processStartedAt : null;
+}
+
+type RuntimeRestartInfo = {
+  oldProcessStartedAt: string;
+  newProcessStartedAt: string;
+  detectedAt: string;
+  runtimeInfo: unknown;
+};
+
+function detectRuntimeRestart(previousRuntimeInfo: unknown, nextRuntimeInfo: unknown): RuntimeRestartInfo | null {
+  const oldProcessStartedAt = runtimeProcessStartedAt(previousRuntimeInfo);
+  const newProcessStartedAt = runtimeProcessStartedAt(nextRuntimeInfo);
+  if (!oldProcessStartedAt || !newProcessStartedAt || oldProcessStartedAt === newProcessStartedAt) {
+    return null;
+  }
+  const oldTimestamp = Date.parse(oldProcessStartedAt);
+  const newTimestamp = Date.parse(newProcessStartedAt);
+  if (!Number.isFinite(oldTimestamp) || !Number.isFinite(newTimestamp) || newTimestamp <= oldTimestamp + 1_000) {
+    return null;
+  }
+  return {
+    oldProcessStartedAt,
+    newProcessStartedAt,
+    detectedAt: new Date().toISOString(),
+    runtimeInfo: nextRuntimeInfo,
+  };
+}
+
 function apiProcessStartedAfterPageLoad(runtimeInfo: any) {
   const processStartedAt = runtimeInfo?.build?.processStartedAt;
   if (typeof processStartedAt !== 'string') return false;
@@ -223,6 +255,74 @@ function classifyClientFailure(err: unknown) {
   return 'frontend_failure';
 }
 
+function startBatchRuntimeMonitor(params: {
+  initialRuntimeInfo: unknown;
+  onRestart: (info: RuntimeRestartInfo) => void;
+}) {
+  let stopped = false;
+  let restartInfo: RuntimeRestartInfo | null = null;
+  let latestRuntimeInfo = params.initialRuntimeInfo;
+  let recoveryPromise: Promise<RuntimeRestartInfo | null> | null = null;
+
+  const poll = async () => {
+    while (!stopped && !restartInfo) {
+      await sleep(RUNTIME_POLL_INTERVAL_MS);
+      if (stopped || restartInfo) break;
+      try {
+        const runtimeInfo = await fetchReviewRuntime();
+        const detected = detectRuntimeRestart(latestRuntimeInfo, runtimeInfo);
+        latestRuntimeInfo = runtimeInfo;
+        if (detected) {
+          restartInfo = detected;
+          params.onRestart(detected);
+          break;
+        }
+      } catch {
+        // A transient failed runtime poll is expected during deploy restarts.
+      }
+    }
+  };
+
+  void poll();
+
+  return {
+    stop() {
+      stopped = true;
+    },
+    getLatestRuntimeInfo() {
+      return latestRuntimeInfo;
+    },
+    getRestartInfo() {
+      return restartInfo;
+    },
+    noteRuntime(runtimeInfo: unknown) {
+      latestRuntimeInfo = runtimeInfo;
+      const detected = detectRuntimeRestart(params.initialRuntimeInfo, runtimeInfo);
+      if (detected && !restartInfo) {
+        restartInfo = detected;
+        params.onRestart(detected);
+      }
+      return restartInfo;
+    },
+    async waitForRecovery() {
+      if (!restartInfo) return null;
+      if (!recoveryPromise) {
+        recoveryPromise = (async () => {
+          await waitForApiHealth(120_000);
+          try {
+            const runtimeInfo = await fetchReviewRuntime();
+            latestRuntimeInfo = runtimeInfo;
+            const updated = detectRuntimeRestart(params.initialRuntimeInfo, runtimeInfo);
+            if (updated) restartInfo = { ...updated, detectedAt: restartInfo?.detectedAt ?? updated.detectedAt };
+          } catch {}
+          return restartInfo;
+        })();
+      }
+      return recoveryPromise;
+    },
+  };
+}
+
 async function reportClientFailure(params: {
   qf: QueuedFile;
   source: ReviewSource;
@@ -230,7 +330,9 @@ async function reportClientFailure(params: {
   clientRequestStartedAt: string;
   clientRequestEndedAt: string;
   apiRuntimeInfo: unknown;
+  runtimeRestartInfo?: RuntimeRestartInfo | null;
 }) {
+  const failureKind = params.runtimeRestartInfo ? 'interrupted_by_server_restart' : classifyClientFailure(params.err);
   const body = JSON.stringify({
     fileName: params.qf.file.name,
     batchRunId: params.source.batchRunId,
@@ -240,12 +342,18 @@ async function reportClientFailure(params: {
     frontendSiteVersion: SITE_VERSION,
     frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
     apiRuntimeVersion: params.apiRuntimeInfo,
+    apiRuntimeRestartDetectedAt: params.runtimeRestartInfo?.detectedAt ?? null,
+    apiRuntimePreviousProcessStartedAt: params.runtimeRestartInfo?.oldProcessStartedAt ?? null,
+    apiRuntimeCurrentProcessStartedAt: params.runtimeRestartInfo?.newProcessStartedAt ?? null,
+    apiRuntimeAfterRestart: params.runtimeRestartInfo?.runtimeInfo ?? null,
     clientRequestStartedAt: params.clientRequestStartedAt,
     clientRequestEndedAt: params.clientRequestEndedAt,
     errorName: params.err instanceof Error ? params.err.name : typeof params.err,
-    errorMessage: errorMessage(params.err),
+    errorMessage: params.runtimeRestartInfo
+      ? 'Server restarted during review; item will retry.'
+      : errorMessage(params.err),
     httpStatus: typeof (params.err as any)?.status === 'number' ? (params.err as any).status : null,
-    failureKind: classifyClientFailure(params.err),
+    failureKind,
   });
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -369,16 +477,41 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
     qf: QueuedFile,
     source: ReviewSource,
     skipSelectAfterSubmit: boolean,
-    apiRuntimeInfo: unknown,
+    runtimeState: { initial: unknown; current: unknown; restartInfo: RuntimeRestartInfo | null },
+    runtimeMonitor?: ReturnType<typeof startBatchRuntimeMonitor>,
   ) => {
     let lastError: unknown;
+    let serverRestartRetryUsed = false;
 
-    for (let attempt = 0; attempt <= SUBMISSION_RETRY_DELAYS_MS.length; attempt++) {
+    for (let attempt = 0; attempt <= SUBMISSION_RETRY_DELAYS_MS.length + 1; attempt++) {
       try {
         setFileStatus(qf.id, { status: 'processing', error: attempt > 0 ? `Retry ${attempt + 1} in progress...` : undefined });
+        source.apiRuntimeVersion = runtimeState.current;
+        source.apiRuntimeAtBatchStart = runtimeState.initial;
+        source.apiRuntimeProcessStartedAt = runtimeProcessStartedAt(runtimeState.current) ?? undefined;
+        if (runtimeState.restartInfo) {
+          source.apiRuntimeRestartDetectedAt = runtimeState.restartInfo.detectedAt;
+          source.apiRuntimePreviousProcessStartedAt = runtimeState.restartInfo.oldProcessStartedAt;
+          source.apiRuntimeCurrentProcessStartedAt = runtimeState.restartInfo.newProcessStartedAt;
+        }
         return await onSubmit(source, skipSelectAfterSubmit);
       } catch (err) {
         lastError = err;
+        let restartInfo = runtimeMonitor?.getRestartInfo() ?? runtimeState.restartInfo;
+        if (!restartInfo && isConnectionLoss(errorMessage(err))) {
+          try {
+            const runtimeInfo = await fetchReviewRuntime();
+            restartInfo = detectRuntimeRestart(runtimeState.current, runtimeInfo) || detectRuntimeRestart(runtimeState.initial, runtimeInfo);
+            runtimeState.current = runtimeInfo;
+            if (restartInfo) {
+              runtimeMonitor?.noteRuntime(runtimeInfo);
+            }
+          } catch {}
+        }
+        if (restartInfo && !runtimeState.restartInfo) {
+          runtimeState.restartInfo = restartInfo;
+          runtimeState.current = restartInfo.runtimeInfo;
+        }
         if (!(err as any)?.attempt) {
           const clientAttempt = await reportClientFailure({
             qf,
@@ -386,11 +519,30 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
             err,
             clientRequestStartedAt: source.clientRequestStartedAt || new Date().toISOString(),
             clientRequestEndedAt: new Date().toISOString(),
-            apiRuntimeInfo,
+            apiRuntimeInfo: runtimeState.current,
+            runtimeRestartInfo: restartInfo,
           });
           if (clientAttempt && typeof err === 'object' && err !== null) {
             (err as any).attempt = clientAttempt;
           }
+        }
+        if (restartInfo && !serverRestartRetryUsed) {
+          serverRestartRetryUsed = true;
+          setFileStatus(qf.id, {
+            status: 'processing',
+            error: 'Server restarted during review; item will retry.',
+            attempt: (err as any)?.attempt,
+          });
+          await runtimeMonitor?.waitForRecovery();
+          await waitForApiHealth(120_000);
+          try {
+            const runtimeInfo = await fetchReviewRuntime();
+            runtimeState.current = runtimeInfo;
+            const updatedRestart = detectRuntimeRestart(runtimeState.initial, runtimeInfo);
+            if (updatedRestart) runtimeState.restartInfo = updatedRestart;
+          } catch {}
+          source.clientRequestStartedAt = new Date().toISOString();
+          continue;
         }
         const message = errorMessage(err);
         const canRetry = isRetryableSubmissionError(err) && attempt < SUBMISSION_RETRY_DELAYS_MS.length;
@@ -429,6 +581,11 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
         setError('The API was redeployed after this page loaded. Please refresh Modern Science Review before starting this batch so the frontend and API versions match.');
         return;
       }
+      const runtimeState: { initial: unknown; current: unknown; restartInfo: RuntimeRestartInfo | null } = {
+        initial: apiRuntimeInfo,
+        current: apiRuntimeInfo,
+        restartInfo: null,
+      };
       const batchRunId = makeClientId('batch');
       try {
         localStorage.setItem('scireview:lastBatchRunId', batchRunId);
@@ -450,6 +607,8 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
           frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
           clientRequestStartedAt,
           apiRuntimeVersion: apiRuntimeInfo,
+          apiRuntimeAtBatchStart: apiRuntimeInfo,
+          apiRuntimeProcessStartedAt: runtimeProcessStartedAt(apiRuntimeInfo) ?? undefined,
         });
         onClose();
         return;
@@ -483,13 +642,39 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       let nextIndex = 0;
       let batchHalted = false;
       let haltMessage: string | null = null;
+      const runtimeMonitor = startBatchRuntimeMonitor({
+        initialRuntimeInfo: apiRuntimeInfo,
+        onRestart: (restartInfo) => {
+          runtimeState.restartInfo = restartInfo;
+          runtimeState.current = restartInfo.runtimeInfo;
+          setError('Server restarted during review; in-flight items will retry after the API is healthy.');
+          setFiles(prev => prev.map(file => file.status === 'processing'
+            ? { ...file, error: 'Server restarted during review; item will retry.' }
+            : file));
+        },
+      });
+
+      const waitForRuntimeIfRestarted = async () => {
+        const restartInfo = runtimeMonitor.getRestartInfo();
+        if (!restartInfo) return;
+        setError('Server restarted during review; queue paused until the API is healthy.');
+        await runtimeMonitor.waitForRecovery();
+        try {
+          const runtimeInfo = await fetchReviewRuntime();
+          runtimeState.current = runtimeInfo;
+          runtimeMonitor.noteRuntime(runtimeInfo);
+        } catch {}
+      };
 
       const processOne = async (qf: QueuedFile) => {
+        if (batchHalted) return;
+        await waitForRuntimeIfRestarted();
         if (batchHalted) return;
         setFileStatus(qf.id, { status: 'processing', error: undefined });
         try {
           const manualText = qf.manualText?.trim();
           const base64 = manualText ? '' : await readFileAsBase64(qf.file);
+          await waitForRuntimeIfRestarted();
           const clientRequestStartedAt = new Date().toISOString();
           const sourceWithAudit: ReviewSource = {
             ...(manualText
@@ -502,13 +687,19 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
             frontendSiteVersion: SITE_VERSION,
             frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
             clientRequestStartedAt,
-            apiRuntimeVersion: apiRuntimeInfo,
+            apiRuntimeVersion: runtimeState.current,
+            apiRuntimeAtBatchStart: runtimeState.initial,
+            apiRuntimeProcessStartedAt: runtimeProcessStartedAt(runtimeState.current) ?? undefined,
+            apiRuntimeRestartDetectedAt: runtimeState.restartInfo?.detectedAt,
+            apiRuntimePreviousProcessStartedAt: runtimeState.restartInfo?.oldProcessStartedAt,
+            apiRuntimeCurrentProcessStartedAt: runtimeState.restartInfo?.newProcessStartedAt,
           };
           await submitWithRetries(
             qf,
             sourceWithAudit,
             skipSelectAfterSubmit,
-            apiRuntimeInfo,
+            runtimeState,
+            runtimeMonitor,
           );
           done++;
           setDoneCount(done);
@@ -535,6 +726,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       );
 
       await Promise.all(workers);
+      runtimeMonitor.stop();
 
       if (failures > 0) {
         setError(haltMessage || `${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);

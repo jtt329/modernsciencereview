@@ -20,4 +20,9 @@ export interface ReviewSource {
   frontendPageLoadedAt?: string;
   clientRequestStartedAt?: string;
   apiRuntimeVersion?: unknown;
+  apiRuntimeAtBatchStart?: unknown;
+  apiRuntimeProcessStartedAt?: string;
+  apiRuntimeRestartDetectedAt?: string;
+  apiRuntimePreviousProcessStartedAt?: string;
+  apiRuntimeCurrentProcessStartedAt?: string;
 }

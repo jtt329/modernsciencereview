@@ -428,6 +428,13 @@ function interruptedByServerRestart(record: ReviewAttemptRecord) {
 
 function withRuntimeAttemptStatus(record: ReviewAttemptRecord): ReviewAttemptRecord {
   if (!interruptedByServerRestart(record)) return record;
+  const payload = debugPayloadObject(record.debugPayload);
+  const oldProcessStartedAt =
+    (payload.apiRuntimeAtRequestStart as any)?.build?.processStartedAt ??
+    (payload.apiRuntimeAtRegistration as any)?.build?.processStartedAt ??
+    (payload.apiRuntimeVersion as any)?.build?.processStartedAt ??
+    null;
+  const newProcessStartedAt = reviewRuntimeInfo()?.build?.processStartedAt ?? null;
   return {
     ...record,
     stageName: "interrupted_by_server_restart",
@@ -437,8 +444,10 @@ function withRuntimeAttemptStatus(record: ReviewAttemptRecord): ReviewAttemptRec
     failureStatus: "interrupted_by_server_restart",
     retryable: true,
     debugPayload: {
-      ...debugPayloadObject(record.debugPayload),
+      ...payload,
       interruptedByServerRestart: true,
+      apiRuntimePreviousProcessStartedAt: oldProcessStartedAt,
+      apiRuntimeCurrentProcessStartedAt: newProcessStartedAt,
       apiRuntimeAtExport: reviewRuntimeInfo(),
       originalStageName: record.stageName,
       originalStageType: record.stageType,
@@ -492,6 +501,7 @@ function buildBatchExport(records: ReviewAttemptRecord[], requestedBatchRunId?: 
     const latestClient = latestAttemptByCreatedAt(group.filter(isClientAttempt));
     const completedServer = latestAttemptByCreatedAt(group.filter((attempt) => !isClientAttempt(attempt) && isCompletedAttempt(attempt)));
     const effectiveLatest = completedServer ?? latestServer ?? latestClient ?? latest;
+    const latestPayload = debugPayloadObject(effectiveLatest.debugPayload);
     const terminal = isCompletedAttempt(effectiveLatest)
       ? "completed"
       : effectiveLatest.failureStatus || effectiveLatest.reviewStatus || "in_progress";
@@ -517,6 +527,9 @@ function buildBatchExport(records: ReviewAttemptRecord[], requestedBatchRunId?: 
       latestServerStatus: latestServer?.failureStatus ?? latestServer?.reviewStatus ?? null,
       latestClientFailureStatus: latestClient?.failureStatus ?? latestClient?.reviewStatus ?? null,
       apiInterrupted: group.some((attempt) => attempt.failureStatus === "interrupted_by_server_restart"),
+      apiRuntimePreviousProcessStartedAt: latestPayload.apiRuntimePreviousProcessStartedAt ?? null,
+      apiRuntimeCurrentProcessStartedAt: latestPayload.apiRuntimeCurrentProcessStartedAt ?? null,
+      apiRuntimeRestartDetectedAt: latestPayload.apiRuntimeRestartDetectedAt ?? null,
     };
   }).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
@@ -1499,6 +1512,9 @@ router.post("/review-attempts/client-failure", async (req, res) => {
       ?? debugString(body, "message")
       ?? "Frontend request failed before a completed API response was received.";
     const failureKind = debugString(body, "failureKind") ?? "frontend_failure";
+    const interruptedByRestart = failureKind === "interrupted_by_server_restart" ||
+      debugString(body, "apiRuntimePreviousProcessStartedAt") != null ||
+      debugString(body, "apiRuntimeCurrentProcessStartedAt") != null;
     const context: ReviewAttemptContext = {
       attemptId,
       batchRunId,
@@ -1509,8 +1525,8 @@ router.post("/review-attempts/client-failure", async (req, res) => {
       paperId: null,
       fileName,
       reviewRunId: null,
-      stageName: "client_failure",
-      stageType: "client",
+      stageName: interruptedByRestart ? "interrupted_by_server_restart" : "client_failure",
+      stageType: interruptedByRestart ? "system" : "client",
       model: null,
       promptVersion: REVIEW_PROMPT_VERSION,
       promptHash: REVIEW_PROMPT_HASH,
@@ -1522,11 +1538,12 @@ router.post("/review-attempts/client-failure", async (req, res) => {
       pdfFallbackAttempted: false,
       pdfVisibleFallbackUsed: false,
       fallbackSucceeded: false,
-      reviewStatus: "client_failure",
+      reviewStatus: interruptedByRestart ? "interrupted_by_server_restart" : "client_failure",
       scientificScoringAttempted: false,
       debugPayload: {
         ...body,
-        clientFailure: true,
+        clientFailure: !interruptedByRestart,
+        interruptedByServerRestart: interruptedByRestart,
         failureKind,
         apiRuntimeAtClientFailureReceipt: reviewRuntimeInfo(),
       },
@@ -1536,7 +1553,7 @@ router.post("/review-attempts/client-failure", async (req, res) => {
       rawErrorCode: typeof body.httpStatus === "number"
         ? body.httpStatus
         : debugString(body, "httpStatus") ?? debugString(body, "errorName") ?? failureKind,
-      failureStatus: "retryable",
+      failureStatus: interruptedByRestart ? "interrupted_by_server_restart" : "retryable",
       retryable: true,
       debugPayload: attemptDebugPayload(context),
     });
@@ -2456,6 +2473,12 @@ router.post("/papers", async (req, res) => {
         requestReceivedAt: new Date().toISOString(),
         clientRequestStartedAt,
         frontendPageLoadedAt: optionalSourceString(source, "frontendPageLoadedAt"),
+        apiRuntimeVersion: source.apiRuntimeVersion ?? null,
+        apiRuntimeAtBatchStart: source.apiRuntimeAtBatchStart ?? null,
+        apiRuntimeProcessStartedAt: optionalSourceString(source, "apiRuntimeProcessStartedAt"),
+        apiRuntimeRestartDetectedAt: optionalSourceString(source, "apiRuntimeRestartDetectedAt"),
+        apiRuntimePreviousProcessStartedAt: optionalSourceString(source, "apiRuntimePreviousProcessStartedAt"),
+        apiRuntimeCurrentProcessStartedAt: optionalSourceString(source, "apiRuntimeCurrentProcessStartedAt"),
         apiRuntimeAtRequestStart: reviewRuntimeInfo(),
       },
     };
