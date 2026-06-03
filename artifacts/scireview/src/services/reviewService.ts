@@ -12,4 +12,12 @@ export interface ReviewSource {
   forceFreshReview?: boolean;
   reuseExistingReview?: boolean;
   pdfVisibleFallback?: boolean;
+  batchRunId?: string;
+  queueItemId?: string;
+  attemptId?: string;
+  requestId?: string;
+  frontendSiteVersion?: string;
+  frontendPageLoadedAt?: string;
+  clientRequestStartedAt?: string;
+  apiRuntimeVersion?: unknown;
 }

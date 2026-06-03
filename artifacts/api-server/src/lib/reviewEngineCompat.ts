@@ -1094,6 +1094,7 @@ const MODEL_CALL_ATTEMPTS = positiveIntEnv("SCIREVIEW_MODEL_CALL_ATTEMPTS", 2);
 const PASS_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_PASS_GENERATION_ATTEMPTS", 1);
 const REPLACEMENT_PASS_ATTEMPTS = positiveIntEnv("SCIREVIEW_REPLACEMENT_PASS_ATTEMPTS", 1);
 const ADJUDICATOR_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_ADJUDICATOR_GENERATION_ATTEMPTS", 2);
+const API_PROCESS_STARTED_AT = new Date().toISOString();
 
 export function reviewRuntimeInfo() {
   return {
@@ -1120,6 +1121,9 @@ export function reviewRuntimeInfo() {
     },
     build: {
       railwayGitCommitSha: process.env.RAILWAY_GIT_COMMIT_SHA || null,
+      railwayDeploymentId: process.env.RAILWAY_DEPLOYMENT_ID || null,
+      nodeEnv: process.env.NODE_ENV || null,
+      processStartedAt: API_PROCESS_STARTED_AT,
     },
   };
 }

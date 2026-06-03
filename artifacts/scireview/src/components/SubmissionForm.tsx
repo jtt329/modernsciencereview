@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle, Cpu, Trash2, Link, Monitor } from 'lucide-react';
 import { useDropzone } from 'react-dropzone';
 import { ReviewSource, ReviewModel, ReviewMode } from '../services/reviewService';
+import { SITE_VERSION } from '../lib/version';
 
 interface SubmissionFormProps {
   onSubmit: (source: ReviewSource, skipSelect?: boolean) => Promise<any>;
@@ -24,6 +25,14 @@ interface QueuedFile {
 const MAX_QUEUED_PDFS = 50;
 const BATCH_CONCURRENCY = 2;
 const SUBMISSION_RETRY_DELAYS_MS: number[] = [];
+const FRONTEND_PAGE_LOADED_AT = new Date().toISOString();
+
+function makeClientId(prefix: string) {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}_${random}`;
+}
 
 const reviewModeCopy: Record<ReviewMode, { label: string; shortLabel: string; description: string; processing: string }> = {
   'benchmark-ingestion': {
@@ -66,6 +75,10 @@ function isDailyQuotaError(err: unknown) {
 
 function stageLabel(stageName: string | null | undefined) {
   switch (stageName) {
+    case 'request_received':
+      return 'Request received';
+    case 'client_failure':
+      return 'Browser/client request';
     case 'metadata_extraction':
     case 'title_author_extraction':
       return 'Metadata helper';
@@ -127,6 +140,7 @@ function shortAttemptError(message: string) {
 function friendlySubmissionError(err: unknown) {
   const message = errorMessage(err);
   const attempt = (err as any)?.attempt;
+  const normalizedMessage = message.trim();
   if (attempt?.reviewStatus === 'invalid_extraction_truncated' || (err as any)?.reviewStatus === 'invalid_extraction_truncated') {
     return 'Extraction invalid: central manuscript content is missing or unusable. Retry extraction, PDF fallback, or manual repair.';
   }
@@ -139,6 +153,9 @@ function friendlySubmissionError(err: unknown) {
       return `${failureStatus ? `${failureStatus}: ` : ''}${helperPrefix}: JSON parse failed: ${shortAttemptError(message)}.${suffix}`;
     }
     return `${failureStatus ? `${failureStatus}: ` : ''}${helperPrefix}: ${shortAttemptError(message)}.${suffix}`;
+  }
+  if (!normalizedMessage || normalizedMessage === 'Error' || normalizedMessage === '[object Object]') {
+    return 'Request failed before a detailed API response was received. The client failure was logged for this batch; retry after refreshing if it repeats.';
   }
   if (!isDailyQuotaError(err)) return message;
   const retryText = (err as any)?.retryAfterText || message.match(/retry in\s*([^.;]+)/i)?.[1]?.trim();
@@ -166,6 +183,74 @@ async function waitForApiHealth(maxWaitMs = 180_000) {
     await sleep(5_000);
   }
   return false;
+}
+
+async function fetchReviewRuntime() {
+  const response = await fetch('/api/review-runtime', {
+    credentials: 'include',
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    throw new Error(`Could not verify API runtime before batch start (${response.status}).`);
+  }
+  return response.json();
+}
+
+function apiProcessStartedAfterPageLoad(runtimeInfo: any) {
+  const processStartedAt = runtimeInfo?.build?.processStartedAt;
+  if (typeof processStartedAt !== 'string') return false;
+  const processStarted = Date.parse(processStartedAt);
+  const pageLoaded = Date.parse(FRONTEND_PAGE_LOADED_AT);
+  return Number.isFinite(processStarted) && Number.isFinite(pageLoaded) && processStarted > pageLoaded + 5_000;
+}
+
+function classifyClientFailure(err: unknown) {
+  const message = errorMessage(err);
+  const status = typeof (err as any)?.status === 'number' ? (err as any).status : null;
+  if (/aborted|abort/i.test(message)) return 'abort';
+  if (/timeout|timed out/i.test(message)) return 'timeout';
+  if (/failed to fetch|load failed|networkerror|network request failed/i.test(message)) return 'failed_to_fetch';
+  if (status) return `http_${status}`;
+  if (/json|unexpected token|non-json/i.test(message)) return 'non_json_response';
+  return 'frontend_failure';
+}
+
+async function reportClientFailure(params: {
+  qf: QueuedFile;
+  source: ReviewSource;
+  err: unknown;
+  clientRequestStartedAt: string;
+  clientRequestEndedAt: string;
+  apiRuntimeInfo: unknown;
+}) {
+  try {
+    const response = await fetch('/api/review-attempts/client-failure', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: params.qf.file.name,
+        batchRunId: params.source.batchRunId,
+        queueItemId: params.source.queueItemId,
+        attemptId: params.source.attemptId,
+        requestId: params.source.requestId,
+        frontendSiteVersion: SITE_VERSION,
+        frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
+        apiRuntimeVersion: params.apiRuntimeInfo,
+        clientRequestStartedAt: params.clientRequestStartedAt,
+        clientRequestEndedAt: params.clientRequestEndedAt,
+        errorName: params.err instanceof Error ? params.err.name : typeof params.err,
+        errorMessage: errorMessage(params.err),
+        httpStatus: typeof (params.err as any)?.status === 'number' ? (params.err as any).status : null,
+        failureKind: classifyClientFailure(params.err),
+      }),
+    });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    return payload?.attempt ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function isValidUrl(value: string) {
@@ -205,7 +290,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       }
       return [
         ...prev,
-        ...accepted.map(f => ({ id: `${f.name}-${Date.now()}-${Math.random()}`, file: f, status: 'pending' as const })),
+        ...accepted.map(f => ({ id: makeClientId('queue'), file: f, status: 'pending' as const })),
       ];
     });
   }, []);
@@ -235,6 +320,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
     qf: QueuedFile,
     source: ReviewSource,
     skipSelectAfterSubmit: boolean,
+    apiRuntimeInfo: unknown,
   ) => {
     let lastError: unknown;
 
@@ -244,6 +330,19 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
         return await onSubmit(source, skipSelectAfterSubmit);
       } catch (err) {
         lastError = err;
+        if (!(err as any)?.attempt) {
+          const clientAttempt = await reportClientFailure({
+            qf,
+            source,
+            err,
+            clientRequestStartedAt: source.clientRequestStartedAt || new Date().toISOString(),
+            clientRequestEndedAt: new Date().toISOString(),
+            apiRuntimeInfo,
+          });
+          if (clientAttempt && typeof err === 'object' && err !== null) {
+            (err as any).attempt = clientAttempt;
+          }
+        }
         const message = errorMessage(err);
         const canRetry = isRetryableSubmissionError(err) && attempt < SUBMISSION_RETRY_DELAYS_MS.length;
         if (!canRetry) break;
@@ -276,9 +375,33 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
     const linkUrl = providePdfLink && isValidUrl(pdfUrl.trim()) ? pdfUrl.trim() : undefined;
 
     try {
+      const apiRuntimeInfo = await fetchReviewRuntime();
+      if (apiProcessStartedAfterPageLoad(apiRuntimeInfo)) {
+        setError('The API was redeployed after this page loaded. Please refresh Modern Science Review before starting this batch so the frontend and API versions match.');
+        return;
+      }
+      const batchRunId = makeClientId('batch');
+      try {
+        localStorage.setItem('scireview:lastBatchRunId', batchRunId);
+      } catch {}
+
       if (submissionType === 'text') {
         if (!text.trim()) return;
-        await onSubmit({ type: 'text', data: text.trim(), model, reviewMode: effectiveReviewMode });
+        const clientRequestStartedAt = new Date().toISOString();
+        await onSubmit({
+          type: 'text',
+          data: text.trim(),
+          model,
+          reviewMode: effectiveReviewMode,
+          batchRunId,
+          queueItemId: makeClientId('queue'),
+          attemptId: makeClientId('attempt'),
+          requestId: makeClientId('request'),
+          frontendSiteVersion: SITE_VERSION,
+          frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
+          clientRequestStartedAt,
+          apiRuntimeVersion: apiRuntimeInfo,
+        });
         onClose();
         return;
       }
@@ -303,12 +426,25 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
         try {
           const manualText = qf.manualText?.trim();
           const base64 = manualText ? '' : await readFileAsBase64(qf.file);
+          const clientRequestStartedAt = new Date().toISOString();
+          const sourceWithAudit: ReviewSource = {
+            ...(manualText
+              ? { type: 'text' as const, data: manualText, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }
+              : { type: 'pdf' as const, data: base64, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl, pdfVisibleFallback: qf.usePdfVisibleFallback }),
+            batchRunId,
+            queueItemId: qf.id,
+            attemptId: makeClientId('attempt'),
+            requestId: makeClientId('request'),
+            frontendSiteVersion: SITE_VERSION,
+            frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
+            clientRequestStartedAt,
+            apiRuntimeVersion: apiRuntimeInfo,
+          };
           await submitWithRetries(
             qf,
-            manualText
-              ? { type: 'text', data: manualText, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }
-              : { type: 'pdf', data: base64, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl, pdfVisibleFallback: qf.usePdfVisibleFallback },
+            sourceWithAudit,
             skipSelectAfterSubmit,
+            apiRuntimeInfo,
           );
           done++;
           setDoneCount(done);

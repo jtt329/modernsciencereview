@@ -424,7 +424,17 @@ export default function App() {
   };
 
   const fetchPapersExport = async (debugAudit = false) => {
-    const res = await fetch(`/api/papers/export${debugAudit ? '?debugAudit=true&includeFailedAttempts=true' : ''}`, { credentials: 'include' });
+    const params = new URLSearchParams();
+    if (debugAudit) {
+      params.set('debugAudit', 'true');
+      params.set('includeFailedAttempts', 'true');
+      try {
+        const batchRunId = localStorage.getItem('scireview:lastBatchRunId');
+        if (batchRunId) params.set('batchRunId', batchRunId);
+      } catch {}
+    }
+    const query = params.toString();
+    const res = await fetch(`/api/papers/export${query ? `?${query}` : ''}`, { credentials: 'include' });
     if (!res.ok) {
       const message = await res.text();
       throw new Error(message || `Export failed with status ${res.status}`);

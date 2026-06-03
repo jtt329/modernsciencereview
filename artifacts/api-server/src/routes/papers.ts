@@ -27,6 +27,7 @@ import {
   normalizeReviewPipelineMode,
   parseGeminiJsonResponse,
   recalibrateStoredAggregateWithComparators,
+  reviewRuntimeInfo,
   v15ComparatorCalibrationForStorage,
   type ComparatorContextSelector,
   type ReviewPipelineMode,
@@ -54,6 +55,8 @@ const router = Router();
 const recentSubmissions = new Map<string, Promise<{ paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }>>();
 
 type ReviewAttemptStageName =
+  | "request_received"
+  | "client_failure"
   | "metadata_extraction"
   | "title_author_extraction"
   | "pdf_text_extraction"
@@ -66,10 +69,13 @@ type ReviewAttemptStageName =
   | "review_validation"
   | "save_review";
 
-type ReviewAttemptStageType = "extraction" | "helper" | "scientific_review" | "validation" | "storage";
+type ReviewAttemptStageType = "request" | "client" | "extraction" | "helper" | "scientific_review" | "validation" | "storage";
 
 interface ReviewAttemptRecord {
   attemptId: string;
+  batchRunId: string | null;
+  queueItemId: string | null;
+  frontendSiteVersion: string | null;
   userId: string | null;
   paperId: string | null;
   fileName: string | null;
@@ -98,6 +104,11 @@ interface ReviewAttemptRecord {
 }
 
 interface ReviewAttemptContext {
+  attemptId: string;
+  batchRunId: string | null;
+  queueItemId: string | null;
+  frontendSiteVersion: string | null;
+  createdAt: string;
   userId: string | null;
   paperId: string | null;
   fileName: string | null;
@@ -207,6 +218,28 @@ function toDbBool(value: boolean) {
   return value ? 1 : 0;
 }
 
+function debugPayloadObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function debugString(payload: Record<string, unknown> | null, key: string): string | null {
+  const value = payload?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function attemptDebugPayload(context: ReviewAttemptContext, extra: Record<string, unknown> = {}) {
+  return {
+    ...debugPayloadObject(context.debugPayload),
+    batchRunId: context.batchRunId,
+    queueItemId: context.queueItemId,
+    frontendSiteVersion: context.frontendSiteVersion,
+    apiRuntime: reviewRuntimeInfo(),
+    ...extra,
+  };
+}
+
 function reviewAttemptInsertValues(record: ReviewAttemptRecord): typeof reviewAttemptsTable.$inferInsert {
   return {
     id: record.attemptId,
@@ -238,8 +271,12 @@ function reviewAttemptInsertValues(record: ReviewAttemptRecord): typeof reviewAt
 }
 
 function reviewAttemptRecordFromRow(row: typeof reviewAttemptsTable.$inferSelect): ReviewAttemptRecord {
+  const debugPayload = row.debugPayload ?? null;
   return {
     attemptId: row.id,
+    batchRunId: debugString(debugPayload, "batchRunId"),
+    queueItemId: debugString(debugPayload, "queueItemId"),
+    frontendSiteVersion: debugString(debugPayload, "frontendSiteVersion"),
     userId: row.userId,
     paperId: row.paperId,
     fileName: row.fileName,
@@ -269,9 +306,170 @@ function reviewAttemptRecordFromRow(row: typeof reviewAttemptsTable.$inferSelect
       retryable: row.retryable === 1,
     }),
     scientificScoringAttempted: row.scientificScoringAttempted === 1,
-    debugPayload: row.debugPayload ?? null,
+    debugPayload,
     retryable: row.retryable === 1,
     createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : new Date(row.createdAt).toISOString(),
+  };
+}
+
+function reviewAttemptRecordFromContext(
+  context: ReviewAttemptContext,
+  overrides: Partial<ReviewAttemptRecord> = {},
+): ReviewAttemptRecord {
+  const record: ReviewAttemptRecord = {
+    attemptId: context.attemptId,
+    batchRunId: context.batchRunId,
+    queueItemId: context.queueItemId,
+    frontendSiteVersion: context.frontendSiteVersion,
+    userId: context.userId,
+    paperId: context.paperId,
+    fileName: context.fileName,
+    reviewRunId: context.reviewRunId,
+    stageName: context.stageName,
+    stageType: context.stageType,
+    model: context.model,
+    promptVersion: context.promptVersion,
+    promptHash: context.promptHash,
+    requestId: context.requestId,
+    errorMessage: "",
+    rawErrorCode: null,
+    retryCount: context.retryCount,
+    extractionCompletenessStatus: context.extractionCompletenessStatus,
+    extractionWarnings: context.extractionWarnings,
+    extractionRetryAttempted: context.extractionRetryAttempted,
+    pdfFallbackAttempted: context.pdfFallbackAttempted,
+    pdfVisibleFallbackUsed: context.pdfVisibleFallbackUsed,
+    fallbackSucceeded: context.fallbackSucceeded,
+    reviewStatus: context.reviewStatus,
+    failureStatus: null,
+    scientificScoringAttempted: context.scientificScoringAttempted,
+    debugPayload: attemptDebugPayload(context),
+    retryable: true,
+    createdAt: context.createdAt,
+  };
+  return { ...record, ...overrides };
+}
+
+async function persistReviewAttemptRecord(record: ReviewAttemptRecord) {
+  const values = reviewAttemptInsertValues(record);
+  const { id: _id, createdAt: _createdAt, ...updateValues } = values as Record<string, unknown>;
+  await db.insert(reviewAttemptsTable)
+    .values(values)
+    .onConflictDoUpdate({
+      target: reviewAttemptsTable.id,
+      set: updateValues,
+    });
+}
+
+async function updateReviewAttemptProgress(
+  context: ReviewAttemptContext,
+  overrides: Partial<ReviewAttemptRecord> = {},
+) {
+  const record = reviewAttemptRecordFromContext(context, {
+    ...overrides,
+    debugPayload: attemptDebugPayload(context, debugPayloadObject(overrides.debugPayload)),
+  });
+  try {
+    await persistReviewAttemptRecord(record);
+  } catch (err) {
+    logger.error({ err, attempt: record }, "Failed to persist review attempt progress");
+  }
+  return record;
+}
+
+function isClientAttempt(record: ReviewAttemptRecord) {
+  return record.stageType === "client" ||
+    record.stageName === "client_failure" ||
+    debugPayloadObject(record.debugPayload).clientFailure === true;
+}
+
+function isCompletedAttempt(record: ReviewAttemptRecord) {
+  return record.failureStatus === "completed" ||
+    record.reviewStatus === "completed" ||
+    record.reviewStatus === "completed_reused" ||
+    record.reviewStatus === "completed_reused_inflight";
+}
+
+function ageForAttempt(record: ReviewAttemptRecord, now = Date.now()) {
+  const timestamp = Date.parse(record.createdAt);
+  const ageMs = Number.isFinite(timestamp) ? Math.max(0, now - timestamp) : null;
+  return {
+    ...record,
+    ageMs,
+    ageMinutes: ageMs == null ? null : Math.round(ageMs / 60000),
+  };
+}
+
+function latestAttemptByCreatedAt(records: ReviewAttemptRecord[]) {
+  return [...records].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
+}
+
+function buildBatchExport(records: ReviewAttemptRecord[], requestedBatchRunId?: string | null) {
+  const now = Date.now();
+  const batchRunId =
+    requestedBatchRunId ||
+    latestAttemptByCreatedAt(records.filter((attempt) => attempt.batchRunId))?.batchRunId ||
+    null;
+  if (!batchRunId) {
+    return {
+      currentBatch: null,
+      historicalFailedAttempts: records
+        .filter((attempt) => !isCompletedAttempt(attempt))
+        .map((attempt) => ageForAttempt(attempt, now)),
+    };
+  }
+
+  const currentRecords = records.filter((attempt) => attempt.batchRunId === batchRunId);
+  const historicalRecords = records.filter((attempt) => attempt.batchRunId !== batchRunId);
+  const byQueueItem = new Map<string, ReviewAttemptRecord[]>();
+  for (const attempt of currentRecords) {
+    const key = attempt.queueItemId || attempt.fileName || attempt.attemptId;
+    const group = byQueueItem.get(key) ?? [];
+    group.push(attempt);
+    byQueueItem.set(key, group);
+  }
+  const items = Array.from(byQueueItem.entries()).map(([key, group]) => {
+    const latest = latestAttemptByCreatedAt(group) ?? group[0];
+    const latestServer = latestAttemptByCreatedAt(group.filter((attempt) => !isClientAttempt(attempt)));
+    const latestClient = latestAttemptByCreatedAt(group.filter(isClientAttempt));
+    const terminal = isCompletedAttempt(latest)
+      ? "completed"
+      : latest.failureStatus || latest.reviewStatus || "in_progress";
+    return {
+      key,
+      queueItemId: latest.queueItemId,
+      fileName: latest.fileName,
+      status: terminal,
+      latestStageName: latest.stageName,
+      latestStageType: latest.stageType,
+      latestReviewStatus: latest.reviewStatus,
+      latestFailureStatus: latest.failureStatus,
+      latestErrorMessage: latest.errorMessage,
+      retryable: latest.retryable,
+      createdAt: latest.createdAt,
+      ageMs: ageForAttempt(latest, now).ageMs,
+      serverAttemptIds: group.filter((attempt) => !isClientAttempt(attempt)).map((attempt) => attempt.attemptId),
+      clientFailureIds: group.filter(isClientAttempt).map((attempt) => attempt.attemptId),
+      latestServerAttemptId: latestServer?.attemptId ?? null,
+      latestClientFailureId: latestClient?.attemptId ?? null,
+    };
+  }).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+
+  return {
+    currentBatch: {
+      batchRunId,
+      itemCount: items.length,
+      items,
+      serverAttempts: currentRecords
+        .filter((attempt) => !isClientAttempt(attempt))
+        .map((attempt) => ageForAttempt(attempt, now)),
+      clientFailures: currentRecords
+        .filter(isClientAttempt)
+        .map((attempt) => ageForAttempt(attempt, now)),
+    },
+    historicalFailedAttempts: historicalRecords
+      .filter((attempt) => !isCompletedAttempt(attempt))
+      .map((attempt) => ageForAttempt(attempt, now)),
   };
 }
 
@@ -280,10 +478,10 @@ async function recordFailedReviewAttempt(context: ReviewAttemptContext, err: unk
   const classified = classifyAttemptFromError(context, err, message);
   const statusCode = typeof (err as any)?.statusCode === "number" ? (err as any).statusCode : null;
   const record: ReviewAttemptRecord = {
-    attemptId: createHash("sha256")
-      .update(`${classified.userId ?? ""}\0${classified.fileName ?? ""}\0${classified.stageName}\0${message}\0${Date.now()}`)
-      .digest("hex")
-      .slice(0, 16),
+    attemptId: classified.attemptId,
+    batchRunId: classified.batchRunId,
+    queueItemId: classified.queueItemId,
+    frontendSiteVersion: classified.frontendSiteVersion,
     userId: classified.userId,
     paperId: classified.paperId,
     fileName: classified.fileName,
@@ -306,15 +504,20 @@ async function recordFailedReviewAttempt(context: ReviewAttemptContext, err: unk
     reviewStatus: classified.reviewStatus ?? ((err as any)?.reviewStatus ?? null),
     failureStatus: null,
     scientificScoringAttempted: classified.scientificScoringAttempted,
-    debugPayload: classified.debugPayload,
+    debugPayload: attemptDebugPayload(classified, {
+      errorName: err instanceof Error ? err.name : typeof err,
+      failedAt: new Date().toISOString(),
+    }),
     retryable: isRetryableAttemptError(message, statusCode),
     createdAt: new Date().toISOString(),
   };
   record.failureStatus = failureStatusForAttempt(record);
+  const existingIndex = failedReviewAttempts.findIndex((attempt) => attempt.attemptId === record.attemptId);
+  if (existingIndex >= 0) failedReviewAttempts.splice(existingIndex, 1);
   failedReviewAttempts.unshift(record);
   failedReviewAttempts.splice(MAX_FAILED_REVIEW_ATTEMPTS);
   try {
-    await db.insert(reviewAttemptsTable).values(reviewAttemptInsertValues(record));
+    await persistReviewAttemptRecord(record);
   } catch (insertErr) {
     logger.error({ err: insertErr, attempt: record }, "Failed to persist review attempt");
   }
@@ -713,6 +916,28 @@ function submissionErrorMessage(err: unknown) {
   return "Unknown server error while creating this review. The API logged the full error; retry after the current deploy, or check Railway logs if it repeats.";
 }
 
+function optionalSourceString(source: any, key: string): string | null {
+  const value = source?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function attemptIdForSubmission(userId: string, source: any, fallbackFileName: string | null) {
+  const explicit = optionalSourceString(source, "attemptId");
+  if (explicit) return explicit;
+  return createHash("sha256")
+    .update([
+      userId,
+      optionalSourceString(source, "batchRunId") ?? "",
+      optionalSourceString(source, "queueItemId") ?? "",
+      optionalSourceString(source, "requestId") ?? "",
+      fallbackFileName ?? "",
+      Date.now().toString(),
+      Math.random().toString(36),
+    ].join("\0"))
+    .digest("hex")
+    .slice(0, 24);
+}
+
 const COMPARATOR_STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is", "it",
   "of", "on", "or", "over", "the", "to", "via", "with", "within", "without", "paper", "review",
@@ -1071,6 +1296,83 @@ router.get("/admin/review-attempts", async (req, res) => {
   }
 });
 
+// POST /api/review-attempts/client-failure — frontend-only queue failure audit
+router.post("/review-attempts/client-failure", async (req, res) => {
+  if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const body = debugPayloadObject(req.body);
+    const fileName = debugString(body, "fileName");
+    const batchRunId = debugString(body, "batchRunId");
+    const queueItemId = debugString(body, "queueItemId");
+    const frontendSiteVersion = debugString(body, "frontendSiteVersion");
+    const attemptId = debugString(body, "attemptId") ?? createHash("sha256")
+      .update([
+        req.user.id,
+        batchRunId ?? "",
+        queueItemId ?? "",
+        fileName ?? "",
+        debugString(body, "clientRequestStartedAt") ?? "",
+        Date.now().toString(),
+      ].join("\0"))
+      .digest("hex")
+      .slice(0, 24);
+    const message = debugString(body, "errorMessage")
+      ?? debugString(body, "message")
+      ?? "Frontend request failed before a completed API response was received.";
+    const failureKind = debugString(body, "failureKind") ?? "frontend_failure";
+    const context: ReviewAttemptContext = {
+      attemptId,
+      batchRunId,
+      queueItemId,
+      frontendSiteVersion,
+      createdAt: new Date().toISOString(),
+      userId: req.user.id,
+      paperId: null,
+      fileName,
+      reviewRunId: null,
+      stageName: "client_failure",
+      stageType: "client",
+      model: null,
+      promptVersion: REVIEW_PROMPT_VERSION,
+      promptHash: REVIEW_PROMPT_HASH,
+      requestId: debugString(body, "requestId"),
+      retryCount: 0,
+      extractionCompletenessStatus: null,
+      extractionWarnings: [],
+      extractionRetryAttempted: false,
+      pdfFallbackAttempted: false,
+      pdfVisibleFallbackUsed: false,
+      fallbackSucceeded: false,
+      reviewStatus: "client_failure",
+      scientificScoringAttempted: false,
+      debugPayload: {
+        ...body,
+        clientFailure: true,
+        failureKind,
+        apiRuntimeAtClientFailureReceipt: reviewRuntimeInfo(),
+      },
+    };
+    const record = reviewAttemptRecordFromContext(context, {
+      errorMessage: message,
+      rawErrorCode: typeof body.httpStatus === "number"
+        ? body.httpStatus
+        : debugString(body, "httpStatus") ?? debugString(body, "errorName") ?? failureKind,
+      failureStatus: "retryable",
+      retryable: true,
+      debugPayload: attemptDebugPayload(context),
+    });
+    await persistReviewAttemptRecord(record);
+    const existingIndex = failedReviewAttempts.findIndex((attempt) => attempt.attemptId === record.attemptId);
+    if (existingIndex >= 0) failedReviewAttempts.splice(existingIndex, 1);
+    failedReviewAttempts.unshift(record);
+    failedReviewAttempts.splice(MAX_FAILED_REVIEW_ATTEMPTS);
+    res.status(201).json({ attempt: record });
+  } catch (err: any) {
+    logger.error({ err }, "Error recording frontend review attempt failure");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // PATCH /api/admin/review-attempts/:id/supersede — mark an old failed attempt as superseded
 router.patch("/admin/review-attempts/:id/supersede", async (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -1353,6 +1655,9 @@ router.get("/papers/export", async (req, res) => {
     const includeSystemPrompt = req.query.includeSystemPrompt === "true";
     const debugAudit = req.query.debugAudit === "true";
     const includeFailedAttempts = debugAudit && req.query.includeFailedAttempts === "true";
+    const requestedBatchRunId = typeof req.query.batchRunId === "string" && req.query.batchRunId.trim()
+      ? req.query.batchRunId.trim()
+      : null;
     if (debugAudit && !requireAdmin(req, res)) return;
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
@@ -1366,6 +1671,9 @@ router.get("/papers/export", async (req, res) => {
           .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
           .slice(0, MAX_FAILED_REVIEW_ATTEMPTS)
       : [];
+    const batchAttemptExport = includeFailedAttempts
+      ? buildBatchExport(failedAttemptsForExport, requestedBatchRunId)
+      : null;
 
     const exported = papers.map(paperRecord => {
       const p = normalizePaperDisplayMetadata(paperRecord);
@@ -1705,9 +2013,12 @@ router.get("/papers/export", async (req, res) => {
       promptVersion: REVIEW_PROMPT_VERSION,
       promptName: REVIEW_PROMPT_NAME,
       promptHash: REVIEW_PROMPT_HASH,
-      ...(debugAudit ? { debugAudit: true } : {}),
+      ...(debugAudit ? { debugAudit: true, apiRuntime: reviewRuntimeInfo() } : {}),
       ...(includeSystemPrompt ? { systemPrompt: LATEST_REVIEW_SYSTEM_INSTRUCTION } : {}),
-      ...(includeFailedAttempts ? { failedAttempts: failedAttemptsForExport } : {}),
+      ...(includeFailedAttempts && batchAttemptExport ? {
+        currentBatch: batchAttemptExport.currentBatch,
+        historicalFailedAttempts: batchAttemptExport.historicalFailedAttempts,
+      } : {}),
       count: exported.length,
       papers: exported,
     });
@@ -1885,6 +2196,58 @@ router.post("/papers", async (req, res) => {
     const isAdmin = Boolean(ADMIN_EMAIL && req.user.email === ADMIN_EMAIL);
     const requestedReviewMode: ReviewPipelineMode = normalizeReviewPipelineMode(source.reviewMode);
     const reviewMode: ReviewPipelineMode = isAdmin ? requestedReviewMode : "normal-review";
+    const selectedModel: ReviewModel = "gemini";
+    const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string; pdfBase64?: string; mimeType?: string } = {
+      fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
+    };
+    const batchRunId = optionalSourceString(source, "batchRunId");
+    const queueItemId = optionalSourceString(source, "queueItemId");
+    const frontendSiteVersion = optionalSourceString(source, "frontendSiteVersion");
+    const clientRequestStartedAt = optionalSourceString(source, "clientRequestStartedAt");
+    const requestId = optionalSourceString(source, "requestId") ?? createHash("sha256")
+      .update(`${req.user.id}\0${batchRunId ?? ""}\0${queueItemId ?? ""}\0${Date.now()}\0${Math.random()}`)
+      .digest("hex")
+      .slice(0, 16);
+    attemptContext = {
+      attemptId: attemptIdForSubmission(req.user.id, source, metadataHints.fileName ?? null),
+      batchRunId,
+      queueItemId,
+      frontendSiteVersion,
+      createdAt: new Date().toISOString(),
+      userId: req.user.id,
+      paperId: null,
+      fileName: metadataHints.fileName ?? null,
+      reviewRunId: null,
+      stageName: "request_received",
+      stageType: "request",
+      model: null,
+      promptVersion: REVIEW_PROMPT_VERSION,
+      promptHash: REVIEW_PROMPT_HASH,
+      requestId,
+      retryCount: 0,
+      extractionCompletenessStatus: null,
+      extractionWarnings: [],
+      extractionRetryAttempted: false,
+      pdfFallbackAttempted: false,
+      pdfVisibleFallbackUsed: false,
+      fallbackSucceeded: false,
+      reviewStatus: null,
+      scientificScoringAttempted: false,
+      debugPayload: {
+        sourceType: source.type,
+        reviewMode,
+        selectedModel,
+        requestReceivedAt: new Date().toISOString(),
+        clientRequestStartedAt,
+        frontendPageLoadedAt: optionalSourceString(source, "frontendPageLoadedAt"),
+        apiRuntimeAtRequestStart: reviewRuntimeInfo(),
+      },
+    };
+    await updateReviewAttemptProgress(attemptContext, {
+      reviewStatus: "request_received",
+      retryable: true,
+      debugPayload: { requestPhase: "received" },
+    });
     const sourceHash = sourceHashFor(source);
     const expectedModelName = expectedReviewModelName(reviewMode);
     const reuseExistingReview = source.reuseExistingReview === true || source.reuseExisting === true;
@@ -1892,7 +2255,23 @@ router.post("/papers", async (req, res) => {
     const allowExistingReviewReuse = reuseExistingReview || !forceFreshReview;
     submissionKey = allowExistingReviewReuse && sourceHash ? `${req.user.id}:${expectedModelName}:${sourceHash}` : null;
     if (submissionKey && recentSubmissions.has(submissionKey)) {
-      res.json(await recentSubmissions.get(submissionKey));
+      const payload = await recentSubmissions.get(submissionKey);
+      if (payload?.paper) {
+        attemptContext.paperId = payload.paper.id;
+      }
+      await updateReviewAttemptProgress(attemptContext, {
+        reviewStatus: "completed_reused_inflight",
+        failureStatus: "completed",
+        retryable: false,
+        debugPayload: { cacheUsed: true, previousReviewUsed: true, reuseReason: "inFlight" },
+      });
+      const attempt = reviewAttemptRecordFromContext(attemptContext, {
+        reviewStatus: "completed_reused_inflight",
+        failureStatus: "completed",
+        retryable: false,
+        debugPayload: attemptDebugPayload(attemptContext, { cacheUsed: true, previousReviewUsed: true, reuseReason: "inFlight" }),
+      });
+      res.json({ ...payload, attempt, batchRunId, queueItemId });
       return;
     }
     if (submissionKey) {
@@ -1907,35 +2286,10 @@ router.post("/papers", async (req, res) => {
     let extractionCompleteness: ExtractionCompletenessReport | null = null;
     let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
     const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
-    const selectedModel: ReviewModel = "gemini";
-    const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string; pdfBase64?: string; mimeType?: string } = {
-      fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
-    };
-    attemptContext = {
-      userId: req.user.id,
-      paperId: null,
-      fileName: metadataHints.fileName ?? null,
-      reviewRunId: null,
-      stageName: "pdf_text_extraction",
-      stageType: "extraction",
-      model: null,
-      promptVersion: REVIEW_PROMPT_VERSION,
-      promptHash: REVIEW_PROMPT_HASH,
-      requestId: null,
-      retryCount: 0,
-      extractionCompletenessStatus: null,
-      extractionWarnings: [],
-      extractionRetryAttempted: false,
-      pdfFallbackAttempted: false,
-      pdfVisibleFallbackUsed: false,
-      fallbackSucceeded: false,
-      reviewStatus: null,
-      scientificScoringAttempted: false,
-      debugPayload: null,
-    };
 
     if (source.type === "pdf") {
       setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_text_extraction" });
       const buffer = Buffer.from(source.data, "base64");
       const pdfParse = (await import("pdf-parse")).default;
       const parsed = await pdfParse(buffer);
@@ -1951,8 +2305,10 @@ router.post("/papers", async (req, res) => {
       });
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
       attemptContext.pdfFallbackAttempted = isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
       if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
+      if (attemptContext.pdfFallbackAttempted) await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_fallback_extraction" });
       const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
       paperContent = repaired.text;
       metadataExtractionText = paperContent;
@@ -1961,6 +2317,7 @@ router.post("/papers", async (req, res) => {
       attemptContext.pdfVisibleFallbackUsed = false;
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
     } else if (source.type === "url") {
       const url = source.data?.trim();
       if (!url) { res.status(400).json({ error: "A valid URL is required." }); return; }
@@ -1968,6 +2325,13 @@ router.post("/papers", async (req, res) => {
       const fetchResp = await fetch(url);
       if (!fetchResp.ok) {
         setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
+        await updateReviewAttemptProgress(attemptContext, {
+          reviewStatus: "failed_url_fetch",
+          errorMessage: `Could not fetch PDF from URL (${fetchResp.status}).`,
+          rawErrorCode: fetchResp.status,
+          failureStatus: "retryable",
+          retryable: true,
+        });
         res.status(400).json({ error: `Could not fetch PDF from URL (${fetchResp.status}). Make sure it is a direct link to a publicly accessible PDF.` });
         return;
       }
@@ -1988,8 +2352,10 @@ router.post("/papers", async (req, res) => {
       });
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
       attemptContext.pdfFallbackAttempted = isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
       if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
+      if (attemptContext.pdfFallbackAttempted) await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_fallback_extraction" });
       const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
       paperContent = repaired.text;
       metadataExtractionText = paperContent;
@@ -1998,14 +2364,17 @@ router.post("/papers", async (req, res) => {
       attemptContext.pdfVisibleFallbackUsed = false;
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
       submittedPdfUrl = url;
     } else {
       setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: "manual_text_received" });
       paperContent = cleanExtractedManuscriptText(source.data);
       metadataExtractionText = paperContent;
       extractionCompleteness = assessExtractionCompleteness(paperContent);
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { manualTextSupplied: source.type === "text" });
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
     }
     // Strip null bytes and non-printable control characters that break JSON serialisation
     paperContent = cleanExtractedManuscriptText(paperContent);
@@ -2017,6 +2386,7 @@ router.post("/papers", async (req, res) => {
       source.pdfVisibleFallback === true &&
       Boolean(metadataHints.pdfBase64);
     setAttemptStage(attemptContext, "extraction_quality_check", "validation", null);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
     if (isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus) && !usePdfVisibleLastResort) {
       attemptContext.reviewStatus = "invalid_extraction_truncated";
       const attempt = await recordFailedReviewAttempt(attemptContext, new Error("Review not completed: extracted manuscript text is not complete enough for a reliable review. Retry extraction, PDF fallback, or manual repair."));
@@ -2037,10 +2407,12 @@ router.post("/papers", async (req, res) => {
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
         pdfVisibleFallbackRequested: true,
       });
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
     }
 
     // Step 1: extract real title and authors (before anonymous review)
     setAttemptStage(attemptContext, "metadata_extraction", "helper", GEMINI_METADATA_MODEL);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: "metadata_extraction" });
     const metadata = await extractLatestMetadata(metadataExtractionText || paperContent, metadataHints);
 
     const existingBySource = allowExistingReviewReuse && sourceHash
@@ -2058,11 +2430,18 @@ router.post("/papers", async (req, res) => {
         adjudicatorContextIncluded: false,
       }, "Reused existing review by source hash");
       if (resolveSubmission) resolveSubmission(existingBySource);
+      attemptContext.paperId = existingBySource.paper.id;
+      const attempt = await updateReviewAttemptProgress(attemptContext, {
+        reviewStatus: "completed_reused",
+        failureStatus: "completed",
+        retryable: false,
+        debugPayload: { cacheUsed: true, previousReviewUsed: true, reuseReason: "sourceHash" },
+      });
       if (submissionKey) {
         const key = submissionKey;
         setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
       }
-      res.json(existingBySource);
+      res.json({ ...existingBySource, attempt, batchRunId, queueItemId });
       return;
     }
 
@@ -2086,16 +2465,24 @@ router.post("/papers", async (req, res) => {
         adjudicatorContextIncluded: false,
       }, "Reused existing review by metadata");
       if (resolveSubmission) resolveSubmission(existingByMetadata);
+      attemptContext.paperId = existingByMetadata.paper.id;
+      const attempt = await updateReviewAttemptProgress(attemptContext, {
+        reviewStatus: "completed_reused",
+        failureStatus: "completed",
+        retryable: false,
+        debugPayload: { cacheUsed: true, previousReviewUsed: true, reuseReason: "metadata" },
+      });
       if (submissionKey) {
         const key = submissionKey;
         setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
       }
-      res.json(existingByMetadata);
+      res.json({ ...existingByMetadata, attempt, batchRunId, queueItemId });
       return;
     }
 
     // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
     setAttemptStage(attemptContext, "blind_pass_1", "scientific_review", GEMINI_PASS_MODEL);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: "scientific_review_started" });
     const reviewInput: ReviewInput = usePdfVisibleLastResort && metadataHints.pdfBase64
       ? {
           text: paperContent,
@@ -2111,6 +2498,7 @@ router.post("/papers", async (req, res) => {
     );
     addSubmissionCostControls(reviewValues, sourceHash, reviewMode);
     setAttemptStage(attemptContext, "review_validation", "validation", null);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: "review_validation" });
     if (reviewMode === "benchmark-ingestion") {
       const issue = benchmarkCompletionIssue(reviewValues);
       if (issue) {
@@ -2129,6 +2517,7 @@ router.post("/papers", async (req, res) => {
     let paper: typeof papersTable.$inferSelect;
     try {
       setAttemptStage(attemptContext, "save_review", "storage", null);
+      await updateReviewAttemptProgress(attemptContext, { reviewStatus: "save_review" });
       [paper] = await db.insert(papersTable).values({
         title: metadata.title,
         content: (source.type === "pdf" || source.type === "url") ? `[PDF] ${metadata.title}` : paperContent,
@@ -2149,6 +2538,16 @@ router.post("/papers", async (req, res) => {
 
     attemptContext.paperId = paper.id;
     const [review] = await db.insert(reviewsTable).values(buildReviewInsertValues(paper.id, reviewValues)).returning();
+    const attempt = await updateReviewAttemptProgress(attemptContext, {
+      reviewStatus: "completed",
+      failureStatus: "completed",
+      retryable: false,
+      debugPayload: {
+        savedPaperId: paper.id,
+        savedReviewId: review.id,
+        score: reviewValues.score,
+      },
+    });
 
     const payload = { paper, review };
     if (resolveSubmission) resolveSubmission(payload);
@@ -2156,7 +2555,7 @@ router.post("/papers", async (req, res) => {
       const key = submissionKey;
       setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
     }
-    res.json(payload);
+    res.json({ ...payload, attempt, batchRunId, queueItemId });
   } catch (err: any) {
     if (rejectSubmission) rejectSubmission(err);
     if (submissionKey) {
