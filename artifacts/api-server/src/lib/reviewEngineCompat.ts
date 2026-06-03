@@ -1613,6 +1613,40 @@ function invalidExtractionError(reason: string) {
   return error;
 }
 
+function deterministicSnapshotIsReviewable(snapshot?: ReviewInputSnapshot | null) {
+  if (!snapshot) return false;
+  if (!isExtractionReviewableStatus(snapshot.extractionCompletenessStatus)) return false;
+  if ((snapshot.extractedTextCharCount ?? 0) < 12_000) return false;
+  const estimatedPages = snapshot.estimatedPdfPageCount ?? null;
+  const extractedPages = snapshot.extractedPageCount ?? null;
+  if (estimatedPages && extractedPages && extractedPages < Math.max(2, Math.floor(estimatedPages * 0.8))) {
+    return false;
+  }
+  const text = `${snapshot.rawExtractedText ?? ""}\n${snapshot.blindedReviewText ?? ""}`;
+  const hasLateBody = /\b(references|bibliography|appendix|conclusion|section\s+(iii|iv|v|vi|vii|viii|ix|x)|\n\s*(III|IV|V|VI|VII|VIII|IX|X)\.?\s+[A-Z])/i.test(text);
+  const hasScientificBody = /\b(definition|equation|theorem|derivation|horizon|field equation|thermodynamic|entropy|energy|mass|surface gravity|result)\b/i.test(text);
+  return hasLateBody && hasScientificBody;
+}
+
+function reviewInputSelfCheckError(role: string, reason: string) {
+  const error = new Error(`${role} input self-check failed despite deterministic reviewable extraction: ${reason}`.trim());
+  (error as Error & { statusCode?: number; reviewStatus?: string }).statusCode = 422;
+  (error as Error & { statusCode?: number; reviewStatus?: string }).reviewStatus = "failed_validation";
+  return error;
+}
+
+function invalidReviewInputQualityError(
+  review: { reviewInputQuality?: ReviewInputQuality },
+  role: string,
+  snapshot?: ReviewInputSnapshot | null,
+) {
+  const reason = review.reviewInputQuality?.truncationEvidence || `${role} reported incomplete or truncated review input.`;
+  if (deterministicSnapshotIsReviewable(snapshot)) {
+    return reviewInputSelfCheckError(role, reason);
+  }
+  return invalidExtractionError(reason);
+}
+
 function buildReviewInputSnapshot(
   rawInput: ReviewInput,
   blindedInput: ReviewInput,
@@ -3059,7 +3093,7 @@ function individualReviewReasoningText(review: IndividualReview) {
   ].filter(Boolean).join("\n").trim();
 }
 
-function validateIndividualReview(review: IndividualReview) {
+function validateIndividualReview(review: IndividualReview, reviewInputSnapshot?: ReviewInputSnapshot | null) {
   const reasoningText = individualReviewReasoningText(review);
   const score = review.scoreBand.median;
   const hasCoreReasoning =
@@ -3079,7 +3113,7 @@ function validateIndividualReview(review: IndividualReview) {
   }
 
   if (reviewQualityRequiresInvalidation(review)) {
-    throw invalidExtractionError(review.reviewInputQuality.truncationEvidence || "A blind pass reported incomplete or truncated review input.");
+    throw invalidReviewInputQualityError(review, "Blind pass", reviewInputSnapshot);
   }
 
   if (!review.centralClaim.trim()) {
@@ -3876,6 +3910,7 @@ async function runIndividualPass(
   index: number,
   reviewRunId: string,
   inputAuditHashes: { textHash: string; pdfHash: string | null },
+  reviewInputSnapshot?: ReviewInputSnapshot | null,
 ): Promise<IndividualPassResult> {
   const { parsed, thinkingText, requestId, usage } = await callGemini(
     prompt,
@@ -3889,7 +3924,7 @@ async function runIndividualPass(
     },
   );
   const review = normalizeIndividualReview(parsed);
-  validateIndividualReview(review);
+  validateIndividualReview(review, reviewInputSnapshot);
   return {
     review,
     thinkingText,
@@ -3930,11 +3965,12 @@ async function runPassWithGenerationRetries(
   index: number,
   reviewRunId: string,
   inputAuditHashes: { textHash: string; pdfHash: string | null },
+  reviewInputSnapshot?: ReviewInputSnapshot | null,
 ): Promise<IndividualPassResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < PASS_GENERATION_ATTEMPTS; attempt += 1) {
     try {
-      return await runIndividualPass(prompt, input, "gemini", index, reviewRunId, inputAuditHashes);
+      return await runIndividualPass(prompt, input, "gemini", index, reviewRunId, inputAuditHashes, reviewInputSnapshot);
     } catch (reason) {
       lastError = reason;
       if (attempt < PASS_GENERATION_ATTEMPTS - 1) {
@@ -3942,7 +3978,11 @@ async function runPassWithGenerationRetries(
       }
     }
   }
-  throw new Error(`pass ${index + 1} failed after ${PASS_GENERATION_ATTEMPTS} generation attempts: ${errorMessage(lastError)}`);
+  const error = new Error(`pass ${index + 1} failed after ${PASS_GENERATION_ATTEMPTS} generation attempts: ${errorMessage(lastError)}`);
+  const last = lastError as Error & { statusCode?: number; reviewStatus?: string };
+  if (last?.statusCode) (error as Error & { statusCode?: number }).statusCode = last.statusCode;
+  if (last?.reviewStatus) (error as Error & { reviewStatus?: string }).reviewStatus = last.reviewStatus;
+  throw error;
 }
 
 function pickRepresentativeReview(reviews: IndividualReview[], medianScore: number) {
@@ -4523,7 +4563,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
   };
 }
 
-function validateAggregateReview(review: AggregateReview) {
+function validateAggregateReview(review: AggregateReview, reviewInputSnapshot?: ReviewInputSnapshot | null) {
   if (
     review.inputConstructionOutputLedger.primitiveInputs.length === 0 ||
     review.inputConstructionOutputLedger.introducedConstructions.length === 0 ||
@@ -4561,7 +4601,7 @@ function validateAggregateReview(review: AggregateReview) {
   }
 
   if (reviewQualityRequiresInvalidation(review)) {
-    throw invalidExtractionError(review.reviewInputQuality.truncationEvidence || "The adjudicator reported incomplete or truncated review input.");
+    throw invalidReviewInputQualityError(review, "Adjudicator", reviewInputSnapshot);
   }
 }
 
@@ -5761,7 +5801,7 @@ async function generateMultiPassReview(
 
   const initialPasses = await Promise.allSettled(
     Array.from({ length: REVIEW_PASS_COUNT }, (_unused, index) =>
-      runPassWithGenerationRetries(systemPrompt, blindedContent, index, reviewRunId, inputAuditHashes),
+      runPassWithGenerationRetries(systemPrompt, blindedContent, index, reviewRunId, inputAuditHashes, reviewInputSnapshot),
     ),
   );
 
@@ -5782,7 +5822,7 @@ async function generateMultiPassReview(
   const maxPassAttempts = REVIEW_PASS_COUNT + REPLACEMENT_PASS_ATTEMPTS;
   while (passResults.length < REVIEW_PASS_COUNT && extraIndex < maxPassAttempts) {
     try {
-      passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex, reviewRunId, inputAuditHashes));
+      passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex, reviewRunId, inputAuditHashes, reviewInputSnapshot));
     } catch (reason) {
       passFailures.push({ reason, index: extraIndex });
       if (isDailyModelQuotaError(reason)) {
@@ -5794,13 +5834,19 @@ async function generateMultiPassReview(
 
   const passFailureDetails = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
   if (passResults.length === 0) {
-    throw new Error(`Review failed: 0 of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${passFailureDetails}`);
+    const error = new Error(`Review failed: 0 of ${REVIEW_PASS_COUNT} valid independent passes completed after ${maxPassAttempts} attempts. ${passFailureDetails}`);
+    const validationFailure = passFailures.find(({ reason }) => (reason as any)?.reviewStatus === "failed_validation");
+    if (validationFailure) {
+      (error as Error & { statusCode?: number; reviewStatus?: string }).statusCode = 422;
+      (error as Error & { statusCode?: number; reviewStatus?: string }).reviewStatus = "failed_validation";
+    }
+    throw error;
   }
 
   const individualReviews = passResults.map((result) => result.review);
   const invalidPass = individualReviews.find((review) => reviewQualityRequiresInvalidation(review));
   if (invalidPass) {
-    throw invalidExtractionError(invalidPass.reviewInputQuality.truncationEvidence || "A blind pass reported truncated or incomplete manuscript input.");
+    throw invalidReviewInputQualityError(invalidPass, "Blind pass", reviewInputSnapshot);
   }
   const blindPassHashes = new Set(passResults.map((result) => result.audit.promptHash));
   if (blindPassHashes.size > 1 || (blindPassHashes.size === 1 && !blindPassHashes.has(REVIEW_PROMPT_HASH))) {
@@ -5925,7 +5971,7 @@ async function generateMultiPassReview(
           };
           adjudicatorThinking = adjudicatorResult.thinkingText;
           aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
-          validateAggregateReview(aggregate);
+          validateAggregateReview(aggregate, reviewInputSnapshot);
           adjudicatorAudit.inputStrengthScore = aggregate.inputStrengthScore;
           adjudicatorAudit.constructionStrengthScore = aggregate.constructionStrengthScore;
           adjudicatorAudit.outputStrengthScore = aggregate.outputStrengthScore;
@@ -5990,7 +6036,7 @@ async function generateMultiPassReview(
     throw new Error("Review failed: no aggregate adjudication could be produced.");
   }
   if (reviewQualityRequiresInvalidation(aggregate)) {
-    throw invalidExtractionError(aggregate.reviewInputQuality.truncationEvidence || "The adjudicator reported truncated or incomplete manuscript input.");
+    throw invalidReviewInputQualityError(aggregate, "Adjudicator", reviewInputSnapshot);
   }
   let aggregateReview: AggregateReview = aggregate;
   const comparatorAuditEntries: ReviewRunAuditEntry[] = [];

@@ -55,8 +55,10 @@ const router = Router();
 const recentSubmissions = new Map<string, Promise<{ paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }>>();
 
 type ReviewAttemptStageName =
+  | "upload_received"
   | "request_received"
   | "client_failure"
+  | "interrupted_by_server_restart"
   | "metadata_extraction"
   | "title_author_extraction"
   | "pdf_text_extraction"
@@ -69,7 +71,7 @@ type ReviewAttemptStageName =
   | "review_validation"
   | "save_review";
 
-type ReviewAttemptStageType = "request" | "client" | "extraction" | "helper" | "scientific_review" | "validation" | "storage";
+type ReviewAttemptStageType = "queue" | "request" | "client" | "system" | "extraction" | "helper" | "scientific_review" | "validation" | "storage";
 
 interface ReviewAttemptRecord {
   attemptId: string;
@@ -173,6 +175,9 @@ function classifyAttemptFromError(context: ReviewAttemptContext, err: unknown, m
     setAttemptStage(next, "blind_pass_2", "scientific_review", GEMINI_PASS_MODEL);
   } else if (/adjudicat/i.test(message)) {
     setAttemptStage(next, "adjudicator", "scientific_review", GEMINI_META_MODEL);
+  } else if (/input self-check failed|deterministic reviewable extraction/i.test(message)) {
+    next.stageType = context.stageType === "scientific_review" ? "scientific_review" : "validation";
+    next.reviewStatus = "failed_validation";
   } else if (/bad escaped character|could not parse|did not contain valid json|invalid json|json/i.test(message)) {
     next.stageName = context.stageName === "metadata_extraction" || context.stageName === "title_author_extraction" || context.stageName === "pdf_fallback_extraction"
       ? context.stageName
@@ -181,6 +186,9 @@ function classifyAttemptFromError(context: ReviewAttemptContext, err: unknown, m
   } else if ((err as any)?.reviewStatus === "invalid_extraction_truncated" || /truncated|extraction/i.test(message)) {
     setAttemptStage(next, "extraction_quality_check", "extraction", null);
     next.reviewStatus = "invalid_extraction_truncated";
+  }
+  if (/input self-check failed|deterministic reviewable extraction/i.test(message)) {
+    next.reviewStatus = "failed_validation";
   }
   return next;
 }
@@ -193,6 +201,12 @@ function isRetryableAttemptError(message: string, statusCode: number | null) {
 
 function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" | "stageType" | "errorMessage" | "reviewStatus" | "extractionCompletenessStatus" | "retryable">) {
   const message = record.errorMessage || "";
+  if (record.stageName === "interrupted_by_server_restart" || record.reviewStatus === "interrupted_by_server_restart") {
+    return "interrupted_by_server_restart";
+  }
+  if (/input self-check failed|deterministic reviewable extraction/i.test(message)) {
+    return "failed_validation";
+  }
   if (record.stageName === "pdf_fallback_extraction" && /json|bad escaped character|parse/i.test(message)) {
     return "failed_pdf_fallback_json";
   }
@@ -390,6 +404,49 @@ function isCompletedAttempt(record: ReviewAttemptRecord) {
     record.reviewStatus === "completed_reused_inflight";
 }
 
+function isTerminalAttempt(record: ReviewAttemptRecord) {
+  if (isCompletedAttempt(record)) return true;
+  if (isClientAttempt(record)) return true;
+  if (record.errorMessage.trim()) return true;
+  if (record.retryable === false) return true;
+  return Boolean(record.failureStatus && record.failureStatus !== "retryable");
+}
+
+function apiProcessStartedAtMs() {
+  const processStartedAt = reviewRuntimeInfo()?.build?.processStartedAt;
+  const timestamp = typeof processStartedAt === "string" ? Date.parse(processStartedAt) : NaN;
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function interruptedByServerRestart(record: ReviewAttemptRecord) {
+  if (isTerminalAttempt(record)) return false;
+  if (isClientAttempt(record)) return false;
+  const processStartedAt = apiProcessStartedAtMs();
+  const attemptCreatedAt = Date.parse(record.createdAt);
+  return processStartedAt != null && Number.isFinite(attemptCreatedAt) && processStartedAt > attemptCreatedAt + 1000;
+}
+
+function withRuntimeAttemptStatus(record: ReviewAttemptRecord): ReviewAttemptRecord {
+  if (!interruptedByServerRestart(record)) return record;
+  return {
+    ...record,
+    stageName: "interrupted_by_server_restart",
+    stageType: "system",
+    errorMessage: "Interrupted by server restart; safe to retry.",
+    reviewStatus: "interrupted_by_server_restart",
+    failureStatus: "interrupted_by_server_restart",
+    retryable: true,
+    debugPayload: {
+      ...debugPayloadObject(record.debugPayload),
+      interruptedByServerRestart: true,
+      apiRuntimeAtExport: reviewRuntimeInfo(),
+      originalStageName: record.stageName,
+      originalStageType: record.stageType,
+      originalReviewStatus: record.reviewStatus,
+    },
+  };
+}
+
 function ageForAttempt(record: ReviewAttemptRecord, now = Date.now()) {
   const timestamp = Date.parse(record.createdAt);
   const ageMs = Number.isFinite(timestamp) ? Math.max(0, now - timestamp) : null;
@@ -406,21 +463,22 @@ function latestAttemptByCreatedAt(records: ReviewAttemptRecord[]) {
 
 function buildBatchExport(records: ReviewAttemptRecord[], requestedBatchRunId?: string | null) {
   const now = Date.now();
+  const normalizedRecords = records.map(withRuntimeAttemptStatus);
   const batchRunId =
     requestedBatchRunId ||
-    latestAttemptByCreatedAt(records.filter((attempt) => attempt.batchRunId))?.batchRunId ||
+    latestAttemptByCreatedAt(normalizedRecords.filter((attempt) => attempt.batchRunId))?.batchRunId ||
     null;
   if (!batchRunId) {
     return {
       currentBatch: null,
-      historicalFailedAttempts: records
+      historicalFailedAttempts: normalizedRecords
         .filter((attempt) => !isCompletedAttempt(attempt))
         .map((attempt) => ageForAttempt(attempt, now)),
     };
   }
 
-  const currentRecords = records.filter((attempt) => attempt.batchRunId === batchRunId);
-  const historicalRecords = records.filter((attempt) => attempt.batchRunId !== batchRunId);
+  const currentRecords = normalizedRecords.filter((attempt) => attempt.batchRunId === batchRunId);
+  const historicalRecords = normalizedRecords.filter((attempt) => attempt.batchRunId !== batchRunId);
   const byQueueItem = new Map<string, ReviewAttemptRecord[]>();
   for (const attempt of currentRecords) {
     const key = attempt.queueItemId || attempt.fileName || attempt.attemptId;
@@ -432,26 +490,33 @@ function buildBatchExport(records: ReviewAttemptRecord[], requestedBatchRunId?: 
     const latest = latestAttemptByCreatedAt(group) ?? group[0];
     const latestServer = latestAttemptByCreatedAt(group.filter((attempt) => !isClientAttempt(attempt)));
     const latestClient = latestAttemptByCreatedAt(group.filter(isClientAttempt));
-    const terminal = isCompletedAttempt(latest)
+    const completedServer = latestAttemptByCreatedAt(group.filter((attempt) => !isClientAttempt(attempt) && isCompletedAttempt(attempt)));
+    const effectiveLatest = completedServer ?? latestServer ?? latestClient ?? latest;
+    const terminal = isCompletedAttempt(effectiveLatest)
       ? "completed"
-      : latest.failureStatus || latest.reviewStatus || "in_progress";
+      : effectiveLatest.failureStatus || effectiveLatest.reviewStatus || "in_progress";
     return {
       key,
-      queueItemId: latest.queueItemId,
-      fileName: latest.fileName,
+      queueItemId: effectiveLatest.queueItemId,
+      fileName: effectiveLatest.fileName,
       status: terminal,
-      latestStageName: latest.stageName,
-      latestStageType: latest.stageType,
-      latestReviewStatus: latest.reviewStatus,
-      latestFailureStatus: latest.failureStatus,
-      latestErrorMessage: latest.errorMessage,
-      retryable: latest.retryable,
-      createdAt: latest.createdAt,
-      ageMs: ageForAttempt(latest, now).ageMs,
+      stageName: effectiveLatest.stageName,
+      stageType: effectiveLatest.stageType,
+      latestStageName: effectiveLatest.stageName,
+      latestStageType: effectiveLatest.stageType,
+      latestReviewStatus: effectiveLatest.reviewStatus,
+      latestFailureStatus: effectiveLatest.failureStatus,
+      latestErrorMessage: effectiveLatest.errorMessage,
+      retryable: effectiveLatest.retryable,
+      createdAt: effectiveLatest.createdAt,
+      ageMs: ageForAttempt(effectiveLatest, now).ageMs,
       serverAttemptIds: group.filter((attempt) => !isClientAttempt(attempt)).map((attempt) => attempt.attemptId),
       clientFailureIds: group.filter(isClientAttempt).map((attempt) => attempt.attemptId),
       latestServerAttemptId: latestServer?.attemptId ?? null,
       latestClientFailureId: latestClient?.attemptId ?? null,
+      latestServerStatus: latestServer?.failureStatus ?? latestServer?.reviewStatus ?? null,
+      latestClientFailureStatus: latestClient?.failureStatus ?? latestClient?.reviewStatus ?? null,
+      apiInterrupted: group.some((attempt) => attempt.failureStatus === "interrupted_by_server_restart"),
     };
   }).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
@@ -827,6 +892,22 @@ function textEdgeSnippets(text: string) {
   };
 }
 
+function sectionMarkerInventory(text: string) {
+  const markers = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "References"];
+  return markers.map((marker) => {
+    const pattern = marker === "References"
+      ? /\b(references|bibliography)\b/i
+      : new RegExp(`(?:^|\\n)\\s*(?:section\\s+)?${marker}\\.?\\s+[^\\n]{2,120}`, "i");
+    const match = pattern.exec(text);
+    return {
+      marker,
+      present: Boolean(match),
+      index: match?.index ?? -1,
+      sample: match?.[0]?.slice(0, 160) ?? "",
+    };
+  });
+}
+
 function updateAttemptInputDebugPayload(
   context: ReviewAttemptContext,
   text: string,
@@ -834,13 +915,22 @@ function updateAttemptInputDebugPayload(
   extra: Record<string, unknown> = {},
 ) {
   const snippets = textEdgeSnippets(text || "");
+  const rawText = text || "";
   context.debugPayload = {
     ...context.debugPayload,
     ...extra,
-    extractedTextCharCount: text.length,
-    extractedTextTokenCount: Math.ceil(text.length / 4),
+    rawExtractedTextHash: createHash("sha256").update(rawText).digest("hex"),
+    blindedReviewTextHash: createHash("sha256").update(rawText).digest("hex"),
+    extractedTextCharCount: rawText.length,
+    extractedTextTokenCount: Math.ceil(rawText.length / 4),
     extractedTextFirst2000: snippets.first2000,
     extractedTextLast2000: snippets.last2000,
+    rawExtractedTextFirst2000: snippets.first2000,
+    rawExtractedTextLast2000: snippets.last2000,
+    blindedReviewTextFirst2000: snippets.first2000,
+    blindedReviewTextLast2000: snippets.last2000,
+    sectionMarkerInventory: sectionMarkerInventory(rawText),
+    phraseIndexAListOf: rawText.toLowerCase().indexOf("a list of"),
     extractionCompletenessStatus: report?.extractionCompletenessStatus ?? context.extractionCompletenessStatus,
     extractionWarnings: report?.extractionWarnings ?? context.extractionWarnings,
     estimatedPdfPageCount: report?.estimatedPdfPageCount ?? null,
@@ -1281,7 +1371,7 @@ router.get("/admin/review-attempts", async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit ?? 200), 1), MAX_FAILED_REVIEW_ATTEMPTS);
     const rows = await db.select().from(reviewAttemptsTable).orderBy(desc(reviewAttemptsTable.createdAt)).limit(limit);
     res.json({
-      attempts: rows.map(reviewAttemptRecordFromRow),
+      attempts: rows.map(reviewAttemptRecordFromRow).map(withRuntimeAttemptStatus),
       repairOptions: [
         "retry_normal_extraction",
         "retry_pdf_fallback",
@@ -1292,6 +1382,95 @@ router.get("/admin/review-attempts", async (req, res) => {
     });
   } catch (err: any) {
     logger.error({ err }, "Error listing review attempts");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/review-batches/register — durably register visible queue rows before long review requests start
+router.post("/review-batches/register", async (req, res) => {
+  if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const body = debugPayloadObject(req.body);
+    const batchRunId = debugString(body, "batchRunId");
+    if (!batchRunId) {
+      res.status(400).json({ error: "batchRunId is required" });
+      return;
+    }
+    const frontendSiteVersion = debugString(body, "frontendSiteVersion");
+    const frontendPageLoadedAt = debugString(body, "frontendPageLoadedAt");
+    const apiRuntimeVersion = body.apiRuntimeVersion ?? null;
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    if (rawItems.length === 0) {
+      res.status(400).json({ error: "items are required" });
+      return;
+    }
+
+    const registered: ReviewAttemptRecord[] = [];
+    for (const rawItem of rawItems) {
+      const item = debugPayloadObject(rawItem);
+      const queueItemId = debugString(item, "queueItemId");
+      const fileName = debugString(item, "fileName");
+      const attemptId = debugString(item, "attemptId") ?? createHash("sha256")
+        .update([
+          req.user.id,
+          batchRunId,
+          queueItemId ?? "",
+          fileName ?? "",
+          "upload_received",
+        ].join("\0"))
+        .digest("hex")
+        .slice(0, 24);
+      const context: ReviewAttemptContext = {
+        attemptId,
+        batchRunId,
+        queueItemId,
+        frontendSiteVersion,
+        createdAt: new Date().toISOString(),
+        userId: req.user.id,
+        paperId: null,
+        fileName,
+        reviewRunId: null,
+        stageName: "upload_received",
+        stageType: "queue",
+        model: null,
+        promptVersion: REVIEW_PROMPT_VERSION,
+        promptHash: REVIEW_PROMPT_HASH,
+        requestId: debugString(item, "requestId"),
+        retryCount: 0,
+        extractionCompletenessStatus: null,
+        extractionWarnings: [],
+        extractionRetryAttempted: false,
+        pdfFallbackAttempted: false,
+        pdfVisibleFallbackUsed: false,
+        fallbackSucceeded: false,
+        reviewStatus: "upload_received",
+        scientificScoringAttempted: false,
+        debugPayload: {
+          fileSize: typeof item.fileSize === "number" ? item.fileSize : null,
+          reviewMode: debugString(item, "reviewMode"),
+          registeredAt: new Date().toISOString(),
+          frontendPageLoadedAt,
+          apiRuntimeVersion,
+          apiRuntimeAtRegistration: reviewRuntimeInfo(),
+        },
+      };
+      const record = reviewAttemptRecordFromContext(context, {
+        reviewStatus: "upload_received",
+        failureStatus: null,
+        retryable: true,
+      });
+      await persistReviewAttemptRecord(record);
+      registered.push(record);
+    }
+
+    res.status(201).json({
+      batchRunId,
+      itemCount: registered.length,
+      attempts: registered,
+      apiRuntime: reviewRuntimeInfo(),
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Error registering review batch");
     res.status(500).json({ error: err.message });
   }
 });
@@ -1369,6 +1548,43 @@ router.post("/review-attempts/client-failure", async (req, res) => {
     res.status(201).json({ attempt: record });
   } catch (err: any) {
     logger.error({ err }, "Error recording frontend review attempt failure");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/review-jobs/:id — inspect one durable review attempt/job
+router.get("/review-jobs/:id", async (req, res) => {
+  if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const [row] = await db.select().from(reviewAttemptsTable).where(eq(reviewAttemptsTable.id, req.params.id));
+    if (!row) {
+      res.status(404).json({ error: "Review job not found" });
+      return;
+    }
+    const attempt = withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row));
+    if (attempt.userId !== req.user.id && !requireAdmin(req, res)) return;
+    res.json({ attempt, apiRuntime: reviewRuntimeInfo() });
+  } catch (err: any) {
+    logger.error({ err }, "Error getting review job");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/batches/:batchRunId — inspect durable status for the current or requested batch
+router.get("/batches/:batchRunId", async (req, res) => {
+  if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
+  try {
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 1000), 1), 2000);
+    const rows = await db.select().from(reviewAttemptsTable).orderBy(desc(reviewAttemptsTable.createdAt)).limit(limit);
+    const attempts = rows
+      .map(reviewAttemptRecordFromRow)
+      .filter((attempt) => attempt.userId === req.user.id || (ADMIN_EMAIL && req.user.email === ADMIN_EMAIL));
+    res.json({
+      ...buildBatchExport(attempts, req.params.batchRunId),
+      apiRuntime: reviewRuntimeInfo(),
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Error getting review batch");
     res.status(500).json({ error: err.message });
   }
 });

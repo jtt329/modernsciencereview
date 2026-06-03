@@ -17,6 +17,8 @@ interface QueuedFile {
   status: 'pending' | 'processing' | 'done' | 'error';
   error?: string;
   attempt?: any;
+  attemptId?: string;
+  requestId?: string;
   manualText?: string;
   showManualText?: boolean;
   usePdfVisibleFallback?: boolean;
@@ -75,10 +77,14 @@ function isDailyQuotaError(err: unknown) {
 
 function stageLabel(stageName: string | null | undefined) {
   switch (stageName) {
+    case 'upload_received':
+      return 'Upload registered';
     case 'request_received':
       return 'Request received';
     case 'client_failure':
       return 'Browser/client request';
+    case 'interrupted_by_server_restart':
+      return 'Server restart';
     case 'metadata_extraction':
     case 'title_author_extraction':
       return 'Metadata helper';
@@ -119,6 +125,8 @@ function failureStatusLabel(value: string | null | undefined) {
       return 'Validation failed';
     case 'retryable':
       return 'Retryable';
+    case 'interrupted_by_server_restart':
+      return 'Interrupted by server restart';
     case 'needs_manual_repair':
       return 'Needs manual repair';
     case 'superseded':
@@ -223,34 +231,75 @@ async function reportClientFailure(params: {
   clientRequestEndedAt: string;
   apiRuntimeInfo: unknown;
 }) {
-  try {
-    const response = await fetch('/api/review-attempts/client-failure', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: params.qf.file.name,
-        batchRunId: params.source.batchRunId,
-        queueItemId: params.source.queueItemId,
-        attemptId: params.source.attemptId,
-        requestId: params.source.requestId,
-        frontendSiteVersion: SITE_VERSION,
-        frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
-        apiRuntimeVersion: params.apiRuntimeInfo,
-        clientRequestStartedAt: params.clientRequestStartedAt,
-        clientRequestEndedAt: params.clientRequestEndedAt,
-        errorName: params.err instanceof Error ? params.err.name : typeof params.err,
-        errorMessage: errorMessage(params.err),
-        httpStatus: typeof (params.err as any)?.status === 'number' ? (params.err as any).status : null,
-        failureKind: classifyClientFailure(params.err),
-      }),
-    });
-    if (!response.ok) return null;
-    const payload = await response.json();
-    return payload?.attempt ?? null;
-  } catch {
-    return null;
+  const body = JSON.stringify({
+    fileName: params.qf.file.name,
+    batchRunId: params.source.batchRunId,
+    queueItemId: params.source.queueItemId,
+    attemptId: params.source.attemptId,
+    requestId: params.source.requestId,
+    frontendSiteVersion: SITE_VERSION,
+    frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
+    apiRuntimeVersion: params.apiRuntimeInfo,
+    clientRequestStartedAt: params.clientRequestStartedAt,
+    clientRequestEndedAt: params.clientRequestEndedAt,
+    errorName: params.err instanceof Error ? params.err.name : typeof params.err,
+    errorMessage: errorMessage(params.err),
+    httpStatus: typeof (params.err as any)?.status === 'number' ? (params.err as any).status : null,
+    failureKind: classifyClientFailure(params.err),
+  });
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch('/api/review-attempts/client-failure', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      if (!response.ok) return null;
+      const payload = await response.json();
+      return payload?.attempt ?? null;
+    } catch {
+      if (attempt === 0) {
+        await waitForApiHealth(60_000);
+      } else {
+        await sleep(1_000 * (attempt + 1));
+      }
+    }
   }
+  return null;
+}
+
+async function registerBatchItems(params: {
+  batchRunId: string;
+  files: QueuedFile[];
+  reviewMode: ReviewMode;
+  apiRuntimeInfo: unknown;
+}) {
+  const response = await fetch('/api/review-batches/register', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      batchRunId: params.batchRunId,
+      frontendSiteVersion: SITE_VERSION,
+      frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
+      apiRuntimeVersion: params.apiRuntimeInfo,
+      items: params.files.map((qf) => ({
+        queueItemId: qf.id,
+        attemptId: qf.attemptId,
+        requestId: qf.requestId,
+        fileName: qf.file.name,
+        fileSize: qf.file.size,
+        reviewMode: params.reviewMode,
+      })),
+    }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`Could not register this review batch (${response.status}). ${text}`.trim());
+  }
+  return response.json();
 }
 
 function isValidUrl(value: string) {
@@ -411,6 +460,21 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
         onClose();
         return;
       }
+      const filesWithAuditIds = filesToProcess.map((qf) => ({
+        ...qf,
+        attemptId: qf.attemptId || makeClientId('attempt'),
+        requestId: qf.requestId || makeClientId('request'),
+      }));
+      setFiles(prev => prev.map((file) => {
+        const withAudit = filesWithAuditIds.find((candidate) => candidate.id === file.id);
+        return withAudit ? { ...file, attemptId: withAudit.attemptId, requestId: withAudit.requestId } : file;
+      }));
+      await registerBatchItems({
+        batchRunId,
+        files: filesWithAuditIds,
+        reviewMode: effectiveReviewMode,
+        apiRuntimeInfo,
+      });
 
       let done = files.filter(f => f.status === 'done').length;
       let failures = 0;
@@ -433,8 +497,8 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
               : { type: 'pdf' as const, data: base64, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl, pdfVisibleFallback: qf.usePdfVisibleFallback }),
             batchRunId,
             queueItemId: qf.id,
-            attemptId: makeClientId('attempt'),
-            requestId: makeClientId('request'),
+            attemptId: qf.attemptId || makeClientId('attempt'),
+            requestId: qf.requestId || makeClientId('request'),
             frontendSiteVersion: SITE_VERSION,
             frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
             clientRequestStartedAt,
@@ -461,10 +525,10 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       };
 
       const workers = Array.from(
-        { length: Math.min(BATCH_CONCURRENCY, filesToProcess.length) },
+        { length: Math.min(BATCH_CONCURRENCY, filesWithAuditIds.length) },
         async () => {
-          while (!batchHalted && nextIndex < filesToProcess.length) {
-            const qf = filesToProcess[nextIndex++];
+          while (!batchHalted && nextIndex < filesWithAuditIds.length) {
+            const qf = filesWithAuditIds[nextIndex++];
             await processOne(qf);
           }
         },
