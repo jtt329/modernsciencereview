@@ -279,7 +279,26 @@ type ReviewInputQuality = {
   shouldInvalidateReview: boolean;
 };
 
-export type ExtractionCompletenessStatus = "complete" | "weak" | "possibly_truncated" | "truncated" | "failed";
+export type ExtractionCompletenessStatus =
+  | "complete"
+  | "complete_with_warnings"
+  | "reviewable_with_warnings"
+  | "needs_manual_repair"
+  | "invalid_truncated"
+  | "failed";
+
+export function isExtractionReviewableStatus(status: string | null | undefined) {
+  return status === "complete" ||
+    status === "complete_with_warnings" ||
+    status === "reviewable_with_warnings";
+}
+
+export function isExtractionBlockingStatus(status: string | null | undefined) {
+  if (!status) return true;
+  if (isExtractionReviewableStatus(status)) return false;
+  // Legacy statuses from older attempts remain conservative.
+  return true;
+}
 
 export type ExtractionCompletenessReport = {
   extractionCompletenessStatus: ExtractionCompletenessStatus;
@@ -1437,6 +1456,33 @@ function normalizeSectionNeedle(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function tailLooksLikeReferencesOrPageArtifact(tail: string) {
+  const compact = (tail || "").replace(/\s+/g, " ").trim();
+  if (!compact) return false;
+  const citationCount = (compact.match(/\[\d+\]/g) || []).length;
+  const bibliographicSignals = /\b(references|bibliography|doi|arxiv|gr-qc|hep-th|astro-ph|phys\.|rev\.|lett\.|class\.|quantum|grav\.|jhep|commun\.|math\.|proc\.|press|university|journal|vol\.|pp\.|pages?)\b/i.test(compact);
+  const yearSignals = (compact.match(/\b(19|20)\d{2}\b/g) || []).length;
+  const endsWithPageNumber = /(?:^|\s)\d{1,4}\s*$/.test(compact);
+  return (citationCount >= 2 || yearSignals >= 2 || bibliographicSignals) && (endsWithPageNumber || citationCount >= 1 || bibliographicSignals);
+}
+
+function hasLikelyScientificBody(cleanText: string, estimatedPdfPageCount: number | null, extractedPageCount: number | null) {
+  const lower = cleanText.toLowerCase();
+  const sectionSignals = [
+    /\b(i{1,3}|iv|v|vi|vii|viii|ix|x)\.\s+[a-z]/i,
+    /\bsection\s+(i{1,3}|iv|v|vi|vii|viii|ix|x|\d+)/i,
+    /\b(deriv|equation|theorem|definition|proposition|lemma|result|proof|model|method|construction|calculation|solution|field equation|first law|surface gravity|energy|entropy)\b/i,
+    /[=≈∝∂∫∑√]|\\(?:frac|partial|int|sum|rho|mu|alpha|beta|gamma)/,
+  ];
+  const signalCount = sectionSignals.reduce((count, pattern) => count + (pattern.test(cleanText) ? 1 : 0), 0);
+  const pageCount = extractedPageCount ?? estimatedPdfPageCount ?? null;
+  const lengthLooksSubstantial = cleanText.length >= 8000 || (pageCount ? cleanText.length >= pageCount * 1000 : cleanText.length >= 5000);
+  const hasEarlyAndLaterBody = /\babstract\b/i.test(cleanText) &&
+    (/\b(introduction|preliminaries|setup)\b/i.test(cleanText) || /\b(i\.|1\.)\s+[a-z]/i.test(cleanText)) &&
+    (/\b(conclusion|discussion|references|bibliography|appendix)\b/i.test(lower) || tailLooksLikeReferencesOrPageArtifact(cleanText.slice(-1200)));
+  return signalCount >= 2 && (lengthLooksSubstantial || hasEarlyAndLaterBody);
+}
+
 export function assessExtractionCompleteness(
   text: string,
   options: { estimatedPdfPageCount?: number | null; extractedPageCount?: number | null } = {},
@@ -1447,24 +1493,37 @@ export function assessExtractionCompleteness(
   const extractedPageCount = typeof options.extractedPageCount === "number" ? options.extractedPageCount : null;
   const warnings: string[] = [];
   const charCount = cleanText.length;
+  const tail = cleanText.slice(-600).trim();
+  const referenceTail = tailLooksLikeReferencesOrPageArtifact(tail);
+  const hasScientificBody = hasLikelyScientificBody(cleanText, estimatedPdfPageCount, extractedPageCount);
 
-  if (charCount < 50) warnings.push("Parser returned almost no readable manuscript text.");
-  if (charCount < 2000) warnings.push("Extracted manuscript text is very short.");
+  const almostNoText = charCount < 50;
+  const veryShortText = charCount < 2000;
+  const shortForPageCount = Boolean(estimatedPdfPageCount && estimatedPdfPageCount >= 6 && charCount < estimatedPdfPageCount * 900);
+  const pageCountFarLower = Boolean(estimatedPdfPageCount && extractedPageCount && extractedPageCount < Math.max(2, Math.floor(estimatedPdfPageCount * 0.65)));
+  const earlyOnly = Boolean(/^\s*(abstract|introduction)\b/i.test(cleanText) && !/\b(section|references|bibliography|appendix)\b/i.test(cleanText.slice(2000)));
+
+  if (almostNoText) warnings.push("Parser returned almost no readable manuscript text.");
+  if (veryShortText) warnings.push("Extracted manuscript text is very short.");
   if (estimatedPdfPageCount && estimatedPdfPageCount >= 6 && charCount < estimatedPdfPageCount * 900) {
     warnings.push(`Extracted text is short for an estimated ${estimatedPdfPageCount}-page PDF.`);
   }
-  if (estimatedPdfPageCount && extractedPageCount && extractedPageCount < Math.max(2, Math.floor(estimatedPdfPageCount * 0.65))) {
+  if (pageCountFarLower) {
     warnings.push(`Extracted page count ${extractedPageCount} is much lower than estimated PDF page count ${estimatedPdfPageCount}.`);
   }
-  if (/^\s*(abstract|introduction)\b/i.test(cleanText) && !/\b(section|references|bibliography|appendix)\b/i.test(cleanText.slice(2000))) {
+  if (earlyOnly) {
     warnings.push("Extracted text appears limited to early abstract/introduction material.");
   }
-  if (!/\b(references|bibliography)\b/i.test(cleanText) && estimatedPdfPageCount && estimatedPdfPageCount >= 6) {
+  if (!/\b(references|bibliography)\b/i.test(cleanText) && estimatedPdfPageCount && estimatedPdfPageCount >= 6 && !referenceTail) {
     warnings.push("Extracted text lacks a references/bibliography marker for a multi-page PDF.");
   }
-  const tail = cleanText.slice(-600).trim();
-  if (tail && !/[.!?}\]\)]\s*$/.test(tail) && !/\b(references|bibliography)\b/i.test(tail)) {
+  if (!hasScientificBody && estimatedPdfPageCount && estimatedPdfPageCount >= 6) {
+    warnings.push("Extracted text lacks enough central scientific body markers for a multi-page PDF.");
+  }
+  if (tail && !/[.!?}\]\)]\s*$/.test(tail) && !/\b(references|bibliography)\b/i.test(tail) && !referenceTail) {
     warnings.push("Extracted text appears to end mid-sentence or mid-section.");
+  } else if (tail && referenceTail && !/[.!?}\]\)]\s*$/.test(tail)) {
+    warnings.push("Extracted text tail appears to be references, citation fragments, or page-number artifacts.");
   }
   const tocMatch = cleanText.slice(0, 5000).match(/\b(table of contents|contents)\b([\s\S]{0,3000})/i);
   if (tocMatch) {
@@ -1480,12 +1539,19 @@ export function assessExtractionCompleteness(
   }
 
   let status: ExtractionCompletenessStatus = "complete";
-  if (charCount < 50) {
+  const tocMissingCentralSections = warnings.some((warning) => /table-of-contents sections are absent/.test(warning));
+  const centralContentAbsent = !hasScientificBody &&
+    (pageCountFarLower || earlyOnly || tocMissingCentralSections || warnings.some((warning) => /end mid-sentence|central scientific body markers/.test(warning)));
+  const needsManualRepair = !hasScientificBody && (veryShortText || shortForPageCount);
+
+  if (almostNoText) {
     status = "failed";
-  } else if (warnings.some((warning) => /almost no|much lower|limited to early|end mid-sentence|absent/.test(warning))) {
-    status = warnings.length >= 2 ? "truncated" : "possibly_truncated";
+  } else if (centralContentAbsent) {
+    status = "invalid_truncated";
+  } else if (needsManualRepair) {
+    status = "needs_manual_repair";
   } else if (warnings.length > 0) {
-    status = "weak";
+    status = hasScientificBody ? "complete_with_warnings" : "reviewable_with_warnings";
   }
 
   return {
@@ -1537,7 +1603,7 @@ function reviewQualityRequiresInvalidation(review: { reviewInputQuality?: Review
 }
 
 function invalidExtractionError(reason: string) {
-  const error = new Error(`Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback. ${reason}`.trim());
+  const error = new Error(`Review not completed: extracted manuscript text is not complete enough for a reliable review. Retry extraction, PDF fallback, or manual repair. ${reason}`.trim());
   (error as Error & { statusCode?: number; reviewStatus?: string }).statusCode = 422;
   (error as Error & { statusCode?: number; reviewStatus?: string }).reviewStatus = "invalid_extraction_truncated";
   return error;
@@ -5681,7 +5747,7 @@ async function generateMultiPassReview(
   const blindedContent = blindReviewInput(paperContent);
   const inputAuditHashes = reviewInputAuditHashes(blindedContent);
   const reviewInputSnapshot = buildReviewInputSnapshot(paperContent, blindedContent, options.extractionCompleteness);
-  if (reviewInputSnapshot.extractionCompletenessStatus !== "complete") {
+  if (isExtractionBlockingStatus(reviewInputSnapshot.extractionCompletenessStatus)) {
     throw invalidExtractionError(`Extraction completeness status is ${reviewInputSnapshot.extractionCompletenessStatus}: ${reviewInputSnapshot.extractionWarnings.join("; ")}`);
   }
   const thinkingChunks: string[] = [];

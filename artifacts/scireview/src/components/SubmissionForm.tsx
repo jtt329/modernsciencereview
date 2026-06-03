@@ -97,7 +97,7 @@ function failureStatusLabel(value: string | null | undefined) {
     case 'completed':
       return 'Completed';
     case 'failed_extraction_truncated':
-      return 'Extraction truncated';
+      return 'Invalid extraction';
     case 'failed_pdf_fallback_json':
       return 'PDF fallback helper JSON failed';
     case 'failed_review_json':
@@ -128,7 +128,7 @@ function friendlySubmissionError(err: unknown) {
   const message = errorMessage(err);
   const attempt = (err as any)?.attempt;
   if (attempt?.reviewStatus === 'invalid_extraction_truncated' || (err as any)?.reviewStatus === 'invalid_extraction_truncated') {
-    return 'Extraction invalid: manuscript text appears truncated. Retry with improved extraction or PDF fallback.';
+    return 'Extraction invalid: central manuscript content is missing or unusable. Retry extraction, PDF fallback, or manual repair.';
   }
   if (attempt && typeof attempt === 'object') {
     const stage = stageLabel(attempt.stageName);

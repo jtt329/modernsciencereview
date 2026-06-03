@@ -21,6 +21,8 @@ import {
   extractManuscriptTextFromPdfForReview,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
+  isExtractionBlockingStatus,
+  isExtractionReviewableStatus,
   normalizePaperDisplayMetadata,
   normalizeReviewPipelineMode,
   parseGeminiJsonResponse,
@@ -191,12 +193,9 @@ function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" |
   }
   if (
     record.reviewStatus === "invalid_extraction_truncated" ||
-    record.extractionCompletenessStatus === "weak" ||
-    record.extractionCompletenessStatus === "possibly_truncated" ||
-    record.extractionCompletenessStatus === "truncated" ||
-    record.extractionCompletenessStatus === "failed"
+    (record.extractionCompletenessStatus && isExtractionBlockingStatus(record.extractionCompletenessStatus))
   ) {
-    return "failed_extraction_truncated";
+    return record.extractionCompletenessStatus === "needs_manual_repair" ? "needs_manual_repair" : "failed_extraction_truncated";
   }
   if (record.stageName === "review_validation" || /validation|missing|required|invalid/i.test(message)) {
     return "failed_validation";
@@ -467,10 +466,10 @@ function benchmarkCompletionIssue(reviewValues: Record<string, any>) {
     ...(Array.isArray(ledger.blindPassReviews) ? ledger.blindPassReviews.map((pass: any) => pass?.reviewInputQuality) : []),
   ].some((quality: any) => quality?.shouldInvalidateReview === true);
 
-  if (ledger.extractionCompletenessStatus !== "complete") {
+  if (isExtractionBlockingStatus(ledger.extractionCompletenessStatus)) {
     return `Extraction completeness status is ${ledger.extractionCompletenessStatus ?? "unknown"}.`;
   }
-  if (ledger.reviewInputSnapshot?.extractionCompletenessStatus && ledger.reviewInputSnapshot.extractionCompletenessStatus !== "complete") {
+  if (ledger.reviewInputSnapshot?.extractionCompletenessStatus && isExtractionBlockingStatus(ledger.reviewInputSnapshot.extractionCompletenessStatus)) {
     return `Review input snapshot extraction status is ${ledger.reviewInputSnapshot.extractionCompletenessStatus}.`;
   }
   if (Number(ledger.validPassCount ?? 0) !== 2 || blindPassAudit.length !== 2) {
@@ -606,7 +605,7 @@ function compactReviewInputSnapshot(snapshot: any, paperId: string) {
 
 function extractionErrorPayload(report: ExtractionCompletenessReport) {
   return {
-    error: "Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback.",
+    error: "Review not completed: extracted manuscript text is not complete enough for a reliable review. Retry extraction, PDF fallback, or manual repair.",
     transient: false,
     reviewStatus: "invalid_extraction_truncated",
     extractionCompletenessStatus: report.extractionCompletenessStatus,
@@ -651,7 +650,7 @@ async function repairPdfExtractionIfNeeded(options: {
   text: string;
   metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string; pdfBase64?: string; mimeType?: string };
 }) {
-  if (options.report.extractionCompletenessStatus === "complete") {
+  if (isExtractionReviewableStatus(options.report.extractionCompletenessStatus)) {
     return { text: options.text, report: options.report, fallbackUsed: false };
   }
   if (!options.metadataHints.pdfBase64) {
@@ -1952,13 +1951,13 @@ router.post("/papers", async (req, res) => {
       });
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
-      attemptContext.pdfFallbackAttempted = extractionCompleteness.extractionCompletenessStatus !== "complete";
+      attemptContext.pdfFallbackAttempted = isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
       if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
       const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
       paperContent = repaired.text;
       metadataExtractionText = paperContent;
       extractionCompleteness = repaired.report;
-      attemptContext.fallbackSucceeded = repaired.fallbackUsed && extractionCompleteness.extractionCompletenessStatus === "complete";
+      attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
       attemptContext.pdfVisibleFallbackUsed = false;
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
@@ -1989,13 +1988,13 @@ router.post("/papers", async (req, res) => {
       });
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
-      attemptContext.pdfFallbackAttempted = extractionCompleteness.extractionCompletenessStatus !== "complete";
+      attemptContext.pdfFallbackAttempted = isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
       if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
       const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
       paperContent = repaired.text;
       metadataExtractionText = paperContent;
       extractionCompleteness = repaired.report;
-      attemptContext.fallbackSucceeded = repaired.fallbackUsed && extractionCompleteness.extractionCompletenessStatus === "complete";
+      attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
       attemptContext.pdfVisibleFallbackUsed = false;
       updateAttemptExtractionContext(attemptContext, extractionCompleteness);
       updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
@@ -2018,17 +2017,17 @@ router.post("/papers", async (req, res) => {
       source.pdfVisibleFallback === true &&
       Boolean(metadataHints.pdfBase64);
     setAttemptStage(attemptContext, "extraction_quality_check", "validation", null);
-    if (extractionCompleteness.extractionCompletenessStatus !== "complete" && !usePdfVisibleLastResort) {
+    if (isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus) && !usePdfVisibleLastResort) {
       attemptContext.reviewStatus = "invalid_extraction_truncated";
-      const attempt = await recordFailedReviewAttempt(attemptContext, new Error("Review incomplete: extracted manuscript text appears truncated. Retry with improved extraction or PDF fallback."));
+      const attempt = await recordFailedReviewAttempt(attemptContext, new Error("Review not completed: extracted manuscript text is not complete enough for a reliable review. Retry extraction, PDF fallback, or manual repair."));
       res.status(422).json({ ...extractionErrorPayload(extractionCompleteness), attempt });
       return;
     }
-    if (usePdfVisibleLastResort && extractionCompleteness.extractionCompletenessStatus !== "complete") {
+    if (usePdfVisibleLastResort && isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus)) {
       attemptContext.pdfVisibleFallbackUsed = true;
       extractionCompleteness = {
         ...extractionCompleteness,
-        extractionCompletenessStatus: "complete",
+        extractionCompletenessStatus: "reviewable_with_warnings",
         extractionWarnings: [
           ...extractionCompleteness.extractionWarnings,
           "Admin selected PDF-visible last-resort review after text extraction remained incomplete. Blinding strength is lower.",
