@@ -150,6 +150,64 @@ async function apiFetch(path: string, options?: RequestInit) {
   return res.json();
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function attemptFailureMessage(attempt: any) {
+  const stage = attempt?.stageName ? String(attempt.stageName).replace(/_/g, ' ') : 'review job';
+  const status = attempt?.reviewStatus ? String(attempt.reviewStatus).replace(/_/g, ' ') : null;
+  const message = typeof attempt?.errorMessage === 'string' && attempt.errorMessage.trim()
+    ? attempt.errorMessage.trim()
+    : status
+      ? `Stopped at ${status}.`
+      : 'Review job failed.';
+  return `${stage}: ${message}`;
+}
+
+function isJobComplete(attempt: any, data: any) {
+  return Boolean(
+    data?.paper &&
+    (attempt?.failureStatus === 'completed' ||
+      attempt?.reviewStatus === 'completed' ||
+      attempt?.reviewStatus === 'completed_reused' ||
+      attempt?.reviewStatus === 'completed_reused_inflight')
+  );
+}
+
+function isJobFailed(attempt: any) {
+  if (!attempt) return false;
+  if (attempt.failureStatus === 'completed') return false;
+  if (typeof attempt.errorMessage === 'string' && attempt.errorMessage.trim()) return true;
+  if (attempt.failureStatus && attempt.failureStatus !== 'retryable') return true;
+  return attempt.reviewStatus === 'failed_validation' ||
+    attempt.reviewStatus === 'invalid_extraction_truncated' ||
+    attempt.reviewStatus === 'needs_manual_repair' ||
+    attempt.reviewStatus === 'failed';
+}
+
+async function pollReviewJob(jobId: string) {
+  const deadline = Date.now() + 90 * 60 * 1000;
+  while (Date.now() < deadline) {
+    const data = await apiFetch(`/api/review-jobs/${encodeURIComponent(jobId)}`);
+    const attempt = data?.attempt;
+    if (isJobComplete(attempt, data)) return data;
+    if (isJobFailed(attempt)) {
+      const error = new Error(attemptFailureMessage(attempt)) as Error & {
+        attempt?: unknown;
+        reviewStatus?: string | null;
+        transient?: boolean;
+      };
+      error.attempt = attempt;
+      error.reviewStatus = attempt?.reviewStatus || null;
+      error.transient = Boolean(attempt?.retryable);
+      throw error;
+    }
+    await sleep(2500);
+  }
+  const error = new Error('Review job is still running after 90 minutes. It remains queued on the server; refresh and check the batch/debug status before retrying.') as Error & { transient?: boolean };
+  error.transient = true;
+  throw error;
+}
+
 function displayName(user: AuthUser) {
   return [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email || 'User';
 }
@@ -286,11 +344,14 @@ export default function App() {
   };
 
   const handleSubmitPaper = async (source: ReviewSource, skipSelect = false) => {
-    const data = await apiFetch('/api/papers', {
+    const job = await apiFetch('/api/review-jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source, model: source.model || 'gemini' }),
     });
+    const jobId = job.jobId || job.attempt?.attemptId;
+    if (!jobId) throw new Error('Review job was created without a job id.');
+    const data = await pollReviewJob(jobId);
     await fetchPapers();
     if (!skipSelect) {
       window.history.pushState({}, '', paperPath(data.paper.id));
