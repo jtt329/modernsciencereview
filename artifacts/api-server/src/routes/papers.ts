@@ -411,6 +411,14 @@ function isCompletedAttempt(record: ReviewAttemptRecord) {
     record.reviewStatus === "completed_reused_inflight";
 }
 
+function isInterruptedReviewAttempt(record: ReviewAttemptRecord) {
+  const payload = debugPayloadObject(record.debugPayload);
+  return record.stageName === "interrupted_by_server_restart" ||
+    record.reviewStatus === "interrupted_by_server_restart" ||
+    record.failureStatus === "interrupted_by_server_restart" ||
+    payload.interruptedByServerRestart === true;
+}
+
 function isTerminalAttempt(record: ReviewAttemptRecord) {
   if (isCompletedAttempt(record)) return true;
   if (isClientAttempt(record)) return true;
@@ -473,6 +481,54 @@ function ageForAttempt(record: ReviewAttemptRecord, now = Date.now()) {
   };
 }
 
+function redactedStringSummary(value: unknown) {
+  if (typeof value !== "string") return value;
+  return {
+    redacted: true,
+    charCount: value.length,
+    sha256: createHash("sha256").update(value).digest("hex"),
+  };
+}
+
+function summarizeSourceSnapshot(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const snapshot = value as Record<string, unknown>;
+  return {
+    ...snapshot,
+    data: redactedStringSummary(snapshot.data),
+    manualText: redactedStringSummary(snapshot.manualText),
+    rawText: redactedStringSummary(snapshot.rawText),
+    text: redactedStringSummary(snapshot.text),
+  };
+}
+
+function sanitizeAttemptDebugPayload(value: unknown) {
+  const payload = debugPayloadObject(value);
+  const sanitized: Record<string, unknown> = { ...payload };
+  if ("sourceSnapshot" in sanitized) {
+    sanitized.sourceSnapshot = summarizeSourceSnapshot(sanitized.sourceSnapshot);
+    sanitized.sourceSnapshotRedacted = true;
+  }
+  if ("source" in sanitized) {
+    sanitized.source = summarizeSourceSnapshot(sanitized.source);
+  }
+  if (typeof sanitized.data === "string") {
+    sanitized.data = redactedStringSummary(sanitized.data);
+  }
+  return sanitized;
+}
+
+function attemptForResponse<T extends ReviewAttemptRecord>(record: T): T {
+  return {
+    ...record,
+    debugPayload: sanitizeAttemptDebugPayload(record.debugPayload),
+  };
+}
+
+function ageForAttemptResponse(record: ReviewAttemptRecord, now = Date.now()) {
+  return attemptForResponse(ageForAttempt(record, now));
+}
+
 function latestAttemptByCreatedAt(records: ReviewAttemptRecord[]) {
   return [...records].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0] ?? null;
 }
@@ -489,7 +545,7 @@ function buildBatchExport(records: ReviewAttemptRecord[], requestedBatchRunId?: 
       currentBatch: null,
       historicalFailedAttempts: normalizedRecords
         .filter((attempt) => !isCompletedAttempt(attempt))
-        .map((attempt) => ageForAttempt(attempt, now)),
+        .map((attempt) => ageForAttemptResponse(attempt, now)),
     };
   }
 
@@ -547,14 +603,14 @@ function buildBatchExport(records: ReviewAttemptRecord[], requestedBatchRunId?: 
       items,
       serverAttempts: currentRecords
         .filter((attempt) => !isClientAttempt(attempt))
-        .map((attempt) => ageForAttempt(attempt, now)),
+        .map((attempt) => ageForAttemptResponse(attempt, now)),
       clientFailures: currentRecords
         .filter(isClientAttempt)
-        .map((attempt) => ageForAttempt(attempt, now)),
+        .map((attempt) => ageForAttemptResponse(attempt, now)),
     },
     historicalFailedAttempts: historicalRecords
       .filter((attempt) => !isCompletedAttempt(attempt))
-      .map((attempt) => ageForAttempt(attempt, now)),
+      .map((attempt) => ageForAttemptResponse(attempt, now)),
   };
 }
 
@@ -1093,6 +1149,7 @@ function shouldResumeReviewJob(record: ReviewAttemptRecord, now = Date.now()) {
   if (isClientAttempt(record)) return false;
   if (activeReviewJobIds.has(record.attemptId) || queuedReviewJobIds.includes(record.attemptId)) return false;
   if (record.reviewStatus === "queued" || record.reviewStatus === "upload_received") return true;
+  if (isInterruptedReviewAttempt(record)) return true;
   if (interruptedByServerRestart(record)) return true;
   if (!record.errorMessage.trim() && record.retryable && !record.failureStatus) {
     const ageMs = ageForAttempt(record, now).ageMs;
@@ -1664,7 +1721,7 @@ router.get("/admin/review-attempts", async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit ?? 200), 1), MAX_FAILED_REVIEW_ATTEMPTS);
     const rows = await db.select().from(reviewAttemptsTable).orderBy(desc(reviewAttemptsTable.createdAt)).limit(limit);
     res.json({
-      attempts: rows.map(reviewAttemptRecordFromRow).map(withRuntimeAttemptStatus),
+      attempts: rows.map(reviewAttemptRecordFromRow).map(withRuntimeAttemptStatus).map(attemptForResponse),
       repairOptions: [
         "retry_normal_extraction",
         "retry_pdf_fallback",
@@ -1759,7 +1816,7 @@ router.post("/review-batches/register", async (req, res) => {
     res.status(201).json({
       batchRunId,
       itemCount: registered.length,
-      attempts: registered,
+      attempts: registered.map(attemptForResponse),
       apiRuntime: reviewRuntimeInfo(),
     });
   } catch (err: any) {
@@ -1842,7 +1899,7 @@ router.post("/review-attempts/client-failure", async (req, res) => {
     if (existingIndex >= 0) failedReviewAttempts.splice(existingIndex, 1);
     failedReviewAttempts.unshift(record);
     failedReviewAttempts.splice(MAX_FAILED_REVIEW_ATTEMPTS);
-    res.status(201).json({ attempt: record });
+    res.status(201).json({ attempt: attemptForResponse(record) });
   } catch (err: any) {
     logger.error({ err }, "Error recording frontend review attempt failure");
     res.status(500).json({ error: err.message });
@@ -1857,7 +1914,7 @@ router.post("/review-jobs", async (req, res) => {
     const attempt = await createDurableReviewJob(req.user, source);
     res.status(202).json({
       jobId: attempt.attemptId,
-      attempt,
+      attempt: attemptForResponse(attempt),
       batchRunId: attempt.batchRunId,
       queueItemId: attempt.queueItemId,
       apiRuntime: reviewRuntimeInfo(),
@@ -1887,7 +1944,7 @@ router.post("/review-jobs/:id/retry", async (req, res) => {
       retryCount: record.retryCount + 1,
     }, "manual_retry");
     enqueueReviewJob(queued.attemptId);
-    res.status(202).json({ jobId: queued.attemptId, attempt: queued, apiRuntime: reviewRuntimeInfo() });
+    res.status(202).json({ jobId: queued.attemptId, attempt: attemptForResponse(queued), apiRuntime: reviewRuntimeInfo() });
   } catch (err: any) {
     logger.error({ err }, "Error retrying review job");
     res.status(500).json({ error: err.message });
@@ -1903,8 +1960,15 @@ router.get("/review-jobs/:id", async (req, res) => {
       res.status(404).json({ error: "Review job not found" });
       return;
     }
-    const attempt = withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row));
+    let attempt = withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row));
     if (attempt.userId !== req.user.id && !requireAdmin(req, res)) return;
+    if (shouldResumeReviewJob(attempt)) {
+      attempt = await markReviewJobQueued({
+        ...attempt,
+        retryCount: attempt.retryCount + (isInterruptedReviewAttempt(attempt) ? 1 : 0),
+      }, isInterruptedReviewAttempt(attempt) ? "poll_server_restart_recovery" : "poll_stale_recovery");
+      enqueueReviewJob(attempt.attemptId);
+    }
     let paper: typeof papersTable.$inferSelect | null = null;
     let review: typeof reviewsTable.$inferSelect | null = null;
     if (attempt.paperId && isCompletedAttempt(attempt)) {
@@ -1915,7 +1979,7 @@ router.get("/review-jobs/:id", async (req, res) => {
         review = reviewRow ?? null;
       }
     }
-    res.json({ attempt, paper, review, apiRuntime: reviewRuntimeInfo() });
+    res.json({ attempt: attemptForResponse(attempt), paper, review, apiRuntime: reviewRuntimeInfo() });
   } catch (err: any) {
     logger.error({ err }, "Error getting review job");
     res.status(500).json({ error: err.message });
@@ -1957,7 +2021,7 @@ router.patch("/admin/review-attempts/:id/supersede", async (req, res) => {
       res.status(404).json({ error: "Review attempt not found" });
       return;
     }
-    res.json({ attempt: reviewAttemptRecordFromRow(updated) });
+    res.json({ attempt: attemptForResponse(reviewAttemptRecordFromRow(updated)) });
   } catch (err: any) {
     logger.error({ err }, "Error superseding review attempt");
     res.status(500).json({ error: err.message });

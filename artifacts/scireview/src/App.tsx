@@ -176,6 +176,14 @@ function isJobComplete(attempt: any, data: any) {
 function isJobFailed(attempt: any) {
   if (!attempt) return false;
   if (attempt.failureStatus === 'completed') return false;
+  if (
+    attempt.retryable &&
+    (attempt.reviewStatus === 'interrupted_by_server_restart' ||
+      attempt.failureStatus === 'interrupted_by_server_restart' ||
+      attempt.stageName === 'interrupted_by_server_restart')
+  ) {
+    return false;
+  }
   if (typeof attempt.errorMessage === 'string' && attempt.errorMessage.trim()) return true;
   if (attempt.failureStatus && attempt.failureStatus !== 'retryable') return true;
   return attempt.reviewStatus === 'failed_validation' ||
