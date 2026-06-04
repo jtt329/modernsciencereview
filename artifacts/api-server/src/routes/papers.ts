@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable } from "@workspace/db";
 import { eq, desc, and, sql } from "drizzle-orm";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
@@ -55,8 +55,17 @@ const router = Router();
 const recentSubmissions = new Map<string, Promise<{ paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }>>();
 const REVIEW_JOB_CONCURRENCY = Math.max(1, Number(process.env.REVIEW_JOB_CONCURRENCY ?? 1) || 1);
 const REVIEW_JOB_STALE_MS = Math.max(5 * 60 * 1000, Number(process.env.REVIEW_JOB_STALE_MS ?? 15 * 60 * 1000) || 15 * 60 * 1000);
+const REVIEW_JOB_LEASE_MS = Math.max(REVIEW_JOB_STALE_MS, Number(process.env.REVIEW_JOB_LEASE_MS ?? 25 * 60 * 1000) || 25 * 60 * 1000);
+const REVIEW_JOB_HEARTBEAT_MS = Math.max(15 * 1000, Number(process.env.REVIEW_JOB_HEARTBEAT_MS ?? 45 * 1000) || 45 * 1000);
+const REVIEW_JOB_RECOVERY_INTERVAL_MS = Math.max(15 * 1000, Number(process.env.REVIEW_JOB_RECOVERY_INTERVAL_MS ?? 30 * 1000) || 30 * 1000);
 const REVIEW_JOB_RECOVERY_LIMIT = Math.max(20, Number(process.env.REVIEW_JOB_RECOVERY_LIMIT ?? 300) || 300);
-const REVIEW_JOB_AUTO_RECOVERY = process.env.REVIEW_JOB_AUTO_RECOVERY === "true";
+const REVIEW_JOB_AUTO_RECOVERY = process.env.REVIEW_JOB_AUTO_RECOVERY !== "false";
+const REVIEW_JOB_MAX_AUTO_RETRIES = Math.max(1, Number(process.env.REVIEW_JOB_MAX_AUTO_RETRIES ?? 3) || 3);
+const REVIEW_JOB_WORKER_ID = [
+  process.env.RAILWAY_DEPLOYMENT_ID || process.env.RAILWAY_REPLICA_ID || "local",
+  process.pid,
+  randomUUID().slice(0, 8),
+].join(":");
 const queuedReviewJobIds: string[] = [];
 const activeReviewJobIds = new Set<string>();
 let reviewJobDrainScheduled = false;
@@ -251,6 +260,16 @@ function debugString(payload: Record<string, unknown> | null, key: string): stri
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function debugNumber(payload: Record<string, unknown> | null, key: string): number | null {
+  const value = payload?.[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function attemptDebugPayload(context: ReviewAttemptContext, extra: Record<string, unknown> = {}) {
   return {
     ...debugPayloadObject(context.debugPayload),
@@ -260,6 +279,27 @@ function attemptDebugPayload(context: ReviewAttemptContext, extra: Record<string
     apiRuntime: reviewRuntimeInfo(),
     ...extra,
   };
+}
+
+function reviewJobLeaseExpiresAt(now = Date.now()) {
+  return new Date(now + REVIEW_JOB_LEASE_MS).toISOString();
+}
+
+function reviewJobAutoRetryCount(record: ReviewAttemptRecord) {
+  const payload = debugPayloadObject(record.debugPayload);
+  return debugNumber(payload, "autoRecoveryCount") ?? 0;
+}
+
+function canAutoRecoverReviewJob(record: ReviewAttemptRecord) {
+  return reviewJobAutoRetryCount(record) < REVIEW_JOB_MAX_AUTO_RETRIES;
+}
+
+function jobLeaseExpired(record: ReviewAttemptRecord, now = Date.now()) {
+  const payload = debugPayloadObject(record.debugPayload);
+  if (payload.jobStatus !== "running") return false;
+  const leaseExpiresAt = timestampMs(payload.leaseExpiresAt);
+  if (leaseExpiresAt == null) return ageForAttempt(record, now).ageMs != null && ageForAttempt(record, now).ageMs! > REVIEW_JOB_STALE_MS;
+  return leaseExpiresAt + 1000 < now;
 }
 
 function reviewAttemptInsertValues(record: ReviewAttemptRecord): typeof reviewAttemptsTable.$inferInsert {
@@ -452,7 +492,12 @@ function attemptLifecycleStartedAtMs(record: ReviewAttemptRecord): number | null
     timestampMs(payload.queuedAt),
     timestampMs(payload.requestReceivedAt),
     timestampMs(payload.clientRequestStartedAt),
+    timestampMs(payload.workerStartedAt),
+    timestampMs(payload.workerHeartbeatAt),
+    timestampMs(payload.leaseStartedAt),
     runtimeStartedAtMs(payload.apiRuntimeAtQueued),
+    runtimeStartedAtMs(payload.apiRuntimeAtWorkerStart),
+    runtimeStartedAtMs(payload.apiRuntimeAtHeartbeat),
     runtimeStartedAtMs(payload.apiRuntimeAtRequestStart),
     runtimeStartedAtMs(payload.apiRuntimeAtRegistration),
     runtimeStartedAtMs(payload.apiRuntimeVersion),
@@ -1171,10 +1216,13 @@ async function reviewAttemptById(attemptId: string) {
 }
 
 function shouldResumeReviewJob(record: ReviewAttemptRecord, now = Date.now()) {
+  const payload = debugPayloadObject(record.debugPayload);
   if (!sourceSnapshotFromAttempt(record)) return false;
   if (isCompletedAttempt(record)) return false;
   if (isClientAttempt(record)) return false;
+  if (payload.jobStatus === "auto_recovery_exceeded") return false;
   if (activeReviewJobIds.has(record.attemptId) || queuedReviewJobIds.includes(record.attemptId)) return false;
+  if (jobLeaseExpired(record, now)) return true;
   if (record.reviewStatus === "queued" || record.reviewStatus === "upload_received") return true;
   if (isInterruptedReviewAttempt(record)) return true;
   if (interruptedByServerRestart(record)) return true;
@@ -1206,6 +1254,77 @@ async function markReviewJobQueued(record: ReviewAttemptRecord, reason: string) 
   };
   await persistReviewAttemptRecord(queuedRecord);
   return queuedRecord;
+}
+
+async function markReviewJobRunning(record: ReviewAttemptRecord, reason: string) {
+  const payload = debugPayloadObject(record.debugPayload);
+  const now = Date.now();
+  const runningRecord: ReviewAttemptRecord = {
+    ...record,
+    stageName: "request_received",
+    stageType: "request",
+    errorMessage: "",
+    rawErrorCode: null,
+    reviewStatus: "running",
+    failureStatus: null,
+    retryable: true,
+    debugPayload: {
+      ...payload,
+      jobStatus: "running",
+      workerId: REVIEW_JOB_WORKER_ID,
+      workerStartReason: reason,
+      workerStartedAt: new Date(now).toISOString(),
+      workerHeartbeatAt: new Date(now).toISOString(),
+      leaseStartedAt: new Date(now).toISOString(),
+      leaseExpiresAt: reviewJobLeaseExpiresAt(now),
+      apiRuntimeAtWorkerStart: reviewRuntimeInfo(),
+    },
+  };
+  await persistReviewAttemptRecord(runningRecord);
+  return runningRecord;
+}
+
+async function touchReviewJobHeartbeat(attemptId: string) {
+  const record = await reviewAttemptById(attemptId);
+  if (!record || isCompletedAttempt(record)) return;
+  const payload = debugPayloadObject(record.debugPayload);
+  if (payload.workerId && payload.workerId !== REVIEW_JOB_WORKER_ID) return;
+  const now = Date.now();
+  await persistReviewAttemptRecord({
+    ...record,
+    debugPayload: {
+      ...payload,
+      jobStatus: "running",
+      workerId: REVIEW_JOB_WORKER_ID,
+      workerHeartbeatAt: new Date(now).toISOString(),
+      leaseExpiresAt: reviewJobLeaseExpiresAt(now),
+      apiRuntimeAtHeartbeat: reviewRuntimeInfo(),
+    },
+  });
+}
+
+async function markReviewJobAutoRecoveryExceeded(record: ReviewAttemptRecord, reason: string) {
+  const payload = debugPayloadObject(record.debugPayload);
+  const failedRecord: ReviewAttemptRecord = {
+    ...record,
+    stageName: "interrupted_by_server_restart",
+    stageType: "system",
+    errorMessage: `Review job exceeded ${REVIEW_JOB_MAX_AUTO_RETRIES} automatic restart recoveries (${reason}). Manual retry is available.`,
+    reviewStatus: "needs_manual_retry",
+    failureStatus: "retryable",
+    retryable: true,
+    debugPayload: {
+      ...payload,
+      jobStatus: "auto_recovery_exceeded",
+      autoRecoveryExceededAt: new Date().toISOString(),
+      autoRecoveryExceededReason: reason,
+      autoRecoveryCount: reviewJobAutoRetryCount(record),
+      maxAutoRecoveries: REVIEW_JOB_MAX_AUTO_RETRIES,
+      apiRuntimeAtAutoRecoveryExceeded: reviewRuntimeInfo(),
+    },
+  };
+  await persistReviewAttemptRecord(failedRecord);
+  return failedRecord;
 }
 
 function enqueueReviewJob(attemptId: string) {
@@ -1262,7 +1381,7 @@ async function runReviewJob(attemptId: string) {
     return;
   }
 
-  const runningRecord = await markReviewJobQueued(record, "worker_start");
+  const runningRecord = await markReviewJobRunning(record, "worker_start");
   const source = {
     ...sourceSnapshot,
     attemptId,
@@ -1270,10 +1389,18 @@ async function runReviewJob(attemptId: string) {
     jobDebugPayload: runningRecord.debugPayload,
     clientRequestStartedAt: debugString(debugPayloadObject(runningRecord.debugPayload), "clientRequestStartedAt") ?? sourceSnapshot.clientRequestStartedAt,
   };
+  const heartbeat = setInterval(() => {
+    void touchReviewJobHeartbeat(attemptId).catch((err) => {
+      logger.warn({ err, attemptId }, "Failed to update durable review job heartbeat");
+    });
+  }, REVIEW_JOB_HEARTBEAT_MS);
+  heartbeat.unref?.();
   try {
     await processPaperSubmission(userSnapshot, source);
   } catch (err) {
     logger.error({ err, attemptId }, "Durable review job failed");
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 
@@ -1322,10 +1449,34 @@ async function recoverReviewJobs() {
       .limit(REVIEW_JOB_RECOVERY_LIMIT);
     const now = Date.now();
     for (const row of rows) {
-      const record = reviewAttemptRecordFromRow(row);
+      const record = withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row));
       if (!shouldResumeReviewJob(record, now)) continue;
-      const reason = interruptedByServerRestart(record) ? "server_restart_recovery" : "stale_or_queued_recovery";
-      const queued = await markReviewJobQueued(record, reason);
+      const reason = interruptedByServerRestart(record)
+        ? "server_restart_recovery"
+        : jobLeaseExpired(record, now)
+          ? "lease_expired_recovery"
+          : "stale_or_queued_recovery";
+      if ((reason === "server_restart_recovery" || reason === "lease_expired_recovery") && !canAutoRecoverReviewJob(record)) {
+        await markReviewJobAutoRecoveryExceeded(record, reason);
+        continue;
+      }
+      const payload = debugPayloadObject(record.debugPayload);
+      const autoRecoveryCount = reason === "server_restart_recovery" || reason === "lease_expired_recovery"
+        ? reviewJobAutoRetryCount(record) + 1
+        : reviewJobAutoRetryCount(record);
+      const queued = await markReviewJobQueued({
+        ...record,
+        retryCount: reason === "server_restart_recovery" || reason === "lease_expired_recovery"
+          ? record.retryCount + 1
+          : record.retryCount,
+        debugPayload: {
+          ...payload,
+          autoRecoveryCount,
+          lastAutoRecoveryReason: reason,
+          lastAutoRecoveryAt: new Date().toISOString(),
+          recoveredByWorkerId: REVIEW_JOB_WORKER_ID,
+        },
+      }, reason);
       enqueueReviewJob(queued.attemptId);
     }
   } catch (err) {
@@ -1341,7 +1492,7 @@ function startReviewJobRecovery() {
   if (reviewJobRecoveryStarted) return;
   reviewJobRecoveryStarted = true;
   setTimeout(() => { void recoverReviewJobs(); }, 1000).unref?.();
-  setInterval(() => { void recoverReviewJobs(); }, 60_000).unref?.();
+  setInterval(() => { void recoverReviewJobs(); }, REVIEW_JOB_RECOVERY_INTERVAL_MS).unref?.();
 }
 
 async function createDurableReviewJob(user: any, source: any) {
@@ -1392,6 +1543,7 @@ async function createDurableReviewJob(user: any, source: any) {
       sourceSnapshot: storedSource,
       userSnapshot: jobUserSnapshot(user),
       jobStatus: "queued",
+      autoRecoveryCount: 0,
       durableJob: true,
       queuedAt: now,
       clientRequestStartedAt: optionalSourceString(source, "clientRequestStartedAt"),
@@ -1974,6 +2126,12 @@ router.post("/review-jobs/:id/retry", async (req, res) => {
     const queued = await markReviewJobQueued({
       ...record,
       retryCount: record.retryCount + 1,
+      debugPayload: {
+        ...debugPayloadObject(record.debugPayload),
+        autoRecoveryCount: 0,
+        manualRetryAt: new Date().toISOString(),
+        manualRetryByUserId: req.user.id,
+      },
     }, "manual_retry");
     enqueueReviewJob(queued.attemptId);
     res.status(202).json({ jobId: queued.attemptId, attempt: attemptForResponse(queued), apiRuntime: reviewRuntimeInfo() });
@@ -1995,11 +2153,32 @@ router.get("/review-jobs/:id", async (req, res) => {
     let attempt = withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row));
     if (attempt.userId !== req.user.id && !requireAdmin(req, res)) return;
     if (shouldResumeReviewJob(attempt)) {
-      attempt = await markReviewJobQueued({
-        ...attempt,
-        retryCount: attempt.retryCount + (isInterruptedReviewAttempt(attempt) ? 1 : 0),
-      }, isInterruptedReviewAttempt(attempt) ? "poll_server_restart_recovery" : "poll_stale_recovery");
-      enqueueReviewJob(attempt.attemptId);
+      const reason = isInterruptedReviewAttempt(attempt)
+        ? "poll_server_restart_recovery"
+        : jobLeaseExpired(attempt)
+          ? "poll_lease_expired_recovery"
+          : "poll_stale_recovery";
+      const countsAgainstAutoRetries = reason === "poll_server_restart_recovery" || reason === "poll_lease_expired_recovery";
+      if (countsAgainstAutoRetries && !canAutoRecoverReviewJob(attempt)) {
+        attempt = await markReviewJobAutoRecoveryExceeded(attempt, reason);
+      } else {
+        const payload = debugPayloadObject(attempt.debugPayload);
+        const autoRecoveryCount = countsAgainstAutoRetries
+          ? reviewJobAutoRetryCount(attempt) + 1
+          : reviewJobAutoRetryCount(attempt);
+        attempt = await markReviewJobQueued({
+          ...attempt,
+          retryCount: countsAgainstAutoRetries ? attempt.retryCount + 1 : attempt.retryCount,
+          debugPayload: {
+            ...payload,
+            autoRecoveryCount,
+            lastAutoRecoveryReason: reason,
+            lastAutoRecoveryAt: new Date().toISOString(),
+            recoveredByWorkerId: REVIEW_JOB_WORKER_ID,
+          },
+        }, reason);
+        enqueueReviewJob(attempt.attemptId);
+      }
     }
     let paper: typeof papersTable.$inferSelect | null = null;
     let review: typeof reviewsTable.$inferSelect | null = null;
