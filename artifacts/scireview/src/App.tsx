@@ -151,6 +151,24 @@ async function apiFetch(path: string, options?: RequestInit) {
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+const REVIEW_JOB_POLL_INTERVAL_MS = 2500;
+const REVIEW_JOB_POLL_TRANSIENT_WINDOW_MS = 12 * 60 * 1000;
+
+function pollErrorMessage(err: unknown) {
+  if (err instanceof Error) return err.message || err.name;
+  if (typeof err === 'string') return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+function isTransientReviewJobPollError(err: unknown) {
+  const status = typeof (err as any)?.status === 'number' ? (err as any).status : 0;
+  if ((err as any)?.transient || [500, 502, 503, 504].includes(status)) return true;
+  return /failed to fetch|load failed|networkerror|network request failed|application failed to respond|temporar|unavailable|timeout|\b(500|502|503|504)\b/i.test(pollErrorMessage(err));
+}
 
 function attemptFailureMessage(attempt: any) {
   const stage = attempt?.stageName ? String(attempt.stageName).replace(/_/g, ' ') : 'review job';
@@ -194,22 +212,47 @@ function isJobFailed(attempt: any) {
 
 async function pollReviewJob(jobId: string) {
   const deadline = Date.now() + 90 * 60 * 1000;
+  let firstTransientPollErrorAt: number | null = null;
+  let transientPollErrorCount = 0;
   while (Date.now() < deadline) {
-    const data = await apiFetch(`/api/review-jobs/${encodeURIComponent(jobId)}`);
-    const attempt = data?.attempt;
-    if (isJobComplete(attempt, data)) return data;
-    if (isJobFailed(attempt)) {
-      const error = new Error(attemptFailureMessage(attempt)) as Error & {
-        attempt?: unknown;
-        reviewStatus?: string | null;
-        transient?: boolean;
-      };
-      error.attempt = attempt;
-      error.reviewStatus = attempt?.reviewStatus || null;
-      error.transient = Boolean(attempt?.retryable);
-      throw error;
+    try {
+      const data = await apiFetch(`/api/review-jobs/${encodeURIComponent(jobId)}`);
+      firstTransientPollErrorAt = null;
+      transientPollErrorCount = 0;
+      const attempt = data?.attempt;
+      if (isJobComplete(attempt, data)) return data;
+      if (isJobFailed(attempt)) {
+        const error = new Error(attemptFailureMessage(attempt)) as Error & {
+          attempt?: unknown;
+          reviewStatus?: string | null;
+          transient?: boolean;
+          jobAttemptFailure?: boolean;
+        };
+        error.attempt = attempt;
+        error.reviewStatus = attempt?.reviewStatus || null;
+        error.transient = Boolean(attempt?.retryable);
+        error.jobAttemptFailure = true;
+        throw error;
+      }
+    } catch (err) {
+      if ((err as any)?.jobAttemptFailure) throw err;
+      if (!isTransientReviewJobPollError(err)) throw err;
+      const now = Date.now();
+      firstTransientPollErrorAt ??= now;
+      transientPollErrorCount += 1;
+      if (now - firstTransientPollErrorAt > REVIEW_JOB_POLL_TRANSIENT_WINDOW_MS) {
+        const error = new Error(`Review job status polling could not reach the API for ${Math.round(REVIEW_JOB_POLL_TRANSIENT_WINDOW_MS / 60000)} minutes. The server job may still be running; refresh and check the batch/debug status before retrying. Last error: ${pollErrorMessage(err)}`) as Error & {
+          transient?: boolean;
+          status?: number;
+        };
+        error.transient = true;
+        error.status = typeof (err as any)?.status === 'number' ? (err as any).status : undefined;
+        throw error;
+      }
+      await sleep(Math.min(15_000, REVIEW_JOB_POLL_INTERVAL_MS + transientPollErrorCount * 1000));
+      continue;
     }
-    await sleep(2500);
+    await sleep(REVIEW_JOB_POLL_INTERVAL_MS);
   }
   const error = new Error('Review job is still running after 90 minutes. It remains queued on the server; refresh and check the batch/debug status before retrying.') as Error & { transient?: boolean };
   error.transient = true;
