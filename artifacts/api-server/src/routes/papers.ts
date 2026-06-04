@@ -434,12 +434,38 @@ function apiProcessStartedAtMs() {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
+function timestampMs(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function runtimeStartedAtMs(value: unknown): number | null {
+  if (!value || typeof value !== "object") return null;
+  return timestampMs((value as any)?.build?.processStartedAt);
+}
+
+function attemptLifecycleStartedAtMs(record: ReviewAttemptRecord): number | null {
+  const payload = debugPayloadObject(record.debugPayload);
+  const candidates = [
+    timestampMs(record.createdAt),
+    timestampMs(payload.queuedAt),
+    timestampMs(payload.requestReceivedAt),
+    timestampMs(payload.clientRequestStartedAt),
+    runtimeStartedAtMs(payload.apiRuntimeAtQueued),
+    runtimeStartedAtMs(payload.apiRuntimeAtRequestStart),
+    runtimeStartedAtMs(payload.apiRuntimeAtRegistration),
+    runtimeStartedAtMs(payload.apiRuntimeVersion),
+  ].filter((timestamp): timestamp is number => timestamp != null);
+  return candidates.length ? Math.max(...candidates) : null;
+}
+
 function interruptedByServerRestart(record: ReviewAttemptRecord) {
   if (isTerminalAttempt(record)) return false;
   if (isClientAttempt(record)) return false;
   const processStartedAt = apiProcessStartedAtMs();
-  const attemptCreatedAt = Date.parse(record.createdAt);
-  return processStartedAt != null && Number.isFinite(attemptCreatedAt) && processStartedAt > attemptCreatedAt + 1000;
+  const lifecycleStartedAt = attemptLifecycleStartedAtMs(record);
+  return processStartedAt != null && lifecycleStartedAt != null && processStartedAt > lifecycleStartedAt + 1000;
 }
 
 function withRuntimeAttemptStatus(record: ReviewAttemptRecord): ReviewAttemptRecord {
@@ -473,8 +499,8 @@ function withRuntimeAttemptStatus(record: ReviewAttemptRecord): ReviewAttemptRec
 }
 
 function ageForAttempt(record: ReviewAttemptRecord, now = Date.now()) {
-  const timestamp = Date.parse(record.createdAt);
-  const ageMs = Number.isFinite(timestamp) ? Math.max(0, now - timestamp) : null;
+  const timestamp = attemptLifecycleStartedAtMs(record);
+  const ageMs = timestamp != null ? Math.max(0, now - timestamp) : null;
   return {
     ...record,
     ageMs,
