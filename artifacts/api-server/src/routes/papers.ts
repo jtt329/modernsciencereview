@@ -285,6 +285,15 @@ function attemptDebugPayload(context: ReviewAttemptContext, extra: Record<string
   };
 }
 
+function completedAttemptDebugPayload(context: ReviewAttemptContext, extra: Record<string, unknown> = {}) {
+  return attemptDebugPayload(context, {
+    ...extra,
+    jobStatus: "completed",
+    completedAt: new Date().toISOString(),
+    apiRuntimeAtCompleted: reviewRuntimeInfo(),
+  });
+}
+
 function reviewJobLeaseExpiresAt(now = Date.now()) {
   return new Date(now + REVIEW_JOB_LEASE_MS).toISOString();
 }
@@ -3167,16 +3176,32 @@ if (submissionKey && recentSubmissions.has(submissionKey)) {
     attemptContext.paperId = payload.paper.id;
   }
   await updateReviewAttemptProgress(attemptContext, {
+    stageName: "save_review",
+    stageType: "storage",
     reviewStatus: "completed_reused_inflight",
     failureStatus: "completed",
     retryable: false,
-    debugPayload: { cacheUsed: true, previousReviewUsed: true, reuseReason: "inFlight" },
+    debugPayload: completedAttemptDebugPayload(attemptContext, {
+      cacheUsed: true,
+      previousReviewUsed: true,
+      reuseReason: "inFlight",
+      savedPaperId: payload.paper.id,
+      savedReviewId: payload.review?.id ?? null,
+    }),
   });
   const attempt = reviewAttemptRecordFromContext(attemptContext, {
+    stageName: "save_review",
+    stageType: "storage",
     reviewStatus: "completed_reused_inflight",
     failureStatus: "completed",
     retryable: false,
-    debugPayload: attemptDebugPayload(attemptContext, { cacheUsed: true, previousReviewUsed: true, reuseReason: "inFlight" }),
+    debugPayload: completedAttemptDebugPayload(attemptContext, {
+      cacheUsed: true,
+      previousReviewUsed: true,
+      reuseReason: "inFlight",
+      savedPaperId: payload.paper.id,
+      savedReviewId: payload.review?.id ?? null,
+    }),
   });
   return { ...payload, attempt, batchRunId, queueItemId };
 }
@@ -3338,10 +3363,18 @@ if (existingBySource?.review) {
   if (resolveSubmission) resolveSubmission(existingBySource);
   attemptContext.paperId = existingBySource.paper.id;
   const attempt = await updateReviewAttemptProgress(attemptContext, {
+    stageName: "save_review",
+    stageType: "storage",
     reviewStatus: "completed_reused",
     failureStatus: "completed",
     retryable: false,
-    debugPayload: { cacheUsed: true, previousReviewUsed: true, reuseReason: "sourceHash" },
+    debugPayload: completedAttemptDebugPayload(attemptContext, {
+      cacheUsed: true,
+      previousReviewUsed: true,
+      reuseReason: "sourceHash",
+      savedPaperId: existingBySource.paper.id,
+      savedReviewId: existingBySource.review.id,
+    }),
   });
   if (submissionKey) {
     const key = submissionKey;
@@ -3372,10 +3405,18 @@ if (existingByMetadata?.review) {
   if (resolveSubmission) resolveSubmission(existingByMetadata);
   attemptContext.paperId = existingByMetadata.paper.id;
   const attempt = await updateReviewAttemptProgress(attemptContext, {
+    stageName: "save_review",
+    stageType: "storage",
     reviewStatus: "completed_reused",
     failureStatus: "completed",
     retryable: false,
-    debugPayload: { cacheUsed: true, previousReviewUsed: true, reuseReason: "metadata" },
+    debugPayload: completedAttemptDebugPayload(attemptContext, {
+      cacheUsed: true,
+      previousReviewUsed: true,
+      reuseReason: "metadata",
+      savedPaperId: existingByMetadata.paper.id,
+      savedReviewId: existingByMetadata.review.id,
+    }),
   });
   if (submissionKey) {
     const key = submissionKey;
@@ -3446,11 +3487,11 @@ const attempt = await updateReviewAttemptProgress(attemptContext, {
   reviewStatus: "completed",
   failureStatus: "completed",
   retryable: false,
-  debugPayload: {
+  debugPayload: completedAttemptDebugPayload(attemptContext, {
     savedPaperId: paper.id,
     savedReviewId: review.id,
     score: reviewValues.score,
-  },
+  }),
 });
 
 const payload = { paper, review };
