@@ -246,6 +246,11 @@ const scoreToneClass = (value: number | null, scale: 10 | 100 = 10) => {
   return 'text-rose-100 border-rose-300/25 bg-rose-400/10';
 };
 
+const formatDiagnosticSubscore = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(value)) return 'N/A';
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/0$/, '');
+};
+
 const groundingTone = (value: unknown): 'green' | 'yellow' | 'red' | 'neutral' => {
   const text = hasText(value) ? value.toLowerCase() : '';
   if (!text) return 'neutral';
@@ -337,7 +342,7 @@ const validityTone = (value: unknown): { label: string; className: string; tone:
 const validSubscore = (value: unknown, isValid = true): number | null => {
   const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
   if (!isValid || !Number.isFinite(numeric) || numeric < 0 || numeric > 10) return null;
-  return Math.round(numeric);
+  return Math.round(numeric * 2) / 2;
 };
 
 const asLedgerOutputs = (ledger: any): Array<{
@@ -1098,7 +1103,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{card.label}</p>
                           <p className={`text-2xl font-black ${card.color}`}>
-                            {card.value == null ? 'N/A' : card.value}
+                            {formatDiagnosticSubscore(card.value)}
                             {card.value != null && <span className="text-sm font-bold text-slate-400">/10</span>}
                           </p>
                         </div>
@@ -1112,7 +1117,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Input Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentInputStrengthScore)}`}>
-                      {currentInputStrengthScore == null ? 'N/A' : currentInputStrengthScore}
+                      {formatDiagnosticSubscore(currentInputStrengthScore)}
                       {currentInputStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
                     </p>
                   </div>
@@ -1155,7 +1160,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Construction Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentConstructionStrengthScore)}`}>
-                      {currentConstructionStrengthScore == null ? 'N/A' : currentConstructionStrengthScore}
+                      {formatDiagnosticSubscore(currentConstructionStrengthScore)}
                       {currentConstructionStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
                     </p>
                   </div>
@@ -1198,7 +1203,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Output Strength</p>
                     <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentOutputStrengthScore)}`}>
-                      {currentOutputStrengthScore == null ? 'N/A' : currentOutputStrengthScore}
+                      {formatDiagnosticSubscore(currentOutputStrengthScore)}
                       {currentOutputStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
                     </p>
                   </div>
@@ -1461,7 +1466,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                             .replace('inputStrengthScore', 'Input Strength')
                             .replace('constructionStrengthScore', 'Construction Strength')
                             .replace('outputStrengthScore', 'Output Strength');
-                          return `- ${label}: ${change.from} -> ${change.to}${change.rationale ? ` - ${change.rationale}` : ''}`;
+                          return `- ${label}: ${formatDiagnosticSubscore(change.from)} -> ${formatDiagnosticSubscore(change.to)}${change.rationale ? ` - ${change.rationale}` : ''}`;
                         }).join('\n')}
                       </Markdown>
                     </Section>
