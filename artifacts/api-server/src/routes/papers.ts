@@ -53,7 +53,7 @@ const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "
 
 const router = Router();
 const recentSubmissions = new Map<string, Promise<{ paper: typeof papersTable.$inferSelect; review: typeof reviewsTable.$inferSelect | null }>>();
-const REVIEW_JOB_CONCURRENCY = Math.max(1, Number(process.env.REVIEW_JOB_CONCURRENCY ?? 1) || 1);
+const REVIEW_JOB_CONCURRENCY = Math.max(1, Number(process.env.REVIEW_JOB_CONCURRENCY ?? 2) || 2);
 const REVIEW_JOB_STALE_MS = Math.max(5 * 60 * 1000, Number(process.env.REVIEW_JOB_STALE_MS ?? 15 * 60 * 1000) || 15 * 60 * 1000);
 const REVIEW_JOB_LEASE_MS = Math.max(REVIEW_JOB_STALE_MS, Number(process.env.REVIEW_JOB_LEASE_MS ?? 25 * 60 * 1000) || 25 * 60 * 1000);
 const REVIEW_JOB_HEARTBEAT_MS = Math.max(15 * 1000, Number(process.env.REVIEW_JOB_HEARTBEAT_MS ?? 45 * 1000) || 45 * 1000);

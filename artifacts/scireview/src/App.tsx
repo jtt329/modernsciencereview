@@ -210,7 +210,9 @@ function isJobFailed(attempt: any) {
     attempt.reviewStatus === 'failed';
 }
 
-async function pollReviewJob(jobId: string) {
+type ReviewJobUpdateHandler = (attempt: any) => void;
+
+async function pollReviewJob(jobId: string, onJobUpdate?: ReviewJobUpdateHandler) {
   const deadline = Date.now() + 90 * 60 * 1000;
   let firstTransientPollErrorAt: number | null = null;
   let transientPollErrorCount = 0;
@@ -220,6 +222,7 @@ async function pollReviewJob(jobId: string) {
       firstTransientPollErrorAt = null;
       transientPollErrorCount = 0;
       const attempt = data?.attempt;
+      if (attempt) onJobUpdate?.(attempt);
       if (isJobComplete(attempt, data)) return data;
       if (isJobFailed(attempt)) {
         const error = new Error(attemptFailureMessage(attempt)) as Error & {
@@ -394,7 +397,7 @@ export default function App() {
     fetchPapers();
   };
 
-  const handleSubmitPaper = async (source: ReviewSource, skipSelect = false) => {
+  const handleSubmitPaper = async (source: ReviewSource, skipSelect = false, onJobUpdate?: ReviewJobUpdateHandler) => {
     const job = await apiFetch('/api/review-jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -402,7 +405,7 @@ export default function App() {
     });
     const jobId = job.jobId || job.attempt?.attemptId;
     if (!jobId) throw new Error('Review job was created without a job id.');
-    const data = await pollReviewJob(jobId);
+    const data = await pollReviewJob(jobId, onJobUpdate);
     await fetchPapers();
     if (!skipSelect) {
       window.history.pushState({}, '', paperPath(data.paper.id));

@@ -6,7 +6,7 @@ import { ReviewSource, ReviewModel, ReviewMode } from '../services/reviewService
 import { SITE_VERSION } from '../lib/version';
 
 interface SubmissionFormProps {
-  onSubmit: (source: ReviewSource, skipSelect?: boolean) => Promise<any>;
+  onSubmit: (source: ReviewSource, skipSelect?: boolean, onJobUpdate?: (attempt: any) => void) => Promise<any>;
   onClose: () => void;
   isAdmin?: boolean;
 }
@@ -103,6 +103,44 @@ function stageLabel(stageName: string | null | undefined) {
       return 'Save review';
     default:
       return stageName || 'Review attempt';
+  }
+}
+
+function activeStageLabel(attempt: any) {
+  const stageName = attempt?.stageName || attempt?.debugPayload?.stageName;
+  const reviewStatus = attempt?.reviewStatus || attempt?.debugPayload?.jobStatus;
+  switch (stageName) {
+    case 'upload_received':
+      return 'Queued on server...';
+    case 'request_received':
+      return 'Worker picked up job...';
+    case 'metadata_extraction':
+    case 'title_author_extraction':
+      return 'Extracting title and authors...';
+    case 'pdf_text_extraction':
+      return 'Extracting PDF text...';
+    case 'pdf_fallback_extraction':
+      return 'Repairing PDF extraction...';
+    case 'extraction_quality_check':
+      return 'Checking extraction quality...';
+    case 'blind_pass_1':
+      return 'Generating blind pass 1...';
+    case 'blind_pass_2':
+      return 'Generating blind pass 2...';
+    case 'adjudicator':
+      return 'Running blind adjudicator...';
+    case 'json_parse':
+      return 'Parsing model JSON...';
+    case 'review_validation':
+      return 'Validating review...';
+    case 'save_review':
+      return 'Saving completed review...';
+    case 'interrupted_by_server_restart':
+      return 'Server restarted; item moved to repair lane...';
+    default:
+      if (reviewStatus === 'queued') return 'Queued behind another paper...';
+      if (reviewStatus === 'running') return 'Review worker running...';
+      return reviewModeCopy['benchmark-ingestion'].processing;
   }
 }
 
@@ -480,7 +518,13 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
           source.apiRuntimePreviousProcessStartedAt = runtimeState.restartInfo.oldProcessStartedAt;
           source.apiRuntimeCurrentProcessStartedAt = runtimeState.restartInfo.newProcessStartedAt;
         }
-        return await onSubmit(source, skipSelectAfterSubmit);
+        return await onSubmit(source, skipSelectAfterSubmit, (attempt) => {
+          setFileStatus(qf.id, {
+            status: 'processing',
+            attempt,
+            error: activeStageLabel(attempt),
+          });
+        });
       } catch (err) {
         lastError = err;
         let restartInfo = runtimeMonitor?.getRestartInfo() ?? runtimeState.restartInfo;
