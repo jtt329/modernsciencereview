@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable } from "@workspace/db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import { createHash } from "crypto";
 import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
@@ -56,6 +56,7 @@ const recentSubmissions = new Map<string, Promise<{ paper: typeof papersTable.$i
 const REVIEW_JOB_CONCURRENCY = Math.max(1, Number(process.env.REVIEW_JOB_CONCURRENCY ?? 1) || 1);
 const REVIEW_JOB_STALE_MS = Math.max(5 * 60 * 1000, Number(process.env.REVIEW_JOB_STALE_MS ?? 15 * 60 * 1000) || 15 * 60 * 1000);
 const REVIEW_JOB_RECOVERY_LIMIT = Math.max(20, Number(process.env.REVIEW_JOB_RECOVERY_LIMIT ?? 300) || 300);
+const REVIEW_JOB_AUTO_RECOVERY = process.env.REVIEW_JOB_AUTO_RECOVERY === "true";
 const queuedReviewJobIds: string[] = [];
 const activeReviewJobIds = new Set<string>();
 let reviewJobDrainScheduled = false;
@@ -1287,6 +1288,7 @@ function reviewAttemptContextFromRecord(
 }
 
 async function recoverReviewJobs() {
+  if (!REVIEW_JOB_AUTO_RECOVERY) return;
   try {
     const rows = await db.select()
       .from(reviewAttemptsTable)
@@ -1306,6 +1308,10 @@ async function recoverReviewJobs() {
 }
 
 function startReviewJobRecovery() {
+  if (!REVIEW_JOB_AUTO_RECOVERY) {
+    logger.info("Durable review job auto-recovery disabled; jobs recover on poll or manual retry");
+    return;
+  }
   if (reviewJobRecoveryStarted) return;
   reviewJobRecoveryStarted = true;
   setTimeout(() => { void recoverReviewJobs(); }, 1000).unref?.();
@@ -1718,7 +1724,7 @@ router.get("/papers/system-prompt", (_req, res) => {
 router.get("/admin/review-attempts", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const limit = Math.min(Math.max(Number(req.query.limit ?? 200), 1), MAX_FAILED_REVIEW_ATTEMPTS);
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 100);
     const rows = await db.select().from(reviewAttemptsTable).orderBy(desc(reviewAttemptsTable.createdAt)).limit(limit);
     res.json({
       attempts: rows.map(reviewAttemptRecordFromRow).map(withRuntimeAttemptStatus).map(attemptForResponse),
@@ -1990,8 +1996,13 @@ router.get("/review-jobs/:id", async (req, res) => {
 router.get("/batches/:batchRunId", async (req, res) => {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
   try {
-    const limit = Math.min(Math.max(Number(req.query.limit ?? 1000), 1), 2000);
-    const rows = await db.select().from(reviewAttemptsTable).orderBy(desc(reviewAttemptsTable.createdAt)).limit(limit);
+    const batchRunId = req.params.batchRunId;
+    const limit = Math.min(Math.max(Number(req.query.limit ?? 100), 1), 500);
+    const rows = await db.select()
+      .from(reviewAttemptsTable)
+      .where(sql`${reviewAttemptsTable.debugPayload}->>'batchRunId' = ${batchRunId}`)
+      .orderBy(desc(reviewAttemptsTable.createdAt))
+      .limit(limit);
     const attempts = rows
       .map(reviewAttemptRecordFromRow)
       .filter((attempt) => attempt.userId === req.user.id || (ADMIN_EMAIL && req.user.email === ADMIN_EMAIL));
@@ -2295,8 +2306,17 @@ router.get("/papers/export", async (req, res) => {
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
     const persistedFailedAttempts = includeFailedAttempts
-      ? (await db.select().from(reviewAttemptsTable).orderBy(desc(reviewAttemptsTable.createdAt)).limit(MAX_FAILED_REVIEW_ATTEMPTS))
-          .map(reviewAttemptRecordFromRow)
+      ? (requestedBatchRunId
+          ? await db.select()
+              .from(reviewAttemptsTable)
+              .where(sql`${reviewAttemptsTable.debugPayload}->>'batchRunId' = ${requestedBatchRunId}`)
+              .orderBy(desc(reviewAttemptsTable.createdAt))
+              .limit(100)
+          : await db.select()
+              .from(reviewAttemptsTable)
+              .orderBy(desc(reviewAttemptsTable.createdAt))
+              .limit(50)
+        ).map(reviewAttemptRecordFromRow)
       : [];
     const failedAttemptsForExport = includeFailedAttempts
       ? Array.from(new Map([...persistedFailedAttempts, ...failedReviewAttempts].map((attempt) => [attempt.attemptId, attempt])).values())
