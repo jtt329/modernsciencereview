@@ -1594,6 +1594,9 @@ function reviewQualityRequiresInvalidation(
   review: { reviewInputQuality?: ReviewInputQuality; scientificReview?: string; paperType?: string; correctness?: string; outputValidity?: string; constructionAssessment?: string; inputConstructionOutputLedger?: InputConstructionOutputLedger; technicalAssessment?: unknown },
   snapshot?: ReviewInputSnapshot | null,
 ) {
+  if (deterministicSnapshotIsReviewable(snapshot)) {
+    return false;
+  }
   const text = [
     review.scientificReview,
     review.paperType,
@@ -1606,10 +1609,6 @@ function reviewQualityRequiresInvalidation(
     typeof review.technicalAssessment === "string" ? review.technicalAssessment : "",
   ].filter(Boolean).join("\n");
   if (review.reviewInputQuality?.shouldInvalidateReview && !deterministicSnapshotIsReviewable(snapshot)) return true;
-  if (review.reviewInputQuality?.shouldInvalidateReview && deterministicSnapshotIsReviewable(snapshot)) {
-    return TRUNCATION_SIGNAL_PATTERN.test(text) &&
-      /(cannot|can't|unable|insufficient|not possible|score limited|lower.*because|output strength|missing|incomplete|truncated)/i.test(text);
-  }
   return TRUNCATION_SIGNAL_PATTERN.test(text) && /score|output strength|derivation|section|missing|incomplete/i.test(text);
 }
 
@@ -3705,15 +3704,11 @@ function reviewableSectionInventoryText(snapshot: ReviewInputSnapshot) {
 
 function reviewableFalseTruncationNote(snapshot: ReviewInputSnapshot) {
   const text = snapshot.blindedReviewText || snapshot.rawExtractedText || "";
-  const phraseIndex = text.toLowerCase().indexOf("a list of");
   const sectionInventory = reviewableSectionInventoryText(snapshot);
   const tailSample = textSnippetLast(text, 600).replace(/\s+/g, " ").trim();
   return [
     sectionInventory ? "Detected later manuscript sections in this exact review input:" : "",
     sectionInventory,
-    phraseIndex >= 0
-      ? `The phrase "a list of" appears at character ${phraseIndex}; it is not the end of the provided manuscript text. Continue reading after that phrase.`
-      : "",
     tailSample ? `End-of-input sample: ${tailSample}` : "",
   ].filter(Boolean).join("\n");
 }
@@ -3732,6 +3727,7 @@ function reviewInputWithExtractionQaNote(input: ReviewInput, snapshot?: ReviewIn
     "EXTRACTION QA NOTE:",
     `Deterministic extraction checks classified this blinded manuscript text as ${snapshot.extractionCompletenessStatus}${pageSummary ? ` (${pageSummary})` : ""}.`,
     "Proceed with scientific review unless the text actually lacks central manuscript content.",
+    "Do not discuss extraction warnings in the public scientific review when deterministic QA says the manuscript is reviewable.",
     "Do not mark the review input invalid merely because old-PDF formatting, references, page numbers, or a local sentence fragment looks imperfect when later scientific sections are present in the provided text.",
     "If an early phrase appears locally unfinished, continue scanning the complete text before setting reviewInputQuality.shouldInvalidateReview.",
     snapshot.extractionWarnings.length ? `Non-blocking extraction warnings: ${snapshot.extractionWarnings.join("; ")}` : "",
