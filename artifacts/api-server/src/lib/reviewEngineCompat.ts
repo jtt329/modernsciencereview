@@ -3671,6 +3671,46 @@ function reviewInputText(input: ReviewInput) {
   return typeof input === "string" ? input : input.text;
 }
 
+function reviewableSectionInventoryText(snapshot: ReviewInputSnapshot) {
+  const text = snapshot.blindedReviewText || snapshot.rawExtractedText || "";
+  const markers: Array<{ label: string; pattern: RegExp }> = [
+    { label: "I. Introduction", pattern: /\n\s*I\.?\s+Introduction\b/i },
+    { label: "II. Unified first law", pattern: /\n\s*II\.?\s+Unified first law\b/i },
+    { label: "III.", pattern: /\n\s*III\.?\s+[A-Z]/ },
+    { label: "IV.", pattern: /\n\s*IV\.?\s+[A-Z]/ },
+    { label: "V.", pattern: /\n\s*V\.?\s+[A-Z]/ },
+    { label: "VI.", pattern: /\n\s*VI\.?\s+[A-Z]/ },
+    { label: "VII.", pattern: /\n\s*VII\.?\s+[A-Z]/ },
+    { label: "VIII.", pattern: /\n\s*VIII\.?\s+[A-Z]/ },
+    { label: "IX.", pattern: /\n\s*IX\.?\s+[A-Z]/ },
+    { label: "References", pattern: /\bReferences\b/i },
+  ];
+  return markers
+    .map(({ label, pattern }) => {
+      const match = pattern.exec(text);
+      if (!match || typeof match.index !== "number") return "";
+      const sample = text.slice(match.index, Math.min(text.length, match.index + 120)).replace(/\s+/g, " ").trim();
+      return `${label} at character ${match.index}${sample ? ` (${sample})` : ""}`;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function reviewableFalseTruncationNote(snapshot: ReviewInputSnapshot) {
+  const text = snapshot.blindedReviewText || snapshot.rawExtractedText || "";
+  const phraseIndex = text.toLowerCase().indexOf("a list of");
+  const sectionInventory = reviewableSectionInventoryText(snapshot);
+  const tailSample = textSnippetLast(text, 600).replace(/\s+/g, " ").trim();
+  return [
+    sectionInventory ? "Detected later manuscript sections in this exact review input:" : "",
+    sectionInventory,
+    phraseIndex >= 0
+      ? `The phrase "a list of" appears at character ${phraseIndex}; it is not the end of the provided manuscript text. Continue reading after that phrase.`
+      : "",
+    tailSample ? `End-of-input sample: ${tailSample}` : "",
+  ].filter(Boolean).join("\n");
+}
+
 function reviewInputWithExtractionQaNote(input: ReviewInput, snapshot?: ReviewInputSnapshot | null): ReviewInput {
   if (!snapshot || snapshot.extractionCompletenessStatus === "complete") return input;
   if (!deterministicSnapshotIsReviewable(snapshot)) return input;
@@ -3686,7 +3726,9 @@ function reviewInputWithExtractionQaNote(input: ReviewInput, snapshot?: ReviewIn
     `Deterministic extraction checks classified this blinded manuscript text as ${snapshot.extractionCompletenessStatus}${pageSummary ? ` (${pageSummary})` : ""}.`,
     "Proceed with scientific review unless the text actually lacks central manuscript content.",
     "Do not mark the review input invalid merely because old-PDF formatting, references, page numbers, or a local sentence fragment looks imperfect when later scientific sections are present in the provided text.",
+    "If an early phrase appears locally unfinished, continue scanning the complete text before setting reviewInputQuality.shouldInvalidateReview.",
     snapshot.extractionWarnings.length ? `Non-blocking extraction warnings: ${snapshot.extractionWarnings.join("; ")}` : "",
+    reviewableFalseTruncationNote(snapshot),
     "",
     "BLINDED MANUSCRIPT TEXT:",
     "",
