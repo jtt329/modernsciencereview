@@ -1094,6 +1094,8 @@ const MODEL_CALL_ATTEMPTS = positiveIntEnv("SCIREVIEW_MODEL_CALL_ATTEMPTS", 2);
 const PASS_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_PASS_GENERATION_ATTEMPTS", 1);
 const REPLACEMENT_PASS_ATTEMPTS = positiveIntEnv("SCIREVIEW_REPLACEMENT_PASS_ATTEMPTS", 1);
 const ADJUDICATOR_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_ADJUDICATOR_GENERATION_ATTEMPTS", 2);
+const GEMINI_HELPER_CALL_TIMEOUT_MS = positiveIntEnv("SCIREVIEW_GEMINI_HELPER_CALL_TIMEOUT_MS", 2 * 60 * 1000);
+const GEMINI_REVIEW_CALL_TIMEOUT_MS = positiveIntEnv("SCIREVIEW_GEMINI_REVIEW_CALL_TIMEOUT_MS", 6 * 60 * 1000);
 const API_PROCESS_STARTED_AT = new Date().toISOString();
 
 export function reviewRuntimeInfo() {
@@ -1113,6 +1115,8 @@ export function reviewRuntimeInfo() {
       passGenerationAttempts: PASS_GENERATION_ATTEMPTS,
       replacementPassAttempts: REPLACEMENT_PASS_ATTEMPTS,
       adjudicatorGenerationAttempts: ADJUDICATOR_GENERATION_ATTEMPTS,
+      helperCallTimeoutMs: GEMINI_HELPER_CALL_TIMEOUT_MS,
+      reviewCallTimeoutMs: GEMINI_REVIEW_CALL_TIMEOUT_MS,
       saveFallbackWhenAtLeastOnePassSucceeds: true,
     },
     quotaHandling: {
@@ -1134,6 +1138,22 @@ function stripControlChars(text: string) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      const seconds = Math.round(timeoutMs / 1000);
+      const error = new Error(`${label} timed out after ${seconds}s`);
+      (error as Error & { transient?: boolean }).transient = true;
+      reject(error);
+    }, timeoutMs);
+    timeout.unref?.();
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeout) clearTimeout(timeout);
+  });
 }
 
 function errorMessage(error: unknown) {
@@ -1174,7 +1194,7 @@ function isTransientModelError(error: unknown) {
   const message = errorMessage(error).toLowerCase();
   return (
     /\b(429|500|502|503|504)\b/.test(message) ||
-    /resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|deadline|internal/.test(message)
+    /resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|deadline|timeout|timed out|internal/.test(message)
   );
 }
 
@@ -3899,8 +3919,11 @@ async function callGemini(
   options?: { maxOutputTokens?: number; includeThoughts?: boolean; responseJsonSchema?: unknown; temperature?: number },
 ) {
   const includeThoughts = options?.includeThoughts ?? false;
+  const timeoutMs = geminiModel === GEMINI_METADATA_MODEL
+    ? GEMINI_HELPER_CALL_TIMEOUT_MS
+    : GEMINI_REVIEW_CALL_TIMEOUT_MS;
   const request = async (useResponseSchema: boolean) => {
-    const response = await geminiAI.models.generateContent({
+    const response = await withTimeout(geminiAI.models.generateContent({
       model: geminiModel,
       contents: [{ role: "user", parts: reviewInputParts(input) }],
       config: {
@@ -3911,7 +3934,7 @@ async function callGemini(
         maxOutputTokens: options?.maxOutputTokens ?? 32768,
         ...(includeThoughts ? { thinkingConfig: { includeThoughts: true, thinkingLevel: "HIGH" } } : {}),
       } as any,
-    });
+    }), timeoutMs, `${geminiModel} generateContent`);
 
     const parts: any[] = (response as any).candidates?.[0]?.content?.parts ?? [];
     const thinkingParts = parts.filter((part: any) => part.thought === true);
@@ -3949,7 +3972,7 @@ async function callGeminiPlainText(
   options?: { maxOutputTokens?: number; temperature?: number },
 ) {
   return withModelRetries(geminiModel, async () => {
-    const response = await geminiAI.models.generateContent({
+    const response = await withTimeout(geminiAI.models.generateContent({
       model: geminiModel,
       contents: [{ role: "user", parts: reviewInputParts(input) }],
       config: {
@@ -3957,7 +3980,7 @@ async function callGeminiPlainText(
         temperature: options?.temperature ?? 0,
         maxOutputTokens: options?.maxOutputTokens ?? 32768,
       } as any,
-    });
+    }), GEMINI_HELPER_CALL_TIMEOUT_MS, `${geminiModel} plain-text generateContent`);
     const text = response.text?.trim();
     if (!text) throw new Error("No plain-text response from Gemini model.");
     const usage = (response as any).usageMetadata ?? null;
