@@ -258,6 +258,8 @@ assert.match(routesSource, /const forceFreshReview = source\.forceFreshReview ==
 assert.doesNotMatch(routesSource, /forceFreshReview = .*reviewMode === "benchmark-ingestion"/);
 assert.match(routesSource, /benchmarkCompletionIssue/);
 assert.match(routesSource, /Benchmark review incomplete/);
+assert.match(routesSource, /benchmarkSnapshotIsDeterministicallyReviewable/);
+assert.match(routesSource, /invalidQuality[\s\S]*&& !deterministicReviewable/);
 assert.match(routesSource, /\/admin\/review-attempts/);
 assert.match(routesSource, /submit_manual_extracted_text/);
 assert.match(routesSource, /usePdfVisibleLastResort/);

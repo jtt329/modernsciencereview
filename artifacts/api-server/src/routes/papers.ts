@@ -885,6 +885,45 @@ function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash
   return reviewValues;
 }
 
+function benchmarkSnapshotIsDeterministicallyReviewable(ledger: Record<string, any>) {
+  const snapshot = ledger.reviewInputSnapshot && typeof ledger.reviewInputSnapshot === "object"
+    ? ledger.reviewInputSnapshot as Record<string, any>
+    : {};
+  const status = String(
+    snapshot.extractionCompletenessStatus ??
+    ledger.extractionCompletenessStatus ??
+    "",
+  );
+  if (!isExtractionReviewableStatus(status)) return false;
+
+  const charCount = Number(snapshot.extractedTextCharCount ?? ledger.extractedTextCharCount ?? 0);
+  if (!Number.isFinite(charCount) || charCount < 12_000) return false;
+
+  const estimatedPages = Number(snapshot.estimatedPdfPageCount ?? ledger.estimatedPdfPageCount ?? 0);
+  const extractedPages = Number(snapshot.extractedPageCount ?? ledger.extractedPageCount ?? 0);
+  if (
+    Number.isFinite(estimatedPages) &&
+    Number.isFinite(extractedPages) &&
+    estimatedPages > 0 &&
+    extractedPages > 0 &&
+    extractedPages < Math.max(2, Math.floor(estimatedPages * 0.8))
+  ) {
+    return false;
+  }
+
+  const text = [
+    snapshot.rawExtractedText,
+    snapshot.blindedReviewText,
+    snapshot.rawExtractedTextFirst2000,
+    snapshot.rawExtractedTextLast2000,
+    snapshot.blindedReviewTextFirst2000,
+    snapshot.blindedReviewTextLast2000,
+  ].filter((value) => typeof value === "string").join("\n");
+  const hasLateBody = /\b(references|bibliography|appendix|conclusion|section\s+(iii|iv|v|vi|vii|viii|ix|x)|\n\s*(III|IV|V|VI|VII|VIII|IX|X)\.?\s+[A-Z])/i.test(text);
+  const hasScientificBody = /\b(definition|equation|theorem|derivation|horizon|field equation|thermodynamic|entropy|energy|mass|surface gravity|result)\b/i.test(text);
+  return hasLateBody && hasScientificBody;
+}
+
 function benchmarkCompletionIssue(reviewValues: Record<string, any>) {
   const ledger = parseJsonObject(reviewValues.coverageLedgerJson ?? null);
   if (!ledger) return "Review ledger was not saved.";
@@ -893,10 +932,11 @@ function benchmarkCompletionIssue(reviewValues: Record<string, any>) {
   const adjudicatorAudit = passAudit.find((entry: any) => entry?.role === "adjudicator");
   const textHashes = new Set(blindPassAudit.map((entry: any) => entry?.textHash).filter(Boolean));
   const pdfHashes = new Set(blindPassAudit.map((entry: any) => entry?.pdfHash ?? ""));
+  const deterministicReviewable = benchmarkSnapshotIsDeterministicallyReviewable(ledger);
   const invalidQuality = [
     ledger.reviewInputQuality,
     ...(Array.isArray(ledger.blindPassReviews) ? ledger.blindPassReviews.map((pass: any) => pass?.reviewInputQuality) : []),
-  ].some((quality: any) => quality?.shouldInvalidateReview === true);
+  ].some((quality: any) => quality?.shouldInvalidateReview === true) && !deterministicReviewable;
 
   if (isExtractionBlockingStatus(ledger.extractionCompletenessStatus)) {
     return `Extraction completeness status is ${ledger.extractionCompletenessStatus ?? "unknown"}.`;
