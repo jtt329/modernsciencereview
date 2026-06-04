@@ -3671,6 +3671,34 @@ function reviewInputText(input: ReviewInput) {
   return typeof input === "string" ? input : input.text;
 }
 
+function reviewInputWithExtractionQaNote(input: ReviewInput, snapshot?: ReviewInputSnapshot | null): ReviewInput {
+  if (!snapshot || snapshot.extractionCompletenessStatus === "complete") return input;
+  if (!deterministicSnapshotIsReviewable(snapshot)) return input;
+
+  const pageSummary = [
+    snapshot.extractedPageCount && snapshot.estimatedPdfPageCount
+      ? `${snapshot.extractedPageCount}/${snapshot.estimatedPdfPageCount} PDF pages extracted`
+      : "",
+    snapshot.extractedTextCharCount ? `${snapshot.extractedTextCharCount} extracted characters` : "",
+  ].filter(Boolean).join("; ");
+  const qaNote = [
+    "EXTRACTION QA NOTE:",
+    `Deterministic extraction checks classified this blinded manuscript text as ${snapshot.extractionCompletenessStatus}${pageSummary ? ` (${pageSummary})` : ""}.`,
+    "Proceed with scientific review unless the text actually lacks central manuscript content.",
+    "Do not mark the review input invalid merely because old-PDF formatting, references, page numbers, or a local sentence fragment looks imperfect when later scientific sections are present in the provided text.",
+    snapshot.extractionWarnings.length ? `Non-blocking extraction warnings: ${snapshot.extractionWarnings.join("; ")}` : "",
+    "",
+    "BLINDED MANUSCRIPT TEXT:",
+    "",
+  ].filter((line) => line !== "").join("\n");
+
+  if (typeof input === "string") return `${qaNote}${input}`;
+  return {
+    ...input,
+    text: `${qaNote}${input.text}`,
+  };
+}
+
 function reviewInputAuditHashes(input: ReviewInput) {
   const text = reviewInputText(input);
   const pdfBase64 = typeof input === "string" ? "" : input.pdfBase64;
@@ -5789,11 +5817,12 @@ async function generateMultiPassReview(
   const reviewMode = options.reviewMode ?? DEFAULT_REVIEW_PIPELINE_MODE;
   const systemPrompt = withLatexMarkdownFormatting(promptOverride?.trim() || REVIEW_SYSTEM_INSTRUCTION);
   const blindedContent = blindReviewInput(paperContent);
-  const inputAuditHashes = reviewInputAuditHashes(blindedContent);
   const reviewInputSnapshot = buildReviewInputSnapshot(paperContent, blindedContent, options.extractionCompleteness);
   if (isExtractionBlockingStatus(reviewInputSnapshot.extractionCompletenessStatus)) {
     throw invalidExtractionError(`Extraction completeness status is ${reviewInputSnapshot.extractionCompletenessStatus}: ${reviewInputSnapshot.extractionWarnings.join("; ")}`);
   }
+  const modelBlindedContent = reviewInputWithExtractionQaNote(blindedContent, reviewInputSnapshot);
+  const inputAuditHashes = reviewInputAuditHashes(modelBlindedContent);
   const thinkingChunks: string[] = [];
 
   const passResults: IndividualPassResult[] = [];
@@ -5801,7 +5830,7 @@ async function generateMultiPassReview(
 
   const initialPasses = await Promise.allSettled(
     Array.from({ length: REVIEW_PASS_COUNT }, (_unused, index) =>
-      runPassWithGenerationRetries(systemPrompt, blindedContent, index, reviewRunId, inputAuditHashes, reviewInputSnapshot),
+      runPassWithGenerationRetries(systemPrompt, modelBlindedContent, index, reviewRunId, inputAuditHashes, reviewInputSnapshot),
     ),
   );
 
@@ -5822,7 +5851,7 @@ async function generateMultiPassReview(
   const maxPassAttempts = REVIEW_PASS_COUNT + REPLACEMENT_PASS_ATTEMPTS;
   while (passResults.length < REVIEW_PASS_COUNT && extraIndex < maxPassAttempts) {
     try {
-      passResults.push(await runPassWithGenerationRetries(systemPrompt, blindedContent, extraIndex, reviewRunId, inputAuditHashes, reviewInputSnapshot));
+      passResults.push(await runPassWithGenerationRetries(systemPrompt, modelBlindedContent, extraIndex, reviewRunId, inputAuditHashes, reviewInputSnapshot));
     } catch (reason) {
       passFailures.push({ reason, index: extraIndex });
       if (isDailyModelQuotaError(reason)) {
@@ -5935,7 +5964,7 @@ async function generateMultiPassReview(
             : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a valid v17 diagnostic-only adjudication. Do not output intrinsicScore, scoreBand, bestClassification, scoreConfidence, scoreCappingReason, or scoreAdjustmentReason. Resolve only inputStrengthScore, constructionStrengthScore, outputStrengthScore, and the supporting canonical review fields.`;
           const adjudicatorResult = await callGemini(
             `${BLIND_INTRINSIC_ADJUDICATOR_PROMPT}${retryInstruction}`,
-            buildAdjudicatorInput(blindedContent, individualReviews),
+            buildAdjudicatorInput(modelBlindedContent, individualReviews),
             GEMINI_META_MODEL,
             {
               maxOutputTokens: 16384,
@@ -5989,7 +6018,7 @@ async function generateMultiPassReview(
             errorMessage: errorMessage(reason),
             attempt: attempt + 1,
             model: GEMINI_META_MODEL,
-            adjudicatorInputChars: reviewInputText(buildAdjudicatorInput(blindedContent, individualReviews)).length,
+            adjudicatorInputChars: reviewInputText(buildAdjudicatorInput(modelBlindedContent, individualReviews)).length,
           }, "Blind adjudicator attempt failed");
           if (isDailyModelQuotaError(reason)) {
             throw new Error(dailyQuotaErrorMessage(reason));

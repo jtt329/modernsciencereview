@@ -96,7 +96,12 @@ assert.match(engineSource, /diagnosticScoreFormula: "10 \* average\(inputStrengt
 assert.match(engineSource, /not_run_benchmark_ingestion/);
 assert.match(engineSource, /comparatorContextIncluded: false/);
 assert.match(engineSource, /calibrationContextIncluded: false/);
-assert.match(engineSource, /reviewInputAuditHashes\(blindedContent\)/);
+assert.match(engineSource, /reviewInputWithExtractionQaNote/);
+assert.match(engineSource, /EXTRACTION QA NOTE/);
+assert.match(engineSource, /modelBlindedContent = reviewInputWithExtractionQaNote\(blindedContent, reviewInputSnapshot\)/);
+assert.match(engineSource, /reviewInputAuditHashes\(modelBlindedContent\)/);
+assert.match(engineSource, /runPassWithGenerationRetries\(systemPrompt, modelBlindedContent/);
+assert.match(engineSource, /buildAdjudicatorInput\(modelBlindedContent, individualReviews\)/);
 assert.match(engineSource, /textHash: inputAuditHashes\.textHash/);
 assert.match(engineSource, /pdfHash: inputAuditHashes\.pdfHash/);
 assert.match(engineSource, /cacheUsed: false/);
