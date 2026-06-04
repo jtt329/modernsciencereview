@@ -26,7 +26,6 @@ interface QueuedFile {
 
 const MAX_QUEUED_PDFS = 50;
 const BATCH_CONCURRENCY = 2;
-const SUBMISSION_RETRY_DELAYS_MS: number[] = [];
 const FRONTEND_PAGE_LOADED_AT = new Date().toISOString();
 const RUNTIME_POLL_INTERVAL_MS = 5_000;
 
@@ -54,11 +53,6 @@ const reviewModeCopy: Record<ReviewMode, { label: string; shortLabel: string; de
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function formatDelay(ms: number) {
-  const seconds = Math.ceil(ms / 1000);
-  return seconds >= 60 ? `${Math.round(seconds / 60)} min` : `${seconds} sec`;
 }
 
 function errorMessage(err: unknown) {
@@ -170,13 +164,6 @@ function friendlySubmissionError(err: unknown) {
   const retryText = (err as any)?.retryAfterText || message.match(/retry in\s*([^.;]+)/i)?.[1]?.trim();
   const retrySuffix = retryText ? ` Google says to retry in ${retryText}.` : '';
   return `Gemini Pro daily request quota reached.${retrySuffix} Completed papers were saved; retry the pending papers after the quota resets or raise the Gemini Pro daily request quota.`;
-}
-
-function isRetryableSubmissionError(err: unknown) {
-  if (isDailyQuotaError(err)) return false;
-  const status = typeof (err as any)?.status === 'number' ? (err as any).status : 0;
-  if ((err as any)?.transient || [429, 500, 502, 503, 504].includes(status)) return true;
-  return /failed to fetch|load failed|networkerror|network request failed|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(errorMessage(err));
 }
 
 async function waitForApiHealth(maxWaitMs = 180_000) {
@@ -350,7 +337,7 @@ async function reportClientFailure(params: {
     clientRequestEndedAt: params.clientRequestEndedAt,
     errorName: params.err instanceof Error ? params.err.name : typeof params.err,
     errorMessage: params.runtimeRestartInfo
-      ? 'Server restarted during review; item will retry.'
+      ? 'Server restarted during review; item moved to repair lane for manual retry.'
       : errorMessage(params.err),
     httpStatus: typeof (params.err as any)?.status === 'number' ? (params.err as any).status : null,
     failureKind,
@@ -481,11 +468,10 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
     runtimeMonitor?: ReturnType<typeof startBatchRuntimeMonitor>,
   ) => {
     let lastError: unknown;
-    let serverRestartRetryUsed = false;
 
-    for (let attempt = 0; attempt <= SUBMISSION_RETRY_DELAYS_MS.length + 1; attempt++) {
+    for (let attempt = 0; attempt < 1; attempt++) {
       try {
-        setFileStatus(qf.id, { status: 'processing', error: attempt > 0 ? `Retry ${attempt + 1} in progress...` : undefined });
+        setFileStatus(qf.id, { status: 'processing', error: undefined });
         source.apiRuntimeVersion = runtimeState.current;
         source.apiRuntimeAtBatchStart = runtimeState.initial;
         source.apiRuntimeProcessStartedAt = runtimeProcessStartedAt(runtimeState.current) ?? undefined;
@@ -526,41 +512,14 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
             (err as any).attempt = clientAttempt;
           }
         }
-        if (restartInfo && !serverRestartRetryUsed) {
-          serverRestartRetryUsed = true;
+        if (restartInfo) {
           setFileStatus(qf.id, {
-            status: 'processing',
-            error: 'Server restarted during review; item will retry.',
+            status: 'error',
+            error: 'Server restarted during review; moved to the repair lane for manual retry.',
             attempt: (err as any)?.attempt,
           });
-          await runtimeMonitor?.waitForRecovery();
-          await waitForApiHealth(120_000);
-          try {
-            const runtimeInfo = await fetchReviewRuntime();
-            runtimeState.current = runtimeInfo;
-            const updatedRestart = detectRuntimeRestart(runtimeState.initial, runtimeInfo);
-            if (updatedRestart) runtimeState.restartInfo = updatedRestart;
-          } catch {}
-          source.clientRequestStartedAt = new Date().toISOString();
-          continue;
         }
-        const message = errorMessage(err);
-        const canRetry = isRetryableSubmissionError(err) && attempt < SUBMISSION_RETRY_DELAYS_MS.length;
-        if (!canRetry) break;
-
-        const delay = SUBMISSION_RETRY_DELAYS_MS[attempt];
-        const waitingForApi = isConnectionLoss(message);
-        setFileStatus(qf.id, {
-          status: 'processing',
-          error: waitingForApi
-            ? `Connection dropped. Waiting for API health, then retrying in ${formatDelay(delay)}...`
-            : `Temporary model/API issue. Retrying in ${formatDelay(delay)}...`,
-        });
-
-        if (waitingForApi) {
-          await waitForApiHealth();
-        }
-        await sleep(delay);
+        break;
       }
     }
 
@@ -647,9 +606,9 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
         onRestart: (restartInfo) => {
           runtimeState.restartInfo = restartInfo;
           runtimeState.current = restartInfo.runtimeInfo;
-          setError('Server restarted during review; in-flight items will retry after the API is healthy.');
+          setError('Server restarted during review; in-flight items were moved to the repair lane for manual retry.');
           setFiles(prev => prev.map(file => file.status === 'processing'
-            ? { ...file, error: 'Server restarted during review; item will retry.' }
+            ? { ...file, error: 'Server restarted during review; moved to the repair lane for manual retry.' }
             : file));
         },
       });
@@ -657,7 +616,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       const waitForRuntimeIfRestarted = async () => {
         const restartInfo = runtimeMonitor.getRestartInfo();
         if (!restartInfo) return;
-        setError('Server restarted during review; queue paused until the API is healthy.');
+        setError('Server restarted during review; queue paused until the API is healthy. In-flight items stay in the repair lane.');
         await runtimeMonitor.waitForRecovery();
         try {
           const runtimeInfo = await fetchReviewRuntime();
@@ -1072,7 +1031,7 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
                 </p>
                 <p className="text-indigo-500 text-xs mt-1">
                   {isBatch
-                    ? `Up to ${BATCH_CONCURRENCY} papers are reviewed at once. Each completed paper is saved immediately, and failed papers do not block the rest of the queue.`
+                    ? `Up to ${BATCH_CONCURRENCY} papers are reviewed at once. Each completed paper is saved immediately, and failed papers move to a repair lane without blocking the rest of the queue.`
                     : effectiveReviewMode === 'benchmark-ingestion'
                       ? 'This runs metadata extraction, two independent blind Gemini Pro review passes, and a blind Gemini Pro adjudicator. Comparator calibration is skipped for benchmark ingestion.'
                       : 'This runs metadata extraction, two independent blind Gemini Pro review passes, a blind Gemini Pro adjudicator, then benchmark comparator calibration. Please keep this window open.'}

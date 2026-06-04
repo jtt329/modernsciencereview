@@ -59,8 +59,8 @@ const REVIEW_JOB_LEASE_MS = Math.max(REVIEW_JOB_STALE_MS, Number(process.env.REV
 const REVIEW_JOB_HEARTBEAT_MS = Math.max(15 * 1000, Number(process.env.REVIEW_JOB_HEARTBEAT_MS ?? 45 * 1000) || 45 * 1000);
 const REVIEW_JOB_RECOVERY_INTERVAL_MS = Math.max(5 * 1000, Number(process.env.REVIEW_JOB_RECOVERY_INTERVAL_MS ?? 5 * 1000) || 5 * 1000);
 const REVIEW_JOB_RECOVERY_LIMIT = Math.max(20, Number(process.env.REVIEW_JOB_RECOVERY_LIMIT ?? 300) || 300);
-const REVIEW_JOB_AUTO_RECOVERY = process.env.REVIEW_JOB_AUTO_RECOVERY !== "false";
-const REVIEW_JOB_MAX_AUTO_RETRIES = Math.max(1, Number(process.env.REVIEW_JOB_MAX_AUTO_RETRIES ?? 3) || 3);
+const REVIEW_JOB_AUTO_RECOVERY = process.env.REVIEW_JOB_AUTO_RECOVERY === "true";
+const REVIEW_JOB_MAX_AUTO_RETRIES = Math.max(0, Number(process.env.REVIEW_JOB_MAX_AUTO_RETRIES ?? 0) || 0);
 const REVIEW_PROCESS_ROLE = process.env.REVIEW_PROCESS_ROLE || "combined";
 const REVIEW_JOB_PROCESSING_ENABLED =
   process.env.REVIEW_JOB_PROCESSING_ENABLED !== "false" && REVIEW_PROCESS_ROLE !== "web";
@@ -304,7 +304,7 @@ function reviewJobAutoRetryCount(record: ReviewAttemptRecord) {
 }
 
 function canAutoRecoverReviewJob(record: ReviewAttemptRecord) {
-  return reviewJobAutoRetryCount(record) < REVIEW_JOB_MAX_AUTO_RETRIES;
+  return REVIEW_JOB_MAX_AUTO_RETRIES > 0 && reviewJobAutoRetryCount(record) < REVIEW_JOB_MAX_AUTO_RETRIES;
 }
 
 function jobLeaseExpired(record: ReviewAttemptRecord, now = Date.now()) {
@@ -1550,7 +1550,7 @@ function startReviewJobRecovery() {
     return;
   }
   if (!REVIEW_JOB_AUTO_RECOVERY) {
-    logger.info("Durable review job auto-recovery disabled; jobs recover on poll or manual retry");
+    logger.info("Durable review job auto-recovery disabled; interrupted jobs move to the repair lane for manual retry");
     return;
   }
   if (reviewJobRecoveryStarted) return;
@@ -2216,7 +2216,7 @@ router.get("/review-jobs/:id", async (req, res) => {
     }
     let attempt = withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row));
     if (attempt.userId !== req.user.id && !requireAdmin(req, res)) return;
-    if (REVIEW_JOB_PROCESSING_ENABLED && shouldResumeReviewJob(attempt)) {
+    if (REVIEW_JOB_AUTO_RECOVERY && REVIEW_JOB_PROCESSING_ENABLED && shouldResumeReviewJob(attempt)) {
       const reason = isInterruptedReviewAttempt(attempt)
         ? "poll_server_restart_recovery"
         : jobLeaseExpired(attempt)
