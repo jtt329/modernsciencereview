@@ -195,13 +195,10 @@ function isJobFailed(attempt: any) {
   if (!attempt) return false;
   if (attempt.failureStatus === 'completed') return false;
   if (
-    attempt.retryable &&
-    (attempt.reviewStatus === 'interrupted_by_server_restart' ||
-      attempt.failureStatus === 'interrupted_by_server_restart' ||
-      attempt.stageName === 'interrupted_by_server_restart')
-  ) {
-    return false;
-  }
+    attempt.reviewStatus === 'interrupted_by_server_restart' ||
+    attempt.failureStatus === 'interrupted_by_server_restart' ||
+    attempt.stageName === 'interrupted_by_server_restart'
+  ) return true;
   if (typeof attempt.errorMessage === 'string' && attempt.errorMessage.trim()) return true;
   if (attempt.failureStatus && attempt.failureStatus !== 'retryable') return true;
   return attempt.reviewStatus === 'failed_validation' ||
@@ -398,20 +395,32 @@ export default function App() {
   };
 
   const handleSubmitPaper = async (source: ReviewSource, skipSelect = false, onJobUpdate?: ReviewJobUpdateHandler) => {
-    const job = await apiFetch('/api/review-jobs', {
+    const job = await enqueueReviewJob(source);
+    const jobId = job.jobId || job.attempt?.attemptId;
+    if (!jobId) throw new Error('Review job was created without a job id.');
+    const data = await waitForReviewJob(jobId, onJobUpdate);
+    await handleReviewJobComplete(data, skipSelect);
+    return data;
+  };
+
+  const enqueueReviewJob = async (source: ReviewSource) => {
+    return apiFetch('/api/review-jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ source, model: source.model || 'gemini' }),
     });
-    const jobId = job.jobId || job.attempt?.attemptId;
-    if (!jobId) throw new Error('Review job was created without a job id.');
-    const data = await pollReviewJob(jobId, onJobUpdate);
+  };
+
+  const waitForReviewJob = async (jobId: string, onJobUpdate?: ReviewJobUpdateHandler) => {
+    return pollReviewJob(jobId, onJobUpdate);
+  };
+
+  const handleReviewJobComplete = async (data: any, skipSelect = false) => {
     await fetchPapers();
     if (!skipSelect) {
       window.history.pushState({}, '', paperPath(data.paper.id));
       setSelectedPaperId(data.paper.id);
     }
-    return data;
   };
 
   const handleLikePaper = async (paperId: string, e: React.MouseEvent) => {
@@ -984,6 +993,9 @@ export default function App() {
         {isSubmitting && (
           <SubmissionForm
             onSubmit={handleSubmitPaper}
+            onEnqueueReviewJob={enqueueReviewJob}
+            onPollReviewJob={waitForReviewJob}
+            onReviewJobComplete={handleReviewJobComplete}
             onClose={() => setIsSubmitting(false)}
             isAdmin={isAdmin}
           />

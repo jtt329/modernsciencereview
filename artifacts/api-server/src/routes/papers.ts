@@ -1501,7 +1501,6 @@ function reviewAttemptContextFromRecord(
 
 async function recoverReviewJobs() {
   if (!REVIEW_JOB_PROCESSING_ENABLED) return;
-  if (!REVIEW_JOB_AUTO_RECOVERY) return;
   try {
     const rows = await db.select()
       .from(reviewAttemptsTable)
@@ -1550,8 +1549,7 @@ function startReviewJobRecovery() {
     return;
   }
   if (!REVIEW_JOB_AUTO_RECOVERY) {
-    logger.info("Durable review job auto-recovery disabled; interrupted jobs move to the repair lane for manual retry");
-    return;
+    logger.info("Durable review job automatic retry disabled; queued/stale jobs still recover, interrupted running jobs move to manual retry");
   }
   if (reviewJobRecoveryStarted) return;
   reviewJobRecoveryStarted = true;

@@ -7,6 +7,9 @@ import { SITE_VERSION } from '../lib/version';
 
 interface SubmissionFormProps {
   onSubmit: (source: ReviewSource, skipSelect?: boolean, onJobUpdate?: (attempt: any) => void) => Promise<any>;
+  onEnqueueReviewJob: (source: ReviewSource) => Promise<any>;
+  onPollReviewJob: (jobId: string, onJobUpdate?: (attempt: any) => void) => Promise<any>;
+  onReviewJobComplete: (data: any, skipSelect?: boolean) => Promise<void>;
   onClose: () => void;
   isAdmin?: boolean;
 }
@@ -136,7 +139,7 @@ function activeStageLabel(attempt: any) {
     case 'save_review':
       return 'Saving completed review...';
     case 'interrupted_by_server_restart':
-      return 'Server restarted; item moved to repair lane...';
+      return 'Server redeployed during review; retry this item after refresh...';
     default:
       if (reviewStatus === 'queued') return 'Queued behind another paper...';
       if (reviewStatus === 'running') return 'Review worker running...';
@@ -186,6 +189,13 @@ function friendlySubmissionError(err: unknown) {
     return 'Extraction invalid: central manuscript content is missing or unusable. Retry extraction, PDF fallback, or manual repair.';
   }
   if (attempt && typeof attempt === 'object') {
+    if (
+      attempt.reviewStatus === 'interrupted_by_server_restart' ||
+      attempt.failureStatus === 'interrupted_by_server_restart' ||
+      attempt.stageName === 'interrupted_by_server_restart'
+    ) {
+      return 'Server redeployed during review. This item is retryable; completed reviews were saved.';
+    }
     const stage = stageLabel(attempt.stageName);
     const failureStatus = failureStatusLabel(attempt.failureStatus);
     const suffix = attempt.retryable ? ' Retryable.' : '';
@@ -439,7 +449,14 @@ function isValidUrl(value: string) {
   try { new URL(value); return true; } catch { return false; }
 }
 
-export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: SubmissionFormProps) {
+export default function SubmissionForm({
+  onSubmit,
+  onEnqueueReviewJob,
+  onPollReviewJob,
+  onReviewJobComplete,
+  onClose,
+  isAdmin = false,
+}: SubmissionFormProps) {
   const [submissionType, setSubmissionType] = useState<'pdf' | 'text'>('pdf');
   const [model, setModel] = useState<ReviewModel>('gemini');
   const [reviewMode, setReviewMode] = useState<ReviewMode>(isAdmin ? 'benchmark-ingestion' : 'normal-review');
@@ -642,7 +659,6 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
       let failures = 0;
       const skipSelectAfterSubmit = files.length > 1;
       setDoneCount(done);
-      let nextIndex = 0;
       let batchHalted = false;
       let haltMessage: string | null = null;
       const runtimeMonitor = startBatchRuntimeMonitor({
@@ -650,17 +666,14 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
         onRestart: (restartInfo) => {
           runtimeState.restartInfo = restartInfo;
           runtimeState.current = restartInfo.runtimeInfo;
-          setError('Server restarted during review; in-flight items were moved to the repair lane for manual retry.');
-          setFiles(prev => prev.map(file => file.status === 'processing'
-            ? { ...file, error: 'Server restarted during review; moved to the repair lane for manual retry.' }
-            : file));
+          setError('Server redeployed during this batch. Durable jobs remain on the server; interrupted running items will become retryable and queued items will continue after the API is healthy.');
         },
       });
 
       const waitForRuntimeIfRestarted = async () => {
         const restartInfo = runtimeMonitor.getRestartInfo();
         if (!restartInfo) return;
-        setError('Server restarted during review; queue paused until the API is healthy. In-flight items stay in the repair lane.');
+        setError('Server redeployed during this batch. Waiting for the API to become healthy before continuing queue setup.');
         await runtimeMonitor.waitForRecovery();
         try {
           const runtimeInfo = await fetchReviewRuntime();
@@ -669,44 +682,101 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
         } catch {}
       };
 
-      const processOne = async (qf: QueuedFile) => {
-        if (batchHalted) return;
+      type JobEntry = { qf: QueuedFile; jobId: string; attempt?: any };
+
+      const buildSourceForFile = async (qf: QueuedFile): Promise<ReviewSource> => {
+        const manualText = qf.manualText?.trim();
+        const base64 = manualText ? '' : await readFileAsBase64(qf.file);
+        const clientRequestStartedAt = new Date().toISOString();
+        return {
+          ...(manualText
+            ? { type: 'text' as const, data: manualText, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }
+            : { type: 'pdf' as const, data: base64, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl, pdfVisibleFallback: qf.usePdfVisibleFallback }),
+          batchRunId,
+          queueItemId: qf.id,
+          attemptId: qf.attemptId || makeClientId('attempt'),
+          requestId: qf.requestId || makeClientId('request'),
+          frontendSiteVersion: SITE_VERSION,
+          frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
+          clientRequestStartedAt,
+          apiRuntimeVersion: runtimeState.current,
+          apiRuntimeAtBatchStart: runtimeState.initial,
+          apiRuntimeProcessStartedAt: runtimeProcessStartedAt(runtimeState.current) ?? undefined,
+          apiRuntimeRestartDetectedAt: runtimeState.restartInfo?.detectedAt,
+          apiRuntimePreviousProcessStartedAt: runtimeState.restartInfo?.oldProcessStartedAt,
+          apiRuntimeCurrentProcessStartedAt: runtimeState.restartInfo?.newProcessStartedAt,
+        };
+      };
+
+      const enqueueOne = async (qf: QueuedFile): Promise<JobEntry | null> => {
+        if (batchHalted) return null;
         await waitForRuntimeIfRestarted();
-        if (batchHalted) return;
-        setFileStatus(qf.id, { status: 'processing', error: undefined });
+        if (batchHalted) return null;
+        setFileStatus(qf.id, { status: 'processing', error: 'Queued on server...' });
+        let sourceWithAudit: ReviewSource | null = null;
         try {
-          const manualText = qf.manualText?.trim();
-          const base64 = manualText ? '' : await readFileAsBase64(qf.file);
-          await waitForRuntimeIfRestarted();
-          const clientRequestStartedAt = new Date().toISOString();
-          const sourceWithAudit: ReviewSource = {
-            ...(manualText
-              ? { type: 'text' as const, data: manualText, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }
-              : { type: 'pdf' as const, data: base64, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl, pdfVisibleFallback: qf.usePdfVisibleFallback }),
-            batchRunId,
-            queueItemId: qf.id,
-            attemptId: qf.attemptId || makeClientId('attempt'),
-            requestId: qf.requestId || makeClientId('request'),
-            frontendSiteVersion: SITE_VERSION,
-            frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
-            clientRequestStartedAt,
-            apiRuntimeVersion: runtimeState.current,
-            apiRuntimeAtBatchStart: runtimeState.initial,
-            apiRuntimeProcessStartedAt: runtimeProcessStartedAt(runtimeState.current) ?? undefined,
-            apiRuntimeRestartDetectedAt: runtimeState.restartInfo?.detectedAt,
-            apiRuntimePreviousProcessStartedAt: runtimeState.restartInfo?.oldProcessStartedAt,
-            apiRuntimeCurrentProcessStartedAt: runtimeState.restartInfo?.newProcessStartedAt,
-          };
-          await submitWithRetries(
-            qf,
-            sourceWithAudit,
-            skipSelectAfterSubmit,
-            runtimeState,
-            runtimeMonitor,
-          );
+          sourceWithAudit = await buildSourceForFile(qf);
+          const job = await onEnqueueReviewJob(sourceWithAudit);
+          const jobId = job?.jobId || job?.attempt?.attemptId;
+          if (!jobId) throw new Error('Review job was created without a job id.');
+          setFileStatus(qf.id, {
+            status: 'processing',
+            error: activeStageLabel(job?.attempt),
+            attempt: job?.attempt,
+          });
+          return { qf, jobId, attempt: job?.attempt };
+        } catch (err: any) {
+          failures++;
+          let restartInfo = runtimeMonitor.getRestartInfo() ?? runtimeState.restartInfo;
+          if (!restartInfo && isConnectionLoss(errorMessage(err))) {
+            try {
+              const runtimeInfo = await fetchReviewRuntime();
+              restartInfo = detectRuntimeRestart(runtimeState.current, runtimeInfo) || detectRuntimeRestart(runtimeState.initial, runtimeInfo);
+              runtimeState.current = runtimeInfo;
+              if (restartInfo) runtimeMonitor.noteRuntime(runtimeInfo);
+            } catch {}
+          }
+          if (sourceWithAudit && !(err as any)?.attempt) {
+            const clientAttempt = await reportClientFailure({
+              qf,
+              source: sourceWithAudit,
+              err,
+              clientRequestStartedAt: sourceWithAudit.clientRequestStartedAt || new Date().toISOString(),
+              clientRequestEndedAt: new Date().toISOString(),
+              apiRuntimeInfo: runtimeState.current,
+              runtimeRestartInfo: restartInfo,
+            });
+            if (clientAttempt && typeof err === 'object' && err !== null) {
+              (err as any).attempt = clientAttempt;
+            }
+          }
+          const message = friendlySubmissionError(err);
+          if (isDailyQuotaError(err)) {
+            batchHalted = true;
+            haltMessage = message;
+          }
+          setFileStatus(qf.id, { status: 'error', error: message, attempt: err?.attempt });
+          return null;
+        }
+      };
+
+      const jobEntries = (await Promise.all(filesWithAuditIds.map(enqueueOne)))
+        .filter((entry): entry is JobEntry => Boolean(entry));
+
+      let pollIndex = 0;
+      const processJob = async (entry: JobEntry) => {
+        try {
+          const data = await onPollReviewJob(entry.jobId, (attempt) => {
+            setFileStatus(entry.qf.id, {
+              status: 'processing',
+              attempt,
+              error: activeStageLabel(attempt),
+            });
+          });
+          await onReviewJobComplete(data, skipSelectAfterSubmit);
           done++;
           setDoneCount(done);
-          setFileStatus(qf.id, { status: 'done', error: undefined, attempt: undefined });
+          setFileStatus(entry.qf.id, { status: 'done', error: undefined, attempt: undefined });
         } catch (err: any) {
           failures++;
           const message = friendlySubmissionError(err);
@@ -714,21 +784,21 @@ export default function SubmissionForm({ onSubmit, onClose, isAdmin = false }: S
             batchHalted = true;
             haltMessage = message;
           }
-          setFileStatus(qf.id, { status: 'error', error: message, attempt: err?.attempt });
+          setFileStatus(entry.qf.id, { status: 'error', error: message, attempt: err?.attempt });
         }
       };
 
-      const workers = Array.from(
-        { length: Math.min(BATCH_CONCURRENCY, filesWithAuditIds.length) },
+      const pollWorkers = Array.from(
+        { length: Math.min(Math.max(BATCH_CONCURRENCY, 4), jobEntries.length) },
         async () => {
-          while (!batchHalted && nextIndex < filesWithAuditIds.length) {
-            const qf = filesWithAuditIds[nextIndex++];
-            await processOne(qf);
+          while (!batchHalted && pollIndex < jobEntries.length) {
+            const entry = jobEntries[pollIndex++];
+            await processJob(entry);
           }
         },
       );
 
-      await Promise.all(workers);
+      await Promise.all(pollWorkers);
       runtimeMonitor.stop();
 
       if (failures > 0) {
