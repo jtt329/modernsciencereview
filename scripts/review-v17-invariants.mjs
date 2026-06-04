@@ -126,6 +126,11 @@ assert.match(engineSource, /invalidReviewInputQualityError\(aggregate, "Adjudica
 assert.match(engineSource, /deterministicSnapshotIsReviewable/);
 assert.match(engineSource, /reviewInputSelfCheckError/);
 assert.match(engineSource, /input self-check failed despite deterministic reviewable extraction/);
+assert.match(engineSource, /reviewQualityRequiresInvalidation\(review, reviewInputSnapshot\)/);
+assert.match(engineSource, /reviewQualityRequiresInvalidation\(aggregate, reviewInputSnapshot\)/);
+assert.match(engineSource, /individualReviews\.find\(\(review\) => reviewQualityRequiresInvalidation\(review, reviewInputSnapshot\)\)/);
+assert.doesNotMatch(engineSource, /reviewQualityRequiresInvalidation\(review\)/);
+assert.doesNotMatch(engineSource, /reviewQualityRequiresInvalidation\(aggregate\)/);
 assert.match(engineSource, /extractManuscriptTextFromPdfForReview/);
 assert.match(engineSource, /PDF_EXTRACTION_FALLBACK_PLAIN_TEXT_PROMPT/);
 assert.match(engineSource, /callGeminiPlainText/);

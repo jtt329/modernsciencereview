@@ -1590,8 +1590,10 @@ function normalizeReviewInputQuality(value: unknown, reasoningText = ""): Review
   };
 }
 
-function reviewQualityRequiresInvalidation(review: { reviewInputQuality?: ReviewInputQuality; scientificReview?: string; paperType?: string; correctness?: string; outputValidity?: string; constructionAssessment?: string; inputConstructionOutputLedger?: InputConstructionOutputLedger; technicalAssessment?: unknown }) {
-  if (review.reviewInputQuality?.shouldInvalidateReview) return true;
+function reviewQualityRequiresInvalidation(
+  review: { reviewInputQuality?: ReviewInputQuality; scientificReview?: string; paperType?: string; correctness?: string; outputValidity?: string; constructionAssessment?: string; inputConstructionOutputLedger?: InputConstructionOutputLedger; technicalAssessment?: unknown },
+  snapshot?: ReviewInputSnapshot | null,
+) {
   const text = [
     review.scientificReview,
     review.paperType,
@@ -1603,6 +1605,11 @@ function reviewQualityRequiresInvalidation(review: { reviewInputQuality?: Review
     review.inputConstructionOutputLedger?.outputs?.map((output) => [output.output, output.support, output.validity, output.assessment].join(" ")).join(" "),
     typeof review.technicalAssessment === "string" ? review.technicalAssessment : "",
   ].filter(Boolean).join("\n");
+  if (review.reviewInputQuality?.shouldInvalidateReview && !deterministicSnapshotIsReviewable(snapshot)) return true;
+  if (review.reviewInputQuality?.shouldInvalidateReview && deterministicSnapshotIsReviewable(snapshot)) {
+    return TRUNCATION_SIGNAL_PATTERN.test(text) &&
+      /(cannot|can't|unable|insufficient|not possible|score limited|lower.*because|output strength|missing|incomplete|truncated)/i.test(text);
+  }
   return TRUNCATION_SIGNAL_PATTERN.test(text) && /score|output strength|derivation|section|missing|incomplete/i.test(text);
 }
 
@@ -3112,7 +3119,7 @@ function validateIndividualReview(review: IndividualReview, reviewInputSnapshot?
     throw new Error("Generated review was missing a scientific review.");
   }
 
-  if (reviewQualityRequiresInvalidation(review)) {
+  if (reviewQualityRequiresInvalidation(review, reviewInputSnapshot)) {
     throw invalidReviewInputQualityError(review, "Blind pass", reviewInputSnapshot);
   }
 
@@ -4670,7 +4677,7 @@ function validateAggregateReview(review: AggregateReview, reviewInputSnapshot?: 
     throw new Error(review.scoringAnomaly);
   }
 
-  if (reviewQualityRequiresInvalidation(review)) {
+  if (reviewQualityRequiresInvalidation(review, reviewInputSnapshot)) {
     throw invalidReviewInputQualityError(review, "Adjudicator", reviewInputSnapshot);
   }
 }
@@ -5915,7 +5922,7 @@ async function generateMultiPassReview(
   }
 
   const individualReviews = passResults.map((result) => result.review);
-  const invalidPass = individualReviews.find((review) => reviewQualityRequiresInvalidation(review));
+  const invalidPass = individualReviews.find((review) => reviewQualityRequiresInvalidation(review, reviewInputSnapshot));
   if (invalidPass) {
     throw invalidReviewInputQualityError(invalidPass, "Blind pass", reviewInputSnapshot);
   }
@@ -6106,7 +6113,7 @@ async function generateMultiPassReview(
   if (!aggregate) {
     throw new Error("Review failed: no aggregate adjudication could be produced.");
   }
-  if (reviewQualityRequiresInvalidation(aggregate)) {
+  if (reviewQualityRequiresInvalidation(aggregate, reviewInputSnapshot)) {
     throw invalidReviewInputQualityError(aggregate, "Adjudicator", reviewInputSnapshot);
   }
   let aggregateReview: AggregateReview = aggregate;
