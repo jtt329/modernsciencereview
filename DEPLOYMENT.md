@@ -9,12 +9,27 @@ Both environments should deploy the same GitHub branch or release, but they must
 
 ## Railway Services
 
-Each environment needs two Railway services:
+Each environment needs three Railway services:
 
 - `@workspace/scireview`: the public web service.
-- `@workspace/api-server`: the API service.
+- `@workspace/api-server`: the HTTP/API service. It should run the web-only API command.
+- `review-worker`: the durable review worker service. It should run the worker-only command and should not have a public domain.
 
 The web service serves the built React app and proxies `/api/*` requests to the API service through `API_PROXY_TARGET`.
+
+The API service should use:
+
+```bash
+pnpm --filter @workspace/api-server run start:web
+```
+
+The review worker service should use:
+
+```bash
+pnpm --filter @workspace/api-server run start:worker
+```
+
+This split keeps login, exports, normal browsing, and upload/job creation isolated from long-running review work. If the worker is restarted or crashes while reviewing a paper, the API service should remain available and the durable job can be retried or recovered.
 
 ## Environment Split
 
@@ -29,7 +44,7 @@ Submissions made through staging are stored only in the staging database. Submis
 
 ## Required Variables
 
-Set these on each `@workspace/api-server` service:
+Set these on both the `@workspace/api-server` and `review-worker` services:
 
 - `DATABASE_URL`: environment-specific Postgres connection string.
 - `AI_INTEGRATIONS_GEMINI_API_KEY`: Gemini API key.
@@ -42,6 +57,16 @@ Set these on each `@workspace/api-server` service:
 - `ISSUER_URL`: optional; defaults to `https://accounts.google.com`.
 - `PUBLIC_WEB_ORIGIN`: the matching web origin for that environment.
 - `ADMIN_EMAIL`: the Google account email that should get admin controls.
+
+For the API service, set:
+
+- `REVIEW_PROCESS_ROLE=web`
+- `REVIEW_JOB_PROCESSING_ENABLED=false`
+
+For the worker service, set:
+
+- `REVIEW_PROCESS_ROLE=worker`
+- `REVIEW_JOB_PROCESSING_ENABLED=true`
 
 Set these on each `@workspace/scireview` service:
 
