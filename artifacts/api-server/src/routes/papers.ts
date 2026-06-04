@@ -3099,6 +3099,7 @@ const batchRunId = optionalSourceString(source, "batchRunId");
 const queueItemId = optionalSourceString(source, "queueItemId");
 const frontendSiteVersion = optionalSourceString(source, "frontendSiteVersion");
 const clientRequestStartedAt = optionalSourceString(source, "clientRequestStartedAt");
+const durableJob = source.durableJob === true;
 const requestId = optionalSourceString(source, "requestId") ?? createHash("sha256")
   .update(`${user.id}\0${batchRunId ?? ""}\0${queueItemId ?? ""}\0${Date.now()}\0${Math.random()}`)
   .digest("hex")
@@ -3133,7 +3134,7 @@ attemptContext = {
     sourceType: source.type,
     reviewMode,
     selectedModel,
-    durableJob: source.durableJob === true,
+    durableJob,
     requestReceivedAt: new Date().toISOString(),
     clientRequestStartedAt,
     frontendPageLoadedAt: optionalSourceString(source, "frontendPageLoadedAt"),
@@ -3156,7 +3157,7 @@ const expectedModelName = expectedReviewModelName(reviewMode);
 const reuseExistingReview = source.reuseExistingReview === true || source.reuseExisting === true;
 const forceFreshReview = source.forceFreshReview === true || source.forceFresh === true;
 const allowExistingReviewReuse = reuseExistingReview || !forceFreshReview;
-submissionKey = allowExistingReviewReuse && sourceHash ? `${user.id}:${expectedModelName}:${sourceHash}` : null;
+submissionKey = !durableJob && allowExistingReviewReuse && sourceHash ? `${user.id}:${expectedModelName}:${sourceHash}` : null;
 if (submissionKey && recentSubmissions.has(submissionKey)) {
   const payload = await recentSubmissions.get(submissionKey);
   if (!payload?.paper) {
