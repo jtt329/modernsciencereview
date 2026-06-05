@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 
 const root = process.cwd();
@@ -60,8 +62,64 @@ assert.doesNotMatch(engineSource, /thermodynamics-spacetime"[\s\S]{0,900}ted\\s\
 assert.doesNotMatch(engineSource, /thermodynamics-spacetime"[\s\S]{0,900}t\\.\\?\\s\+jacobson/);
 assert.match(engineSource, /score \+= 100/);
 assert.match(engineSource, /score \+= 80/);
+assert.match(engineSource, /const rawExtractionOverride = benchmarkMetadataOverrideForText/);
 assert.match(engineSource, /const contextualOverride = benchmarkMetadataOverrideForText\(extraText\)/);
-assert.match(engineSource, /const override = contextualOverride \?\? storedMetadataOverride/);
+assert.match(engineSource, /const override = rawExtractionOverride \?\? contextualOverride \?\? storedMetadataOverride/);
+assert.match(engineSource, /const rawExtractionOverride = benchmarkMetadataOverrideForText\(\[[\s\S]{0,240}metadata\.rawExtractedTitle/);
+
+async function assertKnownBenchmarkMetadataRegression() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-metadata-regression-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import { normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
+    const staleRecord = {
+      title: "Thermodynamics of Spacetime: The Einstein Equation of State",
+      paperAuthors: "Ted Jacobson",
+      dateMetadata: {
+        rawExtractedTitle: "McGill/94-45; UMDGR-95-047 Gr- Increase of Black Hole Entropy in Higher Curvature Gravity",
+        cleanedTitle: "Thermodynamics of Spacetime: The Einstein Equation of State",
+        displayedTitle: "Thermodynamics of Spacetime: The Einstein Equation of State",
+        displayedAuthors: ["Ted Jacobson"],
+        rawExtractedAuthors: "Ted Jacobson",
+        arxivId: "gr-qc/9504004",
+        doi: "",
+      },
+    };
+    const reviewContext = "The Second Law of black hole thermodynamics holds for quasi-stationary processes in any diffeomorphism-invariant gravity theory, and for fully dynamical processes in f(R) higher curvature theories, where an extended Raychaudhuri equation governs the evolution of the horizon effective expansion.";
+    const normalized = normalizePaperDisplayMetadata(staleRecord, reviewContext);
+    if (normalized.title !== "Increase of Black Hole Entropy in Higher Curvature Gravity") {
+      throw new Error("wrong normalized title: " + normalized.title);
+    }
+    if (normalized.paperAuthors !== "Ted Jacobson, Gungwon Kang, Robert C. Myers") {
+      throw new Error("wrong normalized authors: " + normalized.paperAuthors);
+    }
+    if (normalized.dateMetadata?.arxivId !== "gr-qc/9503020") {
+      throw new Error("wrong normalized arXiv id: " + normalized.dateMetadata?.arxivId);
+    }
+  `);
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousGeminiUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  const previousGeminiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  process.env.NODE_ENV = "production";
+  process.env.AI_INTEGRATIONS_GEMINI_BASE_URL = previousGeminiUrl || "https://example.invalid";
+  process.env.AI_INTEGRATIONS_GEMINI_API_KEY = previousGeminiKey || "test-key";
+  try {
+    await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs" });
+    await import(pathToFileURL(out).href);
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousGeminiUrl === undefined) delete process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+    else process.env.AI_INTEGRATIONS_GEMINI_BASE_URL = previousGeminiUrl;
+    if (previousGeminiKey === undefined) delete process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+    else process.env.AI_INTEGRATIONS_GEMINI_API_KEY = previousGeminiKey;
+  }
+}
+
+await assertKnownBenchmarkMetadataRegression();
 
 assert.match(blindPrompt, /0 to 10 in 0\.5 increments/);
 assert.match(blindPrompt, /Use 0 when no correct, relevant, manuscript-contained contribution survives/);
