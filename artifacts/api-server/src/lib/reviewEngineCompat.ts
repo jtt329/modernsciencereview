@@ -1099,6 +1099,16 @@ const ADJUDICATOR_GENERATION_ATTEMPTS = positiveIntEnv("SCIREVIEW_ADJUDICATOR_GE
 const GEMINI_HELPER_CALL_TIMEOUT_MS = positiveIntEnv("SCIREVIEW_GEMINI_HELPER_CALL_TIMEOUT_MS", 2 * 60 * 1000);
 const GEMINI_REVIEW_CALL_TIMEOUT_MS = positiveIntEnv("SCIREVIEW_GEMINI_REVIEW_CALL_TIMEOUT_MS", 6 * 60 * 1000);
 const API_PROCESS_STARTED_AT = new Date().toISOString();
+const LANDINGAI_ADE_ENABLED = process.env.SCIREVIEW_LANDINGAI_ADE_ENABLED === "true";
+const LANDINGAI_ADE_API_KEY_PRESENT = Boolean(process.env.LANDINGAI_API_KEY || process.env.SCIREVIEW_LANDINGAI_API_KEY);
+
+function documentExtractionProviderStatus() {
+  return {
+    localPdfText: "enabled",
+    geminiPdfFallback: "enabled",
+    landingAiAde: LANDINGAI_ADE_ENABLED && LANDINGAI_ADE_API_KEY_PRESENT ? "configured_pending_verification" : "disabled",
+  };
+}
 
 export function reviewRuntimeInfo() {
   return {
@@ -1121,6 +1131,7 @@ export function reviewRuntimeInfo() {
       reviewCallTimeoutMs: GEMINI_REVIEW_CALL_TIMEOUT_MS,
       saveFallbackWhenAtLeastOnePassSucceeds: true,
     },
+    documentExtractionProviders: documentExtractionProviderStatus(),
     quotaHandling: {
       dailyModelQuota: "fail-fast",
       stopsBatchQueue: true,
@@ -3592,6 +3603,17 @@ type ArxivMetadata = {
   journalRef: string;
 };
 
+type BibliographicMetadata = {
+  source: "crossref";
+  title: string;
+  authors: string[];
+  doi: string;
+  journalName: string;
+  publicationDate: string;
+  confidence: number;
+  notes: string;
+};
+
 function xmlTagText(source: string, tagName: string) {
   const match = source.match(new RegExp(`<${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)</${tagName}>`, "i"));
   return decodeXmlEntities(match?.[1] || "")
@@ -3633,6 +3655,155 @@ async function fetchArxivMetadata(arxivId?: string): Promise<ArxivMetadata | nul
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function normalizeTitleForBibliographicMatch(value?: string) {
+  return cleanMetadataText(value)
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(?:arxiv|doi)\s*:\s*/g, " ")
+    .replace(/\b(?:pdf|preprint|manuscript)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function titleSimilarity(left?: string, right?: string) {
+  const leftTokens = new Set(normalizeTitleForBibliographicMatch(left).split(" ").filter((token) => token.length > 2));
+  const rightTokens = new Set(normalizeTitleForBibliographicMatch(right).split(" ").filter((token) => token.length > 2));
+  if (leftTokens.size === 0 || rightTokens.size === 0) return 0;
+  let overlap = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) overlap += 1;
+  }
+  return overlap / Math.max(leftTokens.size, rightTokens.size);
+}
+
+function datePartsToIsoMonth(value: unknown) {
+  if (!value || typeof value !== "object") return "";
+  const dateParts = (value as { ["date-parts"]?: unknown })["date-parts"];
+  const first = Array.isArray(dateParts) && Array.isArray(dateParts[0]) ? dateParts[0] : [];
+  const year = Number(first[0]);
+  if (!Number.isFinite(year) || year < 1000) return "";
+  const month = Number(first[1]);
+  const day = Number(first[2]);
+  if (Number.isFinite(month) && month >= 1 && month <= 12) {
+    if (Number.isFinite(day) && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+    return `${year}-${String(month).padStart(2, "0")}`;
+  }
+  return `${year}`;
+}
+
+function crossrefAuthorNames(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return uniqueCleanStrings(value.map((author) => {
+    if (!author || typeof author !== "object") return "";
+    const record = author as Record<string, unknown>;
+    const given = asString(record.given);
+    const family = asString(record.family);
+    const name = asString(record.name);
+    return name || [given, family].filter(Boolean).join(" ");
+  }));
+}
+
+function crossrefMessageToBibliographicMetadata(message: Record<string, unknown>, confidence: number, notes: string): BibliographicMetadata | null {
+  const title = cleanDisplayTitle(firstStringArray([message.title])[0] || firstString([message.title])).title;
+  const authors = crossrefAuthorNames(message.author);
+  if (!title || title === "Unknown Title") return null;
+  const publicationDate =
+    datePartsToIsoMonth(message["published-print"]) ||
+    datePartsToIsoMonth(message["published-online"]) ||
+    datePartsToIsoMonth(message.published) ||
+    datePartsToIsoMonth(message.issued);
+  return {
+    source: "crossref",
+    title,
+    authors,
+    doi: normalizeDoi(asString(message.DOI)),
+    journalName: firstStringArray([message["container-title"]])[0] || firstString([message["container-title"]]),
+    publicationDate,
+    confidence,
+    notes,
+  };
+}
+
+async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<unknown> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  timeout.unref?.();
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": "ModernScienceReview/1.0 (metadata extraction; contact: admin@modernscience.space)",
+        "Accept": "application/json",
+      },
+    });
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchCrossrefMetadataByDoi(doi?: string): Promise<BibliographicMetadata | null> {
+  const normalizedDoi = normalizeDoi(doi);
+  if (!normalizedDoi) return null;
+  const payload = await fetchJsonWithTimeout(`https://api.crossref.org/works/${encodeURIComponent(normalizedDoi)}`, 6500);
+  const message = payload && typeof payload === "object"
+    ? (payload as Record<string, unknown>).message
+    : null;
+  if (!message || typeof message !== "object") return null;
+  return crossrefMessageToBibliographicMetadata(message as Record<string, unknown>, 0.98, "Crossref DOI metadata matched the manuscript DOI.");
+}
+
+async function fetchCrossrefMetadataByTitle(titleHint?: string): Promise<BibliographicMetadata | null> {
+  const cleanedHint = cleanDisplayTitle(titleHint || "").title;
+  if (!cleanedHint || cleanedHint === "Unknown Title" || cleanedHint.length < 16 || looksLikeAffiliationOrAddressJunk(cleanedHint)) {
+    return null;
+  }
+  const payload = await fetchJsonWithTimeout(
+    `https://api.crossref.org/works?query.title=${encodeURIComponent(cleanedHint)}&rows=5&select=DOI,title,author,published-print,published-online,published,issued,container-title,type`,
+    6500,
+  );
+  const items = payload && typeof payload === "object"
+    ? (((payload as Record<string, unknown>).message as Record<string, unknown> | undefined)?.items)
+    : null;
+  if (!Array.isArray(items)) return null;
+  let best: BibliographicMetadata | null = null;
+  let bestSimilarity = 0;
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = crossrefMessageToBibliographicMetadata(item as Record<string, unknown>, 0.8, "Crossref title search matched a high-similarity manuscript title hint.");
+    if (!candidate) continue;
+    const similarity = titleSimilarity(cleanedHint, candidate.title);
+    if (similarity > bestSimilarity) {
+      best = { ...candidate, confidence: Math.max(0.75, Math.min(0.95, similarity)) };
+      bestSimilarity = similarity;
+    }
+  }
+  return best && bestSimilarity >= 0.72 ? best : null;
+}
+
+async function resolveBibliographicMetadata(input: {
+  doi?: string;
+  titleHints?: Array<string | undefined | null>;
+}): Promise<BibliographicMetadata | null> {
+  const doiMetadata = await fetchCrossrefMetadataByDoi(input.doi);
+  if (doiMetadata) return doiMetadata;
+  const hints = uniqueCleanStrings(input.titleHints ?? [])
+    .map((hint) => cleanDisplayTitle(hint).title)
+    .filter((hint) => hint && hint !== "Unknown Title" && !looksLikeAffiliationOrAddressJunk(hint));
+  for (const hint of hints.slice(0, 3)) {
+    const titleMetadata = await fetchCrossrefMetadataByTitle(hint);
+    if (titleMetadata) return titleMetadata;
+  }
+  return null;
 }
 
 function looksLikeJournalCitation(value?: string) {
@@ -4009,6 +4180,20 @@ export function buildPdfFallbackText(hints: MetadataHints) {
     hints.pdfTitle ? `Embedded PDF title hint: ${hints.pdfTitle}` : "",
     hints.pdfAuthor ? `Embedded PDF author hint: ${hints.pdfAuthor}` : "",
   ].filter(Boolean).join("\n");
+}
+
+export async function extractManuscriptTextWithLandingAiAdeForReview(_input: {
+  pdfBase64: string;
+  mimeType?: string;
+  fileName?: string;
+}) {
+  if (!LANDINGAI_ADE_ENABLED) {
+    return null;
+  }
+  if (!LANDINGAI_ADE_API_KEY_PRESENT) {
+    throw new Error("LandingAI ADE extraction is enabled but no LANDINGAI_API_KEY/SCIREVIEW_LANDINGAI_API_KEY is configured.");
+  }
+  throw new Error("LandingAI ADE extraction is configured but intentionally disabled until the provider is verified against benchmark PDFs.");
 }
 
 const PDF_EXTRACTION_FALLBACK_PROMPT = String.raw`You are an extraction step, not a scientific reviewer.
@@ -5881,7 +6066,22 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     headerText,
     stripControlChars(paperContent).slice(0, 16000),
   ].filter(Boolean).join("\n"));
+  const detectedDoi = doiIdsFromText([
+    hints.fileName,
+    hints.pdfTitle,
+    headerText,
+    stripControlChars(paperContent).slice(0, 16000),
+  ].filter(Boolean).join("\n"))[0] || "";
   const arxivMetadata = await fetchArxivMetadata(detectedArxivId);
+  let bibliographicMetadata = await resolveBibliographicMetadata({
+    doi: detectedDoi || arxivMetadata?.doi,
+    titleHints: detectedDoi || arxivMetadata?.doi ? [
+      fallback.title,
+      hints.pdfTitle,
+      hints.fileName,
+      arxivMetadata?.title,
+    ] : [],
+  });
   const knownArxivAuthorList = knownArxivAuthors(detectedArxivId);
   const looksTruncatedTitle = (value: string) =>
     /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
@@ -5892,6 +6092,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     /^(arxiv:|submitted by\b)/i.test(value) ||
     /^\s*(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?\s*$/i.test(value) ||
     isOnlyReportCodeLine(value) ||
+    looksLikeAffiliationOrAddressJunk(value) ||
     value.length < 8 ||
     looksTruncatedTitle(value);
   const isSuspiciousAuthors = (value: string) =>
@@ -5929,6 +6130,28 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     const parsedTitleCleanup = cleanDisplayTitle(rawParsedTitle);
     const fallbackTitleCleanup = cleanDisplayTitle(fallback.title);
     const parsedTitleConfidence = asNumber(parsedMetadata.titleConfidence, 0, 0, 1);
+    if (
+      !bibliographicMetadata &&
+      (
+        detectedDoi ||
+        asString(parsedMetadata.doi) ||
+        parsedTitleConfidence < 0.7 ||
+        isSuspiciousTitle(parsedTitleCleanup.title) ||
+        isSuspiciousTitle(fallbackTitleCleanup.title)
+      )
+    ) {
+      bibliographicMetadata = await resolveBibliographicMetadata({
+        doi: asString(parsedMetadata.doi) || detectedDoi || arxivMetadata?.doi,
+        titleHints: [
+          rawParsedTitle,
+          parsedTitleCleanup.title,
+          fallbackTitleCleanup.title,
+          fallback.title,
+          hints.fileName,
+          hints.pdfTitle,
+        ],
+      });
+    }
     const shouldPreferArxivTitle =
       Boolean(arxivMetadata?.title) &&
       (
@@ -5936,9 +6159,21 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         isSuspiciousTitle(parsedTitleCleanup.title) ||
         isSuspiciousTitle(fallbackTitleCleanup.title)
       );
+    const shouldPreferBibliographicTitle =
+      !shouldPreferArxivTitle &&
+      Boolean(bibliographicMetadata?.title) &&
+      (
+        parsedTitleConfidence < 0.75 ||
+        bibliographicMetadata!.confidence >= 0.95 ||
+        isSuspiciousTitle(parsedTitleCleanup.title) ||
+        isSuspiciousTitle(fallbackTitleCleanup.title) ||
+        titleSimilarity(parsedTitleCleanup.title, bibliographicMetadata!.title) >= 0.82
+      );
     const bestTitle =
       shouldPreferArxivTitle
         ? arxivMetadata!.title
+        : shouldPreferBibliographicTitle
+        ? bibliographicMetadata!.title
         : isSuspiciousTitle(parsedTitleCleanup.title)
         ? (isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title)
         : parsedTitleCleanup.title;
@@ -5973,11 +6208,26 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       bestAuthorList = arxivAuthorList;
       bestAuthors = arxivAuthorList.join(", ");
     }
+    const bibliographicAuthorList = bibliographicMetadata?.authors ?? [];
+    const usedBibliographicAuthors =
+      !usedArxivAuthors &&
+      bibliographicAuthorList.length > 0 &&
+      (
+        bestAuthorList.length === 0 ||
+        bestAuthorList[0] === "Unknown Authors" ||
+        bibliographicAuthorList.length > bestAuthorList.length ||
+        asNumber(parsedMetadata.authorsConfidence, 0, 0, 1) < 0.75
+      );
+    if (usedBibliographicAuthors) {
+      bestAuthorList = bibliographicAuthorList;
+      bestAuthors = bibliographicAuthorList.join(", ");
+    }
     const titleCleanupNotes = uniqueCleanStrings([
       asString(parsedMetadata.titleCleaningNotes),
       parsedTitleCleanup.notes,
       isSuspiciousTitle(parsedTitleCleanup.title) ? fallbackTitleCleanup.notes : "",
       shouldPreferArxivTitle ? "arXiv metadata replaced low-confidence or suspicious title extraction." : "",
+      shouldPreferBibliographicTitle ? `${bibliographicMetadata!.source} metadata replaced low-confidence or suspicious title extraction.` : "",
     ]).join(" ");
     const benchmarkOverrideText = benchmarkMetadataOverrideCandidate([
       hints.fileName,
@@ -5992,6 +6242,9 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       arxivMetadata?.arxivId,
       arxivMetadata?.title,
       arxivMetadata?.authors,
+      bibliographicMetadata?.doi,
+      bibliographicMetadata?.title,
+      bibliographicMetadata?.authors,
       asString(parsedMetadata.doi),
       arxivMetadata?.doi,
     ]);
@@ -6002,25 +6255,31 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       cleanedTitle: benchmarkOverride?.title ?? bestTitle,
       displayedTitle: benchmarkOverride?.title ?? bestTitle,
       titleCleaningNotes: titleCleanupNotes || asString(parsedMetadata.titleCleaningNotes),
-      titleConfidence: benchmarkOverride ? Math.max(parsedTitleConfidence, 0.98) : shouldPreferArxivTitle ? Math.max(parsedTitleConfidence, 0.95) : parsedTitleConfidence,
+      titleConfidence: benchmarkOverride ? Math.max(parsedTitleConfidence, 0.98) : shouldPreferArxivTitle ? Math.max(parsedTitleConfidence, 0.95) : shouldPreferBibliographicTitle ? Math.max(parsedTitleConfidence, bibliographicMetadata?.confidence ?? 0.85) : parsedTitleConfidence,
       arxivId: normalizeArxivId(benchmarkOverride?.arxivId || asString(parsedMetadata.arxivId) || parsedTitleCleanup.arxivId || fallbackTitleCleanup.arxivId || arxivMetadata?.arxivId || detectedArxivId),
       reportCodes: uniqueCleanStrings([
         ...firstStringArray([parsedMetadata.reportCodes]),
         ...parsedTitleCleanup.reportCodes,
         ...fallbackTitleCleanup.reportCodes,
       ]),
-      doi: benchmarkOverride?.doi || asString(parsedMetadata.doi) || arxivMetadata?.doi || "",
-      journalName: benchmarkOverride?.journalName || asString(parsedMetadata.journalName) || arxivMetadata?.journalRef || "",
-      journalPublicationDate: benchmarkOverride?.journalPublicationDate || asString(parsedMetadata.journalPublicationDate),
+      doi: benchmarkOverride?.doi || asString(parsedMetadata.doi) || arxivMetadata?.doi || bibliographicMetadata?.doi || detectedDoi,
+      journalName: benchmarkOverride?.journalName || asString(parsedMetadata.journalName) || arxivMetadata?.journalRef || bibliographicMetadata?.journalName || "",
+      journalPublicationDate: benchmarkOverride?.journalPublicationDate || asString(parsedMetadata.journalPublicationDate) || bibliographicMetadata?.publicationDate || "",
       arxivFirstSubmissionDate: asString(parsedMetadata.arxivFirstSubmissionDate) || arxivMetadata?.published || "",
-      originalPublicationDateBestGuess: asString(parsedMetadata.originalPublicationDateBestGuess) || asString(parsedMetadata.journalPublicationDate) || arxivMetadata?.published || "",
-      dateSource: asString(parsedMetadata.dateSource) || (arxivMetadata?.published ? "arxiv metadata" : ""),
+      originalPublicationDateBestGuess: asString(parsedMetadata.originalPublicationDateBestGuess) || asString(parsedMetadata.journalPublicationDate) || bibliographicMetadata?.publicationDate || arxivMetadata?.published || "",
+      dateSource: asString(parsedMetadata.dateSource) || (arxivMetadata?.published ? "arxiv metadata" : bibliographicMetadata?.publicationDate ? `${bibliographicMetadata.source} metadata` : ""),
+      dateConfidence: bibliographicMetadata?.publicationDate ? Math.max(asNumber(parsedMetadata.dateConfidence, 0, 0, 1), bibliographicMetadata.confidence) : asNumber(parsedMetadata.dateConfidence, 0, 0, 1),
+      dateNotes: uniqueCleanStrings([
+        asString(parsedMetadata.dateNotes),
+        bibliographicMetadata ? bibliographicMetadata.notes : "",
+      ]).join(" "),
       rawExtractedAuthors: benchmarkOverride?.authors.join(", ") || asString(parsedMetadata.rawExtractedAuthors, authors),
-      authorsConfidence: benchmarkOverride ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), 0.98) : usedArxivAuthors ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), 0.95) : asNumber(parsedMetadata.authorsConfidence, 0, 0, 1),
+      authorsConfidence: benchmarkOverride ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), 0.98) : usedArxivAuthors ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), 0.95) : usedBibliographicAuthors ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), bibliographicMetadata?.confidence ?? 0.8) : asNumber(parsedMetadata.authorsConfidence, 0, 0, 1),
       authorsExtractionNotes: uniqueCleanStrings([
         asString(parsedMetadata.authorsExtractionNotes),
         usedFallbackMultiAuthorBlock ? "Deterministic fallback replaced a one-author parse with a multi-author title-page block." : "",
         usedArxivAuthors ? (knownArxivAuthorList.length > 0 ? "Known arXiv metadata override supplied the complete author list." : "arXiv metadata supplied the complete author list.") : "",
+        usedBibliographicAuthors ? `${bibliographicMetadata!.source} metadata supplied a more complete author list.` : "",
         benchmarkOverride ? "Known benchmark metadata override supplied canonical authors." : "",
       ]).join(" "),
       displayedAuthors: benchmarkOverride?.authors ?? (bestAuthorList.length > 0 ? bestAuthorList : splitAuthorNames(bestAuthors)),
@@ -6039,11 +6298,24 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     };
   } catch {
     const fallbackTitleCleanup = cleanDisplayTitle(fallback.title);
-    const fallbackTitle = arxivMetadata?.title || (isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title);
+    if (!bibliographicMetadata) {
+      bibliographicMetadata = await resolveBibliographicMetadata({
+        doi: detectedDoi || arxivMetadata?.doi,
+        titleHints: [
+          fallbackTitleCleanup.title,
+          fallback.title,
+          hints.fileName,
+          hints.pdfTitle,
+        ],
+      });
+    }
+    const fallbackTitle = arxivMetadata?.title || bibliographicMetadata?.title || (isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title);
     const fallbackAuthorList = knownArxivAuthorList.length > (arxivMetadata?.authors?.length ?? 0)
       ? knownArxivAuthorList
       : arxivMetadata?.authors?.length
         ? arxivMetadata.authors
+        : bibliographicMetadata?.authors?.length
+          ? bibliographicMetadata.authors
         : splitAuthorNames(fallback.authors);
     const fallbackAuthors = fallbackAuthorList.length ? fallbackAuthorList.join(", ") : fallback.authors;
     const benchmarkOverrideText = benchmarkMetadataOverrideCandidate([
@@ -6058,6 +6330,9 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       arxivMetadata?.arxivId,
       arxivMetadata?.title,
       arxivMetadata?.authors,
+      bibliographicMetadata?.doi,
+      bibliographicMetadata?.title,
+      bibliographicMetadata?.authors,
     ]);
     const benchmarkOverride = benchmarkMetadataOverrideForText(benchmarkOverrideText);
     const fallbackMetadata = applyBenchmarkMetadataOverride({
@@ -6067,18 +6342,19 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       displayedTitle: benchmarkOverride?.title ?? fallbackTitle,
       arxivId: normalizeArxivId(benchmarkOverride?.arxivId || arxivMetadata?.arxivId || fallbackTitleCleanup.arxivId || detectedArxivId),
       reportCodes: fallbackTitleCleanup.reportCodes,
-      doi: benchmarkOverride?.doi || arxivMetadata?.doi || "",
-      journalName: benchmarkOverride?.journalName || arxivMetadata?.journalRef || "",
-      journalPublicationDate: benchmarkOverride?.journalPublicationDate || "",
+      doi: benchmarkOverride?.doi || arxivMetadata?.doi || bibliographicMetadata?.doi || detectedDoi,
+      journalName: benchmarkOverride?.journalName || arxivMetadata?.journalRef || bibliographicMetadata?.journalName || "",
+      journalPublicationDate: benchmarkOverride?.journalPublicationDate || bibliographicMetadata?.publicationDate || "",
       arxivFirstSubmissionDate: arxivMetadata?.published || "",
-      originalPublicationDateBestGuess: benchmarkOverride?.journalPublicationDate || arxivMetadata?.published || "",
-      dateSource: arxivMetadata?.published ? "arxiv metadata" : benchmarkOverride ? "benchmark metadata override" : "unknown",
-      dateConfidence: arxivMetadata?.published ? 0.95 : benchmarkOverride?.journalPublicationDate ? 0.9 : 0,
+      originalPublicationDateBestGuess: benchmarkOverride?.journalPublicationDate || arxivMetadata?.published || bibliographicMetadata?.publicationDate || "",
+      dateSource: arxivMetadata?.published ? "arxiv metadata" : bibliographicMetadata?.publicationDate ? `${bibliographicMetadata.source} metadata` : benchmarkOverride ? "benchmark metadata override" : "unknown",
+      dateConfidence: arxivMetadata?.published ? 0.95 : benchmarkOverride?.journalPublicationDate ? 0.9 : bibliographicMetadata?.publicationDate ? bibliographicMetadata.confidence : 0,
       dateNotes: uniqueCleanStrings([
         arxivMetadata?.published ? "arXiv metadata was used after model metadata extraction failed." : "Date metadata was not confidently extracted.",
+        bibliographicMetadata ? `${bibliographicMetadata.source} metadata was available after model metadata extraction failed.` : "",
         benchmarkOverride?.dateNotes,
       ]).join(" "),
-      titleCleaningNotes: benchmarkOverride?.title ? "Known benchmark metadata override was used after model metadata extraction failed." : arxivMetadata?.title ? "arXiv metadata was used after model metadata extraction failed." : fallbackTitleCleanup.notes || "Fallback metadata was used.",
+      titleCleaningNotes: benchmarkOverride?.title ? "Known benchmark metadata override was used after model metadata extraction failed." : arxivMetadata?.title ? "arXiv metadata was used after model metadata extraction failed." : bibliographicMetadata?.title ? `${bibliographicMetadata.source} metadata was used after model metadata extraction failed.` : fallbackTitleCleanup.notes || "Fallback metadata was used.",
       displayedAuthors: benchmarkOverride?.authors ?? fallbackAuthorList,
       rawExtractedAuthors: benchmarkOverride?.authors.join(", ") || fallbackAuthors,
       authorsConfidence: benchmarkOverride ? 0.98 : fallbackAuthorList.length > 0 && fallbackAuthorList[0] !== "Unknown Authors" ? 0.95 : 0.4,
@@ -6086,7 +6362,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         ? "Known benchmark metadata override was used after model metadata extraction failed."
         : knownArxivAuthorList.length > 0
           ? "Known arXiv metadata override was used after model metadata extraction failed."
-          : arxivMetadata?.authors?.length ? "arXiv metadata was used after model metadata extraction failed." : "Fallback metadata was used.",
+          : arxivMetadata?.authors?.length ? "arXiv metadata was used after model metadata extraction failed." : bibliographicMetadata?.authors?.length ? `${bibliographicMetadata.source} metadata was used after model metadata extraction failed.` : "Fallback metadata was used.",
     }, benchmarkOverrideText);
     return {
       title: fallbackMetadata.displayedTitle,
