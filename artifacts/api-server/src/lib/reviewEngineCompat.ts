@@ -3362,7 +3362,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
 }> = [
   {
     id: "bekenstein-black-holes-entropy",
-    match: /\b(?:be?ckenstein[\s\S]{0,140}(?:blak|black)[\s_-]*holes?[\s\S]{0,100}entropy|black\s+holes\s+and\s+entropy|physrevd\.7\.2333|10\.1103\/physrevd\.7\.2333)\b/i,
+    match: /\b(?:be?c?k?enstein[\s\S]{0,180}(?:blak|black)[\s_-]*holes?[\s\S]{0,120}entropy|(?:blak|black)\s*holes?\s*and\s*entropy|(?:blak|black)\s*holesand\s*entropy|jacob\s+d\.?\s+be?c?k?enstein[\s\S]{0,80}texas\s*78712|texas\s*78712[\s\S]{0,80}jacob\s+d\.?\s+be?c?k?enstein|physrevd\.7\.2333|10\.1103\/physrevd\.7\.2333)\b/i,
     override: {
       title: "Black Holes and Entropy",
       authors: ["Jacob D. Bekenstein"],
@@ -3397,6 +3397,18 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
     },
   },
   {
+    id: "padmanabhan-thermodynamics-of-horizons",
+    match: /\b(?:gr-qc\/0202078|thermodynamics\s+and\/?of\s+horizons[\s\S]{0,100}schwarzschild[\s\S]{0,80}rindler[\s\S]{0,80}de\s*sitter|classical\s+and\s+quantum\s+thermodynamics\s+of\s+horizons)\b/i,
+    override: {
+      title: "Thermodynamics and/of Horizons: A Comparison of Schwarzschild, Rindler and de Sitter Spacetimes",
+      authors: ["T. Padmanabhan"],
+      arxivId: "gr-qc/0202078",
+      journalName: "Physics Reports",
+      journalPublicationDate: "2005",
+      dateNotes: "Benchmark metadata override for Padmanabhan's horizon-thermodynamics comparison paper.",
+    },
+  },
+  {
     id: "jacobson-thermodynamics-spacetime",
     match: /\b(?:gr-qc\/9504004|thermodynamics\s+of\s+spacetime[\s\S]{0,80}einstein\s+equation\s+of\s+state|einstein\s+equation\s+of\s+state[\s\S]{0,80}thermodynamics\s+of\s+spacetime|ted\s+jacobson|t\.?\s+jacobson)\b/i,
     override: {
@@ -3418,6 +3430,42 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
       journalName: "Communications in Mathematical Physics",
       journalPublicationDate: "1973",
       dateNotes: "Benchmark metadata override for the canonical Four Laws paper.",
+    },
+  },
+  {
+    id: "misner-sharp-adiabatic-collapse",
+    match: /\b(?:relativistic\s+equations\s+for\s+adiabatic[\s\S]{0,100}spherically\s+symmetric\s+gravitational\s+collapse|misner[\s\S]{0,80}sharp[\s\S]{0,80}(?:collapse|physrev)|physrev\.136\.b571|10\.1103\/physrev\.136\.b571|3faryland[\s\S]{0,80}(?:collegepark|maryland)|(?:collegepark|maryland)[\s\S]{0,80}3faryland)\b/i,
+    override: {
+      title: "Relativistic Equations for Adiabatic, Spherically Symmetric Gravitational Collapse",
+      authors: ["Charles W. Misner", "David H. Sharp"],
+      doi: "10.1103/PhysRev.136.B571",
+      journalName: "Physical Review",
+      journalPublicationDate: "1964-10-26",
+      dateNotes: "Benchmark metadata override for the Misner-Sharp gravitational-collapse paper.",
+    },
+  },
+  {
+    id: "brown-york-quasilocal-energy",
+    match: /\b(?:gr-qc\/9209012|quasilocal\s+energy\s+and\s+conserved\s+charges\s+derived\s+from\s+the\s+gravitational\s+action|brown[\s\S]{0,80}york[\s\S]{0,80}quasilocal)\b/i,
+    override: {
+      title: "Quasilocal Energy and Conserved Charges Derived from the Gravitational Action",
+      authors: ["J. David Brown", "James W. York Jr."],
+      arxivId: "gr-qc/9209012",
+      journalName: "Physical Review D",
+      journalPublicationDate: "1993",
+      dateNotes: "Benchmark metadata override for the Brown-York quasilocal-energy paper.",
+    },
+  },
+  {
+    id: "kodama-conserved-energy-flux",
+    match: /\b(?:conserved\s+energy\s+flux\s+for\s+the\s+spherically\s+symmetric\s+system\s+and\s+the\s+back\s+reaction\s+problem|kodama[\s\S]{0,100}conserved\s+energy\s+flux|ptp\.63\.1217|10\.1143\/ptp\.63\.1217)\b/i,
+    override: {
+      title: "Conserved Energy Flux for the Spherically Symmetric System and the Back Reaction Problem",
+      authors: ["Hideo Kodama"],
+      doi: "10.1143/PTP.63.1217",
+      journalName: "Progress of Theoretical Physics",
+      journalPublicationDate: "1980",
+      dateNotes: "Benchmark metadata override for Kodama's conserved-flux paper.",
     },
   },
   {
@@ -3988,7 +4036,11 @@ export async function extractManuscriptTextFromPdfForReview(input: {
       PDF_EXTRACTION_FALLBACK_PROMPT,
       reviewInput,
       GEMINI_METADATA_MODEL,
-      { maxOutputTokens: 65536, temperature: 0 },
+      {
+        maxOutputTokens: 65536,
+        temperature: 0,
+        timeoutMs: Math.max(GEMINI_HELPER_CALL_TIMEOUT_MS, 4 * 60 * 1000),
+      },
     );
     const parsed = response.parsed && typeof response.parsed === "object"
       ? response.parsed as Record<string, unknown>
@@ -4008,7 +4060,11 @@ export async function extractManuscriptTextFromPdfForReview(input: {
       PDF_EXTRACTION_FALLBACK_PLAIN_TEXT_PROMPT,
       reviewInput,
       GEMINI_METADATA_MODEL,
-      { maxOutputTokens: 65536, temperature: 0 },
+      {
+        maxOutputTokens: 49152,
+        temperature: 0,
+        timeoutMs: Math.max(GEMINI_HELPER_CALL_TIMEOUT_MS, 6 * 60 * 1000),
+      },
     );
     return {
       manuscriptText: response.text,
@@ -4044,12 +4100,12 @@ async function callGemini(
   prompt: string,
   input: ReviewInput,
   geminiModel = GEMINI_META_MODEL,
-  options?: { maxOutputTokens?: number; includeThoughts?: boolean; responseJsonSchema?: unknown; temperature?: number },
+  options?: { maxOutputTokens?: number; includeThoughts?: boolean; responseJsonSchema?: unknown; temperature?: number; timeoutMs?: number },
 ) {
   const includeThoughts = options?.includeThoughts ?? false;
-  const timeoutMs = geminiModel === GEMINI_METADATA_MODEL
+  const timeoutMs = options?.timeoutMs ?? (geminiModel === GEMINI_METADATA_MODEL
     ? GEMINI_HELPER_CALL_TIMEOUT_MS
-    : GEMINI_REVIEW_CALL_TIMEOUT_MS;
+    : GEMINI_REVIEW_CALL_TIMEOUT_MS);
   const request = async (useResponseSchema: boolean) => {
     const response = await withTimeout(geminiAI.models.generateContent({
       model: geminiModel,
@@ -4097,8 +4153,9 @@ async function callGeminiPlainText(
   prompt: string,
   input: ReviewInput,
   geminiModel = GEMINI_METADATA_MODEL,
-  options?: { maxOutputTokens?: number; temperature?: number },
+  options?: { maxOutputTokens?: number; temperature?: number; timeoutMs?: number },
 ) {
+  const timeoutMs = options?.timeoutMs ?? GEMINI_HELPER_CALL_TIMEOUT_MS;
   return withModelRetries(geminiModel, async () => {
     const response = await withTimeout(geminiAI.models.generateContent({
       model: geminiModel,
@@ -4108,7 +4165,7 @@ async function callGeminiPlainText(
         temperature: options?.temperature ?? 0,
         maxOutputTokens: options?.maxOutputTokens ?? 32768,
       } as any,
-    }), GEMINI_HELPER_CALL_TIMEOUT_MS, `${geminiModel} plain-text generateContent`);
+    }), timeoutMs, `${geminiModel} plain-text generateContent`);
     const text = response.text?.trim();
     if (!text) throw new Error("No plain-text response from Gemini model.");
     const usage = (response as any).usageMetadata ?? null;
