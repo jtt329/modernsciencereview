@@ -219,6 +219,8 @@ assert.match(routesSource, /reviewJobAutoRetryCount/);
 assert.match(routesSource, /canAutoRecoverReviewJob/);
 assert.match(routesSource, /workerHeartbeatAt/);
 assert.match(routesSource, /apiRuntimeAtWorkerStart/);
+assert.match(routesSource, /frontendPageStaleAfterApiRestart/);
+assert.match(routesSource, /STALE_FRONTEND_AFTER_API_RESTART/);
 assert.doesNotMatch(routesSource, /if \(!REVIEW_JOB_AUTO_RECOVERY\) return/);
 assert.match(routesSource, /queued\/stale jobs still recover/);
 assert.match(routesSource, /debugPayload}->>'batchRunId'/);

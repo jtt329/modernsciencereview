@@ -498,6 +498,12 @@ function runtimeStartedAtMs(value: unknown): number | null {
   return timestampMs((value as any)?.build?.processStartedAt);
 }
 
+function frontendPageStaleAfterApiRestart(source: any) {
+  const pageLoadedAt = timestampMs(optionalSourceString(source, "frontendPageLoadedAt"));
+  const processStartedAt = apiProcessStartedAtMs();
+  return pageLoadedAt != null && processStartedAt != null && processStartedAt > pageLoadedAt + 1000;
+}
+
 function attemptLifecycleStartedAtMs(record: ReviewAttemptRecord): number | null {
   const payload = debugPayloadObject(record.debugPayload);
   const candidates = [
@@ -1560,6 +1566,15 @@ function startReviewJobRecovery() {
 async function createDurableReviewJob(user: any, source: any) {
   if (!source?.type || !source?.data) {
     throw submissionHttpError("source.type and source.data are required", 400);
+  }
+  if (frontendPageStaleAfterApiRestart(source)) {
+    throw submissionHttpError("Modern Science Review was redeployed after this page loaded. Please refresh before starting or continuing this batch.", 409, {
+      code: "STALE_FRONTEND_AFTER_API_RESTART",
+      reviewStatus: "stale_frontend_after_api_restart",
+      retryable: true,
+      apiRuntime: reviewRuntimeInfo(),
+      frontendPageLoadedAt: optionalSourceString(source, "frontendPageLoadedAt"),
+    });
   }
   const fileName = typeof source.fileName === "string" && source.fileName.trim()
     ? source.fileName.trim()
