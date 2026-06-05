@@ -3338,6 +3338,42 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   override: BenchmarkMetadataOverride;
 }> = [
   {
+    id: "bekenstein-black-holes-entropy",
+    match: /\b(?:be?ckenstein[\s\S]{0,140}(?:blak|black)[\s_-]*holes?[\s\S]{0,100}entropy|black\s+holes\s+and\s+entropy|physrevd\.7\.2333|10\.1103\/physrevd\.7\.2333|texas\s*78712|texas78712)\b/i,
+    override: {
+      title: "Black Holes and Entropy",
+      authors: ["Jacob D. Bekenstein"],
+      doi: "10.1103/PhysRevD.7.2333",
+      journalName: "Physical Review D",
+      journalPublicationDate: "1973",
+      dateNotes: "Benchmark metadata override for Bekenstein's black-hole entropy paper.",
+    },
+  },
+  {
+    id: "unruh-notes-black-hole-evaporation",
+    match: /\b(?:unruh[\s\S]{0,140}(?:black[\s_-]*hole[\s_-]*evaporation|notes[\s\S]{0,80}black[\s_-]*hole)|notes\s+on\s+black[\s-]*hole\s+evaporation|number\s*4\s*15\s*august\s*1976|number415august\s*1976|physrevd\.14\.870|10\.1103\/physrevd\.14\.870)\b/i,
+    override: {
+      title: "Notes on Black-Hole Evaporation",
+      authors: ["W. G. Unruh"],
+      doi: "10.1103/PhysRevD.14.870",
+      journalName: "Physical Review D",
+      journalPublicationDate: "1976-08-15",
+      dateNotes: "Benchmark metadata override for Unruh's black-hole evaporation paper.",
+    },
+  },
+  {
+    id: "gibbons-hawking-cosmological-event-horizons",
+    match: /\b(?:gibbons[\s\S]{0,100}hawking[\s\S]{0,120}cosmological|cosmological\s+event\s+horizons[\s\S]{0,120}thermodynamics[\s\S]{0,120}particle\s+creation|event\s*horizons,\s*thermodynamics,\s*and\s*particle\s*creation|physrevd\.15\.2738|10\.1103\/physrevd\.15\.2738)\b/i,
+    override: {
+      title: "Cosmological Event Horizons, Thermodynamics, and Particle Creation",
+      authors: ["G. W. Gibbons", "S. W. Hawking"],
+      doi: "10.1103/PhysRevD.15.2738",
+      journalName: "Physical Review D",
+      journalPublicationDate: "1977",
+      dateNotes: "Benchmark metadata override for the Gibbons-Hawking cosmological horizons paper.",
+    },
+  },
+  {
     id: "four-laws-black-hole-mechanics",
     match: /\b(?:four\s+laws\s+of\s+black\s+hole\s+mechanics|bf01645742|bardeen[\s\S]{0,80}carter[\s\S]{0,80}hawking)\b/i,
     override: {
@@ -3358,6 +3394,40 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
       arxivId: "1110.4055",
       journalName: "Physical Review D",
       dateNotes: "Benchmark metadata override for the Frodden-Ghosh-Perez paper.",
+    },
+  },
+  {
+    id: "cai-kim-frw-first-law",
+    match: /\b(?:hep-th\/0501055|cai[\s\S]{0,80}kim[\s\S]{0,120}friedmann|first\s+law\s+of\s+thermodynamics\s+and\s+friedmann\s+equations)\b/i,
+    override: {
+      title: "First Law of Thermodynamics and Friedmann Equations of Friedmann-Robertson-Walker Universe",
+      authors: ["Rong-Gen Cai", "Sang Pyo Kim"],
+      arxivId: "hep-th/0501055",
+      journalName: "Journal of High Energy Physics",
+      journalPublicationDate: "2005",
+      dateNotes: "Benchmark metadata override for the Cai-Kim FRW horizon-thermodynamics paper.",
+    },
+  },
+  {
+    id: "rovelli-smolin-area-volume",
+    match: /\b(?:gr-qc\/9411005|rovelli[\s\S]{0,80}smolin[\s\S]{0,140}discreteness|discreteness\s+of\s+area\s+and\s+volume\s+in\s+quantum\s+gravity)\b/i,
+    override: {
+      title: "Discreteness of Area and Volume in Quantum Gravity",
+      authors: ["Carlo Rovelli", "Lee Smolin"],
+      arxivId: "gr-qc/9411005",
+      journalName: "Nuclear Physics B",
+      journalPublicationDate: "1995",
+      dateNotes: "Benchmark metadata override for the Rovelli-Smolin area/volume discreteness paper.",
+    },
+  },
+  {
+    id: "ong-maximum-force-black-hole-thermodynamics",
+    match: /\b(?:2309\.04110|ong[\s\S]{0,160}maximum\s+force|maximum\s+force\s+perspective\s+on\s+black\s+hole\s+thermodynamics)\b/i,
+    override: {
+      title: "A Maximum Force Perspective on Black Hole Thermodynamics",
+      authors: ["Yen Chin Ong"],
+      arxivId: "2309.04110",
+      dateNotes: "Benchmark metadata override for Ong's maximum-force black-hole thermodynamics paper.",
     },
   },
   {
