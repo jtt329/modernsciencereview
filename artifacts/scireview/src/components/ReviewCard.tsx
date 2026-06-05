@@ -238,6 +238,14 @@ const firstSentence = (value: unknown): string => {
   return sentence.length > 220 ? `${sentence.slice(0, 217).trim()}...` : sentence;
 };
 
+const diagnosticPreview = (...values: unknown[]): string => {
+  const merged = mergeUniqueText(...values).replace(/\s+/g, ' ').trim();
+  if (!merged) return '';
+  const first = firstSentence(merged);
+  const previewSource = first.length >= 75 ? first : merged;
+  return previewSource.length > 240 ? `${previewSource.slice(0, 237).trim()}...` : previewSource;
+};
+
 const scoreToneClass = (value: number | null, scale: 10 | 100 = 10) => {
   if (value == null) return 'text-slate-100 border-white/15';
   const normalized = scale === 10 ? value * 10 : value;
@@ -317,8 +325,8 @@ const qualityLine = (label: string, value: string, tone: 'green' | 'yellow' | 'r
 type IcoTabId = 'input' | 'construction' | 'output';
 
 const ICO_TAB_THEME = {
-  activeCard: 'border-indigo-200/35 bg-indigo-300/[0.10] shadow-lg shadow-indigo-950/20',
-  inactiveCard: 'border-indigo-300/10 bg-indigo-950/25 opacity-80 hover:border-indigo-200/25 hover:bg-indigo-900/35 hover:opacity-100',
+  activeCard: 'border-indigo-100/70 bg-indigo-300/[0.12] shadow-lg shadow-indigo-950/20 ring-1 ring-indigo-100/25',
+  inactiveCard: 'border-indigo-300/10 bg-indigo-950/25 opacity-80 hover:border-indigo-200/30 hover:bg-indigo-900/35 hover:opacity-100',
   panel: 'border-indigo-200/20 bg-indigo-300/[0.07]',
 };
 
@@ -884,26 +892,43 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       : '';
   const versionAndMode = [shortPromptVersion, pipelineModeLabel].filter(Boolean).join(' ');
   const modelPromptLine = [modelBase, versionAndMode].filter(Boolean).join(' · ');
+  const outputAssessmentPreview = mergeUniqueText(
+    currentWhyOutputsMatter,
+    currentInputConstructionOutputAssessment,
+    ...currentLedgerOutputs.map((item: any) => item?.assessment || item?.support || item?.validity),
+  );
   const diagnosticCards = [
     {
       id: 'input' as const,
       label: 'Input Strength',
       value: currentInputStrengthScore,
-      rationale: firstSentence(currentSubscoreRationale?.inputStrengthScore),
+      rationale: diagnosticPreview(
+        currentSubscoreRationale?.inputStrengthScore,
+        currentInputGrounding,
+        currentInputFundamentality,
+        ...currentPrimitiveInputDetails.map((item) => item.assessment),
+      ),
       color: currentInputStrengthScore == null ? 'text-slate-200' : currentInputStrengthScore >= 8 ? 'text-emerald-200' : currentInputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
     },
     {
       id: 'construction' as const,
       label: 'Construction Strength',
       value: currentConstructionStrengthScore,
-      rationale: firstSentence(currentSubscoreRationale?.constructionStrengthScore),
+      rationale: diagnosticPreview(
+        currentSubscoreRationale?.constructionStrengthScore,
+        currentConstructionAssessment,
+        ...currentIntroducedConstructionDetails.map((item) => item.assessment),
+      ),
       color: currentConstructionStrengthScore == null ? 'text-slate-200' : currentConstructionStrengthScore >= 8 ? 'text-emerald-200' : currentConstructionStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
     },
     {
       id: 'output' as const,
       label: 'Output Strength',
       value: currentOutputStrengthScore,
-      rationale: firstSentence(currentSubscoreRationale?.outputStrengthScore),
+      rationale: diagnosticPreview(
+        currentSubscoreRationale?.outputStrengthScore,
+        outputAssessmentPreview,
+      ),
       color: currentOutputStrengthScore == null ? 'text-slate-200' : currentOutputStrengthScore >= 8 ? 'text-emerald-200' : currentOutputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
     },
   ];
@@ -1098,7 +1123,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         role="tab"
                         aria-selected={active}
                         onClick={() => setActiveIcoTab(card.id)}
-                        className={`h-full rounded-2xl border p-4 text-left transition-all ${active ? ICO_TAB_THEME.activeCard : ICO_TAB_THEME.inactiveCard}`}
+                        className={`flex h-full min-h-[10.5rem] flex-col justify-start rounded-2xl border-2 p-4 text-left transition-all ${active ? ICO_TAB_THEME.activeCard : ICO_TAB_THEME.inactiveCard}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{card.label}</p>
