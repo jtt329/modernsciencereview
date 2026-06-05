@@ -779,6 +779,8 @@ Rules:
 - If the title spans multiple visual or extracted-text lines, join the lines into one complete title in the correct order.
 - Return paper authors only: personal names as written, comma-separated, preserving author order. Omit affiliations, departments, emails, dates, ORCID ids, footnote symbols, and addresses.
 - If the author line uses superscripts, bullets, footnotes, or line breaks, strip the markers and preserve all author names.
+- Use bibliographic common sense: never treat a department, university, laboratory, city, state, ZIP/postal code, publisher line, copyright notice, page header, journal citation, or affiliation/address fragment as the title or as an author.
+- If the most visible extracted candidate is affiliation/address text, keep looking in the title page/header, DOI/arXiv metadata, embedded metadata, or filename hints; if still not recoverable, return "Unknown Title" or "Unknown Authors".
 - Do not invent authors that are not visible in the manuscript. If only some names are visible, return the visible names.
 - If title or authors are genuinely not recoverable, use "Unknown Title" or "Unknown Authors".
 - Use plain text in every metadata field. Do not include LaTeX or mathematical notation unless it is literally part of the title.
@@ -3253,6 +3255,26 @@ function cleanMetadataText(value?: string) {
     .trim();
 }
 
+const AFFILIATION_OR_ADDRESS_JUNK_REGEX =
+  /\b(?:affiliations?|addresses?|department|departments|university|universities|institute|institutes|institution|laboratory|laboratories|college\s*park|college|school|faculty|centre|center|campus|palmer\s+physical\s+laboratory|austin|princeton|maryland|3faryland|california|texas|massachusetts|new\s+york|new\s+jersey|cambridge|oxford|stanford|berkeley)\b/i;
+const STATE_ZIP_JUNK_REGEX =
+  /\b(?:texas|maryland|california|massachusetts|new\s+york|new\s+jersey|pennsylvania|illinois|washington|virginia|ohio|michigan|florida|georgia|north\s+carolina|south\s+carolina)\s*\d{5}\b/i;
+
+function looksLikeAffiliationOrAddressJunk(value?: string) {
+  const cleaned = cleanMetadataText(value);
+  if (!cleaned) return false;
+  const compact = cleaned.replace(/\s+/g, "");
+  if (STATE_ZIP_JUNK_REGEX.test(cleaned)) return true;
+  if (/^[A-Za-z]{3,}\d{4,}[|:;,. -]*$/i.test(compact)) return true;
+  if (/^\d{5}(?:-\d{4})?[|:;,. -]*$/i.test(cleaned)) return true;
+  if (AFFILIATION_OR_ADDRESS_JUNK_REGEX.test(cleaned)) {
+    const scienceWords = cleaned.match(/\b(?:black|hole|entropy|thermodynamics|gravity|gravitational|quantum|relativity|spacetime|horizon|equation|mechanics|energy|flux|collapse|cosmological|particle|creation|friedmann|symmetric|adiabatic|conserved|charge)\b/gi) ?? [];
+    const mostlyLocationOrAffiliation = cleaned.length < 90 || scienceWords.length === 0;
+    return mostlyLocationOrAffiliation;
+  }
+  return false;
+}
+
 const ARXIV_ID_REGEX = /\b(?:arxiv:\s*)?(?:(?:[a-z-]+(?:\.[A-Z]{2})?\/\d{7})|(?:\d{4}\.\d{4,5}))(?:v\d+)?\b/gi;
 const LEADING_REPORT_CODE_REGEX = /^\s*(?:[A-Z]{2,}(?:-[A-Z0-9]+)+(?:\/\d+)*(?:-\d+)?|[A-Z]{2,}-[A-Z]{2,}-\d{2,}(?:\/\d+)*(?:-\d+)?)\s*/;
 const REPORT_CODE_SCAN_REGEX = /\b[A-Z]{2,}(?:-[A-Z0-9]+)+(?:\/\d+)*(?:-\d+)?\b/g;
@@ -3651,12 +3673,12 @@ function cleanDisplayTitle(value?: string) {
     .trim();
   const arxivIds = uniqueCleanStrings(raw.match(ARXIV_ID_REGEX) || []);
   const reportCodes = uniqueCleanStrings(raw.match(REPORT_CODE_SCAN_REGEX) || []);
-  if (!raw || looksLikeJournalCitation(raw)) {
+  if (!raw || looksLikeJournalCitation(raw) || looksLikeAffiliationOrAddressJunk(raw)) {
     return {
       title: "Unknown Title",
       arxivId: arxivIds[0] || "",
       reportCodes,
-      notes: raw ? "Rejected journal citation as title." : "No title text found.",
+      notes: raw ? "Rejected journal citation, address, or affiliation text as title." : "No title text found.",
     };
   }
 
@@ -3690,12 +3712,12 @@ function cleanDisplayTitle(value?: string) {
     .replace(/\s+/g, " ")
     .trim();
 
-  if (!cleaned || looksLikeJournalCitation(cleaned) || cleaned.length < 8) {
+  if (!cleaned || looksLikeJournalCitation(cleaned) || looksLikeAffiliationOrAddressJunk(cleaned) || cleaned.length < 8) {
     return {
       title: "Unknown Title",
       arxivId: arxivIds[0] || "",
       reportCodes: uniqueCleanStrings(strippedReports),
-      notes: "Title cleanup rejected non-title text.",
+      notes: "Title cleanup rejected non-title text, address text, or affiliation text.",
     };
   }
 
@@ -3730,6 +3752,7 @@ function splitAuthorNames(value: string) {
     .filter((part) =>
       Boolean(part) &&
       !/@/.test(part) &&
+      !looksLikeAffiliationOrAddressJunk(part) &&
       !/\b(university|institute|department|laboratory|college|school|faculty|centre|center|press|journal|received|accepted|abstract)\b/i.test(part) &&
       /[A-Za-z]{2}/.test(part)
     )
@@ -3740,6 +3763,7 @@ function isUsefulTitleHint(value?: string) {
   const cleaned = cleanDisplayTitle(value).title;
   if (cleaned.length < 8 || cleaned.length > 220) return false;
   if (looksLikeJournalCitation(cleaned)) return false;
+  if (looksLikeAffiliationOrAddressJunk(cleaned)) return false;
   if (/^(untitled|unknown|arxiv|paper|document)$/i.test(cleaned)) return false;
   if (/^[a-z]+[0-9]{2,}$/i.test(cleaned)) return false;
   if (/^\d{4}\.\d{4,5}(v\d+)?$/i.test(cleaned)) return false;
@@ -3751,6 +3775,7 @@ function isUsefulAuthorHint(value?: string) {
   const cleaned = cleanMetadataText(value);
   if (cleaned.length < 3 || cleaned.length > 300) return false;
   if (/^(unknown|anonymous|admin|root|user|owner)$/i.test(cleaned)) return false;
+  if (looksLikeAffiliationOrAddressJunk(cleaned)) return false;
   if (/@|\b(university|institute|department|laboratory|college|school|press|journal)\b/i.test(cleaned)) return false;
   if (!/[A-Za-z]{2}/.test(cleaned)) return false;
   return true;
@@ -3774,6 +3799,7 @@ function heuristicMetadata(paperContent: string, hints: MetadataHints = {}) {
   const headerLines = manuscriptHeaderText(paperContent);
 
   const looksLikeAffiliation = (line: string) =>
+    looksLikeAffiliationOrAddressJunk(line) ||
     /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(line);
 
   const looksLikeTitleContinuation = (previousLine: string, nextLine: string) => {
