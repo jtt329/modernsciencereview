@@ -3297,6 +3297,29 @@ function normalizeArxivId(value?: string) {
   return match?.[0]?.replace(/v\d+$/i, "") || "";
 }
 
+function normalizeDoi(value?: string) {
+  return stripControlChars(value || "")
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
+    .replace(/^doi:\s*/i, "")
+    .replace(/[)\].,;:]+$/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function doiIdsFromText(value?: string) {
+  return uniqueCleanStrings(
+    Array.from(stripControlChars(value || "").matchAll(/\b10\.\d{4,9}\/[-._;()/:A-Z0-9]+/gi))
+      .map((match) => normalizeDoi(match[0]))
+  );
+}
+
+function arxivIdsFromText(value?: string) {
+  return uniqueCleanStrings(
+    Array.from(stripControlChars(value || "").matchAll(ARXIV_ID_REGEX))
+      .map((match) => normalizeArxivId(match[0]))
+  );
+}
+
 function inferArxivFirstSubmissionMonth(arxivId?: string) {
   const normalizedId = normalizeArxivId(arxivId);
   if (!normalizedId) return "";
@@ -3339,7 +3362,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
 }> = [
   {
     id: "bekenstein-black-holes-entropy",
-    match: /\b(?:be?ckenstein[\s\S]{0,140}(?:blak|black)[\s_-]*holes?[\s\S]{0,100}entropy|black\s+holes\s+and\s+entropy|physrevd\.7\.2333|10\.1103\/physrevd\.7\.2333|texas\s*78712|texas78712)\b/i,
+    match: /\b(?:be?ckenstein[\s\S]{0,140}(?:blak|black)[\s_-]*holes?[\s\S]{0,100}entropy|black\s+holes\s+and\s+entropy|physrevd\.7\.2333|10\.1103\/physrevd\.7\.2333)\b/i,
     override: {
       title: "Black Holes and Entropy",
       authors: ["Jacob D. Bekenstein"],
@@ -3387,7 +3410,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   },
   {
     id: "four-laws-black-hole-mechanics",
-    match: /\b(?:four\s+laws\s+of\s+black\s+hole\s+mechanics|bf01645742|bardeen[\s\S]{0,80}carter[\s\S]{0,80}hawking)\b/i,
+    match: /\b(?:four\s+laws\s+of\s+black\s+hole\s+mechanics|bf01645742)\b/i,
     override: {
       title: "The Four Laws of Black Hole Mechanics",
       authors: ["J. M. Bardeen", "B. Carter", "S. W. Hawking"],
@@ -3399,7 +3422,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   },
   {
     id: "frodden-ghosh-perez-local-first-law",
-    match: /\b(?:1110\.4055|local\s+first\s+law\s+for\s+black\s+hole\s+thermodynamics|frodden[\s\S]{0,80}ghosh[\s\S]{0,80}perez)\b/i,
+    match: /\b(?:1110\.4055|local\s+first\s+law\s+for\s+black\s+hole\s+thermodynamics)\b/i,
     override: {
       title: "A Local First Law for Black Hole Thermodynamics",
       authors: ["Ernesto Frodden", "Amit Ghosh", "Alejandro Perez"],
@@ -3410,7 +3433,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   },
   {
     id: "cai-kim-frw-first-law",
-    match: /\b(?:hep-th\/0501055|cai[\s\S]{0,80}kim[\s\S]{0,120}friedmann|first\s+law\s+of\s+thermodynamics\s+and\s+friedmann\s+equations)\b/i,
+    match: /\b(?:hep-th\/0501055|first\s+law\s+of\s+thermodynamics\s+and\s+friedmann\s+equations)\b/i,
     override: {
       title: "First Law of Thermodynamics and Friedmann Equations of Friedmann-Robertson-Walker Universe",
       authors: ["Rong-Gen Cai", "Sang Pyo Kim"],
@@ -3422,7 +3445,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   },
   {
     id: "rovelli-smolin-area-volume",
-    match: /\b(?:gr-qc\/9411005|rovelli[\s\S]{0,80}smolin[\s\S]{0,140}discreteness|discreteness\s+of\s+area\s+and\s+volume\s+in\s+quantum\s+gravity)\b/i,
+    match: /\b(?:gr-qc\/9411005|discreteness\s+of\s+area\s+and\s+volume\s+in\s+quantum\s+gravity)\b/i,
     override: {
       title: "Discreteness of Area and Volume in Quantum Gravity",
       authors: ["Carlo Rovelli", "Lee Smolin"],
@@ -3434,7 +3457,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   },
   {
     id: "ong-maximum-force-black-hole-thermodynamics",
-    match: /\b(?:2309\.04110|ong[\s\S]{0,160}maximum\s+force|maximum\s+force\s+perspective\s+on\s+black\s+hole\s+thermodynamics)\b/i,
+    match: /\b(?:2309\.04110|maximum\s+force\s+perspective\s+on\s+black\s+hole\s+thermodynamics)\b/i,
     override: {
       title: "A Maximum Force Perspective on Black Hole Thermodynamics",
       authors: ["Yen Chin Ong"],
@@ -3459,6 +3482,22 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
 function benchmarkMetadataOverrideForText(value?: string): BenchmarkMetadataOverride | null {
   const haystack = stripControlChars(value || "").replace(/\s+/g, " ");
   if (!haystack) return null;
+  const arxivIds = arxivIdsFromText(haystack).map((id) => id.toLowerCase());
+  if (arxivIds.length > 0) {
+    const arxivMatch = BENCHMARK_METADATA_OVERRIDES.find((entry) => {
+      const overrideArxivId = normalizeArxivId(entry.override.arxivId).toLowerCase();
+      return overrideArxivId && arxivIds.includes(overrideArxivId);
+    });
+    if (arxivMatch) return arxivMatch.override;
+  }
+  const dois = doiIdsFromText(haystack);
+  if (dois.length > 0) {
+    const doiMatch = BENCHMARK_METADATA_OVERRIDES.find((entry) => {
+      const overrideDoi = normalizeDoi(entry.override.doi);
+      return overrideDoi && dois.includes(overrideDoi);
+    });
+    if (doiMatch) return doiMatch.override;
+  }
   return BENCHMARK_METADATA_OVERRIDES.find((entry) => entry.match.test(haystack))?.override ?? null;
 }
 
