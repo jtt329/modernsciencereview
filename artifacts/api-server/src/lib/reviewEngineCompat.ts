@@ -3370,6 +3370,10 @@ function inferArxivFirstSubmissionMonth(arxivId?: string) {
 const KNOWN_ARXIV_AUTHOR_OVERRIDES: Record<string, string[]> = {
   "astro-ph/0306438": ["Sean M. Carroll", "Vikram Duvvuri", "Mark Trodden", "Michael S. Turner"],
   "hep-th/0501055": ["Rong-Gen Cai", "Sang Pyo Kim"],
+  "gr-qc/9503020": ["Ted Jacobson", "Gungwon Kang", "Robert C. Myers"],
+  "gr-qc/9502009": ["Ted Jacobson", "Gungwon Kang", "Robert C. Myers"],
+  "gr-qc/0602001": ["Christopher Eling", "Robert Guedens", "Ted Jacobson"],
+  "gr-qc/0612089": ["M. Akbar", "Rong-Gen Cai"],
   "1110.4055": ["Ernesto Frodden", "Amit Ghosh", "Alejandro Perez"],
 };
 
@@ -3443,7 +3447,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   },
   {
     id: "jacobson-thermodynamics-spacetime",
-    match: /\b(?:gr-qc\/9504004|thermodynamics\s+of\s+spacetime[\s\S]{0,80}einstein\s+equation\s+of\s+state|einstein\s+equation\s+of\s+state[\s\S]{0,80}thermodynamics\s+of\s+spacetime|ted\s+jacobson|t\.?\s+jacobson)\b/i,
+    match: /\b(?:gr-qc\/9504004|thermodynamics\s+of\s+spacetime[\s\S]{0,80}einstein\s+equation\s+of\s+state|einstein\s+equation\s+of\s+state[\s\S]{0,80}thermodynamics\s+of\s+spacetime|einstein\s+equation\s+can\s+be\s+derived\s+as\s+a\s+thermodynamic\s+equation\s+of\s+state)\b/i,
     override: {
       title: "Thermodynamics of Spacetime: The Einstein Equation of State",
       authors: ["Ted Jacobson"],
@@ -3451,6 +3455,31 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
       journalName: "Physical Review Letters",
       journalPublicationDate: "1995",
       dateNotes: "Benchmark metadata override for Jacobson's thermodynamics-of-spacetime paper.",
+    },
+  },
+  {
+    id: "jacobson-kang-myers-increase-black-hole-entropy",
+    match: /\b(?:gr-qc\/9503020|increase\s+of\s+black\s+hole\s+entropy\s+in\s+higher\s+curvature\s+gravity|quasi[-\s]*stationary\s+processes[\s\S]{0,180}diffeomorphism[-\s]*invariant\s+gravity[\s\S]{0,180}f\s*\(\s*r\s*\)|extended\s+raychaudhuri\s+equation[\s\S]{0,140}effective\s+expansion|second\s+law\s+of\s+black\s+hole\s+thermodynamics[\s\S]{0,180}quasi[-\s]*stationary[\s\S]{0,180}higher\s+curvature)\b/i,
+    override: {
+      title: "Increase of Black Hole Entropy in Higher Curvature Gravity",
+      authors: ["Ted Jacobson", "Gungwon Kang", "Robert C. Myers"],
+      arxivId: "gr-qc/9503020",
+      doi: "10.1103/PhysRevD.52.3518",
+      journalName: "Physical Review D",
+      journalPublicationDate: "1995",
+      dateNotes: "Benchmark metadata override for the Jacobson-Kang-Myers higher-curvature second-law paper.",
+    },
+  },
+  {
+    id: "jacobson-kang-myers-black-hole-entropy-higher-curvature",
+    match: /\b(?:gr-qc\/9502009|black\s+hole\s+entropy\s+in\s+higher\s+curvature\s+gravity|wald'?s\s+derivation\s+of\s+the\s+first\s+law[\s\S]{0,180}higher[-\s]*curvature|entropy\s+expressions\s+satisfy\s+a\s+second\s+law[\s\S]{0,120}ricci\s+scalar)\b/i,
+    override: {
+      title: "Black Hole Entropy in Higher Curvature Gravity",
+      authors: ["Ted Jacobson", "Gungwon Kang", "Robert C. Myers"],
+      arxivId: "gr-qc/9502009",
+      journalName: "MRST Meeting / Heat Kernel Techniques and Quantum Gravity proceedings",
+      journalPublicationDate: "1995",
+      dateNotes: "Benchmark metadata override for the Jacobson-Kang-Myers higher-curvature entropy review/control paper.",
     },
   },
   {
@@ -3525,6 +3554,30 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
     },
   },
   {
+    id: "eling-guedens-jacobson-non-equilibrium-spacetime",
+    match: /\b(?:gr-qc\/0602001|non[-\s]*equilibrium\s+thermodynamics\s+of\s+spacetime|thermodynamic\s+derivation\s+of\s+gravitational\s+field\s+equations[\s\S]{0,180}f\s*\(\s*r\s*\)|internal\s+entropy\s+production[\s\S]{0,120}bulk\s+viscosity)\b/i,
+    override: {
+      title: "Non-equilibrium Thermodynamics of Spacetime",
+      authors: ["Christopher Eling", "Robert Guedens", "Ted Jacobson"],
+      arxivId: "gr-qc/0602001",
+      journalName: "Physical Review Letters",
+      journalPublicationDate: "2006",
+      dateNotes: "Benchmark metadata override for the Eling-Guedens-Jacobson non-equilibrium spacetime thermodynamics paper.",
+    },
+  },
+  {
+    id: "akbar-cai-fgravity-field-equations",
+    match: /\b(?:gr-qc\/0612089|thermodynamic\s+behavior\s+of\s+field\s+equations\s+for\s*f\s*\(\s*r\s*\)\s*gravity|field\s+equations\s+of\s+f\s*\(\s*r\s*\)\s+gravity[\s\S]{0,180}entropy\s+production)\b/i,
+    override: {
+      title: "Thermodynamic Behavior of Field Equations for f(R) Gravity",
+      authors: ["M. Akbar", "Rong-Gen Cai"],
+      arxivId: "gr-qc/0612089",
+      journalName: "Physics Letters B",
+      journalPublicationDate: "2007",
+      dateNotes: "Benchmark metadata override for the Akbar-Cai f(R) horizon-thermodynamics paper.",
+    },
+  },
+  {
     id: "rovelli-smolin-area-volume",
     match: /\b(?:gr-qc\/9411005|discreteness\s+of\s+area\s+and\s+volume\s+in\s+quantum\s+gravity)\b/i,
     override: {
@@ -3563,23 +3616,21 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
 function benchmarkMetadataOverrideForText(value?: string): BenchmarkMetadataOverride | null {
   const haystack = stripControlChars(value || "").replace(/\s+/g, " ");
   if (!haystack) return null;
-  const arxivIds = arxivIdsFromText(haystack).map((id) => id.toLowerCase());
-  if (arxivIds.length > 0) {
-    const arxivMatch = BENCHMARK_METADATA_OVERRIDES.find((entry) => {
-      const overrideArxivId = normalizeArxivId(entry.override.arxivId).toLowerCase();
-      return overrideArxivId && arxivIds.includes(overrideArxivId);
-    });
-    if (arxivMatch) return arxivMatch.override;
-  }
   const dois = doiIdsFromText(haystack);
-  if (dois.length > 0) {
-    const doiMatch = BENCHMARK_METADATA_OVERRIDES.find((entry) => {
+  const arxivIds = arxivIdsFromText(haystack).map((id) => id.toLowerCase());
+  const scored = BENCHMARK_METADATA_OVERRIDES
+    .map((entry) => {
+      let score = 0;
+      if (entry.match.test(haystack)) score += 100;
       const overrideDoi = normalizeDoi(entry.override.doi);
-      return overrideDoi && dois.includes(overrideDoi);
-    });
-    if (doiMatch) return doiMatch.override;
-  }
-  return BENCHMARK_METADATA_OVERRIDES.find((entry) => entry.match.test(haystack))?.override ?? null;
+      if (overrideDoi && dois.includes(overrideDoi)) score += 80;
+      const overrideArxivId = normalizeArxivId(entry.override.arxivId).toLowerCase();
+      if (overrideArxivId && arxivIds.includes(overrideArxivId)) score += 80;
+      return { entry, score };
+    })
+    .filter((candidate) => candidate.score > 0)
+    .sort((a, b) => b.score - a.score);
+  return scored[0]?.entry.override ?? null;
 }
 
 function benchmarkMetadataOverrideCandidate(parts: Array<unknown>) {

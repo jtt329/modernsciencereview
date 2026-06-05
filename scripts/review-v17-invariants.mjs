@@ -50,6 +50,16 @@ const adjudicatorAddendum = extractRawConst(promptSource, "INTRINSIC_ADJUDICATOR
 assert.match(promptSource, /v17\.1 computed ICO half-point/i);
 assert.match(engineSource, /v17\.1-computed-ico-halfpoint/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
+assert.match(engineSource, /jacobson-kang-myers-increase-black-hole-entropy/);
+assert.match(engineSource, /jacobson-kang-myers-black-hole-entropy-higher-curvature/);
+assert.match(engineSource, /eling-guedens-jacobson-non-equilibrium-spacetime/);
+assert.match(engineSource, /akbar-cai-fgravity-field-equations/);
+assert.match(engineSource, /"gr-qc\/9503020": \["Ted Jacobson", "Gungwon Kang", "Robert C\. Myers"\]/);
+assert.match(engineSource, /"gr-qc\/9502009": \["Ted Jacobson", "Gungwon Kang", "Robert C\. Myers"\]/);
+assert.doesNotMatch(engineSource, /thermodynamics-spacetime"[\s\S]{0,900}ted\\s\+jacobson/);
+assert.doesNotMatch(engineSource, /thermodynamics-spacetime"[\s\S]{0,900}t\\.\\?\\s\+jacobson/);
+assert.match(engineSource, /score \+= 100/);
+assert.match(engineSource, /score \+= 80/);
 
 assert.match(blindPrompt, /0 to 10 in 0\.5 increments/);
 assert.match(blindPrompt, /Use 0 when no correct, relevant, manuscript-contained contribution survives/);
