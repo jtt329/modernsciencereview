@@ -821,6 +821,32 @@ function dedupePapers<T extends typeof papersTable.$inferSelect>(papers: T[]): T
   });
 }
 
+function reviewMetadataNormalizationText(review?: {
+  centralClaim?: string | null;
+  summary?: string | null;
+  finalJudgment?: string | null;
+  coverageLedgerJson?: string | null;
+} | null) {
+  if (!review) return "";
+  const ledger = parseJsonObject(review.coverageLedgerJson ?? null);
+  const organicCohortProfile = ledger?.organicCohortProfile && typeof ledger.organicCohortProfile === "object"
+    ? ledger.organicCohortProfile as Record<string, unknown>
+    : {};
+  return [
+    review.centralClaim,
+    review.summary,
+    review.finalJudgment,
+    ledger?.centralClaim,
+    ledger?.scientificReview,
+    ledger?.comparisonCohort,
+    ledger?.localCohort,
+    ledger?.broadField,
+    ledger?.specialtyField,
+    organicCohortProfile.comparatorSearchSummary,
+    Array.isArray(ledger?.subfields) ? ledger.subfields.join(" ") : "",
+  ].filter(Boolean).join("\n").slice(0, 6000);
+}
+
 function splitAuthorNamesForMetadata(value: string) {
   return value
     .split(/\s*(?:;|\band\b|,(?=\s*[A-Z][A-Za-z.'-]+(?:\s|$)))\s*/i)
@@ -2610,8 +2636,8 @@ router.get("/papers/export", async (req, res) => {
       : null;
 
     const exported = papers.map(paperRecord => {
-      const p = normalizePaperDisplayMetadata(paperRecord);
-      const r = reviewMap.get(p.id);
+      const r = reviewMap.get(paperRecord.id);
+      const p = normalizePaperDisplayMetadata(paperRecord, reviewMetadataNormalizationText(r));
       const coverageLedger = r ? parseJsonObject(r.coverageLedgerJson) : null;
       const reviewObjectVersion = String(coverageLedger?.reviewObjectVersion ?? "");
       const isCanonicalReview =
@@ -2965,8 +2991,7 @@ router.get("/papers/export", async (req, res) => {
 // GET /api/papers — list all papers
 router.get("/papers", async (req, res) => {
   try {
-    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)))
-      .map((paper) => normalizePaperDisplayMetadata(paper));
+    const paperRecords = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select({
       paperId: reviewsTable.paperId,
       summary: reviewsTable.summary,
@@ -2975,6 +3000,7 @@ router.get("/papers", async (req, res) => {
       coverageLedgerJson: reviewsTable.coverageLedgerJson,
     }).from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
+    const papers = paperRecords.map((paper) => normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(reviewMap.get(paper.id))));
     const papersWithSummary = papers.map(p => {
       const review = reviewMap.get(p.id);
       const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
@@ -3065,7 +3091,7 @@ router.get("/papers/:id", async (req, res) => {
     if (!paper) { res.status(404).json({ error: "Paper not found" }); return; }
 
     const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
-    res.json({ paper: normalizePaperDisplayMetadata(paper), review: review || null });
+    res.json({ paper: normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(review)), review: review || null });
   } catch (err: any) {
     logger.error({ err }, "Error getting paper");
     res.status(500).json({ error: err.message });

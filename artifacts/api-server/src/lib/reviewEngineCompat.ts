@@ -3491,7 +3491,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   },
   {
     id: "kodama-conserved-energy-flux",
-    match: /\b(?:conserved\s+energy\s+flux\s+for\s+the\s+spherically\s+symmetric\s+system\s+and\s+the\s+back\s+reaction\s+problem|kodama[\s\S]{0,100}conserved\s+energy\s+flux|ptp\.63\.1217|10\.1143\/ptp\.63\.1217)\b/i,
+    match: /\b(?:conserved\s+energy\s+flux\s+for\s+the\s+spherically\s+symmetric\s+system\s+and\s+the\s+back\s+reaction\s+problem|kodama[\s\S]{0,100}conserved\s+energy\s+flux|exact\s+locally\s+conserved\s+energy\s+flux[\s\S]{0,180}spherically\s+symmetric\s+spacetimes|spherically\s+symmetric\s+spacetimes[\s\S]{0,180}locally\s+conserved\s+energy\s+flux|ptp\.63\.1217|10\.1143\/ptp\.63\.1217)\b/i,
     override: {
       title: "Conserved Energy Flux for the Spherically Symmetric System and the Back Reaction Problem",
       authors: ["Hideo Kodama"],
@@ -6001,7 +6001,7 @@ export function normalizePaperDisplayMetadata<T extends {
   title?: string | null;
   paperAuthors?: string | null;
   dateMetadata?: unknown;
-}>(paper: T): T {
+}>(paper: T, extraNormalizationText = ""): T {
   const existingMetadata = paper.dateMetadata && typeof paper.dateMetadata === "object"
     ? paper.dateMetadata as Record<string, unknown>
     : {};
@@ -6030,6 +6030,7 @@ export function normalizePaperDisplayMetadata<T extends {
       rawExtractedAuthors: asString(existingMetadata.rawExtractedAuthors, asString(paper.paperAuthors, "")),
     }),
     [
+      extraNormalizationText,
       paper.title,
       paper.paperAuthors,
       asString(existingMetadata.rawExtractedTitle),
