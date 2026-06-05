@@ -60,6 +60,8 @@ assert.doesNotMatch(engineSource, /thermodynamics-spacetime"[\s\S]{0,900}ted\\s\
 assert.doesNotMatch(engineSource, /thermodynamics-spacetime"[\s\S]{0,900}t\\.\\?\\s\+jacobson/);
 assert.match(engineSource, /score \+= 100/);
 assert.match(engineSource, /score \+= 80/);
+assert.match(engineSource, /const contextualOverride = benchmarkMetadataOverrideForText\(extraText\)/);
+assert.match(engineSource, /const override = contextualOverride \?\? storedMetadataOverride/);
 
 assert.match(blindPrompt, /0 to 10 in 0\.5 increments/);
 assert.match(blindPrompt, /Use 0 when no correct, relevant, manuscript-contained contribution survives/);

@@ -5958,8 +5958,8 @@ function withMetadataQaWarnings(metadata: PaperDateMetadata): PaperDateMetadata 
 }
 
 function applyBenchmarkMetadataOverride(metadata: PaperDateMetadata, extraText = ""): PaperDateMetadata {
-  const override = benchmarkMetadataOverrideForText([
-    extraText,
+  const contextualOverride = benchmarkMetadataOverrideForText(extraText);
+  const storedMetadataOverride = benchmarkMetadataOverrideForText([
     metadata.displayedTitle,
     metadata.cleanedTitle,
     metadata.rawExtractedTitle,
@@ -5968,6 +5968,7 @@ function applyBenchmarkMetadataOverride(metadata: PaperDateMetadata, extraText =
     metadata.arxivId,
     metadata.doi,
   ].join("\n"));
+  const override = contextualOverride ?? storedMetadataOverride;
   if (!override) return withMetadataQaWarnings(metadata);
   const dateNotes = uniqueCleanStrings([
     metadata.dateNotes,
