@@ -60,8 +60,15 @@ assert.match(engineSource, /"gr-qc\/9503020": \["Ted Jacobson", "Gungwon Kang", 
 assert.match(engineSource, /"gr-qc\/9502009": \["Ted Jacobson", "Gungwon Kang", "Robert C\. Myers"\]/);
 assert.doesNotMatch(engineSource, /thermodynamics-spacetime"[\s\S]{0,900}ted\\s\+jacobson/);
 assert.doesNotMatch(engineSource, /thermodynamics-spacetime"[\s\S]{0,900}t\\.\\?\\s\+jacobson/);
-assert.match(engineSource, /score \+= 100/);
-assert.match(engineSource, /score \+= 80/);
+assert.match(engineSource, /score \+= 120/);
+assert.match(engineSource, /score \+= 90/);
+assert.match(engineSource, /score \+= 160/);
+assert.match(engineSource, /hep-th\/9905177/);
+assert.match(engineSource, /hep-th\/0603001/);
+assert.match(engineSource, /0904\.2765/);
+assert.match(engineSource, /xmlTagText\(match\[1\], "name"\)/);
+assert.match(engineSource, /\^\(references\|bibliography\|acknowledg\?ments\?\|works cited\)\\s\*\[:\.\]\?\\s\*\$/);
+assert.match(engineSource, /Blinded review input is much shorter than raw extraction/);
 assert.match(engineSource, /const rawExtractionOverride = benchmarkMetadataOverrideForText/);
 assert.match(engineSource, /const contextualOverride = benchmarkMetadataOverrideForText\(extraText\)/);
 assert.match(engineSource, /const override = rawExtractionOverride \?\? contextualOverride \?\? storedMetadataOverride/);
@@ -106,6 +113,29 @@ async function assertKnownBenchmarkMetadataRegression() {
     if (normalized.dateMetadata?.arxivId !== "gr-qc/9503020") {
       throw new Error("wrong normalized arXiv id: " + normalized.dateMetadata?.arxivId);
     }
+    const staleRyuRecord = {
+      title: "Black Holes and Entropy",
+      paperAuthors: "Jacob D. Bekenstein",
+      dateMetadata: {
+        rawExtractedTitle: "Holographic Derivation of Entanglement Entropy from AdS/CFT",
+        cleanedTitle: "Black Holes and Entropy",
+        displayedTitle: "Black Holes and Entropy",
+        displayedAuthors: ["Jacob D. Bekenstein"],
+        rawExtractedAuthors: "Jacob D. Bekenstein",
+        arxivId: "hep-th/0603001",
+        doi: "10.1103/PhysRevD.7.2333",
+      },
+    };
+    const normalizedRyu = normalizePaperDisplayMetadata(
+      staleRyuRecord,
+      "The entanglement entropy of a subsystem in a conformal field theory is given holographically by the area of a minimal surface in AdS/CFT.",
+    );
+    if (normalizedRyu.title !== "Holographic Derivation of Entanglement Entropy from AdS/CFT") {
+      throw new Error("stale Ryu record was not repaired: " + normalizedRyu.title);
+    }
+    if (normalizedRyu.paperAuthors !== "Shinsei Ryu, Tadashi Takayanagi") {
+      throw new Error("stale Ryu authors were not repaired: " + normalizedRyu.paperAuthors);
+    }
     const extracted = await extractMetadata(\`
 McGill/94-45; UMDGR-95-047
 Increase of Black Hole Entropy in Higher Curvature Gravity
@@ -122,6 +152,37 @@ The second law of black hole thermodynamics is considered for higher curvature g
     }
     if (!/model metadata extraction was bypassed/i.test(extracted.dateMetadata.titleCleaningNotes)) {
       throw new Error("canonical extraction path was not used");
+    }
+    const ryuWithCitedBekenstein = await extractMetadata(\`
+hep-th/0603001
+Holographic Derivation of Entanglement Entropy from AdS/CFT
+Shinsei Ryu and Tadashi Takayanagi
+
+Abstract
+We present a holographic derivation of entanglement entropy from AdS/CFT.
+
+References
+J. D. Bekenstein, Black Holes and Entropy, Phys. Rev. D 7, 2333 (1973), doi:10.1103/PhysRevD.7.2333.
+\`, { fileName: "25_Ryu__Takayanagi__Holographic_Derivation_of_Entanglement_Entropy_from_AdSCFT.pdf" });
+    if (ryuWithCitedBekenstein.title !== "Holographic Derivation of Entanglement Entropy from AdS/CFT") {
+      throw new Error("Ryu metadata was contaminated by cited Bekenstein DOI: " + ryuWithCitedBekenstein.title);
+    }
+    if (ryuWithCitedBekenstein.authors !== "Shinsei Ryu, Tadashi Takayanagi") {
+      throw new Error("wrong Ryu authors: " + ryuWithCitedBekenstein.authors);
+    }
+    if (ryuWithCitedBekenstein.dateMetadata?.doi !== "10.1103/PhysRevLett.96.181602") {
+      throw new Error("wrong Ryu DOI: " + ryuWithCitedBekenstein.dateMetadata?.doi);
+    }
+    const bousso = await extractMetadata(\`
+hep-th/9905177
+A Covariant Entropy Conjecture
+Raphael Bousso
+
+Abstract
+The covariant entropy conjecture is formulated using light-sheets.
+\`, { fileName: "24_Bousso__A_Covariant_Entropy_Conjecture.pdf" });
+    if (bousso.authors !== "Raphael Bousso") {
+      throw new Error("wrong Bousso authors: " + bousso.authors);
     }
     })();
   `);
