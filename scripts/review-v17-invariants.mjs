@@ -431,6 +431,8 @@ assert.match(routesSource, /adjudicator/);
 assert.match(routesSource, /GEMINI_METADATA_MODEL/);
 assert.match(routesSource, /GEMINI_PASS_MODEL/);
 assert.match(routesSource, /attempt \? \{ attempt \}/);
+assert.doesNotMatch(routesSource, /reuseReason: "metadata"/);
+assert.match(routesSource, /Do not reuse completed reviews from title\/author metadata alone/);
 
 assert.match(engineSource, /TITLE_PAGE_METADATA_PROMPT/);
 assert.match(engineSource, /extractTitlePageMetadataFromPdf/);

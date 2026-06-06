@@ -3462,47 +3462,9 @@ if (existingBySource?.review) {
   return { ...existingBySource, attempt, batchRunId, queueItemId };
 }
 
-const existingByMetadata = allowExistingReviewReuse
-  ? await existingLogicalSubmission(
-      user.id,
-      metadata.title,
-      metadata.authors,
-      expectedModelName,
-    )
-  : null;
-if (existingByMetadata?.review) {
-  logger.info({
-    paperId: existingByMetadata.paper.id,
-    promptVersion: REVIEW_PROMPT_VERSION,
-    promptHash: REVIEW_PROMPT_HASH,
-    cacheUsed: true,
-    previousReviewUsed: true,
-    reuseReason: "metadata",
-    comparatorContextIncluded: false,
-    adjudicatorContextIncluded: false,
-  }, "Reused existing review by metadata");
-  if (resolveSubmission) resolveSubmission(existingByMetadata);
-  attemptContext.paperId = existingByMetadata.paper.id;
-  const attempt = await updateReviewAttemptProgress(attemptContext, {
-    stageName: "save_review",
-    stageType: "storage",
-    reviewStatus: "completed_reused",
-    failureStatus: "completed",
-    retryable: false,
-    debugPayload: completedAttemptDebugPayload(attemptContext, {
-      cacheUsed: true,
-      previousReviewUsed: true,
-      reuseReason: "metadata",
-      savedPaperId: existingByMetadata.paper.id,
-      savedReviewId: existingByMetadata.review.id,
-    }),
-  });
-  if (submissionKey) {
-    const key = submissionKey;
-    setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
-  }
-  return { ...existingByMetadata, attempt, batchRunId, queueItemId };
-}
+// Do not reuse completed reviews from title/author metadata alone. Metadata can be
+// contaminated by OCR, references, or old fallback paths; exact source-hash reuse is
+// the safe cost-control path.
 
 // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
 setAttemptStage(attemptContext, "blind_pass_1", "scientific_review", GEMINI_PASS_MODEL);
