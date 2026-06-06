@@ -3439,6 +3439,7 @@ const KNOWN_ARXIV_AUTHOR_OVERRIDES: Record<string, string[]> = {
   "gr-qc/0602001": ["Christopher Eling", "Robert Guedens", "Ted Jacobson"],
   "gr-qc/0612089": ["M. Akbar", "Rong-Gen Cai"],
   "1110.4055": ["Ernesto Frodden", "Amit Ghosh", "Alejandro Perez"],
+  "1106.4427": ["Valerio Faraoni"],
 };
 
 function knownArxivAuthors(arxivId?: string) {
@@ -3619,6 +3620,18 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
     },
   },
   {
+    id: "faraoni-cosmological-apparent-trapping-horizons",
+    match: /\b(?:1106\.4427|cosmological\s+apparent\s+and\s+trapping\s+horizons|faraoni[\s\S]{0,120}(?:apparent|trapping)\s+horizons)\b/i,
+    override: {
+      title: "Cosmological Apparent and Trapping Horizons",
+      authors: ["Valerio Faraoni"],
+      arxivId: "1106.4427",
+      journalName: "International Journal of Modern Physics D",
+      journalPublicationDate: "2011",
+      dateNotes: "Benchmark metadata override for Faraoni's cosmological apparent/trapping horizons paper.",
+    },
+  },
+  {
     id: "bousso-covariant-entropy-conjecture",
     match: /\b(?:hep-th\/9905177|covariant\s+entropy\s+conjecture|bousso[\s\S]{0,120}light[-\s]*sheets?|jhep\s*9907\s*:?\s*004|10\.1088\/1126-6708\/1999\/07\/004)\b/i,
     override: {
@@ -3765,6 +3778,41 @@ function benchmarkMetadataOverrideCandidate(parts: Array<unknown>) {
     .map((part) => Array.isArray(part) ? part.join(", ") : asString(part))
     .filter(Boolean)
     .join("\n");
+}
+
+function benchmarkOverrideCompatibleWithMetadata(
+  override: BenchmarkMetadataOverride,
+  metadata: PaperDateMetadata,
+  options: { allowRawTitleRepair?: boolean } = {},
+) {
+  const rawTitle = metadata.rawExtractedTitle || "";
+  if (options.allowRawTitleRepair && rawTitle) {
+    const cleanedRawTitle = cleanDisplayTitle(rawTitle).title;
+    const rawTitleSimilarity = Math.max(
+      titleSimilarity(rawTitle, override.title),
+      cleanedRawTitle === "Unknown Title" ? 0 : titleSimilarity(cleanedRawTitle, override.title),
+    );
+    if (rawTitleSimilarity >= 0.7) return true;
+  }
+
+  const metadataArxivId = normalizeArxivId(metadata.arxivId).toLowerCase();
+  const overrideArxivId = normalizeArxivId(override.arxivId).toLowerCase();
+  if (metadataArxivId && overrideArxivId && metadataArxivId !== overrideArxivId) return false;
+
+  const metadataDoi = normalizeDoi(metadata.doi);
+  const overrideDoi = normalizeDoi(override.doi);
+  if (metadataDoi && overrideDoi && metadataDoi !== overrideDoi) return false;
+
+  // If the manuscript/header has a strong arXiv identity, a DOI-only benchmark
+  // hit from references must not overwrite it unless the visible title already
+  // matches the override. This prevents cited classic papers from becoming the
+  // uploaded paper's display metadata.
+  if (metadataArxivId && !overrideArxivId) {
+    const metadataTitle = metadata.displayedTitle || metadata.cleanedTitle || metadata.rawExtractedTitle;
+    if (metadataTitle && titleSimilarity(metadataTitle, override.title) < 0.75) return false;
+  }
+
+  return true;
 }
 
 function firstArxivIdFromText(value?: string) {
@@ -6098,7 +6146,16 @@ function applyBenchmarkMetadataOverride(metadata: PaperDateMetadata, extraText =
     metadata.arxivId,
     metadata.doi,
   ].join("\n"));
-  const override = rawExtractionOverride ?? contextualOverride ?? storedMetadataOverride;
+  const override = [
+    { candidate: rawExtractionOverride, allowRawTitleRepair: true },
+    { candidate: contextualOverride, allowRawTitleRepair: false },
+    { candidate: storedMetadataOverride, allowRawTitleRepair: false },
+  ].find((entry): entry is { candidate: BenchmarkMetadataOverride; allowRawTitleRepair: boolean } => {
+    if (!entry.candidate) return false;
+    return benchmarkOverrideCompatibleWithMetadata(entry.candidate, metadata, {
+      allowRawTitleRepair: entry.allowRawTitleRepair,
+    });
+  })?.candidate;
   if (!override) return withMetadataQaWarnings(metadata);
   const dateNotes = uniqueCleanStrings([
     metadata.dateNotes,
@@ -6539,6 +6596,23 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     bibliographicMetadata?.title,
     bibliographicMetadata?.authors,
   ]);
+  if (strongDetectedArxivId && arxivMetadata?.title) {
+    const authoritativeMetadata = metadataFromAuthoritativeArxiv(arxivMetadata, {
+      rawExtractedTitle: fallback.title,
+      rawExtractedAuthors: fallback.authors,
+      knownAuthorList: knownArxivAuthorList,
+      detectedDoi: strongDetectedDoi,
+      evidenceText: trustedIdentifierText,
+      notes: "Strong arXiv identifier was found in filename, PDF metadata, or manuscript header; model metadata extraction was bypassed.",
+    });
+    if (authoritativeMetadata) {
+      return {
+        title: authoritativeMetadata.displayedTitle,
+        authors: authoritativeMetadata.displayedAuthors.join(", "),
+        dateMetadata: authoritativeMetadata,
+      };
+    }
+  }
   const trustedBenchmarkOverride = benchmarkMetadataOverrideForText(trustedBenchmarkOverrideText);
   if (trustedBenchmarkOverride) {
     const canonicalMetadata = metadataFromCanonicalBenchmarkOverride(trustedBenchmarkOverride, {
@@ -6556,23 +6630,6 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       authors: canonicalMetadata.displayedAuthors.join(", "),
       dateMetadata: canonicalMetadata,
     };
-  }
-  if (strongDetectedArxivId && arxivMetadata?.title) {
-    const authoritativeMetadata = metadataFromAuthoritativeArxiv(arxivMetadata, {
-      rawExtractedTitle: fallback.title,
-      rawExtractedAuthors: fallback.authors,
-      knownAuthorList: knownArxivAuthorList,
-      detectedDoi: strongDetectedDoi,
-      evidenceText: trustedIdentifierText,
-      notes: "Strong arXiv identifier was found in filename, PDF metadata, or manuscript header; model metadata extraction was bypassed.",
-    });
-    if (authoritativeMetadata) {
-      return {
-        title: authoritativeMetadata.displayedTitle,
-        authors: authoritativeMetadata.displayedAuthors.join(", "),
-        dateMetadata: authoritativeMetadata,
-      };
-    }
   }
   if (strongDetectedDoi && bibliographicMetadata?.title) {
     const authoritativeMetadata = metadataFromAuthoritativeBibliographic(bibliographicMetadata, {

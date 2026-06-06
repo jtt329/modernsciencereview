@@ -65,13 +65,18 @@ assert.match(engineSource, /score \+= 90/);
 assert.match(engineSource, /score \+= 160/);
 assert.match(engineSource, /hep-th\/9905177/);
 assert.match(engineSource, /hep-th\/0603001/);
+assert.match(engineSource, /1106\.4427/);
 assert.match(engineSource, /0904\.2765/);
 assert.match(engineSource, /xmlTagText\(match\[1\], "name"\)/);
 assert.match(engineSource, /\^\(references\|bibliography\|acknowledg\?ments\?\|works cited\)\\s\*\[:\.\]\?\\s\*\$/);
 assert.match(engineSource, /Blinded review input is much shorter than raw extraction/);
 assert.match(engineSource, /const rawExtractionOverride = benchmarkMetadataOverrideForText/);
 assert.match(engineSource, /const contextualOverride = benchmarkMetadataOverrideForText\(extraText\)/);
-assert.match(engineSource, /const override = rawExtractionOverride \?\? contextualOverride \?\? storedMetadataOverride/);
+assert.match(engineSource, /function benchmarkOverrideCompatibleWithMetadata/);
+assert.match(engineSource, /allowRawTitleRepair/);
+assert.match(engineSource, /cleanedRawTitle === "Unknown Title" \? 0 : titleSimilarity\(cleanedRawTitle, override\.title\)/);
+assert.match(engineSource, /rawTitleSimilarity >= 0\.7/);
+assert.match(engineSource, /metadataArxivId && !overrideArxivId/);
 assert.match(engineSource, /const rawExtractionOverride = benchmarkMetadataOverrideForText\(\[[\s\S]{0,240}metadata\.rawExtractedTitle/);
 assert.match(engineSource, /function metadataFromAuthoritativeArxiv/);
 assert.match(engineSource, /function metadataFromAuthoritativeBibliographic/);
@@ -183,6 +188,26 @@ The covariant entropy conjecture is formulated using light-sheets.
 \`, { fileName: "24_Bousso__A_Covariant_Entropy_Conjecture.pdf" });
     if (bousso.authors !== "Raphael Bousso") {
       throw new Error("wrong Bousso authors: " + bousso.authors);
+    }
+    const faraoniWithCitedBekenstein = await extractMetadata(\`
+arXiv:1106.4427v1 [gr-qc] 22 Jun 2011
+Cosmological apparent and trapping horizons
+Valerio Faraoni
+
+Abstract
+The apparent horizon and trapping horizon of cosmological spacetimes are discussed.
+
+References
+J. D. Bekenstein, Black Holes and Entropy, Phys. Rev. D 7, 2333 (1973), doi:10.1103/PhysRevD.7.2333.
+\`, { fileName: "23_Faraoni__Cosmological_Apparent_and_Trapping_Horizons.pdf" });
+    if (faraoniWithCitedBekenstein.title !== "Cosmological Apparent and Trapping Horizons") {
+      throw new Error("Faraoni metadata was contaminated by cited Bekenstein DOI: " + faraoniWithCitedBekenstein.title);
+    }
+    if (faraoniWithCitedBekenstein.authors !== "Valerio Faraoni") {
+      throw new Error("wrong Faraoni authors: " + faraoniWithCitedBekenstein.authors);
+    }
+    if (faraoniWithCitedBekenstein.dateMetadata?.arxivId !== "1106.4427") {
+      throw new Error("wrong Faraoni arXiv id: " + faraoniWithCitedBekenstein.dateMetadata?.arxivId);
     }
     })();
   `);
