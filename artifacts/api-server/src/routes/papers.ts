@@ -220,8 +220,49 @@ function isRetryableAttemptError(message: string, statusCode: number | null) {
   return /bad escaped character|could not parse|json|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
 }
 
-function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" | "stageType" | "errorMessage" | "reviewStatus" | "extractionCompletenessStatus" | "retryable">) {
+function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" | "stageType" | "errorMessage" | "reviewStatus" | "extractionCompletenessStatus" | "retryable">): string | null {
   const message = record.errorMessage || "";
+  if (!message.trim()) {
+    const activeReviewStatuses = new Set([
+      "upload_received",
+      "queued",
+      "running",
+      "request_received",
+      "pdf_text_extraction",
+      "pdf_fallback_extraction",
+      "extraction_quality_check",
+      "metadata_extraction",
+      "title_author_extraction",
+      "blind_pass_1",
+      "blind_pass_2",
+      "adjudicator",
+      "json_parse",
+      "review_validation",
+      "save_review",
+      "manual_text_received",
+    ]);
+    const activeStageNames = new Set<ReviewAttemptStageName>([
+      "upload_received",
+      "request_received",
+      "pdf_text_extraction",
+      "pdf_fallback_extraction",
+      "extraction_quality_check",
+      "metadata_extraction",
+      "title_author_extraction",
+      "blind_pass_1",
+      "blind_pass_2",
+      "adjudicator",
+      "json_parse",
+      "review_validation",
+      "save_review",
+    ]);
+    if (
+      activeReviewStatuses.has(record.reviewStatus ?? "") ||
+      activeStageNames.has(record.stageName)
+    ) {
+      return null;
+    }
+  }
   if (/input self-check failed|deterministic reviewable extraction/i.test(message)) {
     return "failed_validation";
   }
