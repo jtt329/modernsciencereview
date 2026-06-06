@@ -17,7 +17,7 @@ interface SubmissionFormProps {
 interface QueuedFile {
   id: string;
   file: File;
-  status: 'pending' | 'processing' | 'done' | 'error';
+  status: 'pending' | 'processing' | 'done' | 'duplicate' | 'error';
   error?: string;
   attempt?: any;
   attemptId?: string;
@@ -112,6 +112,9 @@ function stageLabel(stageName: string | null | undefined) {
 function activeStageLabel(attempt: any) {
   const stageName = attempt?.stageName || attempt?.debugPayload?.stageName;
   const reviewStatus = attempt?.reviewStatus || attempt?.debugPayload?.jobStatus;
+  if (reviewStatus === 'duplicate_existing') {
+    return 'Already in system; existing review was not rerun.';
+  }
   switch (stageName) {
     case 'upload_received':
       return 'Queued on server...';
@@ -151,6 +154,8 @@ function failureStatusLabel(value: string | null | undefined) {
   switch (value) {
     case 'completed':
       return 'Completed';
+    case 'duplicate_existing':
+      return 'Already in system';
     case 'failed_extraction_truncated':
       return 'Invalid extraction';
     case 'failed_pdf_fallback_json':
@@ -470,7 +475,8 @@ export default function SubmissionForm({
   const [doneCount, setDoneCount] = useState(0);
 
   const isBatch = files.length > 1;
-  const remainingFiles = files.filter(f => f.status !== 'done');
+  const isHandledFile = (file: QueuedFile) => file.status === 'done' || file.status === 'duplicate';
+  const remainingFiles = files.filter(f => !isHandledFile(f));
   const failedFiles = files.filter(f => f.status === 'error');
   const effectiveReviewMode: ReviewMode = isAdmin ? reviewMode : 'normal-review';
 
@@ -634,7 +640,7 @@ export default function SubmissionForm({
         return;
       }
 
-      const filesToProcess = files.filter(f => f.status !== 'done');
+      const filesToProcess = files.filter(f => !isHandledFile(f));
       if (filesToProcess.length === 0) {
         onClose();
         return;
@@ -655,7 +661,7 @@ export default function SubmissionForm({
         apiRuntimeInfo,
       });
 
-      let done = files.filter(f => f.status === 'done').length;
+      let done = files.filter(isHandledFile).length;
       let failures = 0;
       const skipSelectAfterSubmit = files.length > 1;
       setDoneCount(done);
@@ -776,7 +782,16 @@ export default function SubmissionForm({
           await onReviewJobComplete(data, skipSelectAfterSubmit);
           done++;
           setDoneCount(done);
-          setFileStatus(entry.qf.id, { status: 'done', error: undefined, attempt: undefined });
+          const attempt = data?.attempt;
+          if (attempt?.reviewStatus === 'duplicate_existing') {
+            setFileStatus(entry.qf.id, {
+              status: 'duplicate',
+              error: 'Already in system; existing review was not rerun.',
+              attempt,
+            });
+          } else {
+            setFileStatus(entry.qf.id, { status: 'done', error: undefined, attempt: undefined });
+          }
         } catch (err: any) {
           failures++;
           const message = friendlySubmissionError(err);
@@ -959,6 +974,7 @@ export default function SubmissionForm({
                       key={qf.id}
                       className={`p-3 rounded-xl border text-sm ${
                         qf.status === 'done' ? 'bg-emerald-50 border-emerald-200' :
+                        qf.status === 'duplicate' ? 'bg-sky-50 border-sky-200' :
                         qf.status === 'error' ? 'bg-rose-50 border-rose-200' :
                         qf.status === 'processing' ? 'bg-indigo-50 border-indigo-200' :
                         'bg-slate-50 border-slate-200'
@@ -969,6 +985,8 @@ export default function SubmissionForm({
                           <Loader2 className="w-4 h-4 text-indigo-500 animate-spin shrink-0" />
                         ) : qf.status === 'done' ? (
                           <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                        ) : qf.status === 'duplicate' ? (
+                          <CheckCircle2 className="w-4 h-4 text-sky-500 shrink-0" />
                         ) : qf.status === 'error' ? (
                           <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
                         ) : (
@@ -978,6 +996,9 @@ export default function SubmissionForm({
                           <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
                           {qf.status === 'processing' && (
                             <p className="text-xs text-indigo-500 break-words">{qf.error || reviewModeCopy[effectiveReviewMode].processing}</p>
+                          )}
+                          {qf.status === 'duplicate' && (
+                            <p className="text-xs text-sky-600 break-words">{qf.error || 'Already in system.'}</p>
                           )}
                           {qf.status === 'error' && <p className="text-xs text-rose-600 break-words">{qf.error}</p>}
                         </div>

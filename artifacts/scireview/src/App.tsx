@@ -186,6 +186,7 @@ function isJobComplete(attempt: any, data: any) {
     data?.paper &&
     (attempt?.failureStatus === 'completed' ||
       attempt?.reviewStatus === 'completed' ||
+      attempt?.reviewStatus === 'duplicate_existing' ||
       attempt?.reviewStatus === 'completed_reused' ||
       attempt?.reviewStatus === 'completed_reused_inflight')
   );

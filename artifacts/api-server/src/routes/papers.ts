@@ -461,6 +461,7 @@ function isClientAttempt(record: ReviewAttemptRecord) {
 function isCompletedAttempt(record: ReviewAttemptRecord) {
   return record.failureStatus === "completed" ||
     record.reviewStatus === "completed" ||
+    record.reviewStatus === "duplicate_existing" ||
     record.reviewStatus === "completed_reused" ||
     record.reviewStatus === "completed_reused_inflight";
 }
@@ -3435,22 +3436,25 @@ if (existingBySource?.review) {
     promptHash: REVIEW_PROMPT_HASH,
     cacheUsed: true,
     previousReviewUsed: true,
-    reuseReason: "sourceHash",
+    duplicateReason: "sourceHash",
     comparatorContextIncluded: false,
     adjudicatorContextIncluded: false,
-  }, "Reused existing review by source hash");
+  }, "Detected existing review by source hash");
   if (resolveSubmission) resolveSubmission(existingBySource);
   attemptContext.paperId = existingBySource.paper.id;
   const attempt = await updateReviewAttemptProgress(attemptContext, {
     stageName: "save_review",
     stageType: "storage",
-    reviewStatus: "completed_reused",
+    reviewStatus: "duplicate_existing",
     failureStatus: "completed",
     retryable: false,
+    errorMessage: "This exact PDF/text source is already in the system.",
     debugPayload: completedAttemptDebugPayload(attemptContext, {
       cacheUsed: true,
       previousReviewUsed: true,
-      reuseReason: "sourceHash",
+      duplicateReason: "sourceHash",
+      duplicateExistingPaperId: existingBySource.paper.id,
+      duplicateExistingReviewId: existingBySource.review.id,
       savedPaperId: existingBySource.paper.id,
       savedReviewId: existingBySource.review.id,
     }),
