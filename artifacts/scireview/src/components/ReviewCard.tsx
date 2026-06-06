@@ -327,7 +327,7 @@ type IcoTabId = 'input' | 'construction' | 'output';
 const ICO_TAB_THEME = {
   activeCard: 'border-indigo-100/70 bg-indigo-300/[0.12] shadow-lg shadow-indigo-950/20 ring-1 ring-indigo-100/25',
   inactiveCard: 'border-indigo-300/10 bg-indigo-950/25 opacity-80 hover:border-indigo-200/30 hover:bg-indigo-900/35 hover:opacity-100',
-  panel: 'border-indigo-200/20 bg-indigo-300/[0.07]',
+  panel: 'border-indigo-100/70 bg-indigo-300/[0.07] shadow-lg shadow-indigo-950/20 ring-1 ring-indigo-100/25',
 };
 
 const validityTone = (value: unknown): { label: string; className: string; tone: 'green' | 'yellow' | 'red' | 'neutral' } => {
@@ -1137,7 +1137,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     );
                   })}
                 </div>
-                <div className={`rounded-2xl border p-4 ${ICO_TAB_THEME.panel}`}>
+                <div className={`rounded-2xl border-2 p-4 ${ICO_TAB_THEME.panel}`}>
                 {activeIcoTab === 'input' && <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Input Strength</p>
