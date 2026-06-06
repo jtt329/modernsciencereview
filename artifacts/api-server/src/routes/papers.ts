@@ -222,9 +222,6 @@ function isRetryableAttemptError(message: string, statusCode: number | null) {
 
 function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" | "stageType" | "errorMessage" | "reviewStatus" | "extractionCompletenessStatus" | "retryable">) {
   const message = record.errorMessage || "";
-  if (record.stageName === "interrupted_by_server_restart" || record.reviewStatus === "interrupted_by_server_restart") {
-    return "interrupted_by_server_restart";
-  }
   if (/input self-check failed|deterministic reviewable extraction/i.test(message)) {
     return "failed_validation";
   }
@@ -242,6 +239,9 @@ function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" |
     (record.extractionCompletenessStatus && isExtractionBlockingStatus(record.extractionCompletenessStatus))
   ) {
     return record.extractionCompletenessStatus === "needs_manual_repair" ? "needs_manual_repair" : "failed_extraction_truncated";
+  }
+  if (record.stageName === "interrupted_by_server_restart" || record.reviewStatus === "interrupted_by_server_restart") {
+    return "interrupted_by_server_restart";
   }
   if (record.stageName === "review_validation" || /validation|missing|required|invalid/i.test(message)) {
     return "failed_validation";
@@ -1403,13 +1403,42 @@ async function touchReviewJobHeartbeat(attemptId: string) {
 
 async function markReviewJobAutoRecoveryExceeded(record: ReviewAttemptRecord, reason: string) {
   const payload = debugPayloadObject(record.debugPayload);
+  const originalStageName =
+    typeof payload.originalStageName === "string" && payload.originalStageName
+      ? payload.originalStageName as ReviewAttemptStageName
+      : record.stageName;
+  const originalStageType =
+    typeof payload.originalStageType === "string" && payload.originalStageType
+      ? payload.originalStageType as ReviewAttemptStageType
+      : record.stageType;
+  const extractionBlocked =
+    Boolean(record.extractionCompletenessStatus && isExtractionBlockingStatus(record.extractionCompletenessStatus)) ||
+    originalStageName === "pdf_fallback_extraction" ||
+    originalStageName === "extraction_quality_check" ||
+    originalStageName === "pdf_text_extraction";
+  const finalStageName = extractionBlocked
+    ? (originalStageName === "pdf_fallback_extraction" ? "pdf_fallback_extraction" : "extraction_quality_check")
+    : "interrupted_by_server_restart";
+  const finalStageType = extractionBlocked
+    ? (originalStageName === "pdf_fallback_extraction" ? "helper" : originalStageType === "helper" ? "helper" : "extraction")
+    : "system";
+  const errorMessage = extractionBlocked
+    ? `Extraction/PDF fallback did not produce reviewable manuscript text before job recovery stopped (${reason}). Manual text repair, cleaner PDF, or PDF-visible last resort is available.`
+    : `Review job exceeded ${REVIEW_JOB_MAX_AUTO_RETRIES} automatic restart recoveries (${reason}). Manual retry is available.`;
   const failedRecord: ReviewAttemptRecord = {
     ...record,
-    stageName: "interrupted_by_server_restart",
-    stageType: "system",
-    errorMessage: `Review job exceeded ${REVIEW_JOB_MAX_AUTO_RETRIES} automatic restart recoveries (${reason}). Manual retry is available.`,
+    stageName: finalStageName,
+    stageType: finalStageType,
+    errorMessage,
     reviewStatus: "needs_manual_retry",
-    failureStatus: "retryable",
+    failureStatus: failureStatusForAttempt({
+      ...record,
+      stageName: finalStageName,
+      stageType: finalStageType,
+      errorMessage,
+      reviewStatus: "needs_manual_retry",
+      retryable: true,
+    }),
     retryable: true,
     debugPayload: {
       ...payload,
@@ -1418,6 +1447,9 @@ async function markReviewJobAutoRecoveryExceeded(record: ReviewAttemptRecord, re
       autoRecoveryExceededReason: reason,
       autoRecoveryCount: reviewJobAutoRetryCount(record),
       maxAutoRecoveries: REVIEW_JOB_MAX_AUTO_RETRIES,
+      autoRecoveryExceededOriginalStageName: originalStageName,
+      autoRecoveryExceededOriginalStageType: originalStageType,
+      autoRecoveryExceededPreservedFailureStage: extractionBlocked,
       apiRuntimeAtAutoRecoveryExceeded: reviewRuntimeInfo(),
     },
   };
