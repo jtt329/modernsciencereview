@@ -808,10 +808,45 @@ Return a JSON object with exactly these fields:
 - dateNotes: string
 Output valid JSON only.`;
 
+const TITLE_PAGE_METADATA_PROMPT = `You are a focused title-page metadata extractor.
+
+Inspect the attached PDF itself, especially the first page / title page / first manuscript header. Identify only the paper title and the paper authors printed there.
+
+Important:
+- Prefer the visually printed title and author block on the first page over extracted-text guesses, references, citations, embedded PDF metadata, filenames, or DOI pages.
+- Do not use references, bibliography entries, running headers, journal citations, addresses, publisher/copyright text, departments, ZIP codes, or affiliation lines as title or authors.
+- Return personal author names only, in order, stripping footnote/superscript/affiliation markers.
+- If the first page clearly shows a title and authors, return them even if the extracted text hints are noisy.
+- If the title or authors are not visible enough to identify confidently, return an empty title or empty authors array and explain why.
+- Use plain text. Avoid LaTeX unless it is literally part of the title.
+
+Return exactly this JSON object:
+{
+  "title": "",
+  "authors": [],
+  "titleEvidence": "",
+  "authorsEvidence": "",
+  "confidence": 0,
+  "notes": ""
+}`;
+
 const jsonString = { type: "string" };
 const jsonNumber = { type: "number" };
 const jsonBoolean = { type: "boolean" };
 const jsonStringArray = { type: "array", items: jsonString };
+const titlePageMetadataJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "authors", "titleEvidence", "authorsEvidence", "confidence", "notes"],
+  properties: {
+    title: jsonString,
+    authors: jsonStringArray,
+    titleEvidence: jsonString,
+    authorsEvidence: jsonString,
+    confidence: jsonNumber,
+    notes: jsonString,
+  },
+};
 const frameworkConditionalityJsonSchema = {
   type: "object",
   properties: {
@@ -6365,6 +6400,74 @@ export function normalizePaperDisplayMetadata<T extends {
   };
 }
 
+type TitlePageVisualMetadata = {
+  title: string;
+  authors: string[];
+  titleEvidence: string;
+  authorsEvidence: string;
+  confidence: number;
+  notes: string;
+};
+
+async function extractTitlePageMetadataFromPdf(
+  hints: MetadataHints,
+  context: {
+    fallbackTitle?: string;
+    fallbackAuthors?: string;
+    headerText?: string;
+  } = {},
+): Promise<TitlePageVisualMetadata | null> {
+  if (!hints.pdfBase64) return null;
+  try {
+    const helperInput = JSON.stringify({
+      fileNameHint: cleanMetadataText(hints.fileName),
+      embeddedPdfTitleHint: cleanMetadataText(hints.pdfTitle),
+      embeddedPdfAuthorHint: cleanMetadataText(hints.pdfAuthor),
+      deterministicTitleGuess: cleanMetadataText(context.fallbackTitle),
+      deterministicAuthorGuess: cleanMetadataText(context.fallbackAuthors),
+      extractedHeaderTextHint: cleanMetadataText(context.headerText).slice(0, 4000),
+      task: "Inspect the PDF title page visually and identify the paper title and paper authors.",
+    }, null, 2);
+    const { parsed } = await callGemini(
+      TITLE_PAGE_METADATA_PROMPT,
+      {
+        text: helperInput,
+        pdfBase64: hints.pdfBase64,
+        mimeType: hints.mimeType || "application/pdf",
+      },
+      GEMINI_METADATA_MODEL,
+      {
+        maxOutputTokens: 512,
+        includeThoughts: false,
+        responseJsonSchema: titlePageMetadataJsonSchema,
+        temperature: 0,
+      },
+    );
+    const parsedMetadata = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    const titleCleanup = cleanDisplayTitle(asString(parsedMetadata.title));
+    const title = titleCleanup.title === "Unknown Title" ? "" : titleCleanup.title;
+    const authors = uniqueCleanStrings(
+      firstStringArray([parsedMetadata.authors]).flatMap((author) => splitAuthorNames(author)),
+    );
+    const confidence = asNumber(parsedMetadata.confidence, 0, 0, 1);
+    if (!title && authors.length === 0) return null;
+    return {
+      title,
+      authors,
+      titleEvidence: asString(parsedMetadata.titleEvidence),
+      authorsEvidence: asString(parsedMetadata.authorsEvidence),
+      confidence,
+      notes: uniqueCleanStrings([
+        asString(parsedMetadata.notes),
+        titleCleanup.notes,
+      ]).join(" "),
+    };
+  } catch (error) {
+    logger.warn({ err: error, errorMessage: errorMessage(error) }, "Title-page PDF metadata fallback failed");
+    return null;
+  }
+}
+
 export async function extractMetadata(paperContent: string, hints: MetadataHints = {}): Promise<ExtractedPaperMetadata> {
   const fallback = heuristicMetadata(paperContent, hints);
   const headerText = manuscriptHeaderText(paperContent).join("\n");
@@ -6574,7 +6677,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         isSuspiciousTitle(fallbackTitleCleanup.title) ||
         titleSimilarity(parsedTitleCleanup.title, bibliographicMetadata!.title) >= 0.82
       );
-    const bestTitle =
+    let bestTitle =
       shouldPreferArxivTitle
         ? arxivMetadata!.title
         : shouldPreferBibliographicTitle
@@ -6586,6 +6689,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     const authors = displayedAuthors.length > 0
       ? displayedAuthors.join(", ")
       : asString(parsedMetadata.authors, fallback.authors);
+    const parsedAuthorsConfidence = asNumber(parsedMetadata.authorsConfidence, 0, 0, 1);
     let bestAuthors = isSuspiciousAuthors(authors) ? fallback.authors : authors;
     let bestAuthorList = isSuspiciousAuthors(authors)
       ? splitAuthorNames(fallback.authors)
@@ -6607,7 +6711,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         bestAuthorList.length === 0 ||
         bestAuthorList[0] === "Unknown Authors" ||
         arxivAuthorList.length > bestAuthorList.length ||
-        asNumber(parsedMetadata.authorsConfidence, 0, 0, 1) < 0.7
+        parsedAuthorsConfidence < 0.7
       );
     if (usedArxivAuthors) {
       bestAuthorList = arxivAuthorList;
@@ -6621,11 +6725,53 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         bestAuthorList.length === 0 ||
         bestAuthorList[0] === "Unknown Authors" ||
         bibliographicAuthorList.length > bestAuthorList.length ||
-        asNumber(parsedMetadata.authorsConfidence, 0, 0, 1) < 0.75
+        parsedAuthorsConfidence < 0.75
       );
     if (usedBibliographicAuthors) {
       bestAuthorList = bibliographicAuthorList;
       bestAuthors = bibliographicAuthorList.join(", ");
+    }
+    const shouldUseTitlePageVisualMetadata =
+      Boolean(hints.pdfBase64) &&
+      (
+        parsedTitleConfidence < 0.7 ||
+        parsedAuthorsConfidence < 0.75 ||
+        isSuspiciousTitle(bestTitle) ||
+        bestAuthorList.length === 0 ||
+        bestAuthorList[0] === "Unknown Authors" ||
+        isSuspiciousAuthors(bestAuthors)
+      );
+    const titlePageVisualMetadata = shouldUseTitlePageVisualMetadata
+      ? await extractTitlePageMetadataFromPdf(hints, {
+          fallbackTitle: fallback.title,
+          fallbackAuthors: fallback.authors,
+          headerText,
+        })
+      : null;
+    const usedTitlePageVisualTitle =
+      Boolean(titlePageVisualMetadata?.title) &&
+      (titlePageVisualMetadata?.confidence ?? 0) >= 0.8 &&
+      (
+        parsedTitleConfidence < 0.8 ||
+        isSuspiciousTitle(bestTitle) ||
+        titleSimilarity(bestTitle, titlePageVisualMetadata!.title) >= 0.72
+      );
+    if (usedTitlePageVisualTitle && titlePageVisualMetadata?.title) {
+      bestTitle = titlePageVisualMetadata.title;
+    }
+    const usedTitlePageVisualAuthors =
+      Boolean(titlePageVisualMetadata?.authors.length) &&
+      (titlePageVisualMetadata?.confidence ?? 0) >= 0.78 &&
+      (
+        parsedAuthorsConfidence < 0.8 ||
+        bestAuthorList.length === 0 ||
+        bestAuthorList[0] === "Unknown Authors" ||
+        titlePageVisualMetadata!.authors.length > bestAuthorList.length ||
+        isSuspiciousAuthors(bestAuthors)
+      );
+    if (usedTitlePageVisualAuthors && titlePageVisualMetadata?.authors.length) {
+      bestAuthorList = titlePageVisualMetadata.authors;
+      bestAuthors = bestAuthorList.join(", ");
     }
     const titleCleanupNotes = uniqueCleanStrings([
       asString(parsedMetadata.titleCleaningNotes),
@@ -6633,6 +6779,8 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       isSuspiciousTitle(parsedTitleCleanup.title) ? fallbackTitleCleanup.notes : "",
       shouldPreferArxivTitle ? "arXiv metadata replaced low-confidence or suspicious title extraction." : "",
       shouldPreferBibliographicTitle ? `${bibliographicMetadata!.source} metadata replaced low-confidence or suspicious title extraction.` : "",
+      usedTitlePageVisualTitle ? "PDF title-page visual metadata fallback replaced low-confidence or suspicious title extraction." : "",
+      usedTitlePageVisualTitle && titlePageVisualMetadata?.titleEvidence ? `Title evidence: ${titlePageVisualMetadata.titleEvidence}` : "",
     ]).join(" ");
     const benchmarkOverrideText = benchmarkMetadataOverrideCandidate([
       hints.fileName,
@@ -6661,7 +6809,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       cleanedTitle: benchmarkOverride?.title ?? bestTitle,
       displayedTitle: benchmarkOverride?.title ?? bestTitle,
       titleCleaningNotes: titleCleanupNotes || asString(parsedMetadata.titleCleaningNotes),
-      titleConfidence: benchmarkOverride ? Math.max(parsedTitleConfidence, 0.98) : shouldPreferArxivTitle ? Math.max(parsedTitleConfidence, 0.95) : shouldPreferBibliographicTitle ? Math.max(parsedTitleConfidence, bibliographicMetadata?.confidence ?? 0.85) : parsedTitleConfidence,
+      titleConfidence: benchmarkOverride ? Math.max(parsedTitleConfidence, 0.98) : shouldPreferArxivTitle ? Math.max(parsedTitleConfidence, 0.95) : shouldPreferBibliographicTitle ? Math.max(parsedTitleConfidence, bibliographicMetadata?.confidence ?? 0.85) : usedTitlePageVisualTitle ? Math.max(parsedTitleConfidence, titlePageVisualMetadata?.confidence ?? 0.8) : parsedTitleConfidence,
       arxivId: normalizeArxivId(benchmarkOverride?.arxivId || asString(parsedMetadata.arxivId) || parsedTitleCleanup.arxivId || fallbackTitleCleanup.arxivId || arxivMetadata?.arxivId || detectedArxivId),
       reportCodes: uniqueCleanStrings([
         ...firstStringArray([parsedMetadata.reportCodes]),
@@ -6680,12 +6828,14 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         bibliographicMetadata ? bibliographicMetadata.notes : "",
       ]).join(" "),
       rawExtractedAuthors: benchmarkOverride?.authors.join(", ") || asString(parsedMetadata.rawExtractedAuthors, authors),
-      authorsConfidence: benchmarkOverride ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), 0.98) : usedArxivAuthors ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), 0.95) : usedBibliographicAuthors ? Math.max(asNumber(parsedMetadata.authorsConfidence, 0, 0, 1), bibliographicMetadata?.confidence ?? 0.8) : asNumber(parsedMetadata.authorsConfidence, 0, 0, 1),
+      authorsConfidence: benchmarkOverride ? Math.max(parsedAuthorsConfidence, 0.98) : usedArxivAuthors ? Math.max(parsedAuthorsConfidence, 0.95) : usedBibliographicAuthors ? Math.max(parsedAuthorsConfidence, bibliographicMetadata?.confidence ?? 0.8) : usedTitlePageVisualAuthors ? Math.max(parsedAuthorsConfidence, titlePageVisualMetadata?.confidence ?? 0.78) : parsedAuthorsConfidence,
       authorsExtractionNotes: uniqueCleanStrings([
         asString(parsedMetadata.authorsExtractionNotes),
         usedFallbackMultiAuthorBlock ? "Deterministic fallback replaced a one-author parse with a multi-author title-page block." : "",
         usedArxivAuthors ? (knownArxivAuthorList.length > 0 ? "Known arXiv metadata override supplied the complete author list." : "arXiv metadata supplied the complete author list.") : "",
         usedBibliographicAuthors ? `${bibliographicMetadata!.source} metadata supplied a more complete author list.` : "",
+        usedTitlePageVisualAuthors ? "PDF title-page visual metadata fallback supplied the visible author list." : "",
+        usedTitlePageVisualAuthors && titlePageVisualMetadata?.authorsEvidence ? `Author evidence: ${titlePageVisualMetadata.authorsEvidence}` : "",
         benchmarkOverride ? "Known benchmark metadata override supplied canonical authors." : "",
       ]).join(" "),
       displayedAuthors: benchmarkOverride?.authors ?? (bestAuthorList.length > 0 ? bestAuthorList : splitAuthorNames(bestAuthors)),
@@ -6715,13 +6865,20 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         ],
       });
     }
-    const fallbackTitle = arxivMetadata?.title || bibliographicMetadata?.title || (isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title);
+    const titlePageVisualMetadata = await extractTitlePageMetadataFromPdf(hints, {
+      fallbackTitle: fallback.title,
+      fallbackAuthors: fallback.authors,
+      headerText,
+    });
+    const fallbackTitle = arxivMetadata?.title || bibliographicMetadata?.title || titlePageVisualMetadata?.title || (isSuspiciousTitle(fallbackTitleCleanup.title) ? fallback.title : fallbackTitleCleanup.title);
     const fallbackAuthorList = knownArxivAuthorList.length > (arxivMetadata?.authors?.length ?? 0)
       ? knownArxivAuthorList
       : arxivMetadata?.authors?.length
         ? arxivMetadata.authors
         : bibliographicMetadata?.authors?.length
           ? bibliographicMetadata.authors
+          : titlePageVisualMetadata?.authors.length
+            ? titlePageVisualMetadata.authors
         : splitAuthorNames(fallback.authors);
     const fallbackAuthors = fallbackAuthorList.length ? fallbackAuthorList.join(", ") : fallback.authors;
     const benchmarkOverrideText = benchmarkMetadataOverrideCandidate([
@@ -6761,15 +6918,15 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         bibliographicMetadata ? `${bibliographicMetadata.source} metadata was available after model metadata extraction failed.` : "",
         benchmarkOverride?.dateNotes,
       ]).join(" "),
-      titleCleaningNotes: benchmarkOverride?.title ? "Known benchmark metadata override was used after model metadata extraction failed." : arxivMetadata?.title ? "arXiv metadata was used after model metadata extraction failed." : bibliographicMetadata?.title ? `${bibliographicMetadata.source} metadata was used after model metadata extraction failed.` : fallbackTitleCleanup.notes || "Fallback metadata was used.",
+      titleCleaningNotes: benchmarkOverride?.title ? "Known benchmark metadata override was used after model metadata extraction failed." : arxivMetadata?.title ? "arXiv metadata was used after model metadata extraction failed." : bibliographicMetadata?.title ? `${bibliographicMetadata.source} metadata was used after model metadata extraction failed.` : titlePageVisualMetadata?.title ? uniqueCleanStrings(["PDF title-page visual metadata fallback was used after model metadata extraction failed.", titlePageVisualMetadata.titleEvidence ? `Title evidence: ${titlePageVisualMetadata.titleEvidence}` : "", titlePageVisualMetadata.notes]).join(" ") : fallbackTitleCleanup.notes || "Fallback metadata was used.",
       displayedAuthors: benchmarkOverride?.authors ?? fallbackAuthorList,
       rawExtractedAuthors: benchmarkOverride?.authors.join(", ") || fallbackAuthors,
-      authorsConfidence: benchmarkOverride ? 0.98 : fallbackAuthorList.length > 0 && fallbackAuthorList[0] !== "Unknown Authors" ? 0.95 : 0.4,
+      authorsConfidence: benchmarkOverride ? 0.98 : arxivMetadata?.authors?.length || knownArxivAuthorList.length || bibliographicMetadata?.authors?.length ? 0.95 : titlePageVisualMetadata?.authors.length ? Math.max(0.78, titlePageVisualMetadata.confidence) : fallbackAuthorList.length > 0 && fallbackAuthorList[0] !== "Unknown Authors" ? 0.7 : 0.4,
       authorsExtractionNotes: benchmarkOverride
         ? "Known benchmark metadata override was used after model metadata extraction failed."
         : knownArxivAuthorList.length > 0
           ? "Known arXiv metadata override was used after model metadata extraction failed."
-          : arxivMetadata?.authors?.length ? "arXiv metadata was used after model metadata extraction failed." : bibliographicMetadata?.authors?.length ? `${bibliographicMetadata.source} metadata was used after model metadata extraction failed.` : "Fallback metadata was used.",
+          : arxivMetadata?.authors?.length ? "arXiv metadata was used after model metadata extraction failed." : bibliographicMetadata?.authors?.length ? `${bibliographicMetadata.source} metadata was used after model metadata extraction failed.` : titlePageVisualMetadata?.authors.length ? uniqueCleanStrings(["PDF title-page visual metadata fallback was used after model metadata extraction failed.", titlePageVisualMetadata.authorsEvidence ? `Author evidence: ${titlePageVisualMetadata.authorsEvidence}` : "", titlePageVisualMetadata.notes]).join(" ") : "Fallback metadata was used.",
     }, benchmarkOverrideText);
     return {
       title: fallbackMetadata.displayedTitle,

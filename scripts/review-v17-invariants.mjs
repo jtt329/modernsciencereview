@@ -432,6 +432,12 @@ assert.match(routesSource, /GEMINI_METADATA_MODEL/);
 assert.match(routesSource, /GEMINI_PASS_MODEL/);
 assert.match(routesSource, /attempt \? \{ attempt \}/);
 
+assert.match(engineSource, /TITLE_PAGE_METADATA_PROMPT/);
+assert.match(engineSource, /extractTitlePageMetadataFromPdf/);
+assert.match(engineSource, /Inspect the PDF title page visually/);
+assert.match(engineSource, /PDF title-page visual metadata fallback/);
+assert.match(engineSource, /responseJsonSchema: titlePageMetadataJsonSchema/);
+
 assert.match(appSource, /error\.attempt = data\.attempt/);
 assert.match(appSource, /\/api\/review-jobs/);
 assert.match(appSource, /pollReviewJob/);
