@@ -54,6 +54,7 @@ assert.match(engineSource, /v17\.1-computed-ico-halfpoint/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /jacobson-kang-myers-increase-black-hole-entropy/);
 assert.match(engineSource, /jacobson-kang-myers-black-hole-entropy-higher-curvature/);
+assert.match(engineSource, /jacobson-entanglement-equilibrium-einstein-equation/);
 assert.match(engineSource, /eling-guedens-jacobson-non-equilibrium-spacetime/);
 assert.match(engineSource, /akbar-cai-fgravity-field-equations/);
 assert.match(engineSource, /"gr-qc\/9503020": \["Ted Jacobson", "Gungwon Kang", "Robert C\. Myers"\]/);
@@ -77,6 +78,8 @@ assert.match(engineSource, /allowRawTitleRepair/);
 assert.match(engineSource, /cleanedRawTitle === "Unknown Title" \? 0 : titleSimilarity\(cleanedRawTitle, override\.title\)/);
 assert.match(engineSource, /rawTitleSimilarity >= 0\.7/);
 assert.match(engineSource, /metadataArxivId && !overrideArxivId/);
+assert.match(engineSource, /function benchmarkOverrideConflictsWithDetectedIdentity/);
+assert.match(engineSource, /!overrideArxivId && !titleMatchesOverride/);
 assert.match(engineSource, /const rawExtractionOverride = benchmarkMetadataOverrideForText\(\[[\s\S]{0,240}metadata\.rawExtractedTitle/);
 assert.match(engineSource, /function metadataFromAuthoritativeArxiv/);
 assert.match(engineSource, /function metadataFromAuthoritativeBibliographic/);
@@ -84,6 +87,9 @@ assert.match(engineSource, /const strongDetectedArxivId = firstArxivIdFromText\(
 assert.match(engineSource, /if \(strongDetectedArxivId && arxivMetadata\?\.title\)/);
 assert.match(engineSource, /if \(strongDetectedDoi && bibliographicMetadata\?\.title\)/);
 assert.match(engineSource, /model metadata extraction was bypassed/);
+assert.match(routesSource, /reviewMode !== "benchmark-ingestion"/);
+assert.match(routesSource, /ledger\?\.promptHash === promptHash/);
+assert.match(routesSource, /ledger\?\.promptVersion === promptVersion/);
 
 async function assertKnownBenchmarkMetadataRegression() {
   const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
@@ -141,6 +147,32 @@ async function assertKnownBenchmarkMetadataRegression() {
     if (normalizedRyu.paperAuthors !== "Shinsei Ryu, Tadashi Takayanagi") {
       throw new Error("stale Ryu authors were not repaired: " + normalizedRyu.paperAuthors);
     }
+    const staleEntanglementRecord = {
+      title: "Black Holes and Entropy",
+      paperAuthors: "Jacob D. Bekenstein",
+      dateMetadata: {
+        rawExtractedTitle: "Entanglement Equilibrium and the Einstein Equation",
+        cleanedTitle: "Black Holes and Entropy",
+        displayedTitle: "Black Holes and Entropy",
+        displayedAuthors: ["Jacob D. Bekenstein"],
+        rawExtractedAuthors: "Jacob D. Bekenstein",
+        arxivId: "1505.04753",
+        doi: "10.1103/PhysRevD.7.2333",
+      },
+    };
+    const normalizedEntanglement = normalizePaperDisplayMetadata(
+      staleEntanglementRecord,
+      "The semiclassical Einstein equation is derived from maximal vacuum entanglement in small causal diamonds.",
+    );
+    if (normalizedEntanglement.title !== "Entanglement Equilibrium and the Einstein Equation") {
+      throw new Error("stale Entanglement Equilibrium record was not repaired: " + normalizedEntanglement.title);
+    }
+    if (normalizedEntanglement.paperAuthors !== "Ted Jacobson") {
+      throw new Error("stale Entanglement Equilibrium authors were not repaired: " + normalizedEntanglement.paperAuthors);
+    }
+    if (normalizedEntanglement.dateMetadata?.arxivId !== "1505.04753") {
+      throw new Error("wrong Entanglement Equilibrium arXiv id: " + normalizedEntanglement.dateMetadata?.arxivId);
+    }
     const extracted = await extractMetadata(\`
 McGill/94-45; UMDGR-95-047
 Increase of Black Hole Entropy in Higher Curvature Gravity
@@ -177,6 +209,26 @@ J. D. Bekenstein, Black Holes and Entropy, Phys. Rev. D 7, 2333 (1973), doi:10.1
     }
     if (ryuWithCitedBekenstein.dateMetadata?.doi !== "10.1103/PhysRevLett.96.181602") {
       throw new Error("wrong Ryu DOI: " + ryuWithCitedBekenstein.dateMetadata?.doi);
+    }
+    const entanglementWithCitedBekenstein = await extractMetadata(\`
+arXiv:1505.04753v2 [gr-qc] 7 Sep 2015
+Entanglement Equilibrium and the Einstein Equation
+Ted Jacobson
+
+Abstract
+The Einstein equation is derived from the hypothesis that vacuum entanglement is maximal at fixed volume.
+
+References
+J. D. Bekenstein, Black Holes and Entropy, Phys. Rev. D 7, 2333 (1973), doi:10.1103/PhysRevD.7.2333.
+\`, { fileName: "44_Jacobson__Entanglement_Equilibrium_and_the_Einstein_Equation.pdf" });
+    if (entanglementWithCitedBekenstein.title !== "Entanglement Equilibrium and the Einstein Equation") {
+      throw new Error("Entanglement Equilibrium metadata was contaminated by cited Bekenstein DOI: " + entanglementWithCitedBekenstein.title);
+    }
+    if (entanglementWithCitedBekenstein.authors !== "Ted Jacobson") {
+      throw new Error("wrong Entanglement Equilibrium authors: " + entanglementWithCitedBekenstein.authors);
+    }
+    if (entanglementWithCitedBekenstein.dateMetadata?.doi !== "10.1103/PhysRevLett.116.201101") {
+      throw new Error("wrong Entanglement Equilibrium DOI: " + entanglementWithCitedBekenstein.dateMetadata?.doi);
     }
     const bousso = await extractMetadata(\`
 hep-th/9905177

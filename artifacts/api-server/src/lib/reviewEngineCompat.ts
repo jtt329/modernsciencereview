@@ -3523,6 +3523,19 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
     },
   },
   {
+    id: "jacobson-entanglement-equilibrium-einstein-equation",
+    match: /\b(?:1505\.04753|entanglement\s+equilibrium\s+and\s+the\s+einstein\s+equation|maximal\s+vacuum\s+entanglement\s+hypothesis|mveh)\b/i,
+    override: {
+      title: "Entanglement Equilibrium and the Einstein Equation",
+      authors: ["Ted Jacobson"],
+      arxivId: "1505.04753",
+      doi: "10.1103/PhysRevLett.116.201101",
+      journalName: "Physical Review Letters",
+      journalPublicationDate: "2016",
+      dateNotes: "Benchmark metadata override for Jacobson's entanglement-equilibrium paper.",
+    },
+  },
+  {
     id: "jacobson-kang-myers-increase-black-hole-entropy",
     match: /\b(?:gr-qc\/9503020|increase\s+of\s+black\s+hole\s+entropy\s+in\s+higher\s+curvature\s+gravity|quasi[-\s]*stationary\s+processes[\s\S]{0,180}diffeomorphism[-\s]*invariant\s+gravity[\s\S]{0,180}f\s*\(\s*r\s*\)|extended\s+raychaudhuri\s+equation[\s\S]{0,140}effective\s+expansion|second\s+law\s+of\s+black\s+hole\s+thermodynamics[\s\S]{0,180}quasi[-\s]*stationary[\s\S]{0,180}higher\s+curvature)\b/i,
     override: {
@@ -3813,6 +3826,44 @@ function benchmarkOverrideCompatibleWithMetadata(
   }
 
   return true;
+}
+
+function benchmarkOverrideConflictsWithDetectedIdentity(
+  override: BenchmarkMetadataOverride,
+  input: {
+    detectedArxivId?: string;
+    detectedDoi?: string;
+    arxivTitle?: string;
+    bibliographicTitle?: string;
+    visualTitle?: string;
+    fallbackTitle?: string;
+  },
+) {
+  const detectedArxivId = normalizeArxivId(input.detectedArxivId).toLowerCase();
+  const overrideArxivId = normalizeArxivId(override.arxivId).toLowerCase();
+  const detectedDoi = normalizeDoi(input.detectedDoi);
+  const overrideDoi = normalizeDoi(override.doi);
+  const identityTitle = [
+    input.arxivTitle,
+    input.bibliographicTitle,
+    input.visualTitle,
+    input.fallbackTitle,
+  ].map((value) => cleanDisplayTitle(value || "").title)
+    .find((value) => value && value !== "Unknown Title") || "";
+  const titleMatchesOverride = identityTitle
+    ? titleSimilarity(identityTitle, override.title) >= 0.72
+    : false;
+
+  if (detectedArxivId) {
+    if (overrideArxivId && overrideArxivId !== detectedArxivId) return true;
+    if (!overrideArxivId && !titleMatchesOverride) return true;
+  }
+
+  if (detectedDoi && overrideDoi && detectedDoi !== overrideDoi && !titleMatchesOverride) {
+    return true;
+  }
+
+  return false;
 }
 
 function firstArxivIdFromText(value?: string) {
@@ -6697,7 +6748,18 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       };
     }
   }
-  const trustedBenchmarkOverride = benchmarkMetadataOverrideForText(trustedBenchmarkOverrideText);
+  const trustedBenchmarkOverrideCandidate = benchmarkMetadataOverrideForText(trustedBenchmarkOverrideText);
+  const trustedBenchmarkOverride = trustedBenchmarkOverrideCandidate &&
+    !benchmarkOverrideConflictsWithDetectedIdentity(trustedBenchmarkOverrideCandidate, {
+      detectedArxivId,
+      detectedDoi: strongDetectedDoi,
+      arxivTitle: arxivMetadata?.title,
+      bibliographicTitle: bibliographicMetadata?.title,
+      visualTitle: titlePageVisualMetadataPreflight?.title,
+      fallbackTitle: fallback.title,
+    })
+    ? trustedBenchmarkOverrideCandidate
+    : null;
   if (trustedBenchmarkOverride) {
     const canonicalMetadata = metadataFromCanonicalBenchmarkOverride(trustedBenchmarkOverride, {
       rawExtractedTitle: fallback.title,
@@ -6930,7 +6992,18 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       bibliographicMetadata?.authors,
       arxivMetadata?.doi,
     ]);
-    const benchmarkOverride = benchmarkMetadataOverrideForText(benchmarkOverrideText);
+    const benchmarkOverrideCandidate = benchmarkMetadataOverrideForText(benchmarkOverrideText);
+    const benchmarkOverride = benchmarkOverrideCandidate &&
+      !benchmarkOverrideConflictsWithDetectedIdentity(benchmarkOverrideCandidate, {
+        detectedArxivId,
+        detectedDoi: strongDetectedDoi || asString(parsedMetadata.doi) || bibliographicMetadata?.doi,
+        arxivTitle: arxivMetadata?.title,
+        bibliographicTitle: bibliographicMetadata?.title,
+        visualTitle: titlePageVisualMetadata?.title,
+        fallbackTitle: bestTitle,
+      })
+      ? benchmarkOverrideCandidate
+      : null;
     const normalizedSource = {
       ...parsedMetadata,
       rawExtractedTitle: rawParsedTitle,
@@ -7026,7 +7099,18 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       bibliographicMetadata?.title,
       bibliographicMetadata?.authors,
     ]);
-    const benchmarkOverride = benchmarkMetadataOverrideForText(benchmarkOverrideText);
+    const benchmarkOverrideCandidate = benchmarkMetadataOverrideForText(benchmarkOverrideText);
+    const benchmarkOverride = benchmarkOverrideCandidate &&
+      !benchmarkOverrideConflictsWithDetectedIdentity(benchmarkOverrideCandidate, {
+        detectedArxivId,
+        detectedDoi: strongDetectedDoi || bibliographicMetadata?.doi,
+        arxivTitle: arxivMetadata?.title,
+        bibliographicTitle: bibliographicMetadata?.title,
+        visualTitle: titlePageVisualMetadata?.title,
+        fallbackTitle,
+      })
+      ? benchmarkOverrideCandidate
+      : null;
     const fallbackMetadata = applyBenchmarkMetadataOverride({
       ...defaultDateMetadata(benchmarkOverride?.title ?? fallbackTitle, benchmarkOverride?.authors ?? fallbackAuthorList),
       rawExtractedTitle: fallback.title,

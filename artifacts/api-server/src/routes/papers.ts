@@ -881,7 +881,13 @@ async function existingLogicalSubmission(
   return { paper, review: review || null };
 }
 
-async function existingSourceSubmission(authorId: string, sourceHash: string, modelName: string) {
+async function existingSourceSubmission(
+  authorId: string,
+  sourceHash: string,
+  modelName: string,
+  promptHash: string,
+  promptVersion: string,
+) {
   const userPapers = await db.select().from(papersTable).where(
     and(
       eq(papersTable.authorId, authorId),
@@ -895,7 +901,10 @@ async function existingSourceSubmission(authorId: string, sourceHash: string, mo
   for (const paper of userPapers) {
     const review = reviewByPaper.get(paper.id);
     const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
-    if (ledger?.submissionSourceHash === sourceHash) {
+    const matchingPrompt =
+      ledger?.promptHash === promptHash &&
+      ledger?.promptVersion === promptVersion;
+    if (ledger?.submissionSourceHash === sourceHash && matchingPrompt) {
       return { paper, review: review || null };
     }
   }
@@ -3245,7 +3254,13 @@ const sourceHash = sourceHashFor(source);
 const expectedModelName = expectedReviewModelName(reviewMode);
 const reuseExistingReview = source.reuseExistingReview === true || source.reuseExisting === true;
 const forceFreshReview = source.forceFreshReview === true || source.forceFresh === true;
-const allowExistingReviewReuse = reuseExistingReview || !forceFreshReview;
+// Exact-source reuse is a useful cost-control path for normal public uploads,
+// but benchmark ingestion is the admin/test lane where the same PDF may be
+// intentionally rerun after prompt, metadata, or extraction fixes.
+const allowExistingReviewReuse =
+  !forceFreshReview &&
+  reviewMode !== "benchmark-ingestion" &&
+  (reuseExistingReview || source.reuseExistingReview !== false);
 submissionKey = !durableJob && allowExistingReviewReuse && sourceHash ? `${user.id}:${expectedModelName}:${sourceHash}` : null;
 if (submissionKey && recentSubmissions.has(submissionKey)) {
   const payload = await recentSubmissions.get(submissionKey);
@@ -3467,7 +3482,13 @@ if (metadataNeedsRepair) {
 }
 
 const existingBySource = allowExistingReviewReuse && sourceHash
-  ? await existingSourceSubmission(user.id, sourceHash, expectedModelName)
+  ? await existingSourceSubmission(
+      user.id,
+      sourceHash,
+      expectedModelName,
+      REVIEW_PROMPT_HASH,
+      REVIEW_PROMPT_VERSION,
+    )
   : null;
 if (existingBySource?.review) {
   logger.info({
