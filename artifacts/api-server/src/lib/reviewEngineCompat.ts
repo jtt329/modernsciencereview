@@ -6529,6 +6529,31 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
   const fallback = heuristicMetadata(paperContent, hints);
   const headerText = manuscriptHeaderText(paperContent).join("\n");
   const extractedTextBeginning = stripControlChars(paperContent).slice(0, 16000);
+  const looksTruncatedTitle = (value: string) =>
+    /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
+  const isSuspiciousTitle = (value: string) =>
+    !value ||
+    value === "Unknown Title" ||
+    looksLikeJournalCitation(value) ||
+    /^(arxiv:|submitted by\b)/i.test(value) ||
+    /^\s*(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?\s*$/i.test(value) ||
+    isOnlyReportCodeLine(value) ||
+    looksLikeAffiliationOrAddressJunk(value) ||
+    value.length < 8 ||
+    looksTruncatedTitle(value);
+  const isSuspiciousAuthors = (value: string) =>
+    !value ||
+    value === "Unknown Authors" ||
+    /^(submitted by\b|abstract\b)/i.test(value) ||
+    /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(value) ||
+    value.length > 500;
+  const titlePageVisualMetadataPreflight = hints.pdfBase64
+    ? await extractTitlePageMetadataFromPdf(hints, {
+        fallbackTitle: fallback.title,
+        fallbackAuthors: fallback.authors,
+        headerText,
+      })
+    : null;
   const metadataInput = JSON.stringify({
     fileNameHint: cleanMetadataText(hints.fileName),
     embeddedPdfTitleHint: cleanMetadataText(hints.pdfTitle),
@@ -6562,6 +6587,65 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     ] : [],
   });
   const knownArxivAuthorList = knownArxivAuthors(detectedArxivId);
+  const visualTitleIsPrimary =
+    Boolean(titlePageVisualMetadataPreflight?.title) &&
+    !isSuspiciousTitle(titlePageVisualMetadataPreflight?.title ?? "") &&
+    (titlePageVisualMetadataPreflight?.confidence ?? 0) >= 0.9;
+  const visualAuthorsArePrimary =
+    Boolean(titlePageVisualMetadataPreflight?.authors.length) &&
+    (titlePageVisualMetadataPreflight?.confidence ?? 0) >= 0.88 &&
+    !isSuspiciousAuthors(titlePageVisualMetadataPreflight?.authors?.join(", ") ?? "");
+  if (visualTitleIsPrimary && visualAuthorsArePrimary && titlePageVisualMetadataPreflight) {
+    const visualTitle = titlePageVisualMetadataPreflight.title;
+    const visualAuthors = titlePageVisualMetadataPreflight.authors;
+    const arxivId = normalizeArxivId(arxivMetadata?.arxivId || detectedArxivId);
+    const doi = normalizeDoi(arxivMetadata?.doi || bibliographicMetadata?.doi || strongDetectedDoi);
+    const arxivFirstSubmissionDate = arxivMetadata?.published || inferArxivFirstSubmissionMonth(arxivId);
+    const journalPublicationDate = bibliographicMetadata?.publicationDate || "";
+    const originalPublicationDateBestGuess = journalPublicationDate || arxivFirstSubmissionDate || "";
+    const visualMetadata = withMetadataQaWarnings({
+      ...defaultDateMetadata(visualTitle, visualAuthors),
+      rawExtractedTitle: fallback.title,
+      cleanedTitle: visualTitle,
+      displayedTitle: visualTitle,
+      titleConfidence: Math.max(0.9, titlePageVisualMetadataPreflight.confidence),
+      titleCleaningNotes: uniqueCleanStrings([
+        "PDF title-page visual metadata was used as the primary title source.",
+        titlePageVisualMetadataPreflight.titleEvidence ? `Title evidence: ${titlePageVisualMetadataPreflight.titleEvidence}` : "",
+        titlePageVisualMetadataPreflight.notes,
+      ]).join(" "),
+      displayedAuthors: visualAuthors,
+      rawExtractedAuthors: visualAuthors.join(", "),
+      authorsConfidence: Math.max(0.88, titlePageVisualMetadataPreflight.confidence),
+      authorsExtractionNotes: uniqueCleanStrings([
+        "PDF title-page visual metadata was used as the primary author source.",
+        titlePageVisualMetadataPreflight.authorsEvidence ? `Author evidence: ${titlePageVisualMetadataPreflight.authorsEvidence}` : "",
+        titlePageVisualMetadataPreflight.notes,
+      ]).join(" "),
+      arxivId,
+      doi,
+      journalName: arxivMetadata?.journalRef || bibliographicMetadata?.journalName || "",
+      journalPublicationDate,
+      arxivFirstSubmissionDate,
+      originalPublicationDateBestGuess,
+      dateSource: journalPublicationDate
+        ? `${bibliographicMetadata?.source ?? "bibliographic"} metadata`
+        : arxivFirstSubmissionDate
+          ? "arXiv metadata"
+          : "visual title-page metadata",
+      dateConfidence: originalPublicationDateBestGuess ? 0.95 : 0.4,
+      dateNotes: uniqueCleanStrings([
+        "Title and authors came from visual title-page inspection; bibliographic sources were used only for identifiers/dates when available.",
+        arxivFirstSubmissionDate ? "arXiv metadata supplied or confirmed the first submission date." : "",
+        bibliographicMetadata?.notes,
+      ]).join(" "),
+    });
+    return {
+      title: visualMetadata.displayedTitle,
+      authors: visualMetadata.displayedAuthors.join(", "),
+      dateMetadata: visualMetadata,
+    };
+  }
   const trustedIdentifierText = [
     hints.fileName,
     hints.pdfTitle,
@@ -6648,31 +6732,6 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       };
     }
   }
-  const looksTruncatedTitle = (value: string) =>
-    /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
-  const isSuspiciousTitle = (value: string) =>
-    !value ||
-    value === "Unknown Title" ||
-    looksLikeJournalCitation(value) ||
-    /^(arxiv:|submitted by\b)/i.test(value) ||
-    /^\s*(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?\s*$/i.test(value) ||
-    isOnlyReportCodeLine(value) ||
-    looksLikeAffiliationOrAddressJunk(value) ||
-    value.length < 8 ||
-    looksTruncatedTitle(value);
-  const isSuspiciousAuthors = (value: string) =>
-    !value ||
-    value === "Unknown Authors" ||
-    /^(submitted by\b|abstract\b)/i.test(value) ||
-    /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(value) ||
-    value.length > 500;
-  const titlePageVisualMetadataPreflight = hints.pdfBase64
-    ? await extractTitlePageMetadataFromPdf(hints, {
-        fallbackTitle: fallback.title,
-        fallbackAuthors: fallback.authors,
-        headerText,
-      })
-    : null;
   try {
     const metadataReviewInput: ReviewInput = hints.pdfBase64
       ? {
