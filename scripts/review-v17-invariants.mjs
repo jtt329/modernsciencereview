@@ -74,7 +74,8 @@ async function assertKnownBenchmarkMetadataRegression() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
+    import { extractMetadata, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
+    globalThis.__msrMetadataRegression = (async () => {
     const staleRecord = {
       title: "Thermodynamics of Spacetime: The Einstein Equation of State",
       paperAuthors: "Ted Jacobson",
@@ -99,6 +100,24 @@ async function assertKnownBenchmarkMetadataRegression() {
     if (normalized.dateMetadata?.arxivId !== "gr-qc/9503020") {
       throw new Error("wrong normalized arXiv id: " + normalized.dateMetadata?.arxivId);
     }
+    const extracted = await extractMetadata(\`
+McGill/94-45; UMDGR-95-047
+Increase of Black Hole Entropy in Higher Curvature Gravity
+Ted Jacobson, Gungwon Kang, Robert C. Myers
+
+Abstract
+The second law of black hole thermodynamics is considered for higher curvature gravity.
+\`, { fileName: "17_Jacobson_Kang_Myers_Increase_of_Black_Hole_Entropy_in_Higher_Curvature_Gravity.pdf" });
+    if (extracted.title !== "Increase of Black Hole Entropy in Higher Curvature Gravity") {
+      throw new Error("wrong extracted title: " + extracted.title);
+    }
+    if (extracted.authors !== "Ted Jacobson, Gungwon Kang, Robert C. Myers") {
+      throw new Error("wrong extracted authors: " + extracted.authors);
+    }
+    if (!/model metadata extraction was bypassed/i.test(extracted.dateMetadata.titleCleaningNotes)) {
+      throw new Error("canonical extraction path was not used");
+    }
+    })();
   `);
   const previousNodeEnv = process.env.NODE_ENV;
   const previousGeminiUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
@@ -109,6 +128,7 @@ async function assertKnownBenchmarkMetadataRegression() {
   try {
     await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs" });
     await import(pathToFileURL(out).href);
+    await globalThis.__msrMetadataRegression;
   } finally {
     if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previousNodeEnv;

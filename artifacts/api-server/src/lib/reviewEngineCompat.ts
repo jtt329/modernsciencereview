@@ -6052,6 +6052,71 @@ function normalizeExtractedDateMetadata(
   });
 }
 
+function metadataFromCanonicalBenchmarkOverride(
+  override: BenchmarkMetadataOverride,
+  input: {
+    rawExtractedTitle: string;
+    rawExtractedAuthors: string;
+    detectedArxivId?: string;
+    detectedDoi?: string;
+    arxivMetadata?: ArxivMetadata | null;
+    bibliographicMetadata?: BibliographicMetadata | null;
+    evidenceText?: string;
+    notes?: string;
+  },
+): PaperDateMetadata {
+  const arxivId = normalizeArxivId(override.arxivId || input.arxivMetadata?.arxivId || input.detectedArxivId);
+  const doi = normalizeDoi(override.doi || input.arxivMetadata?.doi || input.bibliographicMetadata?.doi || input.detectedDoi);
+  const arxivFirstSubmissionDate = input.arxivMetadata?.published || inferArxivFirstSubmissionMonth(arxivId);
+  const journalPublicationDate =
+    override.journalPublicationDate ||
+    input.bibliographicMetadata?.publicationDate ||
+    "";
+  const originalPublicationDateBestGuess =
+    journalPublicationDate ||
+    arxivFirstSubmissionDate ||
+    "";
+  const dateSource = journalPublicationDate
+    ? "canonical benchmark metadata"
+    : arxivFirstSubmissionDate
+      ? "canonical benchmark metadata and arXiv identifier"
+      : "canonical benchmark metadata";
+  const metadata = {
+    ...defaultDateMetadata(override.title, override.authors),
+    rawExtractedTitle: input.rawExtractedTitle || override.title,
+    cleanedTitle: override.title,
+    displayedTitle: override.title,
+    titleConfidence: 0.99,
+    titleCleaningNotes: uniqueCleanStrings([
+      "Canonical benchmark metadata resolved before model title extraction.",
+      input.notes,
+    ]).join(" "),
+    displayedAuthors: override.authors,
+    rawExtractedAuthors: override.authors.join(", ") || input.rawExtractedAuthors,
+    authorsConfidence: 0.99,
+    authorsExtractionNotes: "Canonical benchmark metadata supplied the author list before model author extraction.",
+    arxivId,
+    reportCodes: uniqueCleanStrings([
+      ...cleanDisplayTitle(input.rawExtractedTitle).reportCodes,
+    ]),
+    doi,
+    journalName: override.journalName || input.arxivMetadata?.journalRef || input.bibliographicMetadata?.journalName || "",
+    journalPublicationDate,
+    arxivFirstSubmissionDate,
+    manuscriptDatePrintedOnPdf: "",
+    originalPublicationDateBestGuess,
+    dateSource,
+    dateConfidence: originalPublicationDateBestGuess ? 0.98 : 0.9,
+    dateNotes: uniqueCleanStrings([
+      override.dateNotes,
+      input.arxivMetadata?.published ? "arXiv metadata supplied the first submission date." : "",
+      input.bibliographicMetadata ? input.bibliographicMetadata.notes : "",
+      input.notes,
+    ]).join(" "),
+  };
+  return applyBenchmarkMetadataOverride(metadata, input.evidenceText || "");
+}
+
 export function normalizePaperDisplayMetadata<T extends {
   title?: string | null;
   paperAuthors?: string | null;
@@ -6139,6 +6204,41 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     ] : [],
   });
   const knownArxivAuthorList = knownArxivAuthors(detectedArxivId);
+  const trustedBenchmarkOverrideText = benchmarkMetadataOverrideCandidate([
+    hints.fileName,
+    hints.pdfTitle,
+    hints.pdfAuthor,
+    headerText,
+    fallback.title,
+    fallback.authors,
+    detectedArxivId,
+    detectedDoi,
+    arxivMetadata?.arxivId,
+    arxivMetadata?.title,
+    arxivMetadata?.authors,
+    arxivMetadata?.doi,
+    bibliographicMetadata?.doi,
+    bibliographicMetadata?.title,
+    bibliographicMetadata?.authors,
+  ]);
+  const trustedBenchmarkOverride = benchmarkMetadataOverrideForText(trustedBenchmarkOverrideText);
+  if (trustedBenchmarkOverride) {
+    const canonicalMetadata = metadataFromCanonicalBenchmarkOverride(trustedBenchmarkOverride, {
+      rawExtractedTitle: fallback.title,
+      rawExtractedAuthors: fallback.authors,
+      detectedArxivId,
+      detectedDoi,
+      arxivMetadata,
+      bibliographicMetadata,
+      evidenceText: trustedBenchmarkOverrideText,
+      notes: "Identifier/header-first benchmark metadata path was used; model metadata extraction was bypassed.",
+    });
+    return {
+      title: canonicalMetadata.displayedTitle,
+      authors: canonicalMetadata.displayedAuthors.join(", "),
+      dateMetadata: canonicalMetadata,
+    };
+  }
   const looksTruncatedTitle = (value: string) =>
     /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
   const isSuspiciousTitle = (value: string) =>
