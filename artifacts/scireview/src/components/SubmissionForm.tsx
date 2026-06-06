@@ -472,6 +472,7 @@ export default function SubmissionForm({
   const [pdfUrl, setPdfUrl] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [batchCompleteMessage, setBatchCompleteMessage] = useState<string | null>(null);
   const [doneCount, setDoneCount] = useState(0);
 
   const isBatch = files.length > 1;
@@ -482,6 +483,7 @@ export default function SubmissionForm({
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setError(null);
+    setBatchCompleteMessage(null);
     const pdfs = acceptedFiles.filter(f => f.type === 'application/pdf');
     if (pdfs.length === 0) {
       setError('Please upload PDF files.');
@@ -596,6 +598,7 @@ export default function SubmissionForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setBatchCompleteMessage(null);
     setIsSubmitting(true);
     setDoneCount(0);
 
@@ -642,7 +645,7 @@ export default function SubmissionForm({
 
       const filesToProcess = files.filter(f => !isHandledFile(f));
       if (filesToProcess.length === 0) {
-        onClose();
+        setBatchCompleteMessage('All queued papers are already handled. Click OK to return to the homepage.');
         return;
       }
       const filesWithAuditIds = filesToProcess.map((qf) => ({
@@ -804,7 +807,7 @@ export default function SubmissionForm({
       };
 
       const pollWorkers = Array.from(
-        { length: Math.min(Math.max(BATCH_CONCURRENCY, 4), jobEntries.length) },
+        { length: Math.min(BATCH_CONCURRENCY, jobEntries.length) },
         async () => {
           while (!batchHalted && pollIndex < jobEntries.length) {
             const entry = jobEntries[pollIndex++];
@@ -817,9 +820,11 @@ export default function SubmissionForm({
       runtimeMonitor.stop();
 
       if (failures > 0) {
-        setError(haltMessage || `${failures} of ${filesToProcess.length} remaining papers failed. Completed papers were saved. You can retry the failed papers.`);
+        const message = haltMessage || `${failures} of ${filesToProcess.length} remaining papers need retry or repair. Completed papers were saved.`;
+        setError(message);
+        setBatchCompleteMessage('Batch finished with items in the repair lane. Review the rows above, then retry or repair only those items.');
       } else {
-        onClose();
+        setBatchCompleteMessage(`${filesToProcess.length} of ${filesToProcess.length} papers completed. Click OK to return to the homepage.`);
       }
     } catch (err: any) {
       setError(err?.message ?? String(err) ?? 'Something went wrong. Please try again.');
@@ -1155,6 +1160,13 @@ export default function SubmissionForm({
             </div>
           )}
 
+          {batchCompleteMessage && !isSubmitting && (
+            <div className="flex items-start gap-3 bg-emerald-50 border border-emerald-200 rounded-2xl p-5">
+              <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0 mt-0.5" />
+              <p className="text-emerald-700 text-sm font-medium">{batchCompleteMessage}</p>
+            </div>
+          )}
+
           {isSubmitting && (
             <div className="flex items-start gap-3 bg-indigo-50 border border-indigo-100 rounded-2xl p-5">
               <Loader2 className="w-5 h-5 text-indigo-500 animate-spin shrink-0 mt-0.5" />
@@ -1184,8 +1196,8 @@ export default function SubmissionForm({
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={handleSubmit}
-            disabled={isSubmitting || !isFormValid}
+            onClick={batchCompleteMessage && !isSubmitting ? onClose : handleSubmit}
+            disabled={isSubmitting || (!batchCompleteMessage && !isFormValid)}
             className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black shadow-xl shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-3"
           >
             {isSubmitting ? (
@@ -1195,8 +1207,10 @@ export default function SubmissionForm({
               </>
             ) : (
               <>
-                <Send className="w-5 h-5" />
-                {failedFiles.length > 0
+                {batchCompleteMessage ? <CheckCircle2 className="w-5 h-5" /> : <Send className="w-5 h-5" />}
+                {batchCompleteMessage
+                  ? 'OK'
+                  : failedFiles.length > 0
                   ? `Retry ${remainingFiles.length} Failed/Pending`
                   : isBatch
                     ? `Submit ${files.length} Papers`

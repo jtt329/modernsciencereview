@@ -3425,6 +3425,46 @@ if (usePdfVisibleLastResort && isExtractionBlockingStatus(extractionCompleteness
 setAttemptStage(attemptContext, "metadata_extraction", "helper", GEMINI_METADATA_MODEL);
 await updateReviewAttemptProgress(attemptContext, { reviewStatus: "metadata_extraction" });
 const metadata = await extractLatestMetadata(metadataExtractionText || paperContent, metadataHints);
+const metadataTitle = metadata.dateMetadata?.displayedTitle || metadata.title || "";
+const metadataAuthors = metadata.dateMetadata?.displayedAuthors?.join(", ") || metadata.authors || "";
+const metadataNeedsRepair =
+  source.type === "pdf" &&
+  (
+    !metadataTitle.trim() ||
+    /^Unknown Title$/i.test(metadataTitle.trim()) ||
+    !metadataAuthors.trim() ||
+    /^Unknown Authors$/i.test(metadataAuthors.trim())
+  );
+if (metadataNeedsRepair) {
+  const message = "Metadata repair required: title-page visual extraction could not confidently identify the paper title/authors.";
+  attemptContext.reviewStatus = "needs_manual_repair";
+  await updateReviewAttemptProgress(attemptContext, {
+    reviewStatus: "needs_manual_repair",
+    failureStatus: "needs_manual_repair",
+    retryable: true,
+    errorMessage: message,
+    debugPayload: {
+      ...debugPayloadObject(attemptContext.debugPayload),
+      metadataRepairRequired: true,
+      extractedMetadata: {
+        title: metadataTitle,
+        authors: metadataAuthors,
+        titleConfidence: metadata.dateMetadata?.titleConfidence ?? null,
+        authorsConfidence: metadata.dateMetadata?.authorsConfidence ?? null,
+        titleCleaningNotes: metadata.dateMetadata?.titleCleaningNotes ?? null,
+        authorsExtractionNotes: metadata.dateMetadata?.authorsExtractionNotes ?? null,
+      },
+    },
+  });
+  throw submissionHttpError(message, 422, {
+    reviewStatus: "needs_manual_repair",
+    failureStatus: "needs_manual_repair",
+    retryable: true,
+    stageName: "metadata_extraction",
+    extractionCompletenessStatus: extractionCompleteness.extractionCompletenessStatus,
+    extractionWarnings: extractionCompleteness.extractionWarnings,
+  });
+}
 
 const existingBySource = allowExistingReviewReuse && sourceHash
   ? await existingSourceSubmission(user.id, sourceHash, expectedModelName)

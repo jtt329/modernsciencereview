@@ -6666,6 +6666,13 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     /^(submitted by\b|abstract\b)/i.test(value) ||
     /@|\b(university|institute|department|laboratory|college|school|faculty|centre|center)\b/i.test(value) ||
     value.length > 500;
+  const titlePageVisualMetadataPreflight = hints.pdfBase64
+    ? await extractTitlePageMetadataFromPdf(hints, {
+        fallbackTitle: fallback.title,
+        fallbackAuthors: fallback.authors,
+        headerText,
+      })
+    : null;
   try {
     const metadataReviewInput: ReviewInput = hints.pdfBase64
       ? {
@@ -6798,17 +6805,21 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         bestAuthorList[0] === "Unknown Authors" ||
         isSuspiciousAuthors(bestAuthors)
       );
-    const titlePageVisualMetadata = shouldUseTitlePageVisualMetadata
+    const titlePageVisualMetadata = titlePageVisualMetadataPreflight || (shouldUseTitlePageVisualMetadata
       ? await extractTitlePageMetadataFromPdf(hints, {
           fallbackTitle: fallback.title,
           fallbackAuthors: fallback.authors,
           headerText,
         })
-      : null;
-    const usedTitlePageVisualTitle =
+      : null);
+    const visualTitleIsUsable =
       Boolean(titlePageVisualMetadata?.title) &&
+      !isSuspiciousTitle(titlePageVisualMetadata?.title ?? "");
+    const usedTitlePageVisualTitle =
+      visualTitleIsUsable &&
       (titlePageVisualMetadata?.confidence ?? 0) >= 0.8 &&
       (
+        (titlePageVisualMetadata?.confidence ?? 0) >= 0.92 ||
         parsedTitleConfidence < 0.8 ||
         isSuspiciousTitle(bestTitle) ||
         titleSimilarity(bestTitle, titlePageVisualMetadata!.title) >= 0.72
@@ -6820,6 +6831,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       Boolean(titlePageVisualMetadata?.authors.length) &&
       (titlePageVisualMetadata?.confidence ?? 0) >= 0.78 &&
       (
+        (titlePageVisualMetadata?.confidence ?? 0) >= 0.92 ||
         parsedAuthorsConfidence < 0.8 ||
         bestAuthorList.length === 0 ||
         bestAuthorList[0] === "Unknown Authors" ||
@@ -6922,7 +6934,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
         ],
       });
     }
-    const titlePageVisualMetadata = await extractTitlePageMetadataFromPdf(hints, {
+    const titlePageVisualMetadata = titlePageVisualMetadataPreflight || await extractTitlePageMetadataFromPdf(hints, {
       fallbackTitle: fallback.title,
       fallbackAuthors: fallback.authors,
       headerText,
