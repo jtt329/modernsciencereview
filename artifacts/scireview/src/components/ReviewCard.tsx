@@ -1192,7 +1192,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {currentIntroducedConstructions.length > 0 && (
                     <div>
                       <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-2">Introduced Constructions</p>
-                      <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="space-y-3">
                         {currentIntroducedConstructionDetails.map((item, index) => {
                           return (
                             <div key={`${item.construction}-${index}`} className="bg-white/5 border border-indigo-300/15 rounded-xl p-4 space-y-3">
@@ -1202,7 +1202,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                 </span>
                                 <div className="min-w-0 flex-1 space-y-1">
                                   <Markdown>{item.construction}</Markdown>
-                                  {item.role && <Markdown>{item.role}</Markdown>}
+                                  {item.role && <Markdown>{`**Purpose:** ${item.role}`}</Markdown>}
                                 </div>
                               </div>
                               <div className="space-y-1">
@@ -1235,7 +1235,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   {currentLedgerOutputs.length > 0 && (
                     <div className="space-y-3">
                       <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Outputs</p>
-                      <div className="grid gap-3 lg:grid-cols-2">
+                      <div className="space-y-3">
                       {currentLedgerOutputs.map((item: any, i: number) => {
                         const outputAssessment = item.assessment;
                         const validityLabel = item.validityLevel || item.validity;
