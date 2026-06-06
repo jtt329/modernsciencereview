@@ -66,6 +66,12 @@ assert.match(engineSource, /const rawExtractionOverride = benchmarkMetadataOverr
 assert.match(engineSource, /const contextualOverride = benchmarkMetadataOverrideForText\(extraText\)/);
 assert.match(engineSource, /const override = rawExtractionOverride \?\? contextualOverride \?\? storedMetadataOverride/);
 assert.match(engineSource, /const rawExtractionOverride = benchmarkMetadataOverrideForText\(\[[\s\S]{0,240}metadata\.rawExtractedTitle/);
+assert.match(engineSource, /function metadataFromAuthoritativeArxiv/);
+assert.match(engineSource, /function metadataFromAuthoritativeBibliographic/);
+assert.match(engineSource, /const strongDetectedArxivId = firstArxivIdFromText\(strongIdentifierText\)/);
+assert.match(engineSource, /if \(strongDetectedArxivId && arxivMetadata\?\.title\)/);
+assert.match(engineSource, /if \(strongDetectedDoi && bibliographicMetadata\?\.title\)/);
+assert.match(engineSource, /model metadata extraction was bypassed/);
 
 async function assertKnownBenchmarkMetadataRegression() {
   const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;

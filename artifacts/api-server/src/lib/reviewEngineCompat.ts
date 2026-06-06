@@ -6117,6 +6117,110 @@ function metadataFromCanonicalBenchmarkOverride(
   return applyBenchmarkMetadataOverride(metadata, input.evidenceText || "");
 }
 
+function metadataFromAuthoritativeArxiv(
+  arxivMetadata: ArxivMetadata,
+  input: {
+    rawExtractedTitle: string;
+    rawExtractedAuthors: string;
+    knownAuthorList?: string[];
+    detectedDoi?: string;
+    evidenceText?: string;
+    notes?: string;
+  },
+): PaperDateMetadata | null {
+  if (!arxivMetadata.title) return null;
+  const authors = (input.knownAuthorList?.length ? input.knownAuthorList : arxivMetadata.authors).filter(Boolean);
+  const arxivFirstSubmissionDate = arxivMetadata.published || inferArxivFirstSubmissionMonth(arxivMetadata.arxivId);
+  const metadata = {
+    ...defaultDateMetadata(arxivMetadata.title, authors.length ? authors : splitAuthorNames(input.rawExtractedAuthors)),
+    rawExtractedTitle: input.rawExtractedTitle || arxivMetadata.title,
+    cleanedTitle: arxivMetadata.title,
+    displayedTitle: arxivMetadata.title,
+    titleConfidence: 0.98,
+    titleCleaningNotes: uniqueCleanStrings([
+      "Authoritative arXiv metadata resolved the displayed title before model metadata extraction.",
+      input.notes,
+    ]).join(" "),
+    displayedAuthors: authors.length ? authors : splitAuthorNames(input.rawExtractedAuthors),
+    rawExtractedAuthors: authors.length ? authors.join(", ") : input.rawExtractedAuthors,
+    authorsConfidence: authors.length ? 0.98 : 0.6,
+    authorsExtractionNotes: authors.length
+      ? "Authoritative arXiv metadata supplied the author list before model author extraction."
+      : "arXiv metadata did not include authors; deterministic extracted authors were retained.",
+    arxivId: normalizeArxivId(arxivMetadata.arxivId),
+    reportCodes: uniqueCleanStrings([
+      ...cleanDisplayTitle(input.rawExtractedTitle).reportCodes,
+    ]),
+    doi: normalizeDoi(arxivMetadata.doi || input.detectedDoi),
+    journalName: arxivMetadata.journalRef,
+    journalPublicationDate: "",
+    arxivFirstSubmissionDate,
+    manuscriptDatePrintedOnPdf: "",
+    originalPublicationDateBestGuess: arxivFirstSubmissionDate,
+    dateSource: "arXiv metadata",
+    dateConfidence: arxivFirstSubmissionDate ? 0.98 : 0.9,
+    dateNotes: uniqueCleanStrings([
+      arxivFirstSubmissionDate ? "arXiv metadata supplied the first submission date." : "",
+      input.notes,
+    ]).join(" "),
+  };
+  return applyBenchmarkMetadataOverride(metadata, input.evidenceText || "");
+}
+
+function metadataFromAuthoritativeBibliographic(
+  bibliographicMetadata: BibliographicMetadata,
+  input: {
+    rawExtractedTitle: string;
+    rawExtractedAuthors: string;
+    detectedArxivId?: string;
+    detectedDoi?: string;
+    evidenceText?: string;
+    notes?: string;
+  },
+): PaperDateMetadata | null {
+  if (!bibliographicMetadata.title || bibliographicMetadata.confidence < 0.95) return null;
+  const authors = bibliographicMetadata.authors.length
+    ? bibliographicMetadata.authors
+    : splitAuthorNames(input.rawExtractedAuthors);
+  const arxivId = normalizeArxivId(input.detectedArxivId);
+  const arxivFirstSubmissionDate = inferArxivFirstSubmissionMonth(arxivId);
+  const metadata = {
+    ...defaultDateMetadata(bibliographicMetadata.title, authors),
+    rawExtractedTitle: input.rawExtractedTitle || bibliographicMetadata.title,
+    cleanedTitle: bibliographicMetadata.title,
+    displayedTitle: bibliographicMetadata.title,
+    titleConfidence: Math.max(0.96, bibliographicMetadata.confidence),
+    titleCleaningNotes: uniqueCleanStrings([
+      `${bibliographicMetadata.source} metadata resolved the displayed title before model metadata extraction.`,
+      input.notes,
+    ]).join(" "),
+    displayedAuthors: authors,
+    rawExtractedAuthors: authors.length ? authors.join(", ") : input.rawExtractedAuthors,
+    authorsConfidence: bibliographicMetadata.authors.length ? Math.max(0.96, bibliographicMetadata.confidence) : 0.6,
+    authorsExtractionNotes: bibliographicMetadata.authors.length
+      ? `${bibliographicMetadata.source} metadata supplied the author list before model author extraction.`
+      : `${bibliographicMetadata.source} metadata did not include authors; deterministic extracted authors were retained.`,
+    arxivId,
+    reportCodes: uniqueCleanStrings([
+      ...cleanDisplayTitle(input.rawExtractedTitle).reportCodes,
+    ]),
+    doi: normalizeDoi(bibliographicMetadata.doi || input.detectedDoi),
+    journalName: bibliographicMetadata.journalName,
+    journalPublicationDate: bibliographicMetadata.publicationDate,
+    arxivFirstSubmissionDate,
+    manuscriptDatePrintedOnPdf: "",
+    originalPublicationDateBestGuess: bibliographicMetadata.publicationDate || arxivFirstSubmissionDate,
+    dateSource: `${bibliographicMetadata.source} metadata`,
+    dateConfidence: bibliographicMetadata.publicationDate ? Math.max(0.96, bibliographicMetadata.confidence) : bibliographicMetadata.confidence,
+    dateNotes: uniqueCleanStrings([
+      bibliographicMetadata.notes,
+      arxivFirstSubmissionDate ? `Inferred first submission month ${arxivFirstSubmissionDate} from arXiv identifier ${arxivId}.` : "",
+      input.notes,
+    ]).join(" "),
+  };
+  return applyBenchmarkMetadataOverride(metadata, input.evidenceText || "");
+}
+
 export function normalizePaperDisplayMetadata<T extends {
   title?: string | null;
   paperAuthors?: string | null;
@@ -6172,6 +6276,7 @@ export function normalizePaperDisplayMetadata<T extends {
 export async function extractMetadata(paperContent: string, hints: MetadataHints = {}): Promise<ExtractedPaperMetadata> {
   const fallback = heuristicMetadata(paperContent, hints);
   const headerText = manuscriptHeaderText(paperContent).join("\n");
+  const extractedTextBeginning = stripControlChars(paperContent).slice(0, 16000);
   const metadataInput = JSON.stringify({
     fileNameHint: cleanMetadataText(hints.fileName),
     embeddedPdfTitleHint: cleanMetadataText(hints.pdfTitle),
@@ -6179,20 +6284,21 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     heuristicTitleFallback: fallback.title,
     heuristicAuthorsFallback: fallback.authors,
     manuscriptHeaderText: headerText.slice(0, 8000),
-    extractedTextBeginning: stripControlChars(paperContent).slice(0, 16000),
+    extractedTextBeginning,
   }, null, 2);
-  const detectedArxivId = firstArxivIdFromText([
+  const strongIdentifierText = [
     hints.fileName,
     hints.pdfTitle,
     headerText,
-    stripControlChars(paperContent).slice(0, 16000),
-  ].filter(Boolean).join("\n"));
-  const detectedDoi = doiIdsFromText([
-    hints.fileName,
-    hints.pdfTitle,
-    headerText,
-    stripControlChars(paperContent).slice(0, 16000),
-  ].filter(Boolean).join("\n"))[0] || "";
+  ].filter(Boolean).join("\n");
+  const broadIdentifierText = [
+    strongIdentifierText,
+    extractedTextBeginning,
+  ].filter(Boolean).join("\n");
+  const strongDetectedArxivId = firstArxivIdFromText(strongIdentifierText);
+  const detectedArxivId = strongDetectedArxivId || firstArxivIdFromText(broadIdentifierText);
+  const strongDetectedDoi = doiIdsFromText(strongIdentifierText)[0] || "";
+  const detectedDoi = strongDetectedDoi || doiIdsFromText(broadIdentifierText)[0] || "";
   const arxivMetadata = await fetchArxivMetadata(detectedArxivId);
   let bibliographicMetadata = await resolveBibliographicMetadata({
     doi: detectedDoi || arxivMetadata?.doi,
@@ -6204,6 +6310,23 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     ] : [],
   });
   const knownArxivAuthorList = knownArxivAuthors(detectedArxivId);
+  const trustedIdentifierText = [
+    hints.fileName,
+    hints.pdfTitle,
+    hints.pdfAuthor,
+    headerText,
+    fallback.title,
+    fallback.authors,
+    strongDetectedArxivId,
+    strongDetectedDoi,
+    arxivMetadata?.arxivId,
+    arxivMetadata?.title,
+    arxivMetadata?.authors,
+    arxivMetadata?.doi,
+    bibliographicMetadata?.doi,
+    bibliographicMetadata?.title,
+    bibliographicMetadata?.authors,
+  ].filter(Boolean).join("\n");
   const trustedBenchmarkOverrideText = benchmarkMetadataOverrideCandidate([
     hints.fileName,
     hints.pdfTitle,
@@ -6238,6 +6361,40 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
       authors: canonicalMetadata.displayedAuthors.join(", "),
       dateMetadata: canonicalMetadata,
     };
+  }
+  if (strongDetectedArxivId && arxivMetadata?.title) {
+    const authoritativeMetadata = metadataFromAuthoritativeArxiv(arxivMetadata, {
+      rawExtractedTitle: fallback.title,
+      rawExtractedAuthors: fallback.authors,
+      knownAuthorList: knownArxivAuthorList,
+      detectedDoi,
+      evidenceText: trustedIdentifierText,
+      notes: "Strong arXiv identifier was found in filename, PDF metadata, or manuscript header; model metadata extraction was bypassed.",
+    });
+    if (authoritativeMetadata) {
+      return {
+        title: authoritativeMetadata.displayedTitle,
+        authors: authoritativeMetadata.displayedAuthors.join(", "),
+        dateMetadata: authoritativeMetadata,
+      };
+    }
+  }
+  if (strongDetectedDoi && bibliographicMetadata?.title) {
+    const authoritativeMetadata = metadataFromAuthoritativeBibliographic(bibliographicMetadata, {
+      rawExtractedTitle: fallback.title,
+      rawExtractedAuthors: fallback.authors,
+      detectedArxivId,
+      detectedDoi,
+      evidenceText: trustedIdentifierText,
+      notes: "Strong DOI was found in filename, PDF metadata, or manuscript header; model metadata extraction was bypassed.",
+    });
+    if (authoritativeMetadata) {
+      return {
+        title: authoritativeMetadata.displayedTitle,
+        authors: authoritativeMetadata.displayedAuthors.join(", "),
+        dateMetadata: authoritativeMetadata,
+      };
+    }
   }
   const looksTruncatedTitle = (value: string) =>
     /\b(of|and|for|in|on|with|from|to|the|a|an)$/i.test(value.trim());
