@@ -3343,12 +3343,8 @@ const sourceHash = sourceHashFor(source);
 const expectedModelName = expectedReviewModelName(reviewMode);
 const reuseExistingReview = source.reuseExistingReview === true || source.reuseExisting === true;
 const forceFreshReview = source.forceFreshReview === true || source.forceFresh === true;
-// Exact-source reuse is a useful cost-control path for normal public uploads,
-// but benchmark ingestion is the admin/test lane where the same PDF may be
-// intentionally rerun after prompt, metadata, or extraction fixes.
 const allowExistingReviewReuse =
   !forceFreshReview &&
-  reviewMode !== "benchmark-ingestion" &&
   (reuseExistingReview || source.reuseExistingReview !== false);
 submissionKey = !durableJob && allowExistingReviewReuse && sourceHash ? `${user.id}:${expectedModelName}:${sourceHash}` : null;
 if (submissionKey && recentSubmissions.has(submissionKey)) {

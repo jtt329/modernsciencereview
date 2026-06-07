@@ -3463,6 +3463,18 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   override: BenchmarkMetadataOverride;
 }> = [
   {
+    id: "carroll-field-jackiw-lorentz-violating-electrodynamics",
+    match: /\b(?:limits\s+on\s+a\s+lorentz[-\s]*and[-\s]*parity[-\s]*violating\s+modification\s+of\s+electrodynamics|carroll[\s\S]{0,80}field[\s\S]{0,80}jackiw|chern[-\s]*simons\s+modification[\s\S]{0,180}(?:3\s*\+?\s*1|four)[-\s]*dimensional\s+electrodynamics|vacuum\s+birefringence[\s\S]{0,180}radio\s+galaxies|lorentz\s+invariance[\s\S]{0,180}vacuum\s+birefringence|physrevd\.41\.1231|10\.1103\/physrevd\.41\.1231)\b/i,
+    override: {
+      title: "Limits on a Lorentz- and Parity-Violating Modification of Electrodynamics",
+      authors: ["Sean M. Carroll", "George B. Field", "Roman Jackiw"],
+      doi: "10.1103/PhysRevD.41.1231",
+      journalName: "Physical Review D",
+      journalPublicationDate: "1990",
+      dateNotes: "Benchmark metadata override for the Carroll-Field-Jackiw Lorentz-violating electrodynamics paper.",
+    },
+  },
+  {
     id: "bekenstein-black-holes-entropy",
     match: /\b(?:be?c?k?enstein[\s\S]{0,180}(?:blak|black)[\s_-]*holes?[\s\S]{0,120}entropy|(?:blak|black)\s*holes?\s*and\s*entropy|(?:blak|black)\s*holesand\s*entropy|jacob\s+d\.?\s+be?c?k?enstein[\s\S]{0,80}texas\s*78712|texas\s*78712[\s\S]{0,80}jacob\s+d\.?\s+be?c?k?enstein|physrevd\.7\.2333|10\.1103\/physrevd\.7\.2333)\b/i,
     override: {

@@ -932,6 +932,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       color: currentOutputStrengthScore == null ? 'text-slate-200' : currentOutputStrengthScore >= 8 ? 'text-emerald-200' : currentOutputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
     },
   ];
+  const activeDiagnosticCard = diagnosticCards.find((card) => card.id === activeIcoTab);
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     {
@@ -1138,6 +1139,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   })}
                 </div>
                 <div className={`rounded-2xl border-2 p-4 ${ICO_TAB_THEME.panel}`}>
+                {activeDiagnosticCard?.rationale && (
+                  <div className="mb-4 rounded-xl border border-indigo-300/15 bg-indigo-300/[0.045] p-4 text-sm leading-relaxed text-slate-200">
+                    <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-indigo-300">
+                      Selected Preview
+                    </p>
+                    <Markdown>{activeDiagnosticCard.rationale}</Markdown>
+                  </div>
+                )}
                 {activeIcoTab === 'input' && <div className="space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Input Strength</p>
