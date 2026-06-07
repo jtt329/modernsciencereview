@@ -937,6 +937,7 @@ async function existingSourceSubmission(
   ).orderBy(desc(papersTable.createdAt));
   if (userPapers.length === 0) return null;
 
+  const visiblePaperIds = new Set(dedupePapers(userPapers).map((paper) => paper.id));
   const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.modelName, modelName));
   const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
   for (const paper of userPapers) {
@@ -946,6 +947,15 @@ async function existingSourceSubmission(
       ledger?.promptHash === promptHash &&
       ledger?.promptVersion === promptVersion;
     if (ledger?.submissionSourceHash === sourceHash && matchingPrompt) {
+      if (!visiblePaperIds.has(paper.id)) {
+        logger.warn({
+          paperId: paper.id,
+          title: paper.title,
+          promptVersion,
+          promptHash,
+        }, "Ignoring exact-source duplicate hidden by public feed dedupe");
+        continue;
+      }
       return { paper, review: review || null };
     }
   }
@@ -3616,8 +3626,14 @@ const existingBySource = allowExistingReviewReuse && sourceHash
     )
   : null;
 if (existingBySource?.review) {
+  const existingDisplayPaper = normalizePaperDisplayMetadata(
+    existingBySource.paper,
+    reviewMetadataNormalizationText(existingBySource.review),
+  );
   logger.info({
-    paperId: existingBySource.paper.id,
+    paperId: existingDisplayPaper.id,
+    title: existingDisplayPaper.title,
+    paperAuthors: existingDisplayPaper.paperAuthors,
     promptVersion: REVIEW_PROMPT_VERSION,
     promptHash: REVIEW_PROMPT_HASH,
     cacheUsed: true,
@@ -3626,22 +3642,25 @@ if (existingBySource?.review) {
     comparatorContextIncluded: false,
     adjudicatorContextIncluded: false,
   }, "Detected existing review by source hash");
-  if (resolveSubmission) resolveSubmission(existingBySource);
-  attemptContext.paperId = existingBySource.paper.id;
+  if (resolveSubmission) resolveSubmission({ ...existingBySource, paper: existingDisplayPaper });
+  attemptContext.paperId = existingDisplayPaper.id;
   const attempt = await updateReviewAttemptProgress(attemptContext, {
     stageName: "save_review",
     stageType: "storage",
     reviewStatus: "duplicate_existing",
     failureStatus: "completed",
     retryable: false,
-    errorMessage: "This exact PDF/text source is already in the system.",
+    errorMessage: `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}".`,
     debugPayload: completedAttemptDebugPayload(attemptContext, {
       cacheUsed: true,
       previousReviewUsed: true,
       duplicateReason: "sourceHash",
-      duplicateExistingPaperId: existingBySource.paper.id,
+      duplicateExistingPaperId: existingDisplayPaper.id,
       duplicateExistingReviewId: existingBySource.review.id,
-      savedPaperId: existingBySource.paper.id,
+      duplicateExistingTitle: existingDisplayPaper.title,
+      duplicateExistingAuthors: existingDisplayPaper.paperAuthors,
+      duplicateExistingCreatedAt: existingDisplayPaper.createdAt,
+      savedPaperId: existingDisplayPaper.id,
       savedReviewId: existingBySource.review.id,
     }),
   });
@@ -3649,7 +3668,7 @@ if (existingBySource?.review) {
     const key = submissionKey;
     setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
   }
-  return { ...existingBySource, attempt, batchRunId, queueItemId };
+  return { paper: existingDisplayPaper, review: existingBySource.review, attempt, batchRunId, queueItemId };
 }
 
 // Do not reuse completed reviews from title/author metadata alone. Metadata can be

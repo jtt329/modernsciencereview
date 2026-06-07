@@ -113,7 +113,7 @@ function activeStageLabel(attempt: any) {
   const stageName = attempt?.stageName || attempt?.debugPayload?.stageName;
   const reviewStatus = attempt?.reviewStatus || attempt?.debugPayload?.jobStatus;
   if (reviewStatus === 'duplicate_existing') {
-    return 'Already in system; existing review was not rerun.';
+    return duplicateExistingMessage(attempt);
   }
   switch (stageName) {
     case 'upload_received':
@@ -148,6 +148,23 @@ function activeStageLabel(attempt: any) {
       if (reviewStatus === 'running') return 'Review worker running...';
       return reviewModeCopy['benchmark-ingestion'].processing;
   }
+}
+
+function duplicateExistingMessage(attempt: any, paper?: any) {
+  const payload = attempt?.debugPayload || {};
+  const title = payload.duplicateExistingTitle || paper?.title;
+  const authors = payload.duplicateExistingAuthors || paper?.paperAuthors;
+  const reviewId = payload.duplicateExistingReviewId;
+  if (title && authors) {
+    return `Already in system as "${title}" by ${authors}; existing review was not rerun.`;
+  }
+  if (title) {
+    return `Already in system as "${title}"; existing review was not rerun.`;
+  }
+  if (reviewId) {
+    return `Already in system; matched existing review ${reviewId}.`;
+  }
+  return 'Already in system; existing review was not rerun.';
 }
 
 function failureStatusLabel(value: string | null | undefined) {
@@ -789,7 +806,7 @@ export default function SubmissionForm({
           if (attempt?.reviewStatus === 'duplicate_existing') {
             setFileStatus(entry.qf.id, {
               status: 'duplicate',
-              error: 'Already in system; existing review was not rerun.',
+              error: duplicateExistingMessage(attempt, data?.paper),
               attempt,
             });
           } else {
