@@ -837,6 +837,8 @@ export default function SubmissionForm({
   const isFormValid = submissionType === 'text'
     ? !!text.trim()
     : remainingFiles.length > 0;
+  const batchHasRetryableItems = remainingFiles.length > 0;
+  const primaryButtonClosesModal = Boolean(batchCompleteMessage && !isSubmitting && !batchHasRetryableItems);
 
   return (
     <motion.div
@@ -1196,7 +1198,7 @@ export default function SubmissionForm({
           <motion.button
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
-            onClick={batchCompleteMessage && !isSubmitting ? onClose : handleSubmit}
+            onClick={primaryButtonClosesModal ? onClose : handleSubmit}
             disabled={isSubmitting || (!batchCompleteMessage && !isFormValid)}
             className="bg-indigo-600 text-white px-8 py-3 rounded-2xl font-black shadow-xl shadow-indigo-100 hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center gap-3"
           >
@@ -1208,7 +1210,7 @@ export default function SubmissionForm({
             ) : (
               <>
                 {batchCompleteMessage ? <CheckCircle2 className="w-5 h-5" /> : <Send className="w-5 h-5" />}
-                {batchCompleteMessage
+                {primaryButtonClosesModal
                   ? 'OK'
                   : failedFiles.length > 0
                   ? `Retry ${remainingFiles.length} Failed/Pending`
