@@ -1270,6 +1270,22 @@ async function repairPdfExtractionIfNeeded(options: {
   };
 }
 
+function shouldSkipAutomaticPdfTextFallback(report: ExtractionCompletenessReport | null, text: string) {
+  if (!report) return false;
+  const pageCount = report.estimatedPdfPageCount ?? report.extractedPageCount ?? null;
+  const extractedChars = report.extractedTextCharCount ?? cleanExtractedManuscriptText(text || "").length;
+  return report.extractionCompletenessStatus === "failed" &&
+    Boolean(pageCount && pageCount >= 6) &&
+    extractedChars < 100;
+}
+
+function skippedPdfTextFallbackWarning(report: ExtractionCompletenessReport | null) {
+  const pages = report?.estimatedPdfPageCount ?? report?.extractedPageCount ?? null;
+  return pages
+    ? `Automatic PDF text fallback skipped because the PDF text layer yielded fewer than 100 readable characters from a ${pages}-page PDF; use manual OCR/text or PDF-visible last resort.`
+    : "Automatic PDF text fallback skipped because the PDF text layer yielded fewer than 100 readable characters; use manual OCR/text or PDF-visible last resort.";
+}
+
 function truncationIndicatorMatches(value: unknown) {
   const text = typeof value === "string" ? value : JSON.stringify(value ?? "");
   const indicators = [
@@ -3405,14 +3421,34 @@ if (source.type === "pdf") {
   updateAttemptExtractionContext(attemptContext, extractionCompleteness);
   updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
   await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
-  attemptContext.pdfFallbackAttempted = isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
+  const skipAutomaticFallback = shouldSkipAutomaticPdfTextFallback(extractionCompleteness, paperContent);
+  if (skipAutomaticFallback) {
+    extractionCompleteness = {
+      ...extractionCompleteness,
+      extractionWarnings: [
+        ...extractionCompleteness.extractionWarnings,
+        skippedPdfTextFallbackWarning(extractionCompleteness),
+      ],
+    };
+    updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+    updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
+      pdfFallbackSkipped: true,
+      pdfFallbackSkipReason: "text_layer_empty",
+    });
+  }
+  attemptContext.pdfFallbackAttempted =
+    !skipAutomaticFallback && isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
   if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
   if (attemptContext.pdfFallbackAttempted) await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_fallback_extraction" });
-  const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
-  paperContent = repaired.text;
-  metadataExtractionText = paperContent;
-  extractionCompleteness = repaired.report;
-  attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
+  if (attemptContext.pdfFallbackAttempted) {
+    const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
+    paperContent = repaired.text;
+    metadataExtractionText = paperContent;
+    extractionCompleteness = repaired.report;
+    attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
+  } else {
+    attemptContext.fallbackSucceeded = false;
+  }
   attemptContext.pdfVisibleFallbackUsed = false;
   updateAttemptExtractionContext(attemptContext, extractionCompleteness);
   updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
@@ -3451,14 +3487,34 @@ if (source.type === "pdf") {
   updateAttemptExtractionContext(attemptContext, extractionCompleteness);
   updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
   await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
-  attemptContext.pdfFallbackAttempted = isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
+  const skipAutomaticFallback = shouldSkipAutomaticPdfTextFallback(extractionCompleteness, paperContent);
+  if (skipAutomaticFallback) {
+    extractionCompleteness = {
+      ...extractionCompleteness,
+      extractionWarnings: [
+        ...extractionCompleteness.extractionWarnings,
+        skippedPdfTextFallbackWarning(extractionCompleteness),
+      ],
+    };
+    updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+    updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
+      pdfFallbackSkipped: true,
+      pdfFallbackSkipReason: "text_layer_empty",
+    });
+  }
+  attemptContext.pdfFallbackAttempted =
+    !skipAutomaticFallback && isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
   if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
   if (attemptContext.pdfFallbackAttempted) await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_fallback_extraction" });
-  const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
-  paperContent = repaired.text;
-  metadataExtractionText = paperContent;
-  extractionCompleteness = repaired.report;
-  attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
+  if (attemptContext.pdfFallbackAttempted) {
+    const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
+    paperContent = repaired.text;
+    metadataExtractionText = paperContent;
+    extractionCompleteness = repaired.report;
+    attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
+  } else {
+    attemptContext.fallbackSucceeded = false;
+  }
   attemptContext.pdfVisibleFallbackUsed = false;
   updateAttemptExtractionContext(attemptContext, extractionCompleteness);
   updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
