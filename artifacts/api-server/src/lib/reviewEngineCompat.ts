@@ -311,6 +311,8 @@ export type ExtractionCompletenessReport = {
 };
 
 type ReviewInputSnapshot = ExtractionCompletenessReport & {
+  pdfHash: string | null;
+  pdfVisibleFallbackUsed: boolean;
   rawExtractedTextFirst2000: string;
   rawExtractedTextLast2000: string;
   blindedReviewTextHash: string;
@@ -1690,6 +1692,7 @@ function invalidExtractionError(reason: string) {
 function deterministicSnapshotIsReviewable(snapshot?: ReviewInputSnapshot | null) {
   if (!snapshot) return false;
   if (!isExtractionReviewableStatus(snapshot.extractionCompletenessStatus)) return false;
+  if (snapshot.pdfVisibleFallbackUsed && snapshot.pdfHash) return true;
   const primaryReviewText = snapshot.blindedReviewText || snapshot.rawExtractedText || "";
   const primaryReviewCharCount = snapshot.blindedReviewText ? snapshot.blindedReviewTextCharCount : snapshot.extractedTextCharCount;
   if ((primaryReviewCharCount ?? 0) < 12_000) return false;
@@ -1730,6 +1733,9 @@ function buildReviewInputSnapshot(
 ): ReviewInputSnapshot {
   const rawText = stripControlChars(reviewInputText(rawInput)).trim();
   const blindedText = stripControlChars(reviewInputText(blindedInput)).trim();
+  const pdfBase64 = typeof rawInput === "string" ? "" : rawInput.pdfBase64;
+  const pdfHash = pdfBase64 ? sha256Text(pdfBase64) : null;
+  const pdfVisibleFallbackUsed = Boolean(pdfHash);
   let completeness = extractionCompleteness ?? assessExtractionCompleteness(rawText);
   const blindedCompleteness = assessExtractionCompleteness(blindedText);
   const rawLooksReviewable = isExtractionReviewableStatus(completeness.extractionCompletenessStatus);
@@ -1737,7 +1743,7 @@ function buildReviewInputSnapshot(
   const blindedIsSuspiciouslyShort =
     rawText.length >= 15_000 &&
     blindedText.length < Math.max(8_000, rawText.length * 0.55);
-  if (rawLooksReviewable && (blindedLooksBlocking || blindedIsSuspiciouslyShort)) {
+  if (!pdfVisibleFallbackUsed && rawLooksReviewable && (blindedLooksBlocking || blindedIsSuspiciouslyShort)) {
     completeness = {
       ...completeness,
       extractionCompletenessStatus: "needs_manual_repair",
@@ -1750,6 +1756,8 @@ function buildReviewInputSnapshot(
   }
   return {
     ...completeness,
+    pdfHash,
+    pdfVisibleFallbackUsed,
     rawExtractedTextHash: sha256Text(rawText),
     extractedTextCharCount: rawText.length,
     extractedTextTokenCount: approximateTokenCount(rawText),

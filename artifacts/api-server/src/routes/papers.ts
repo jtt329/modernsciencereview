@@ -988,6 +988,9 @@ function benchmarkSnapshotIsDeterministicallyReviewable(ledger: Record<string, a
     "",
   );
   if (!isExtractionReviewableStatus(status)) return false;
+  if (snapshot.pdfVisibleFallbackUsed === true && typeof snapshot.pdfHash === "string" && snapshot.pdfHash) {
+    return true;
+  }
 
   const charCount = Number(snapshot.extractedTextCharCount ?? ledger.extractedTextCharCount ?? 0);
   if (!Number.isFinite(charCount) || charCount < 12_000) return false;
