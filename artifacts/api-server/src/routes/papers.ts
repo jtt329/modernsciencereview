@@ -65,6 +65,7 @@ const REVIEW_JOB_AUTO_RECOVERY = process.env.REVIEW_JOB_AUTO_RECOVERY === "true"
 const REVIEW_JOB_MAX_AUTO_RETRIES = Math.max(0, Number(process.env.REVIEW_JOB_MAX_AUTO_RETRIES ?? 0) || 0);
 const PAPER_FEED_LIMIT = Math.max(1, Math.min(500, Number(process.env.PAPER_FEED_LIMIT ?? 250) || 250));
 const RETAIN_COMPLETED_REVIEW_JOB_SOURCE_SNAPSHOTS = process.env.RETAIN_COMPLETED_REVIEW_JOB_SOURCE_SNAPSHOTS === "true";
+const RETAIN_FAILED_REVIEW_JOB_SOURCE_SNAPSHOTS = process.env.RETAIN_FAILED_REVIEW_JOB_SOURCE_SNAPSHOTS === "true";
 const REVIEW_PROCESS_ROLE = process.env.REVIEW_PROCESS_ROLE || "combined";
 const REVIEW_JOB_PROCESSING_ENABLED =
   process.env.REVIEW_JOB_PROCESSING_ENABLED !== "false" && REVIEW_PROCESS_ROLE !== "web";
@@ -358,6 +359,36 @@ function completedAttemptDebugPayload(context: ReviewAttemptContext, extra: Reco
     payload.sourceSnapshotRetentionNote = "Completed review job source payload was redacted after completion to avoid retaining uploaded PDF/text bodies in Postgres.";
   }
   return payload;
+}
+
+function failedAttemptDebugPayload(context: ReviewAttemptContext, extra: Record<string, unknown> = {}) {
+  const payload: Record<string, unknown> = attemptDebugPayload(context, {
+    ...extra,
+    jobStatus: "failed",
+    failedAt: typeof extra.failedAt === "string" ? extra.failedAt : new Date().toISOString(),
+    apiRuntimeAtFailed: reviewRuntimeInfo(),
+  });
+  return redactTerminalAttemptSourcePayload(payload);
+}
+
+function redactTerminalAttemptSourcePayload(payload: Record<string, unknown>) {
+  if (RETAIN_FAILED_REVIEW_JOB_SOURCE_SNAPSHOTS) return payload;
+  const redacted = { ...payload };
+  let redactedSource = false;
+  if (redacted.sourceSnapshot) {
+    redacted.sourceSnapshot = summarizeSourceSnapshot(redacted.sourceSnapshot);
+    redactedSource = true;
+  }
+  if (redacted.source) {
+    redacted.source = summarizeSourceSnapshot(redacted.source);
+    redactedSource = true;
+  }
+  if (redactedSource) {
+    redacted.sourceSnapshotRedacted = true;
+    redacted.sourceSnapshotRetentionNote =
+      "Terminal failed review job source payload was redacted to avoid retaining uploaded PDF/text bodies in Postgres. Re-upload the file or provide manual text to retry.";
+  }
+  return redacted;
 }
 
 function reviewJobLeaseExpiresAt(now = Date.now()) {
@@ -840,7 +871,7 @@ async function recordFailedReviewAttempt(context: ReviewAttemptContext, err: unk
     reviewStatus: classified.reviewStatus ?? ((err as any)?.reviewStatus ?? null),
     failureStatus: null,
     scientificScoringAttempted: classified.scientificScoringAttempted,
-    debugPayload: attemptDebugPayload(classified, {
+    debugPayload: failedAttemptDebugPayload(classified, {
       errorName: err instanceof Error ? err.name : typeof err,
       failedAt: new Date().toISOString(),
     }),
@@ -1650,7 +1681,7 @@ async function markReviewJobAutoRecoveryExceeded(record: ReviewAttemptRecord, re
       retryable: true,
     }),
     retryable: true,
-    debugPayload: {
+    debugPayload: redactTerminalAttemptSourcePayload({
       ...payload,
       jobStatus: "auto_recovery_exceeded",
       autoRecoveryExceededAt: new Date().toISOString(),
@@ -1661,7 +1692,7 @@ async function markReviewJobAutoRecoveryExceeded(record: ReviewAttemptRecord, re
       autoRecoveryExceededOriginalStageType: originalStageType,
       autoRecoveryExceededPreservedFailureStage: extractionBlocked,
       apiRuntimeAtAutoRecoveryExceeded: reviewRuntimeInfo(),
-    },
+    }),
   };
   await persistReviewAttemptRecord(failedRecord);
   return failedRecord;
