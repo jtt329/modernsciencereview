@@ -948,26 +948,51 @@ async function existingSourceSubmission(
   const visiblePaperIds = new Set(dedupePapers(userPapers).map((paper) => paper.id));
   const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.modelName, modelName));
   const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
+  let promptMismatchMatch: {
+    paper: typeof papersTable.$inferSelect;
+    review: typeof reviewsTable.$inferSelect | null;
+    promptMatches: false;
+    existingPromptHash: string | null;
+    existingPromptVersion: string | null;
+  } | null = null;
   for (const paper of userPapers) {
     const review = reviewByPaper.get(paper.id);
     const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
+    if (ledger?.submissionSourceHash !== sourceHash) continue;
+    const existingPromptHash = typeof ledger?.promptHash === "string" ? ledger.promptHash : null;
+    const existingPromptVersion = typeof ledger?.promptVersion === "string" ? ledger.promptVersion : null;
     const matchingPrompt =
-      ledger?.promptHash === promptHash &&
-      ledger?.promptVersion === promptVersion;
-    if (ledger?.submissionSourceHash === sourceHash && matchingPrompt) {
-      if (!visiblePaperIds.has(paper.id)) {
-        logger.warn({
-          paperId: paper.id,
-          title: paper.title,
-          promptVersion,
-          promptHash,
-        }, "Ignoring exact-source duplicate hidden by public feed dedupe");
-        continue;
-      }
-      return { paper, review: review || null };
+      existingPromptHash === promptHash &&
+      existingPromptVersion === promptVersion;
+    if (!visiblePaperIds.has(paper.id)) {
+      logger.warn({
+        paperId: paper.id,
+        title: paper.title,
+        existingPromptVersion,
+        existingPromptHash,
+        activePromptVersion: promptVersion,
+        activePromptHash: promptHash,
+      }, "Ignoring exact-source duplicate hidden by public feed dedupe");
+      continue;
     }
+    if (matchingPrompt) {
+      return {
+        paper,
+        review: review || null,
+        promptMatches: true as const,
+        existingPromptHash,
+        existingPromptVersion,
+      };
+    }
+    promptMismatchMatch ??= {
+      paper,
+      review: review || null,
+      promptMatches: false as const,
+      existingPromptHash,
+      existingPromptVersion,
+    };
   }
-  return null;
+  return promptMismatchMatch;
 }
 
 function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash: string | null, reviewMode: ReviewPipelineMode) {
@@ -3433,6 +3458,9 @@ if (existingBySource?.review) {
     paperId: existingDisplayPaper.id,
     title: existingDisplayPaper.title,
     paperAuthors: existingDisplayPaper.paperAuthors,
+    existingPromptVersion: existingBySource.existingPromptVersion,
+    existingPromptHash: existingBySource.existingPromptHash,
+    duplicatePromptMatchesActivePrompt: existingBySource.promptMatches,
     promptVersion: REVIEW_PROMPT_VERSION,
     promptHash: REVIEW_PROMPT_HASH,
     cacheUsed: true,
@@ -3449,12 +3477,19 @@ if (existingBySource?.review) {
     reviewStatus: "duplicate_existing",
     failureStatus: "completed",
     retryable: false,
-    errorMessage: `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}".`,
+    errorMessage: existingBySource.promptMatches
+      ? `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}".`
+      : `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}" under a previous prompt.`,
     debugPayload: completedAttemptDebugPayload(attemptContext, {
       cacheUsed: true,
       previousReviewUsed: true,
       reuseReason: "exactSourcePreExtraction",
       duplicateReason: "sourceHash",
+      duplicatePromptMatchesActivePrompt: existingBySource.promptMatches,
+      duplicateExistingPromptVersion: existingBySource.existingPromptVersion,
+      duplicateExistingPromptHash: existingBySource.existingPromptHash,
+      activePromptVersion: REVIEW_PROMPT_VERSION,
+      activePromptHash: REVIEW_PROMPT_HASH,
       duplicateExistingPaperId: existingDisplayPaper.id,
       duplicateExistingReviewId: existingBySource.review.id,
       duplicateExistingTitle: existingDisplayPaper.title,
