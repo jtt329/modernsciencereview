@@ -37,6 +37,7 @@ import {
   type ReviewModel,
   type ReviewInput,
   type ExtractionCompletenessReport,
+  type ExtractedPaperMetadata,
 } from "../lib/reviewEngineCompat";
 import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
 
@@ -1112,6 +1113,213 @@ async function existingSourceSubmission(
     };
   }
   return promptMismatchMatch;
+}
+
+type ExistingReviewSubmissionMatch = {
+  paper: typeof papersTable.$inferSelect;
+  review: typeof reviewsTable.$inferSelect | null;
+  promptMatches: boolean;
+  existingPromptHash: string | null;
+  existingPromptVersion: string | null;
+  duplicateReason: "doi" | "arxivId" | "titleAuthors";
+};
+
+function normalizeIdentityText(value?: string | null) {
+  return (value || "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’‘]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[\u2010-\u2015]/g, "-")
+    .toLowerCase()
+    .replace(/\b(?:unknown\s+title|unknown\s+authors?)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeIdentityTitle(value?: string | null) {
+  return normalizeIdentityText(value)
+    .replace(/\b(?:the|a|an)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeIdentityAuthor(value?: string | null) {
+  return normalizeIdentityText(value)
+    .replace(/\b(?:jr|sr|ii|iii|iv)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeDoi(value?: string | null) {
+  return (value || "")
+    .trim()
+    .replace(/^doi:\s*/i, "")
+    .replace(/^https?:\/\/(?:dx\.)?doi\.org\//i, "")
+    .replace(/[)\].,;:\s]+$/g, "")
+    .toLowerCase();
+}
+
+function normalizeArxivId(value?: string | null) {
+  return (value || "")
+    .trim()
+    .replace(/^arxiv:\s*/i, "")
+    .replace(/^https?:\/\/arxiv\.org\/(?:abs|pdf)\//i, "")
+    .replace(/\.pdf$/i, "")
+    .replace(/v\d+$/i, "")
+    .toLowerCase();
+}
+
+function paperDateMetadataObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringArrayFromMetadata(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean)
+    : [];
+}
+
+function cleanIdentityAuthors(values: string[]) {
+  const authors = values
+    .map((author) => author.replace(/\s+/g, " ").trim())
+    .filter((author) => author && !/^unknown authors?$/i.test(author));
+  return Array.from(new Set(authors.map((author) => normalizeIdentityAuthor(author))))
+    .filter((author) => author.length >= 2);
+}
+
+function authorsIdentityCompatible(targetAuthors: string[], existingAuthors: string[]) {
+  if (targetAuthors.length === 0 || existingAuthors.length === 0) return false;
+  const existing = new Set(existingAuthors);
+  const overlap = targetAuthors.filter((author) => existing.has(author)).length;
+  const smaller = Math.min(targetAuthors.length, existingAuthors.length);
+  if (smaller <= 1) return overlap >= 1;
+  return overlap >= Math.min(2, smaller) && overlap / smaller >= 0.8;
+}
+
+function promptIdentityForReview(review?: typeof reviewsTable.$inferSelect | null) {
+  const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
+  const existingPromptHash = typeof ledger?.promptHash === "string" ? ledger.promptHash : null;
+  const existingPromptVersion = typeof ledger?.promptVersion === "string" ? ledger.promptVersion : null;
+  return {
+    existingPromptHash,
+    existingPromptVersion,
+    promptMatches:
+      existingPromptHash === REVIEW_PROMPT_HASH &&
+      existingPromptVersion === REVIEW_PROMPT_VERSION,
+  };
+}
+
+function extractedMetadataIdentity(metadata: ExtractedPaperMetadata) {
+  const dateMetadata = metadata.dateMetadata ?? ({} as ExtractedPaperMetadata["dateMetadata"]);
+  const title = dateMetadata.displayedTitle || metadata.title || "";
+  const authors = dateMetadata.displayedAuthors?.length
+    ? dateMetadata.displayedAuthors
+    : splitAuthorNamesForMetadata(metadata.authors || "");
+  const titleConfidence = Number(dateMetadata.titleConfidence ?? 0);
+  const authorsConfidence = Number(dateMetadata.authorsConfidence ?? 0);
+  const titleKey = normalizeIdentityTitle(title);
+  const authorKeys = cleanIdentityAuthors(authors);
+  const doi = normalizeDoi(dateMetadata.doi);
+  const arxivId = normalizeArxivId(dateMetadata.arxivId);
+  const hasUsableTitle = titleKey.length >= 12 && !/^unknown title$/i.test(title.trim());
+  const hasUsableAuthors = authorKeys.length > 0 && !/^unknown authors?$/i.test((metadata.authors || "").trim());
+  return {
+    title,
+    authors,
+    titleKey,
+    authorKeys,
+    doi,
+    arxivId,
+    titleConfidence,
+    authorsConfidence,
+    strong:
+      hasUsableTitle &&
+      (
+        Boolean(doi || arxivId) ||
+        (hasUsableAuthors && titleConfidence >= 0.85 && authorsConfidence >= 0.8)
+      ),
+  };
+}
+
+function paperMetadataIdentity(paper: typeof papersTable.$inferSelect) {
+  const dateMetadata = paperDateMetadataObject(paper.dateMetadata);
+  const displayedAuthors = stringArrayFromMetadata(dateMetadata.displayedAuthors);
+  const title = typeof dateMetadata.displayedTitle === "string" && dateMetadata.displayedTitle.trim()
+    ? dateMetadata.displayedTitle
+    : paper.title;
+  const authors = displayedAuthors.length > 0
+    ? displayedAuthors
+    : splitAuthorNamesForMetadata(paper.paperAuthors || "");
+  return {
+    title,
+    authors,
+    titleKey: normalizeIdentityTitle(title),
+    authorKeys: cleanIdentityAuthors(authors),
+    doi: normalizeDoi(typeof dateMetadata.doi === "string" ? dateMetadata.doi : ""),
+    arxivId: normalizeArxivId(typeof dateMetadata.arxivId === "string" ? dateMetadata.arxivId : ""),
+  };
+}
+
+function metadataIdentityDuplicateReason(
+  target: ReturnType<typeof extractedMetadataIdentity>,
+  existing: ReturnType<typeof paperMetadataIdentity>,
+): ExistingReviewSubmissionMatch["duplicateReason"] | null {
+  if (!target.strong) return null;
+  if (target.doi && existing.doi && target.doi === existing.doi) return "doi";
+  if (target.arxivId && existing.arxivId && target.arxivId === existing.arxivId) return "arxivId";
+  if (
+    target.titleKey &&
+    existing.titleKey &&
+    target.titleKey === existing.titleKey &&
+    authorsIdentityCompatible(target.authorKeys, existing.authorKeys)
+  ) {
+    return "titleAuthors";
+  }
+  return null;
+}
+
+async function existingMetadataIdentitySubmission(
+  authorId: string,
+  metadata: ExtractedPaperMetadata,
+  modelName: string,
+): Promise<ExistingReviewSubmissionMatch | null> {
+  const target = extractedMetadataIdentity(metadata);
+  if (!target.strong) return null;
+
+  const userPapers = await db.select().from(papersTable).where(
+    and(
+      eq(papersTable.authorId, authorId),
+      eq(papersTable.modelName, modelName),
+    ),
+  ).orderBy(desc(papersTable.createdAt));
+  if (userPapers.length === 0) return null;
+
+  const visiblePapers = dedupePapers(userPapers);
+  const visiblePaperIds = new Set(visiblePapers.map((paper) => paper.id));
+  const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.modelName, modelName));
+  const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
+
+  for (const paper of visiblePapers) {
+    const review = reviewByPaper.get(paper.id);
+    if (!review || !visiblePaperIds.has(paper.id)) continue;
+    const existing = paperMetadataIdentity(normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(review)));
+    const duplicateReason = metadataIdentityDuplicateReason(target, existing);
+    if (!duplicateReason) continue;
+    const promptIdentity = promptIdentityForReview(review);
+    return {
+      paper,
+      review,
+      promptMatches: promptIdentity.promptMatches,
+      existingPromptHash: promptIdentity.existingPromptHash,
+      existingPromptVersion: promptIdentity.existingPromptVersion,
+      duplicateReason,
+    };
+  }
+  return null;
 }
 
 function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash: string | null, reviewMode: ReviewPipelineMode) {
@@ -3949,9 +4157,85 @@ if (metadataNeedsRepair && usePdfVisibleLastResort) {
   });
 }
 
-// Do not reuse completed reviews from title/author metadata alone. Metadata can be
-// contaminated by OCR, references, or old fallback paths; exact source-hash reuse is
-// the safe cost-control path.
+const existingByMetadata = allowExistingReviewReuse
+  ? await existingMetadataIdentitySubmission(
+      user.id,
+      metadata,
+      expectedModelName,
+    )
+  : null;
+if (existingByMetadata?.review) {
+  const existingDisplayPaper = normalizePaperDisplayMetadata(
+    existingByMetadata.paper,
+    reviewMetadataNormalizationText(existingByMetadata.review),
+  );
+  logger.info({
+    paperId: existingDisplayPaper.id,
+    title: existingDisplayPaper.title,
+    paperAuthors: existingDisplayPaper.paperAuthors,
+    existingPromptVersion: existingByMetadata.existingPromptVersion,
+    existingPromptHash: existingByMetadata.existingPromptHash,
+    duplicatePromptMatchesActivePrompt: existingByMetadata.promptMatches,
+    promptVersion: REVIEW_PROMPT_VERSION,
+    promptHash: REVIEW_PROMPT_HASH,
+    cacheUsed: true,
+    previousReviewUsed: true,
+    duplicateReason: existingByMetadata.duplicateReason,
+    comparatorContextIncluded: false,
+    adjudicatorContextIncluded: false,
+  }, "Detected existing review by canonical metadata identity before scientific review");
+  if (resolveSubmission) resolveSubmission({ ...existingByMetadata, paper: existingDisplayPaper });
+  attemptContext.paperId = existingDisplayPaper.id;
+  const metadataDuplicateLabel = existingByMetadata.duplicateReason === "doi"
+    ? "DOI"
+    : existingByMetadata.duplicateReason === "arxivId"
+      ? "arXiv ID"
+      : "title and authors";
+  const attempt = await updateReviewAttemptProgress(attemptContext, {
+    stageName: "save_review",
+    stageType: "storage",
+    reviewStatus: "duplicate_existing",
+    failureStatus: "completed",
+    retryable: false,
+    errorMessage: existingByMetadata.promptMatches
+      ? `This paper is already in the system as "${existingDisplayPaper.title}" by ${existingDisplayPaper.paperAuthors || "Unknown Authors"} (${metadataDuplicateLabel} match).`
+      : `This paper is already in the system as "${existingDisplayPaper.title}" by ${existingDisplayPaper.paperAuthors || "Unknown Authors"} under a previous prompt (${metadataDuplicateLabel} match).`,
+    debugPayload: completedAttemptDebugPayload(attemptContext, {
+      cacheUsed: true,
+      previousReviewUsed: true,
+      reuseReason: "metadataIdentityPreReview",
+      duplicateReason: existingByMetadata.duplicateReason,
+      duplicatePromptMatchesActivePrompt: existingByMetadata.promptMatches,
+      duplicateExistingPromptVersion: existingByMetadata.existingPromptVersion,
+      duplicateExistingPromptHash: existingByMetadata.existingPromptHash,
+      activePromptVersion: REVIEW_PROMPT_VERSION,
+      activePromptHash: REVIEW_PROMPT_HASH,
+      duplicateExistingPaperId: existingDisplayPaper.id,
+      duplicateExistingReviewId: existingByMetadata.review.id,
+      duplicateExistingTitle: existingDisplayPaper.title,
+      duplicateExistingAuthors: existingDisplayPaper.paperAuthors,
+      duplicateExistingCreatedAt: existingDisplayPaper.createdAt,
+      extractedMetadata: {
+        title: metadataTitle,
+        authors: metadataAuthors,
+        doi: metadata.dateMetadata?.doi ?? null,
+        arxivId: metadata.dateMetadata?.arxivId ?? null,
+        titleConfidence: metadata.dateMetadata?.titleConfidence ?? null,
+        authorsConfidence: metadata.dateMetadata?.authorsConfidence ?? null,
+      },
+      savedPaperId: existingDisplayPaper.id,
+      savedReviewId: existingByMetadata.review.id,
+    }),
+  });
+  if (submissionKey) {
+    const key = submissionKey;
+    setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
+  }
+  return { paper: existingDisplayPaper, review: existingByMetadata.review, attempt, batchRunId, queueItemId };
+}
+
+// Weak title/author metadata is still not used for reuse. Only exact source hashes
+// or high-confidence canonical metadata identity can stop a new review.
 
 // Step 2: run blind review/adjudication first, then retrieve comparators for calibration
 setAttemptStage(attemptContext, "blind_pass_1", "scientific_review", GEMINI_PASS_MODEL);
