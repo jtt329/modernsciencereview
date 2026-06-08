@@ -62,6 +62,7 @@ const REVIEW_JOB_RECOVERY_INTERVAL_MS = Math.max(5 * 1000, Number(process.env.RE
 const REVIEW_JOB_RECOVERY_LIMIT = Math.max(20, Number(process.env.REVIEW_JOB_RECOVERY_LIMIT ?? 300) || 300);
 const REVIEW_JOB_AUTO_RECOVERY = process.env.REVIEW_JOB_AUTO_RECOVERY === "true";
 const REVIEW_JOB_MAX_AUTO_RETRIES = Math.max(0, Number(process.env.REVIEW_JOB_MAX_AUTO_RETRIES ?? 0) || 0);
+const RETAIN_COMPLETED_REVIEW_JOB_SOURCE_SNAPSHOTS = process.env.RETAIN_COMPLETED_REVIEW_JOB_SOURCE_SNAPSHOTS === "true";
 const REVIEW_PROCESS_ROLE = process.env.REVIEW_PROCESS_ROLE || "combined";
 const REVIEW_JOB_PROCESSING_ENABLED =
   process.env.REVIEW_JOB_PROCESSING_ENABLED !== "false" && REVIEW_PROCESS_ROLE !== "web";
@@ -328,12 +329,18 @@ function attemptDebugPayload(context: ReviewAttemptContext, extra: Record<string
 }
 
 function completedAttemptDebugPayload(context: ReviewAttemptContext, extra: Record<string, unknown> = {}) {
-  return attemptDebugPayload(context, {
+  const payload: Record<string, unknown> = attemptDebugPayload(context, {
     ...extra,
     jobStatus: "completed",
     completedAt: new Date().toISOString(),
     apiRuntimeAtCompleted: reviewRuntimeInfo(),
   });
+  if (!RETAIN_COMPLETED_REVIEW_JOB_SOURCE_SNAPSHOTS && payload.sourceSnapshot) {
+    payload.sourceSnapshot = summarizeSourceSnapshot(payload.sourceSnapshot);
+    payload.sourceSnapshotRedacted = true;
+    payload.sourceSnapshotRetentionNote = "Completed review job source payload was redacted after completion to avoid retaining uploaded PDF/text bodies in Postgres.";
+  }
+  return payload;
 }
 
 function reviewJobLeaseExpiresAt(now = Date.now()) {

@@ -700,6 +700,7 @@ const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
 export const REVIEW_SCORING_FORMULA_VERSION = "ico-average-rounded-v1";
+const STORE_FULL_REVIEW_INPUT_SNAPSHOTS = process.env.STORE_FULL_REVIEW_INPUT_SNAPSHOTS === "true";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -1801,6 +1802,16 @@ function buildReviewInputSnapshot(
     blindedReviewTextLast2000: textSnippetLast(blindedText),
     rawExtractedText: rawText,
     blindedReviewText: blindedText,
+  };
+}
+
+function reviewInputSnapshotForStorage(snapshot: ReviewInputSnapshot) {
+  if (STORE_FULL_REVIEW_INPUT_SNAPSHOTS) return snapshot;
+  const { rawExtractedText: _rawExtractedText, blindedReviewText: _blindedReviewText, ...compact } = snapshot;
+  return {
+    ...compact,
+    fullTextStored: false,
+    fullTextStorageNote: "Full raw/blinded manuscript text omitted from completed review storage; hashes, counts, and edge snippets are retained for audit.",
   };
 }
 
@@ -7739,7 +7750,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     extractionCompletenessStatus: result.reviewInputSnapshot.extractionCompletenessStatus,
     extractionWarnings: result.reviewInputSnapshot.extractionWarnings,
     reviewStatus: "complete",
-    reviewInputSnapshot: result.reviewInputSnapshot,
+    reviewInputSnapshot: reviewInputSnapshotForStorage(result.reviewInputSnapshot),
     rawExtractedTextHash: result.reviewInputSnapshot.rawExtractedTextHash,
     blindedReviewTextHash: result.reviewInputSnapshot.blindedReviewTextHash,
     extractedTextCharCount: result.reviewInputSnapshot.extractedTextCharCount,
