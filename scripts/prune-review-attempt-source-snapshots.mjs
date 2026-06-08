@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import pg from "pg";
+import { createRequire } from "node:module";
+
+const requireFromApiServer = createRequire(
+  new URL("../artifacts/api-server/package.json", import.meta.url),
+);
+const pg = requireFromApiServer("pg");
 
 const { Pool } = pg;
 
