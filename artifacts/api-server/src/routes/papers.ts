@@ -63,6 +63,7 @@ const REVIEW_JOB_RECOVERY_INTERVAL_MS = Math.max(5 * 1000, Number(process.env.RE
 const REVIEW_JOB_RECOVERY_LIMIT = Math.max(20, Number(process.env.REVIEW_JOB_RECOVERY_LIMIT ?? 300) || 300);
 const REVIEW_JOB_AUTO_RECOVERY = process.env.REVIEW_JOB_AUTO_RECOVERY === "true";
 const REVIEW_JOB_MAX_AUTO_RETRIES = Math.max(0, Number(process.env.REVIEW_JOB_MAX_AUTO_RETRIES ?? 0) || 0);
+const PAPER_FEED_LIMIT = Math.max(1, Math.min(500, Number(process.env.PAPER_FEED_LIMIT ?? 250) || 250));
 const RETAIN_COMPLETED_REVIEW_JOB_SOURCE_SNAPSHOTS = process.env.RETAIN_COMPLETED_REVIEW_JOB_SOURCE_SNAPSHOTS === "true";
 const REVIEW_PROCESS_ROLE = process.env.REVIEW_PROCESS_ROLE || "combined";
 const REVIEW_JOB_PROCESSING_ENABLED =
@@ -1154,10 +1155,14 @@ function benchmarkCompletionIssue(reviewValues: Record<string, any>) {
     ...(Array.isArray(ledger.blindPassReviews) ? ledger.blindPassReviews.map((pass: any) => pass?.reviewInputQuality) : []),
   ].some((quality: any) => quality?.shouldInvalidateReview === true) && !deterministicReviewable;
 
-  if (isExtractionBlockingStatus(ledger.extractionCompletenessStatus)) {
+  if (isExtractionBlockingStatus(ledger.extractionCompletenessStatus) && !deterministicReviewable) {
     return `Extraction completeness status is ${ledger.extractionCompletenessStatus ?? "unknown"}.`;
   }
-  if (ledger.reviewInputSnapshot?.extractionCompletenessStatus && isExtractionBlockingStatus(ledger.reviewInputSnapshot.extractionCompletenessStatus)) {
+  if (
+    ledger.reviewInputSnapshot?.extractionCompletenessStatus &&
+    isExtractionBlockingStatus(ledger.reviewInputSnapshot.extractionCompletenessStatus) &&
+    !deterministicReviewable
+  ) {
     return `Review input snapshot extraction status is ${ledger.reviewInputSnapshot.extractionCompletenessStatus}.`;
   }
   if (Number(ledger.validPassCount ?? 0) !== 2 || blindPassAudit.length !== 2) {
@@ -3247,25 +3252,25 @@ router.get("/papers/export", async (req, res) => {
 // GET /api/papers — list all papers
 router.get("/papers", async (req, res) => {
   try {
-    const paperRecords = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+    // Keep the public feed lightweight. Full review ledgers can be very large
+    // because they include audit/input snapshots; loading them here was making
+    // the homepage slow or unavailable as the benchmark grew.
+    const paperRecords = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)).limit(PAPER_FEED_LIMIT));
     const reviews = await db.select({
       paperId: reviewsTable.paperId,
       summary: reviewsTable.summary,
       centralClaim: reviewsTable.centralClaim,
       finalJudgment: reviewsTable.finalJudgment,
-      coverageLedgerJson: reviewsTable.coverageLedgerJson,
     }).from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
     const papers = paperRecords.map((paper) => normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(reviewMap.get(paper.id))));
     const papersWithSummary = papers.map(p => {
       const review = reviewMap.get(p.id);
-      const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
-      const scientificReview = ledger?.scientificReview ?? null;
       return {
         ...p,
-        reviewSummary: scientificReview || review?.summary || null,
-        reviewCentralClaim: ledger?.centralClaim || review?.centralClaim || null,
-        reviewFinalJudgment: scientificReview || review?.finalJudgment || null,
+        reviewSummary: review?.summary || review?.finalJudgment || null,
+        reviewCentralClaim: review?.centralClaim || null,
+        reviewFinalJudgment: review?.finalJudgment || review?.summary || null,
       };
     });
     res.json({ papers: papersWithSummary });
@@ -3620,7 +3625,11 @@ let metadataExtractionText: string;
 let extractionCompleteness: ExtractionCompletenessReport | null = null;
 let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
 const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
-const pdfVisibleLastResortRequested = isAdmin && source.pdfVisibleFallback === true;
+const pdfVisibleLastResortRequested =
+  source.pdfVisibleFallback === true && (source.type === "pdf" || source.type === "url");
+if (source.pdfVisibleFallback === true && !isAdmin) {
+  throw submissionHttpError("PDF-visible last-resort review is available only to admins.", 403);
+}
 
 if (source.type === "pdf") {
   const buffer = Buffer.from(source.data, "base64");
@@ -3790,9 +3799,7 @@ metadataExtractionText = cleanExtractedManuscriptText(metadataExtractionText || 
 extractionCompleteness ??= assessExtractionCompleteness(paperContent);
 updateAttemptExtractionContext(attemptContext, extractionCompleteness);
 updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
-const usePdfVisibleLastResort = isAdmin &&
-  source.pdfVisibleFallback === true &&
-  Boolean(metadataHints.pdfBase64);
+const usePdfVisibleLastResort = pdfVisibleLastResortRequested && Boolean(metadataHints.pdfBase64);
 setAttemptStage(attemptContext, "extraction_quality_check", "validation", null);
 await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
 if (isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus) && !usePdfVisibleLastResort) {
