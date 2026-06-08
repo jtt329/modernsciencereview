@@ -3415,6 +3415,62 @@ if (submissionKey) {
   }));
 }
 
+const existingBySource = allowExistingReviewReuse && sourceHash
+  ? await existingSourceSubmission(
+      user.id,
+      sourceHash,
+      expectedModelName,
+      REVIEW_PROMPT_HASH,
+      REVIEW_PROMPT_VERSION,
+    )
+  : null;
+if (existingBySource?.review) {
+  const existingDisplayPaper = normalizePaperDisplayMetadata(
+    existingBySource.paper,
+    reviewMetadataNormalizationText(existingBySource.review),
+  );
+  logger.info({
+    paperId: existingDisplayPaper.id,
+    title: existingDisplayPaper.title,
+    paperAuthors: existingDisplayPaper.paperAuthors,
+    promptVersion: REVIEW_PROMPT_VERSION,
+    promptHash: REVIEW_PROMPT_HASH,
+    cacheUsed: true,
+    previousReviewUsed: true,
+    duplicateReason: "sourceHash",
+    comparatorContextIncluded: false,
+    adjudicatorContextIncluded: false,
+  }, "Detected existing review by source hash before extraction");
+  if (resolveSubmission) resolveSubmission({ ...existingBySource, paper: existingDisplayPaper });
+  attemptContext.paperId = existingDisplayPaper.id;
+  const attempt = await updateReviewAttemptProgress(attemptContext, {
+    stageName: "save_review",
+    stageType: "storage",
+    reviewStatus: "duplicate_existing",
+    failureStatus: "completed",
+    retryable: false,
+    errorMessage: `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}".`,
+    debugPayload: completedAttemptDebugPayload(attemptContext, {
+      cacheUsed: true,
+      previousReviewUsed: true,
+      reuseReason: "exactSourcePreExtraction",
+      duplicateReason: "sourceHash",
+      duplicateExistingPaperId: existingDisplayPaper.id,
+      duplicateExistingReviewId: existingBySource.review.id,
+      duplicateExistingTitle: existingDisplayPaper.title,
+      duplicateExistingAuthors: existingDisplayPaper.paperAuthors,
+      duplicateExistingCreatedAt: existingDisplayPaper.createdAt,
+      savedPaperId: existingDisplayPaper.id,
+      savedReviewId: existingBySource.review.id,
+    }),
+  });
+  if (submissionKey) {
+    const key = submissionKey;
+    setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
+  }
+  return { paper: existingDisplayPaper, review: existingBySource.review, attempt, batchRunId, queueItemId };
+}
+
 let paperContent: string;
 let metadataExtractionText: string;
 let extractionCompleteness: ExtractionCompletenessReport | null = null;
@@ -3627,61 +3683,6 @@ if (metadataNeedsRepair) {
     extractionCompletenessStatus: extractionCompleteness.extractionCompletenessStatus,
     extractionWarnings: extractionCompleteness.extractionWarnings,
   });
-}
-
-const existingBySource = allowExistingReviewReuse && sourceHash
-  ? await existingSourceSubmission(
-      user.id,
-      sourceHash,
-      expectedModelName,
-      REVIEW_PROMPT_HASH,
-      REVIEW_PROMPT_VERSION,
-    )
-  : null;
-if (existingBySource?.review) {
-  const existingDisplayPaper = normalizePaperDisplayMetadata(
-    existingBySource.paper,
-    reviewMetadataNormalizationText(existingBySource.review),
-  );
-  logger.info({
-    paperId: existingDisplayPaper.id,
-    title: existingDisplayPaper.title,
-    paperAuthors: existingDisplayPaper.paperAuthors,
-    promptVersion: REVIEW_PROMPT_VERSION,
-    promptHash: REVIEW_PROMPT_HASH,
-    cacheUsed: true,
-    previousReviewUsed: true,
-    duplicateReason: "sourceHash",
-    comparatorContextIncluded: false,
-    adjudicatorContextIncluded: false,
-  }, "Detected existing review by source hash");
-  if (resolveSubmission) resolveSubmission({ ...existingBySource, paper: existingDisplayPaper });
-  attemptContext.paperId = existingDisplayPaper.id;
-  const attempt = await updateReviewAttemptProgress(attemptContext, {
-    stageName: "save_review",
-    stageType: "storage",
-    reviewStatus: "duplicate_existing",
-    failureStatus: "completed",
-    retryable: false,
-    errorMessage: `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}".`,
-    debugPayload: completedAttemptDebugPayload(attemptContext, {
-      cacheUsed: true,
-      previousReviewUsed: true,
-      duplicateReason: "sourceHash",
-      duplicateExistingPaperId: existingDisplayPaper.id,
-      duplicateExistingReviewId: existingBySource.review.id,
-      duplicateExistingTitle: existingDisplayPaper.title,
-      duplicateExistingAuthors: existingDisplayPaper.paperAuthors,
-      duplicateExistingCreatedAt: existingDisplayPaper.createdAt,
-      savedPaperId: existingDisplayPaper.id,
-      savedReviewId: existingBySource.review.id,
-    }),
-  });
-  if (submissionKey) {
-    const key = submissionKey;
-    setTimeout(() => recentSubmissions.delete(key), 30 * 60 * 1000).unref?.();
-  }
-  return { paper: existingDisplayPaper, review: existingBySource.review, attempt, batchRunId, queueItemId };
 }
 
 // Do not reuse completed reviews from title/author metadata alone. Metadata can be
