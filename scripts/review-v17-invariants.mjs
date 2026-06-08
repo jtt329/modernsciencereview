@@ -49,8 +49,8 @@ function computedScore(i, c, o) {
 const blindPrompt = extractRawConst(promptSource, "BLIND_REVIEW_PASS_V17_1_PROMPT");
 const adjudicatorAddendum = extractRawConst(promptSource, "INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM");
 
-assert.match(promptSource, /v17\.1\.1 computed ICO half-point/i);
-assert.match(engineSource, /v17\.1\.1-computed-ico-halfpoint/);
+assert.match(promptSource, /v17\.1\.2 computed ICO half-point/i);
+assert.match(engineSource, /v17\.1\.2-computed-ico-halfpoint/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
 assert.match(engineSource, /REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1"/);
@@ -622,4 +622,4 @@ for (const forbidden of [
   assert.equal(canonicalExport.includes(forbidden), false, `standard canonical export includes ${forbidden}`);
 }
 
-console.log("v17.1.1 review invariants passed");
+console.log("v17.1.2 review invariants passed");
