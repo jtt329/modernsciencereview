@@ -49,9 +49,13 @@ function computedScore(i, c, o) {
 const blindPrompt = extractRawConst(promptSource, "BLIND_REVIEW_PASS_V17_1_PROMPT");
 const adjudicatorAddendum = extractRawConst(promptSource, "INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM");
 
-assert.match(promptSource, /v17\.1 computed ICO half-point/i);
-assert.match(engineSource, /v17\.1-computed-ico-halfpoint/);
+assert.match(promptSource, /v17\.1\.1 computed ICO half-point/i);
+assert.match(engineSource, /v17\.1\.1-computed-ico-halfpoint/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
+assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
+assert.match(engineSource, /REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1"/);
+assert.match(engineSource, /REVIEW_SCORING_FORMULA_VERSION = "ico-average-rounded-v1"/);
+assert.match(engineSource, /function isCalibrationCompatibleReviewObject/);
 assert.match(engineSource, /jacobson-kang-myers-increase-black-hole-entropy/);
 assert.match(engineSource, /jacobson-kang-myers-black-hole-entropy-higher-curvature/);
 assert.match(engineSource, /jacobson-entanglement-equilibrium-einstein-equation/);
@@ -90,6 +94,9 @@ assert.match(engineSource, /model metadata extraction was bypassed/);
 assert.match(routesSource, /reviewMode !== "benchmark-ingestion"/);
 assert.match(routesSource, /ledger\?\.promptHash === promptHash/);
 assert.match(routesSource, /ledger\?\.promptVersion === promptVersion/);
+assert.match(routesSource, /isCalibrationCompatibleReviewObject\(coverageLedger\)/);
+assert.match(routesSource, /isCalibrationCompatibleReviewObject\(coverageLedger \?\? aggregateAny\)/);
+assert.doesNotMatch(routesSource, /coverageLedger\.promptVersion !== REVIEW_PROMPT_VERSION/);
 
 async function assertKnownBenchmarkMetadataRegression() {
   const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
@@ -590,4 +597,4 @@ for (const forbidden of [
   assert.equal(canonicalExport.includes(forbidden), false, `standard canonical export includes ${forbidden}`);
 }
 
-console.log("v17.1 review invariants passed");
+console.log("v17.1.1 review invariants passed");

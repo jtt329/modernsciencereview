@@ -23,6 +23,7 @@ import {
   generateCompatReview,
   isExtractionBlockingStatus,
   isExtractionReviewableStatus,
+  isCalibrationCompatibleReviewObject,
   normalizePaperDisplayMetadata,
   normalizeReviewPipelineMode,
   parseGeminiJsonResponse,
@@ -2483,7 +2484,7 @@ router.post("/papers/benchmark-clusters", async (req, res) => {
       if (!review) continue;
       const coverageLedger = parseJsonObject(review.coverageLedgerJson);
       if (!coverageLedger) continue;
-      if (coverageLedger.promptVersion !== REVIEW_PROMPT_VERSION) continue;
+      if (!isCalibrationCompatibleReviewObject(coverageLedger)) continue;
       if (!includeAll && !coverageLedger.benchmarkSetCandidate) continue;
       profiles.push(benchmarkProfileForClustering(paper, review, coverageLedger));
     }
@@ -2598,10 +2599,9 @@ router.post("/papers/comparator-backfill", async (req, res) => {
       const aggregateMeta = parseJsonObject((review as any).aggregateMetaJson ?? null);
       const aggregate = coverageLedger?.aggregate ?? aggregateMeta ?? coverageLedger ?? null;
       const aggregateAny = aggregate && typeof aggregate === "object" ? aggregate as Record<string, any> : null;
-      const promptVersion = coverageLedger?.promptVersion ?? "";
       const benchmarkSetCandidate = Boolean(coverageLedger?.benchmarkSetCandidate);
       const profileSource = aggregateAny?.comparatorProfile ?? aggregateAny?.organicCohortProfile ?? coverageLedger?.organicCohortProfile ?? null;
-      if (promptVersion !== REVIEW_PROMPT_VERSION || !profileSource || (!includeAll && !benchmarkSetCandidate)) {
+      if (!isCalibrationCompatibleReviewObject(coverageLedger ?? aggregateAny) || !profileSource || (!includeAll && !benchmarkSetCandidate)) {
         skipped += 1;
         continue;
       }
@@ -2768,6 +2768,9 @@ router.get("/papers/export", async (req, res) => {
           coverageLedger.comparatorCalibrationStatus === "weak";
         const canonicalReview: Record<string, any> = {
           reviewObjectVersion: coverageLedger.reviewObjectVersion,
+          calibrationCompatibilityFamily: coverageLedger.calibrationCompatibilityFamily ?? null,
+          diagnosticScaleVersion: coverageLedger.diagnosticScaleVersion ?? null,
+          scoringFormulaVersion: coverageLedger.scoringFormulaVersion ?? null,
           promptVersion: coverageLedger.promptVersion ?? REVIEW_PROMPT_VERSION,
           promptName: coverageLedger.promptName ?? REVIEW_PROMPT_NAME,
           promptHash: coverageLedger.promptHash ?? REVIEW_PROMPT_HASH,

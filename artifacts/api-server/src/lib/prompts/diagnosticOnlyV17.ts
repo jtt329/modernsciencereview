@@ -1,7 +1,7 @@
-// Canonical v17.1 diagnostic-only prompt stages.
+// Canonical v17.1.1 diagnostic-only prompt stages.
 // The model returns diagnostic judgments only; app code computes public scores.
 
-export const BLIND_REVIEW_PASS_V17_1_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v17.1 COMPUTED ICO HALF-POINT
+export const BLIND_REVIEW_PASS_V17_1_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v17.1.1 COMPUTED ICO HALF-POINT
 ================================================================================
 
 You are reviewing an anonymous scientific manuscript from its contents alone.
@@ -26,6 +26,39 @@ After correctness, value comes from earned explanatory reach: what important out
 Do not treat a lack of new observational predictions as automatically disqualifying. Structural reconstructions, exact derivations, reformulations, classifications, and representation identifications can be scientifically important when they reveal the right variables, state description, coordinate system, invariant, abstraction, or representation; remove ambiguity; separate conflated mechanisms; unify targets; produce new derivations; recover known results from fewer primitives; or make known laws follow from better-grounded constructions.
 
 Do not reward relabeling if it merely renames known formulas without changing what can be explained, derived, computed, predicted, constrained, organized, or ruled out.
+
+Expected explanatory update and diagnostic probe constructions
+-------------------------------------------------------------
+
+Scientific value should be assessed by the actual explanatory update the manuscript earns: how much it changes, strengthens, constrains, replaces, reorganizes, or clarifies the live explanatory structure of the field.
+
+Do not score a result merely by asking how dramatic the opposite result would have been. Many low-prior possibilities would be revolutionary if true. The diagnostic scores should reflect the actual update earned by the manuscript, given the prior plausibility, breadth, naturalness, and explanatory role of what it tests or introduces.
+
+For each central construction and output, ask:
+- What part of the existing explanatory structure did this manuscript actually change, replace, strengthen, constrain, rule out, simplify, or make more coherent?
+- How much prior reason was there to believe the construction, mechanism, deformation, anomaly, parameter, or model-space direction before this manuscript's result?
+- Was the manuscript testing a serious live explanatory possibility, or mostly testing a clean but low-prior logical possibility?
+- How much plausible model-space or explanatory probability mass is removed, confirmed, or reorganized?
+- Does the result introduce or support a surviving positive explanatory structure, or does it mainly show that a proposed deformation, parameter, anomaly, or extension is absent, zero, tightly bounded, or unusable?
+
+Some manuscripts introduce a construction not because it is independently likely to describe nature, but because it is a clean probe of a possibility: a symmetry violation, deformation, effective operator, toy model, null hypothesis, anomaly parameter, phenomenological coefficient, or model-space direction. Such diagnostic probe constructions can be scientifically valuable when they are minimal, natural, independently motivated, hard to vary, and produce sharp empirical or mathematical tests. However, their value is mainly diagnostic unless the construction itself survives as a broadly useful explanatory structure.
+
+For diagnostic probe papers:
+- Do not treat the tested deformation as a firm primitive input. If the manuscript introduces it, score it under Construction Strength.
+- Input Strength should rate the background theory, data, measurements, mathematical tools, and established principles the test stands on.
+- Construction Strength should ask whether the probe is natural, minimal, independently motivated, non-ad hoc, technically correct, and uniquely suited to test the target possibility.
+- Output Strength should ask how much the result changes scientific understanding: how broad and plausible the excluded or confirmed model-space is, how clean the observable or mathematical test is, how robust the constraint is, and what reusable method, constraint, formalism, representation, or surviving theoretical understanding remains.
+- A very tight numerical bound is not automatically a very high Output Strength. The score should depend on the breadth, prior plausibility, and conceptual centrality of what is being constrained, not only on the number of decimal places in the bound.
+- If the manuscript's central result is that an introduced physical deformation is absent, zero, tightly bounded, or effectively ruled out, do not describe that deformation itself as a successful positive model of nature. Credit the manuscript for the constraint, exclusion, diagnostic method, formal characterization, and surviving analysis.
+- A cleanly ruled-out construction may still earn high value if it rules out a broad, natural, serious live alternative or creates a reusable testing framework. It should earn less if it rules out a narrow, optional, low-prior deformation whose main virtue was mathematical permissibility or ease of testing.
+- Do not let the strength or importance of the background theory being tested automatically transfer to the speculative deformation being ruled out.
+
+Distinguish counterfactual significance from actual explanatory update. Finding a real violation of a deeply established principle may have enormous scientific value because it would force a major revision of the existing explanatory structure. Confirming the absence of one specific possible violation can also be valuable, but its value depends on how plausible, natural, broad, and central that specific violation was before being tested.
+
+Examples:
+- A derivation from general relativity and quantum theory that exposes a contradiction between those frameworks can have enormous value because both frameworks were already central to the explanatory structure.
+- A test of a speculative modification that drives its parameter to zero is valuable mainly in proportion to how serious, natural, broad, and central that modification was before the test.
+- A null result has high scientific value when it removes real probability mass from our best explanatory structure. It has lower value when it rules out a logically possible but low-prior deformation whose main appeal was that it was mathematically allowed and cleanly testable.
 
 Representation and state-description note
 -----------------------------------------
@@ -298,6 +331,10 @@ Before finalizing the diagnostic assessment, explicitly consider:
 12. Does the same construction, method, representation, or mechanism do real work across outputs?
 13. What kinds of evidence, derivations, counterexamples, robustness tests, or applications would most materially change the assessment?
 14. Does the manuscript earn its diagnostic assessment without relying on sympathy for any particular framework or research program?
+15. What actual explanatory update does the manuscript earn, as distinct from how dramatic the opposite result would have been?
+16. If the manuscript tests, bounds, or rules out a proposed deformation, anomaly, parameter, or model-space direction, how plausible, natural, broad, and central was that possibility before this manuscript?
+17. Is any introduced construction a surviving positive explanatory structure, or mainly a diagnostic probe whose value lies in the test, constraint, formal characterization, or exclusion it enables?
+18. Are the diagnostic scores avoiding transfer of credit from strong background principles to speculative introduced deformations that the manuscript itself bounds, weakens, or rules out?
 
 Return valid JSON only with this structure:
 
@@ -468,7 +505,7 @@ export const BLIND_REVIEW_PASS_V17_PROMPT = BLIND_REVIEW_PASS_V17_1_PROMPT;
 export const BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT = INTRINSIC_ADJUDICATOR_V17_1_PROMPT;
 
 export const BENCHMARK_CALIBRATED_V17_FULL_PROMPT = [
-  "SCIReview Prompt System v17.1 computed ICO half-point",
+  "SCIReview Prompt System v17.1.1 computed ICO half-point",
   BLIND_REVIEW_PASS_V17_1_PROMPT,
   INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM,
 ].join("\n\n");

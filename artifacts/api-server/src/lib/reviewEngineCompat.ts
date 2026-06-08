@@ -695,8 +695,11 @@ type ReviewRunAuditEntry = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v17.1-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = "v17.1.1-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
+export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
+export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
+export const REVIEW_SCORING_FORMULA_VERSION = "ico-average-rounded-v1";
 const LATEX_MARKDOWN_FORMATTING_INSTRUCTION = `Formatting instructions for mathematical notation:
 - Wrap every inline mathematical expression in $...$.
 - Wrap every display equation in $$...$$.
@@ -713,11 +716,39 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V17_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V17_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v17.1 computed ICO half-point";
+export const REVIEW_PROMPT_NAME = "v17.1.1 computed ICO half-point";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
   .slice(0, 16);
+
+export function isCalibrationCompatibleReviewObject(value: unknown) {
+  if (!value || typeof value !== "object") return false;
+  const review = value as Record<string, any>;
+  const scoreKeys = ["inputStrengthScore", "constructionStrengthScore", "outputStrengthScore"];
+  const hasCanonicalDiagnostics = scoreKeys.every((key) => typeof review[key] === "number" && Number.isFinite(review[key]));
+  const hasComputedScore = typeof review.computedScore === "number" || typeof review.intrinsicScore === "number";
+  const promptVersion = typeof review.promptVersion === "string" ? review.promptVersion : "";
+  const reviewObjectVersion = typeof review.reviewObjectVersion === "string" ? review.reviewObjectVersion : "";
+  const schemaVersion = typeof review.schemaVersion === "string" ? review.schemaVersion : "";
+  const compatibilityFamily = typeof review.calibrationCompatibilityFamily === "string" ? review.calibrationCompatibilityFamily : "";
+  const diagnosticScaleVersion = typeof review.diagnosticScaleVersion === "string" ? review.diagnosticScaleVersion : "";
+  const scoringFormulaVersion = typeof review.scoringFormulaVersion === "string" ? review.scoringFormulaVersion : "";
+
+  const explicitCompatible =
+    compatibilityFamily === REVIEW_CALIBRATION_COMPATIBILITY_FAMILY &&
+    (!diagnosticScaleVersion || diagnosticScaleVersion === REVIEW_DIAGNOSTIC_SCALE_VERSION) &&
+    (!scoringFormulaVersion || scoringFormulaVersion === REVIEW_SCORING_FORMULA_VERSION);
+  const v17DiagnosticFamily =
+    reviewObjectVersion === REVIEW_OBJECT_VERSION ||
+    reviewObjectVersion.startsWith("v17") ||
+    schemaVersion === "v17.1" ||
+    schemaVersion.startsWith("v17") ||
+    promptVersion.startsWith("v17.1") ||
+    promptVersion.startsWith("v17.0");
+
+  return hasCanonicalDiagnostics && hasComputedScore && (explicitCompatible || v17DiagnosticFamily);
+}
 const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT);
 const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(`
 You are the separate post-intrinsic comparator calibrator for Modern Science Review.
@@ -7665,6 +7696,9 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
   const canonicalCoverageLedger = {
     reviewObjectVersion: REVIEW_OBJECT_VERSION,
     schemaVersion: "v17.1",
+    calibrationCompatibilityFamily: REVIEW_CALIBRATION_COMPATIBILITY_FAMILY,
+    diagnosticScaleVersion: REVIEW_DIAGNOSTIC_SCALE_VERSION,
+    scoringFormulaVersion: REVIEW_SCORING_FORMULA_VERSION,
     reviewRunId: result.reviewRunId,
     promptVersion: REVIEW_PROMPT_VERSION,
     promptName: REVIEW_PROMPT_NAME,
