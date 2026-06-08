@@ -16,6 +16,7 @@ import {
   REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   assessExtractionCompleteness,
+  buildPdfFallbackText,
   compactAggregateForStorage,
   expectedReviewModelName,
   extractManuscriptTextFromPdfForReview,
@@ -87,6 +88,7 @@ type ReviewAttemptStageName =
   | "title_author_extraction"
   | "pdf_text_extraction"
   | "pdf_fallback_extraction"
+  | "pdf_visible_last_resort"
   | "extraction_quality_check"
   | "blind_pass_1"
   | "blind_pass_2"
@@ -233,6 +235,7 @@ function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" |
       "request_received",
       "pdf_text_extraction",
       "pdf_fallback_extraction",
+      "pdf_visible_last_resort",
       "extraction_quality_check",
       "metadata_extraction",
       "title_author_extraction",
@@ -249,6 +252,7 @@ function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" |
       "request_received",
       "pdf_text_extraction",
       "pdf_fallback_extraction",
+      "pdf_visible_last_resort",
       "extraction_quality_check",
       "metadata_extraction",
       "title_author_extraction",
@@ -1413,6 +1417,21 @@ function skippedPdfTextFallbackWarning(report: ExtractionCompletenessReport | nu
   return pages
     ? `Automatic PDF text fallback skipped because the PDF text layer yielded fewer than 100 readable characters from a ${pages}-page PDF; use manual OCR/text or PDF-visible last resort.`
     : "Automatic PDF text fallback skipped because the PDF text layer yielded fewer than 100 readable characters; use manual OCR/text or PDF-visible last resort.";
+}
+
+function pdfVisibleLastResortExtractionReport(text: string): ExtractionCompletenessReport {
+  const cleanText = cleanExtractedManuscriptText(text);
+  return {
+    extractionCompletenessStatus: "reviewable_with_warnings",
+    extractionWarnings: [
+      "PDF-visible last-resort lane selected: local PDF text extraction was bypassed and Gemini will read the attached rendered/native PDF directly. Blinding strength is lower.",
+    ],
+    estimatedPdfPageCount: null,
+    extractedPageCount: null,
+    extractedTextCharCount: cleanText.length,
+    extractedTextTokenCount: Math.ceil(cleanText.length / 4),
+    rawExtractedTextHash: createHash("sha256").update(cleanText).digest("hex"),
+  };
 }
 
 function truncationIndicatorMatches(value: unknown) {
@@ -3601,58 +3620,76 @@ let metadataExtractionText: string;
 let extractionCompleteness: ExtractionCompletenessReport | null = null;
 let submittedPdfUrl: string | null = source.pdfUrl?.trim() || null;
 const submittedDisplayPdf: boolean = !!(source.displayPdf && submittedPdfUrl);
+const pdfVisibleLastResortRequested = isAdmin && source.pdfVisibleFallback === true;
 
 if (source.type === "pdf") {
-  setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
-  await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_text_extraction" });
   const buffer = Buffer.from(source.data, "base64");
-  const pdfParse = (await import("pdf-parse")).default;
-  const parsed = await pdfParse(buffer);
-  metadataHints.pdfTitle = typeof parsed.info?.Title === "string" ? parsed.info.Title : undefined;
-  metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
   metadataHints.pdfBase64 = source.data;
   metadataHints.mimeType = "application/pdf";
-  paperContent = cleanExtractedManuscriptText(parsed.text);
-  metadataExtractionText = paperContent;
-  extractionCompleteness = assessExtractionCompleteness(paperContent, {
-    estimatedPdfPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
-    extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
-  });
-  updateAttemptExtractionContext(attemptContext, extractionCompleteness);
-  updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
-  await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
-  const skipAutomaticFallback = shouldSkipAutomaticPdfTextFallback(extractionCompleteness, paperContent);
-  if (skipAutomaticFallback) {
-    extractionCompleteness = {
-      ...extractionCompleteness,
-      extractionWarnings: [
-        ...extractionCompleteness.extractionWarnings,
-        skippedPdfTextFallbackWarning(extractionCompleteness),
-      ],
-    };
+  if (pdfVisibleLastResortRequested) {
+    setAttemptStage(attemptContext, "pdf_visible_last_resort", "extraction", null);
+    attemptContext.pdfFallbackAttempted = false;
+    attemptContext.pdfVisibleFallbackUsed = true;
+    attemptContext.fallbackSucceeded = true;
+    paperContent = buildPdfFallbackText(metadataHints);
+    metadataExtractionText = paperContent;
+    extractionCompleteness = pdfVisibleLastResortExtractionReport(paperContent);
     updateAttemptExtractionContext(attemptContext, extractionCompleteness);
     updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
-      pdfFallbackSkipped: true,
-      pdfFallbackSkipReason: "text_layer_empty",
+      pdfVisibleFallbackRequested: true,
+      pdfVisibleTextExtractionBypassed: true,
+      pdfByteCount: buffer.length,
     });
-  }
-  attemptContext.pdfFallbackAttempted =
-    !skipAutomaticFallback && isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
-  if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
-  if (attemptContext.pdfFallbackAttempted) await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_fallback_extraction" });
-  if (attemptContext.pdfFallbackAttempted) {
-    const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
-    paperContent = repaired.text;
-    metadataExtractionText = paperContent;
-    extractionCompleteness = repaired.report;
-    attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_visible_last_resort" });
   } else {
-    attemptContext.fallbackSucceeded = false;
+    setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_text_extraction" });
+    const pdfParse = (await import("pdf-parse")).default;
+    const parsed = await pdfParse(buffer);
+    metadataHints.pdfTitle = typeof parsed.info?.Title === "string" ? parsed.info.Title : undefined;
+    metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
+    paperContent = cleanExtractedManuscriptText(parsed.text);
+    metadataExtractionText = paperContent;
+    extractionCompleteness = assessExtractionCompleteness(paperContent, {
+      estimatedPdfPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
+      extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
+    });
+    updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+    updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
+    const skipAutomaticFallback = shouldSkipAutomaticPdfTextFallback(extractionCompleteness, paperContent);
+    if (skipAutomaticFallback) {
+      extractionCompleteness = {
+        ...extractionCompleteness,
+        extractionWarnings: [
+          ...extractionCompleteness.extractionWarnings,
+          skippedPdfTextFallbackWarning(extractionCompleteness),
+        ],
+      };
+      updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
+        pdfFallbackSkipped: true,
+        pdfFallbackSkipReason: "text_layer_empty",
+      });
+    }
+    attemptContext.pdfFallbackAttempted =
+      !skipAutomaticFallback && isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
+    if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
+    if (attemptContext.pdfFallbackAttempted) await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_fallback_extraction" });
+    if (attemptContext.pdfFallbackAttempted) {
+      const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
+      paperContent = repaired.text;
+      metadataExtractionText = paperContent;
+      extractionCompleteness = repaired.report;
+      attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
+    } else {
+      attemptContext.fallbackSucceeded = false;
+    }
+    attemptContext.pdfVisibleFallbackUsed = false;
+    updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+    updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
   }
-  attemptContext.pdfVisibleFallbackUsed = false;
-  updateAttemptExtractionContext(attemptContext, extractionCompleteness);
-  updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
-  await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
 } else if (source.type === "url") {
   const url = source.data?.trim();
   if (!url) { throw submissionHttpError("A valid URL is required.", 400); }
@@ -3671,54 +3708,71 @@ if (source.type === "pdf") {
   }
   const arrayBuf = await fetchResp.arrayBuffer();
   const buffer = Buffer.from(arrayBuf);
-  const pdfParse = (await import("pdf-parse")).default;
-  const parsed = await pdfParse(buffer);
   metadataHints.fileName ||= url.split("/").pop()?.split("?")[0];
-  metadataHints.pdfTitle = typeof parsed.info?.Title === "string" ? parsed.info.Title : undefined;
-  metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
   metadataHints.pdfBase64 = buffer.toString("base64");
   metadataHints.mimeType = "application/pdf";
-  paperContent = cleanExtractedManuscriptText(parsed.text);
-  metadataExtractionText = paperContent;
-  extractionCompleteness = assessExtractionCompleteness(paperContent, {
-    estimatedPdfPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
-    extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
-  });
-  updateAttemptExtractionContext(attemptContext, extractionCompleteness);
-  updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
-  await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
-  const skipAutomaticFallback = shouldSkipAutomaticPdfTextFallback(extractionCompleteness, paperContent);
-  if (skipAutomaticFallback) {
-    extractionCompleteness = {
-      ...extractionCompleteness,
-      extractionWarnings: [
-        ...extractionCompleteness.extractionWarnings,
-        skippedPdfTextFallbackWarning(extractionCompleteness),
-      ],
-    };
+  if (pdfVisibleLastResortRequested) {
+    setAttemptStage(attemptContext, "pdf_visible_last_resort", "extraction", null);
+    attemptContext.pdfFallbackAttempted = false;
+    attemptContext.pdfVisibleFallbackUsed = true;
+    attemptContext.fallbackSucceeded = true;
+    paperContent = buildPdfFallbackText(metadataHints);
+    metadataExtractionText = paperContent;
+    extractionCompleteness = pdfVisibleLastResortExtractionReport(paperContent);
     updateAttemptExtractionContext(attemptContext, extractionCompleteness);
     updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
-      pdfFallbackSkipped: true,
-      pdfFallbackSkipReason: "text_layer_empty",
+      pdfVisibleFallbackRequested: true,
+      pdfVisibleTextExtractionBypassed: true,
+      pdfByteCount: buffer.length,
     });
-  }
-  attemptContext.pdfFallbackAttempted =
-    !skipAutomaticFallback && isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
-  if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
-  if (attemptContext.pdfFallbackAttempted) await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_fallback_extraction" });
-  if (attemptContext.pdfFallbackAttempted) {
-    const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
-    paperContent = repaired.text;
-    metadataExtractionText = paperContent;
-    extractionCompleteness = repaired.report;
-    attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_visible_last_resort" });
   } else {
-    attemptContext.fallbackSucceeded = false;
+    const pdfParse = (await import("pdf-parse")).default;
+    const parsed = await pdfParse(buffer);
+    metadataHints.pdfTitle = typeof parsed.info?.Title === "string" ? parsed.info.Title : undefined;
+    metadataHints.pdfAuthor = typeof parsed.info?.Author === "string" ? parsed.info.Author : undefined;
+    paperContent = cleanExtractedManuscriptText(parsed.text);
+    metadataExtractionText = paperContent;
+    extractionCompleteness = assessExtractionCompleteness(paperContent, {
+      estimatedPdfPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
+      extractedPageCount: typeof parsed.numpages === "number" ? parsed.numpages : null,
+    });
+    updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+    updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
+    const skipAutomaticFallback = shouldSkipAutomaticPdfTextFallback(extractionCompleteness, paperContent);
+    if (skipAutomaticFallback) {
+      extractionCompleteness = {
+        ...extractionCompleteness,
+        extractionWarnings: [
+          ...extractionCompleteness.extractionWarnings,
+          skippedPdfTextFallbackWarning(extractionCompleteness),
+        ],
+      };
+      updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+      updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
+        pdfFallbackSkipped: true,
+        pdfFallbackSkipReason: "text_layer_empty",
+      });
+    }
+    attemptContext.pdfFallbackAttempted =
+      !skipAutomaticFallback && isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
+    if (attemptContext.pdfFallbackAttempted) setAttemptStage(attemptContext, "pdf_fallback_extraction", "helper", GEMINI_METADATA_MODEL);
+    if (attemptContext.pdfFallbackAttempted) await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_fallback_extraction" });
+    if (attemptContext.pdfFallbackAttempted) {
+      const repaired = await repairPdfExtractionIfNeeded({ report: extractionCompleteness, text: paperContent, metadataHints });
+      paperContent = repaired.text;
+      metadataExtractionText = paperContent;
+      extractionCompleteness = repaired.report;
+      attemptContext.fallbackSucceeded = repaired.fallbackUsed && isExtractionReviewableStatus(extractionCompleteness.extractionCompletenessStatus);
+    } else {
+      attemptContext.fallbackSucceeded = false;
+    }
+    attemptContext.pdfVisibleFallbackUsed = false;
+    updateAttemptExtractionContext(attemptContext, extractionCompleteness);
+    updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
+    await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
   }
-  attemptContext.pdfVisibleFallbackUsed = false;
-  updateAttemptExtractionContext(attemptContext, extractionCompleteness);
-  updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, { pdfFallbackAttempted: attemptContext.pdfFallbackAttempted, fallbackSucceeded: attemptContext.fallbackSucceeded });
-  await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
   submittedPdfUrl = url;
 } else {
   setAttemptStage(attemptContext, "pdf_text_extraction", "extraction", null);

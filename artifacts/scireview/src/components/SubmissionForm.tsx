@@ -90,6 +90,8 @@ function stageLabel(stageName: string | null | undefined) {
       return 'PDF text extraction';
     case 'pdf_fallback_extraction':
       return 'PDF fallback extraction helper';
+    case 'pdf_visible_last_resort':
+      return 'PDF-visible review lane';
     case 'extraction_quality_check':
       return 'Extraction quality check';
     case 'blind_pass_1':
@@ -127,6 +129,8 @@ function activeStageLabel(attempt: any) {
       return 'Extracting PDF text...';
     case 'pdf_fallback_extraction':
       return 'Repairing PDF extraction...';
+    case 'pdf_visible_last_resort':
+      return 'Using PDF-visible review lane...';
     case 'extraction_quality_check':
       return 'Checking extraction quality...';
     case 'blind_pass_1':

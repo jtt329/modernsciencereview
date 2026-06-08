@@ -523,6 +523,8 @@ assert.match(routesSource, /\/admin\/review-attempts/);
 assert.match(routesSource, /submit_manual_extracted_text/);
 assert.match(routesSource, /usePdfVisibleLastResort/);
 assert.match(routesSource, /pdfVisibleFallbackRequested/);
+assert.match(routesSource, /pdf_visible_last_resort/);
+assert.match(routesSource, /pdfVisibleTextExtractionBypassed/);
 assert.match(routesSource, /stageName: ReviewAttemptStageName/);
 assert.match(routesSource, /metadata_extraction/);
 assert.match(routesSource, /blind_pass_1/);
