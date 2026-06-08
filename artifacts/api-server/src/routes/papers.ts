@@ -82,6 +82,7 @@ type ReviewAttemptStageName =
   | "request_received"
   | "client_failure"
   | "interrupted_by_server_restart"
+  | "worker_build_mismatch"
   | "metadata_extraction"
   | "title_author_extraction"
   | "pdf_text_extraction"
@@ -283,7 +284,11 @@ function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" |
   ) {
     return record.extractionCompletenessStatus === "needs_manual_repair" ? "needs_manual_repair" : "failed_extraction_truncated";
   }
-  if (record.stageName === "interrupted_by_server_restart" || record.reviewStatus === "interrupted_by_server_restart") {
+  if (
+    record.stageName === "interrupted_by_server_restart" ||
+    record.stageName === "worker_build_mismatch" ||
+    record.reviewStatus === "interrupted_by_server_restart"
+  ) {
     return "interrupted_by_server_restart";
   }
   if (record.stageName === "review_validation" || /validation|missing|required|invalid/i.test(message)) {
@@ -305,6 +310,13 @@ function debugPayloadObject(value: unknown): Record<string, unknown> {
 function debugString(payload: Record<string, unknown> | null, key: string): string | null {
   const value = payload?.[key];
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function runtimeGitSha(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  const build = (value as any).build;
+  const sha = build && typeof build === "object" ? build.railwayGitCommitSha : null;
+  return typeof sha === "string" && sha.trim() ? sha.trim() : null;
 }
 
 function debugNumber(payload: Record<string, unknown> | null, key: string): number | null {
@@ -552,6 +564,40 @@ function frontendPageStaleAfterApiRestart(source: any) {
   const pageLoadedAt = timestampMs(optionalSourceString(source, "frontendPageLoadedAt"));
   const processStartedAt = apiProcessStartedAtMs();
   return pageLoadedAt != null && processStartedAt != null && processStartedAt > pageLoadedAt + 1000;
+}
+
+function sourceSnapshotBackendGitSha(sourceSnapshot: Record<string, any>, record: ReviewAttemptRecord) {
+  const payload = debugPayloadObject(record.debugPayload);
+  return runtimeGitSha(sourceSnapshot.apiRuntimeVersion) ??
+    runtimeGitSha(sourceSnapshot.apiRuntimeAtBatchStart) ??
+    runtimeGitSha(payload.apiRuntimeAtRegistration) ??
+    runtimeGitSha(payload.apiRuntimeAtQueued) ??
+    null;
+}
+
+async function markReviewJobWorkerBuildMismatch(record: ReviewAttemptRecord, sourceSnapshot: Record<string, any>, expectedGitSha: string, workerGitSha: string) {
+  const payload = debugPayloadObject(record.debugPayload);
+  const mismatchRecord: ReviewAttemptRecord = {
+    ...record,
+    stageName: "worker_build_mismatch",
+    stageType: "system",
+    errorMessage: `Worker build mismatch: job was created by ${expectedGitSha}, but this worker is running ${workerGitSha}. Refresh/retry so the paper is reviewed by one consistent deployment.`,
+    rawErrorCode: "WORKER_BUILD_MISMATCH",
+    reviewStatus: "interrupted_by_server_restart",
+    failureStatus: "interrupted_by_server_restart",
+    retryable: true,
+    debugPayload: {
+      ...payload,
+      jobStatus: "interrupted_by_worker_build_mismatch",
+      expectedApiGitSha: expectedGitSha,
+      workerGitSha,
+      sourceSnapshotApiRuntimeVersion: sourceSnapshot.apiRuntimeVersion ?? null,
+      apiRuntimeAtMismatch: reviewRuntimeInfo(),
+      workerId: REVIEW_JOB_WORKER_ID,
+    },
+  };
+  await persistReviewAttemptRecord(mismatchRecord);
+  return mismatchRecord;
 }
 
 function attemptLifecycleStartedAtMs(record: ReviewAttemptRecord): number | null {
@@ -1651,6 +1697,13 @@ async function runReviewJob(attemptId: string) {
       },
     });
     await recordFailedReviewAttempt(context, err);
+    return;
+  }
+
+  const expectedGitSha = sourceSnapshotBackendGitSha(sourceSnapshot, record);
+  const workerGitSha = reviewRuntimeInfo()?.build?.railwayGitCommitSha ?? null;
+  if (expectedGitSha && workerGitSha && expectedGitSha !== workerGitSha) {
+    await markReviewJobWorkerBuildMismatch(record, sourceSnapshot, expectedGitSha, workerGitSha);
     return;
   }
 
