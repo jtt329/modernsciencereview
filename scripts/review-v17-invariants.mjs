@@ -495,7 +495,11 @@ assert.match(routesSource, /Detected existing review by canonical metadata ident
 assert.match(routesSource, /reuseReason: "metadataIdentityPreReview"/);
 assert.match(routesSource, /titleConfidence >= 0\.85/);
 assert.match(routesSource, /authorsConfidence >= 0\.8/);
+assert.match(routesSource, /cleanIdentityAuthorLastNames/);
+assert.match(routesSource, /authorsOrLastNamesIdentityCompatible/);
 assert.match(routesSource, /Weak title\/author metadata is still not used for reuse/);
+assert.match(routesSource, /async function existingMetadataIdentitySubmission[\s\S]*eq\(papersTable\.authorId, authorId\)/);
+assert.doesNotMatch(routesSource, /async function existingMetadataIdentitySubmission[\s\S]{0,400}eq\(papersTable\.modelName/);
 assert.match(routesSource, /metadataRepairBypassedForPdfVisibleLastResort/);
 assert.match(routesSource, /PDF-visible last resort was explicitly requested, so missing\/weak metadata did not block scientific review/);
 assert.match(routesSource, /attemptLifecycleStartedAtMs/);

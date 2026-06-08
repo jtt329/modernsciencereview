@@ -1016,20 +1016,16 @@ async function existingLogicalSubmission(
 async function existingSourceSubmission(
   authorId: string,
   sourceHash: string,
-  modelName: string,
   promptHash: string,
   promptVersion: string,
 ) {
   const userPapers = await db.select().from(papersTable).where(
-    and(
-      eq(papersTable.authorId, authorId),
-      eq(papersTable.modelName, modelName),
-    ),
+    eq(papersTable.authorId, authorId),
   ).orderBy(desc(papersTable.createdAt));
   if (userPapers.length === 0) return null;
 
   const visiblePaperIds = new Set(dedupePapers(userPapers).map((paper) => paper.id));
-  const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.modelName, modelName));
+  const reviews = await db.select().from(reviewsTable);
   const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
 
   const sourceAttempts = await db.select().from(reviewAttemptsTable).where(
@@ -1042,7 +1038,7 @@ async function existingSourceSubmission(
   for (const attempt of sourceAttempts) {
     if (!attempt.paperId) continue;
     const paper = userPapers.find((candidate) => candidate.id === attempt.paperId);
-    if (!paper || paper.modelName !== modelName) continue;
+    if (!paper) continue;
     const review = reviewByPaper.get(paper.id);
     if (!visiblePaperIds.has(paper.id)) {
       logger.warn({
@@ -1191,6 +1187,17 @@ function cleanIdentityAuthors(values: string[]) {
     .filter((author) => author.length >= 2);
 }
 
+function cleanIdentityAuthorLastNames(values: string[]) {
+  const lastNames = values
+    .map((author) => {
+      const normalized = normalizeIdentityAuthor(author);
+      const parts = normalized.split(/\s+/).filter(Boolean);
+      return parts.at(-1) || "";
+    })
+    .filter((lastName) => lastName.length >= 2 && !/^(?:unknown|author|authors)$/.test(lastName));
+  return Array.from(new Set(lastNames));
+}
+
 function authorsIdentityCompatible(targetAuthors: string[], existingAuthors: string[]) {
   if (targetAuthors.length === 0 || existingAuthors.length === 0) return false;
   const existing = new Set(existingAuthors);
@@ -1198,6 +1205,25 @@ function authorsIdentityCompatible(targetAuthors: string[], existingAuthors: str
   const smaller = Math.min(targetAuthors.length, existingAuthors.length);
   if (smaller <= 1) return overlap >= 1;
   return overlap >= Math.min(2, smaller) && overlap / smaller >= 0.8;
+}
+
+function authorLastNamesIdentityCompatible(targetLastNames: string[], existingLastNames: string[]) {
+  if (targetLastNames.length === 0 || existingLastNames.length === 0) return false;
+  const existing = new Set(existingLastNames);
+  const overlap = targetLastNames.filter((lastName) => existing.has(lastName)).length;
+  const smaller = Math.min(targetLastNames.length, existingLastNames.length);
+  if (smaller <= 1) return overlap >= 1;
+  return overlap >= Math.min(2, smaller) && overlap / smaller >= 0.8;
+}
+
+function authorsOrLastNamesIdentityCompatible(
+  targetAuthors: string[],
+  existingAuthors: string[],
+  targetLastNames: string[],
+  existingLastNames: string[],
+) {
+  return authorsIdentityCompatible(targetAuthors, existingAuthors) ||
+    authorLastNamesIdentityCompatible(targetLastNames, existingLastNames);
 }
 
 function promptIdentityForReview(review?: typeof reviewsTable.$inferSelect | null) {
@@ -1223,15 +1249,17 @@ function extractedMetadataIdentity(metadata: ExtractedPaperMetadata) {
   const authorsConfidence = Number(dateMetadata.authorsConfidence ?? 0);
   const titleKey = normalizeIdentityTitle(title);
   const authorKeys = cleanIdentityAuthors(authors);
+  const authorLastNames = cleanIdentityAuthorLastNames(authors);
   const doi = normalizeDoi(dateMetadata.doi);
   const arxivId = normalizeArxivId(dateMetadata.arxivId);
   const hasUsableTitle = titleKey.length >= 12 && !/^unknown title$/i.test(title.trim());
-  const hasUsableAuthors = authorKeys.length > 0 && !/^unknown authors?$/i.test((metadata.authors || "").trim());
+  const hasUsableAuthors = (authorKeys.length > 0 || authorLastNames.length > 0) && !/^unknown authors?$/i.test((metadata.authors || "").trim());
   return {
     title,
     authors,
     titleKey,
     authorKeys,
+    authorLastNames,
     doi,
     arxivId,
     titleConfidence,
@@ -1259,6 +1287,7 @@ function paperMetadataIdentity(paper: typeof papersTable.$inferSelect) {
     authors,
     titleKey: normalizeIdentityTitle(title),
     authorKeys: cleanIdentityAuthors(authors),
+    authorLastNames: cleanIdentityAuthorLastNames(authors),
     doi: normalizeDoi(typeof dateMetadata.doi === "string" ? dateMetadata.doi : ""),
     arxivId: normalizeArxivId(typeof dateMetadata.arxivId === "string" ? dateMetadata.arxivId : ""),
   };
@@ -1275,7 +1304,12 @@ function metadataIdentityDuplicateReason(
     target.titleKey &&
     existing.titleKey &&
     target.titleKey === existing.titleKey &&
-    authorsIdentityCompatible(target.authorKeys, existing.authorKeys)
+    authorsOrLastNamesIdentityCompatible(
+      target.authorKeys,
+      existing.authorKeys,
+      target.authorLastNames,
+      existing.authorLastNames,
+    )
   ) {
     return "titleAuthors";
   }
@@ -1285,22 +1319,18 @@ function metadataIdentityDuplicateReason(
 async function existingMetadataIdentitySubmission(
   authorId: string,
   metadata: ExtractedPaperMetadata,
-  modelName: string,
 ): Promise<ExistingReviewSubmissionMatch | null> {
   const target = extractedMetadataIdentity(metadata);
   if (!target.strong) return null;
 
   const userPapers = await db.select().from(papersTable).where(
-    and(
-      eq(papersTable.authorId, authorId),
-      eq(papersTable.modelName, modelName),
-    ),
+    eq(papersTable.authorId, authorId),
   ).orderBy(desc(papersTable.createdAt));
   if (userPapers.length === 0) return null;
 
   const visiblePapers = dedupePapers(userPapers);
   const visiblePaperIds = new Set(visiblePapers.map((paper) => paper.id));
-  const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.modelName, modelName));
+  const reviews = await db.select().from(reviewsTable);
   const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
 
   for (const paper of visiblePapers) {
@@ -3797,7 +3827,6 @@ const existingBySource = allowExistingReviewReuse && sourceHash
   ? await existingSourceSubmission(
       user.id,
       sourceHash,
-      expectedModelName,
       REVIEW_PROMPT_HASH,
       REVIEW_PROMPT_VERSION,
     )
@@ -4161,7 +4190,6 @@ const existingByMetadata = allowExistingReviewReuse
   ? await existingMetadataIdentitySubmission(
       user.id,
       metadata,
-      expectedModelName,
     )
   : null;
 if (existingByMetadata?.review) {
