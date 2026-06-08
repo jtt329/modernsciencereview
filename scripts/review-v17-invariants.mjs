@@ -487,6 +487,10 @@ assert.match(routesSource, /This exact PDF\/text source is already in the system
 assert.match(routesSource, /duplicatePromptMatchesActivePrompt/);
 assert.match(routesSource, /duplicateExistingPromptVersion/);
 assert.match(routesSource, /under a previous prompt/);
+assert.match(routesSource, /reviewAttemptsTable\.debugPayload}->>'sourceHash'/);
+assert.match(routesSource, /Ignoring exact-source duplicate from review attempt hidden by public feed dedupe/);
+assert.match(routesSource, /metadataRepairBypassedForPdfVisibleLastResort/);
+assert.match(routesSource, /PDF-visible last resort was explicitly requested, so missing\/weak metadata did not block scientific review/);
 assert.match(routesSource, /attemptLifecycleStartedAtMs/);
 assert.match(routesSource, /payload\.queuedAt/);
 assert.match(routesSource, /payload\.requestReceivedAt/);

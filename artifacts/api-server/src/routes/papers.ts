@@ -948,6 +948,43 @@ async function existingSourceSubmission(
   const visiblePaperIds = new Set(dedupePapers(userPapers).map((paper) => paper.id));
   const reviews = await db.select().from(reviewsTable).where(eq(reviewsTable.modelName, modelName));
   const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
+
+  const sourceAttempts = await db.select().from(reviewAttemptsTable).where(
+    and(
+      eq(reviewAttemptsTable.userId, authorId),
+      sql`${reviewAttemptsTable.debugPayload}->>'sourceHash' = ${sourceHash}`,
+      sql`${reviewAttemptsTable.paperId} is not null`,
+    ),
+  ).orderBy(desc(reviewAttemptsTable.createdAt)).limit(50);
+  for (const attempt of sourceAttempts) {
+    if (!attempt.paperId) continue;
+    const paper = userPapers.find((candidate) => candidate.id === attempt.paperId);
+    if (!paper || paper.modelName !== modelName) continue;
+    const review = reviewByPaper.get(paper.id);
+    if (!visiblePaperIds.has(paper.id)) {
+      logger.warn({
+        paperId: paper.id,
+        title: paper.title,
+        activePromptVersion: promptVersion,
+        activePromptHash: promptHash,
+      }, "Ignoring exact-source duplicate from review attempt hidden by public feed dedupe");
+      continue;
+    }
+    const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
+    const existingPromptHash = typeof ledger?.promptHash === "string" ? ledger.promptHash : null;
+    const existingPromptVersion = typeof ledger?.promptVersion === "string" ? ledger.promptVersion : null;
+    const matchingPrompt =
+      existingPromptHash === promptHash &&
+      existingPromptVersion === promptVersion;
+    return {
+      paper,
+      review: review || null,
+      promptMatches: matchingPrompt,
+      existingPromptHash,
+      existingPromptVersion,
+    };
+  }
+
   let promptMismatchMatch: {
     paper: typeof papersTable.$inferSelect;
     review: typeof reviewsTable.$inferSelect | null;
@@ -3689,7 +3726,54 @@ const metadataNeedsRepair =
     !metadataAuthors.trim() ||
     /^Unknown Authors$/i.test(metadataAuthors.trim())
   );
-if (metadataNeedsRepair) {
+if (metadataNeedsRepair && usePdfVisibleLastResort) {
+  const fallbackTitle = typeof source.fileName === "string" && source.fileName.trim()
+    ? source.fileName.replace(/\.pdf$/i, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim()
+    : "Untitled PDF-visible review";
+  metadata.title = metadataTitle.trim() && !/^Unknown Title$/i.test(metadataTitle.trim())
+    ? metadataTitle.trim()
+    : fallbackTitle;
+  metadata.authors = metadataAuthors.trim() && !/^Unknown Authors$/i.test(metadataAuthors.trim())
+    ? metadataAuthors.trim()
+    : "Unknown Authors";
+  metadata.dateMetadata = {
+    ...(metadata.dateMetadata ?? {}),
+    displayedTitle: metadata.title,
+    displayedAuthors: metadata.authors === "Unknown Authors" ? [] : splitAuthorNamesForMetadata(metadata.authors),
+    rawExtractedTitle: metadata.dateMetadata?.rawExtractedTitle ?? metadataTitle,
+    rawExtractedAuthors: metadata.dateMetadata?.rawExtractedAuthors ?? metadataAuthors,
+    titleConfidence: Math.min(Number(metadata.dateMetadata?.titleConfidence ?? 0), metadata.title === fallbackTitle ? 0.2 : 0.6),
+    authorsConfidence: Math.min(Number(metadata.dateMetadata?.authorsConfidence ?? 0), metadata.authors === "Unknown Authors" ? 0 : 0.6),
+    titleCleaningNotes: [
+      metadata.dateMetadata?.titleCleaningNotes,
+      "PDF-visible last resort was explicitly requested, so missing/weak metadata did not block scientific review. Metadata should be corrected manually if needed.",
+    ].filter(Boolean).join(" "),
+    authorsExtractionNotes: [
+      metadata.dateMetadata?.authorsExtractionNotes,
+      "PDF-visible last resort was explicitly requested, so missing/weak authors did not block scientific review. Metadata should be corrected manually if needed.",
+    ].filter(Boolean).join(" "),
+    metadataQaWarnings: [
+      ...((metadata.dateMetadata as any)?.metadataQaWarnings ?? []),
+      "Metadata was weak during PDF-visible last-resort review; review proceeded with editable fallback metadata.",
+    ],
+  } as any;
+  await updateReviewAttemptProgress(attemptContext, {
+    reviewStatus: "metadata_weak_pdf_visible_continuing",
+    retryable: true,
+    debugPayload: {
+      ...debugPayloadObject(attemptContext.debugPayload),
+      metadataRepairBypassedForPdfVisibleLastResort: true,
+      extractedMetadata: {
+        title: metadataTitle,
+        authors: metadataAuthors,
+        fallbackTitle: metadata.title,
+        fallbackAuthors: metadata.authors,
+        titleConfidence: metadata.dateMetadata?.titleConfidence ?? null,
+        authorsConfidence: metadata.dateMetadata?.authorsConfidence ?? null,
+      },
+    },
+  });
+} else if (metadataNeedsRepair) {
   const message = "Metadata repair required: title-page visual extraction could not confidently identify the paper title/authors.";
   attemptContext.reviewStatus = "needs_manual_repair";
   await updateReviewAttemptProgress(attemptContext, {
