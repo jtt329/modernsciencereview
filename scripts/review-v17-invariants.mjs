@@ -49,8 +49,8 @@ function computedScore(i, c, o) {
 const blindPrompt = extractRawConst(promptSource, "BLIND_REVIEW_PASS_V17_1_PROMPT");
 const adjudicatorAddendum = extractRawConst(promptSource, "INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM");
 
-assert.match(promptSource, /v17\.1\.4 computed ICO half-point/i);
-assert.match(engineSource, /v17\.1\.4-computed-ico-halfpoint/);
+assert.match(promptSource, /v17\.1\.5 computed ICO half-point/i);
+assert.match(engineSource, /v17\.1\.5-computed-ico-halfpoint/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
 assert.match(engineSource, /REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1"/);
@@ -307,6 +307,14 @@ assert.match(blindPrompt, /Near-maximum Output Strength is appropriate only if a
 assert.match(blindPrompt, /Experimental, observational, and instrumental work/);
 assert.match(blindPrompt, /A tight numerical bound is not automatically a near-maximum output/);
 assert.match(blindPrompt, /Do not let the strength of the background theory being tested automatically transfer/);
+assert.match(blindPrompt, /Cohort-relative I\/C\/O discipline/);
+assert.match(blindPrompt, /least speculative accepted inputs in the broader field/);
+assert.match(blindPrompt, /Do not literally multiply probabilities across every named input/);
+assert.match(blindPrompt, /weighted-bottleneck judgment/);
+assert.match(blindPrompt, /Identify the output delta/);
+assert.match(blindPrompt, /strongest comparable output envelope/);
+assert.match(blindPrompt, /Do not interpret output breadth as a literal count or percentage of examples/);
+assert.match(blindPrompt, /Do not require new experimental predictions for high Output Strength/);
 assert.match(blindPrompt, /Review input quality/);
 assert.match(blindPrompt, /reviewInputQuality/);
 assert.match(blindPrompt, /shouldInvalidateReview/);
@@ -623,6 +631,13 @@ assert.notEqual(comparatorPromptStart, -1, "comparator calibration prompt missin
 const comparatorPrompt = engineSource.slice(comparatorPromptStart, engineSource.indexOf("function buildComparatorCalibrationInput", comparatorPromptStart));
 assert.match(comparatorPrompt, /You may adjust only those three diagnostic scores/i);
 assert.match(comparatorPrompt, /Do not output a free final score/i);
+assert.match(comparatorPrompt, /v17\.1\.5 cohort-relative Input \/ Construction \/ Output rubric/i);
+assert.match(comparatorPrompt, /weighted-bottleneck judgment/);
+assert.match(comparatorPrompt, /construction's output delta/);
+assert.match(comparatorPrompt, /cohort's output frontier/);
+assert.match(comparatorPrompt, /inputGroundingCheck/);
+assert.match(comparatorPrompt, /constructionOutputDeltaCheck/);
+assert.match(comparatorPrompt, /outputCohortFrontierCheck/);
 assert.match(comparatorPrompt, /calibratedInputStrengthScore/);
 assert.match(comparatorPrompt, /calibratedConstructionStrengthScore/);
 assert.match(comparatorPrompt, /calibratedOutputStrengthScore/);
@@ -640,4 +655,4 @@ for (const forbidden of [
   assert.equal(canonicalExport.includes(forbidden), false, `standard canonical export includes ${forbidden}`);
 }
 
-console.log("v17.1.4 review invariants passed");
+console.log("v17.1.5 review invariants passed");

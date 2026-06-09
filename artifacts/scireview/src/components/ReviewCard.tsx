@@ -892,47 +892,54 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       : '';
   const versionAndMode = [shortPromptVersion, pipelineModeLabel].filter(Boolean).join(' ');
   const modelPromptLine = [modelBase, versionAndMode].filter(Boolean).join(' · ');
-  const outputAssessmentPreview = mergeUniqueText(
+  const outputAssessmentText = mergeUniqueText(
     currentWhyOutputsMatter,
     currentInputConstructionOutputAssessment,
     ...currentLedgerOutputs.map((item: any) => item?.assessment || item?.support || item?.validity),
+  );
+  const inputDiagnosticRationale = mergeUniqueText(
+    currentSubscoreRationale?.inputStrengthScore,
+    currentInputGrounding,
+    currentInputFundamentality,
+    ...currentPrimitiveInputDetails.map((item) => item.assessment),
+  );
+  const constructionDiagnosticRationale = mergeUniqueText(
+    currentSubscoreRationale?.constructionStrengthScore,
+    currentConstructionAssessment,
+    ...currentIntroducedConstructionDetails.map((item) => item.assessment),
+  );
+  const outputDiagnosticRationale = mergeUniqueText(
+    currentSubscoreRationale?.outputStrengthScore,
+    outputAssessmentText,
   );
   const diagnosticCards = [
     {
       id: 'input' as const,
       label: 'Input Strength',
       value: currentInputStrengthScore,
-      rationale: diagnosticPreview(
-        currentSubscoreRationale?.inputStrengthScore,
-        currentInputGrounding,
-        currentInputFundamentality,
-        ...currentPrimitiveInputDetails.map((item) => item.assessment),
-      ),
+      previewRationale: diagnosticPreview(inputDiagnosticRationale),
+      fullRationale: inputDiagnosticRationale,
       color: currentInputStrengthScore == null ? 'text-slate-200' : currentInputStrengthScore >= 8 ? 'text-emerald-200' : currentInputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
     },
     {
       id: 'construction' as const,
       label: 'Construction Strength',
       value: currentConstructionStrengthScore,
-      rationale: diagnosticPreview(
-        currentSubscoreRationale?.constructionStrengthScore,
-        currentConstructionAssessment,
-        ...currentIntroducedConstructionDetails.map((item) => item.assessment),
-      ),
+      previewRationale: diagnosticPreview(constructionDiagnosticRationale),
+      fullRationale: constructionDiagnosticRationale,
       color: currentConstructionStrengthScore == null ? 'text-slate-200' : currentConstructionStrengthScore >= 8 ? 'text-emerald-200' : currentConstructionStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
     },
     {
       id: 'output' as const,
       label: 'Output Strength',
       value: currentOutputStrengthScore,
-      rationale: diagnosticPreview(
-        currentSubscoreRationale?.outputStrengthScore,
-        outputAssessmentPreview,
-      ),
+      previewRationale: diagnosticPreview(outputDiagnosticRationale),
+      fullRationale: outputDiagnosticRationale,
       color: currentOutputStrengthScore == null ? 'text-slate-200' : currentOutputStrengthScore >= 8 ? 'text-emerald-200' : currentOutputStrengthScore >= 5 ? 'text-amber-200' : 'text-rose-200',
     },
   ];
   const activeDiagnosticCard = diagnosticCards.find((card) => card.id === activeIcoTab);
+  const activeDiagnosticRationale = activeDiagnosticCard?.fullRationale || activeDiagnosticCard?.previewRationale;
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     {
@@ -1114,9 +1121,10 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <BrainCircuit className="w-4 h-4" /> Input → Construction → Output Assessment
               </h3>
               <div className="space-y-3">
-                <div className="grid items-stretch gap-3 md:grid-cols-3">
+                <div className="grid items-start gap-3 md:grid-cols-3">
                   {diagnosticCards.map((card) => {
                     const active = activeIcoTab === card.id;
+                    const cardRationale = active ? card.fullRationale || card.previewRationale : card.previewRationale;
                     return (
                       <button
                         key={card.label}
@@ -1124,7 +1132,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         role="tab"
                         aria-selected={active}
                         onClick={() => setActiveIcoTab(card.id)}
-                        className={`flex h-full min-h-[10.5rem] flex-col justify-start rounded-2xl border-2 p-4 text-left transition-all ${active ? ICO_TAB_THEME.activeCard : ICO_TAB_THEME.inactiveCard}`}
+                        className={`flex min-h-[10.5rem] flex-col justify-start rounded-2xl border-2 p-4 text-left transition-all ${active ? `h-auto ${ICO_TAB_THEME.activeCard}` : `h-full ${ICO_TAB_THEME.inactiveCard}`}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{card.label}</p>
@@ -1133,18 +1141,18 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                             {card.value != null && <span className="text-sm font-bold text-slate-400">/10</span>}
                           </p>
                         </div>
-                        {card.rationale && <div className="mt-3 text-xs leading-relaxed text-slate-300"><Markdown>{card.rationale}</Markdown></div>}
+                        {cardRationale && <div className="mt-3 text-xs leading-relaxed text-slate-300"><Markdown>{cardRationale}</Markdown></div>}
                       </button>
                     );
                   })}
                 </div>
                 <div className={`rounded-2xl border-2 p-4 ${ICO_TAB_THEME.panel}`}>
-                {activeDiagnosticCard?.rationale && (
+                {activeDiagnosticRationale && (
                   <div className="mb-4 rounded-xl border border-indigo-300/15 bg-indigo-300/[0.045] p-4 text-sm leading-relaxed text-slate-200">
                     <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-indigo-300">
                       Selected Preview
                     </p>
-                    <Markdown>{activeDiagnosticCard.rationale}</Markdown>
+                    <Markdown>{activeDiagnosticRationale}</Markdown>
                   </div>
                 )}
                 {activeIcoTab === 'input' && <div className="space-y-3">

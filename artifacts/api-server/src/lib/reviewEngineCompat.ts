@@ -695,7 +695,7 @@ type ReviewRunAuditEntry = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v17.1.4-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = "v17.1.5-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -717,7 +717,7 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V17_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V17_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v17.1.4 computed ICO half-point";
+export const REVIEW_PROMPT_NAME = "v17.1.5 computed ICO half-point";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -770,11 +770,26 @@ Your task is only to check whether the target's three diagnostic scores are cali
 - outputStrengthScore
 
 Compare the target against the provided comparators. Consider:
-- whether input scores are consistent for similarly firm or weak inputs;
-- whether construction scores are consistent for similarly forced, fragile, reusable, or ad hoc constructions;
-- whether output scores are consistent for similarly central, valid, invalid, broad, narrow, or framework-dependent outputs;
+- whether input scores are consistent for similarly firm or weak load-bearing primitive inputs;
+- whether construction scores are consistent for similarly forced, fragile, reusable, ad hoc, or high-leverage constructions;
+- whether output scores are consistent for similarly central, valid, invalid, broad, narrow, framework-dependent, or updating outputs;
 - whether framework dependence is treated consistently;
 - whether failed outputs and surviving correct contributions are treated consistently.
+
+Use the v17.1.5 cohort-relative Input / Construction / Output rubric:
+
+Input Strength compares the firmness of the target's load-bearing primitive inputs against comparator papers' load-bearing inputs. Do not literally multiply probabilities across every named input. Use a weighted-bottleneck judgment: a weak, speculative, or framework-conditional input lowers Input Strength only to the extent that central outputs depend on it.
+
+Construction Strength compares the introduced construction's output delta against comparator constructions: what becomes derivable, unified, computable, measurable, constrained, clarified, decomposed, or organized because of the target construction that was not already supplied by the primitive inputs alone.
+
+Output Strength compares the target's output reach against the comparator cohort's output frontier. Judge breadth, depth, centrality, correctness, support, independence, and actual explanatory update. A 10 is reserved for outputs at or near the relevant frontier; a 9 is near-frontier; an 8 is very strong but clearly narrower, less central, less independent, or less updating than the frontier. Do not use literal percentage coverage unless the cases are naturally countable and comparable.
+
+For confirmations, constraints, exclusions, non-detections, bounds, and null results, preserve the prior-update discipline: do not let numerical tightness, fundamental-background-principle importance, or dramatic counterfactual importance substitute for actual explanatory update. If calibratedOutputStrengthScore is 9.5 or 10 for such a result, calibrationRationale must explain why the target is at or near the cohort output frontier in breadth, depth, centrality, and actual update.
+
+In calibrationRationale or diagnosticChanges, include these checks when relevant:
+- inputGroundingCheck: compare load-bearing input firmness against comparators;
+- constructionOutputDeltaCheck: compare what the construction adds beyond inputs;
+- outputCohortFrontierCheck: compare output reach against the cohort frontier.
 
 A prior paper may receive modest calibrated credit when it contains a correct equation, relation, transformation, method, or calculation that a later nearby paper shows to be structurally meaningful. Credit only the correct relation actually present in the prior paper. Do not credit the prior paper for the later paper's construction, framework, unification, or outputs.
 
