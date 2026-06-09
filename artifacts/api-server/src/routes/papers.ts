@@ -85,6 +85,7 @@ type ReviewAttemptStageName =
   | "upload_received"
   | "request_received"
   | "client_failure"
+  | "file_read_failed"
   | "interrupted_by_server_restart"
   | "worker_build_mismatch"
   | "metadata_extraction"
@@ -2697,6 +2698,17 @@ router.post("/review-attempts/client-failure", async (req, res) => {
     const interruptedByRestart = failureKind === "interrupted_by_server_restart" ||
       debugString(body, "apiRuntimePreviousProcessStartedAt") != null ||
       debugString(body, "apiRuntimeCurrentProcessStartedAt") != null;
+    const fileReadFailed = failureKind === "file_read_failed";
+    const stageName = interruptedByRestart
+      ? "interrupted_by_server_restart"
+      : fileReadFailed
+        ? "file_read_failed"
+        : "client_failure";
+    const reviewStatus = interruptedByRestart
+      ? "interrupted_by_server_restart"
+      : fileReadFailed
+        ? "file_read_failed"
+        : "client_failure";
     const context: ReviewAttemptContext = {
       attemptId,
       batchRunId,
@@ -2707,7 +2719,7 @@ router.post("/review-attempts/client-failure", async (req, res) => {
       paperId: null,
       fileName,
       reviewRunId: null,
-      stageName: interruptedByRestart ? "interrupted_by_server_restart" : "client_failure",
+      stageName,
       stageType: interruptedByRestart ? "system" : "client",
       model: null,
       promptVersion: REVIEW_PROMPT_VERSION,
@@ -2720,11 +2732,12 @@ router.post("/review-attempts/client-failure", async (req, res) => {
       pdfFallbackAttempted: false,
       pdfVisibleFallbackUsed: false,
       fallbackSucceeded: false,
-      reviewStatus: interruptedByRestart ? "interrupted_by_server_restart" : "client_failure",
+      reviewStatus,
       scientificScoringAttempted: false,
       debugPayload: {
         ...body,
         clientFailure: !interruptedByRestart,
+        fileReadFailed,
         interruptedByServerRestart: interruptedByRestart,
         failureKind,
         apiRuntimeAtClientFailureReceipt: reviewRuntimeInfo(),

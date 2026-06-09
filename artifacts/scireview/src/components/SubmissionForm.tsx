@@ -60,6 +60,12 @@ function sleep(ms: number) {
 
 function errorMessage(err: unknown) {
   if (err instanceof Error) return err.message || String(err);
+  if (typeof ProgressEvent !== 'undefined' && err instanceof ProgressEvent) {
+    return `Browser file/read request failed (${err.type || 'progress event'}).`;
+  }
+  if (typeof Event !== 'undefined' && err instanceof Event) {
+    return `Browser event failed (${err.type || 'event'}).`;
+  }
   return String(err);
 }
 
@@ -81,6 +87,8 @@ function stageLabel(stageName: string | null | undefined) {
       return 'Request received';
     case 'client_failure':
       return 'Browser/client request';
+    case 'file_read_failed':
+      return 'Browser file read';
     case 'interrupted_by_server_restart':
       return 'Server restart';
     case 'metadata_extraction':
@@ -226,6 +234,9 @@ function friendlySubmissionError(err: unknown) {
     const failureStatus = failureStatusLabel(attempt.failureStatus);
     const suffix = attempt.retryable ? ' Retryable.' : '';
     const helperPrefix = attempt.stageType === 'helper' ? `${stage} failed` : `${stage} failed`;
+    if (attempt.stageName === 'file_read_failed') {
+      return `${failureStatus ? `${failureStatus}: ` : ''}Browser file read failed: ${shortAttemptError(message)}.${suffix}`;
+    }
     if (/json/i.test(message) || /bad escaped character/i.test(message)) {
       return `${failureStatus ? `${failureStatus}: ` : ''}${helperPrefix}: JSON parse failed: ${shortAttemptError(message)}.${suffix}`;
     }
@@ -306,8 +317,10 @@ function apiProcessStartedAfterPageLoad(runtimeInfo: any) {
 }
 
 function classifyClientFailure(err: unknown) {
+  if ((err as any)?.failureKind === 'file_read_failed') return 'file_read_failed';
   const message = errorMessage(err);
   const status = typeof (err as any)?.status === 'number' ? (err as any).status : null;
+  if (/browser file\/read request failed|could not read selected pdf|file read failed/i.test(message)) return 'file_read_failed';
   if (/aborted|abort/i.test(message)) return 'abort';
   if (/timeout|timed out/i.test(message)) return 'timeout';
   if (/failed to fetch|load failed|networkerror|network request failed/i.test(message)) return 'failed_to_fetch';
@@ -532,13 +545,43 @@ export default function SubmissionForm({
 
   const removeFile = (id: string) => setFiles(prev => prev.filter(f => f.id !== id));
 
-  const readFileAsBase64 = (file: File): Promise<string> =>
+  const arrayBufferToBase64 = (buffer: ArrayBuffer) => {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  };
+
+  const readFileAsArrayBufferFallback = (file: File): Promise<ArrayBuffer> =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve((reader.result as string).split(',')[1]);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error || new Error(`FileReader failed while reading ${file.name}.`));
+      reader.onabort = () => reject(new Error(`FileReader was aborted while reading ${file.name}.`));
+      reader.readAsArrayBuffer(file);
     });
+
+  const readFileAsBase64 = async (file: File): Promise<string> => {
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const buffer = typeof file.arrayBuffer === 'function'
+          ? await file.arrayBuffer()
+          : await readFileAsArrayBufferFallback(file);
+        return arrayBufferToBase64(buffer);
+      } catch (err) {
+        lastError = err;
+        if (attempt === 0) await sleep(250);
+      }
+    }
+    const message = errorMessage(lastError);
+    const error = new Error(`Browser could not read selected PDF file "${file.name}" (${(file.size / 1024 / 1024).toFixed(1)} MB): ${message}`);
+    (error as any).failureKind = 'file_read_failed';
+    throw error;
+  };
 
   const setFileStatus = (id: string, patch: Partial<QueuedFile>) => {
     setFiles(prev => prev.map(f => f.id === id ? { ...f, ...patch } : f));
@@ -714,27 +757,34 @@ export default function SubmissionForm({
 
       type JobEntry = { qf: QueuedFile; jobId: string; attempt?: any };
 
-      const buildSourceForFile = async (qf: QueuedFile): Promise<ReviewSource> => {
+      const sourceAuditFieldsForFile = (qf: QueuedFile, clientRequestStartedAt = new Date().toISOString()) => ({
+        model,
+        reviewMode: effectiveReviewMode,
+        fileName: qf.file.name,
+        pdfUrl: linkUrl,
+        displayPdf: displayPdf && !!linkUrl,
+        batchRunId,
+        queueItemId: qf.id,
+        attemptId: qf.attemptId || makeClientId('attempt'),
+        requestId: qf.requestId || makeClientId('request'),
+        frontendSiteVersion: SITE_VERSION,
+        frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
+        clientRequestStartedAt,
+        apiRuntimeVersion: runtimeState.current,
+        apiRuntimeAtBatchStart: runtimeState.initial,
+        apiRuntimeProcessStartedAt: runtimeProcessStartedAt(runtimeState.current) ?? undefined,
+        apiRuntimeRestartDetectedAt: runtimeState.restartInfo?.detectedAt,
+        apiRuntimePreviousProcessStartedAt: runtimeState.restartInfo?.oldProcessStartedAt,
+        apiRuntimeCurrentProcessStartedAt: runtimeState.restartInfo?.newProcessStartedAt,
+      });
+
+      const buildSourceForFile = async (qf: QueuedFile, auditFields = sourceAuditFieldsForFile(qf)): Promise<ReviewSource> => {
         const manualText = qf.manualText?.trim();
         const base64 = manualText ? '' : await readFileAsBase64(qf.file);
-        const clientRequestStartedAt = new Date().toISOString();
         return {
           ...(manualText
-            ? { type: 'text' as const, data: manualText, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl }
-            : { type: 'pdf' as const, data: base64, model, reviewMode: effectiveReviewMode, fileName: qf.file.name, pdfUrl: linkUrl, displayPdf: displayPdf && !!linkUrl, pdfVisibleFallback: qf.usePdfVisibleFallback }),
-          batchRunId,
-          queueItemId: qf.id,
-          attemptId: qf.attemptId || makeClientId('attempt'),
-          requestId: qf.requestId || makeClientId('request'),
-          frontendSiteVersion: SITE_VERSION,
-          frontendPageLoadedAt: FRONTEND_PAGE_LOADED_AT,
-          clientRequestStartedAt,
-          apiRuntimeVersion: runtimeState.current,
-          apiRuntimeAtBatchStart: runtimeState.initial,
-          apiRuntimeProcessStartedAt: runtimeProcessStartedAt(runtimeState.current) ?? undefined,
-          apiRuntimeRestartDetectedAt: runtimeState.restartInfo?.detectedAt,
-          apiRuntimePreviousProcessStartedAt: runtimeState.restartInfo?.oldProcessStartedAt,
-          apiRuntimeCurrentProcessStartedAt: runtimeState.restartInfo?.newProcessStartedAt,
+            ? { type: 'text' as const, data: manualText, ...auditFields }
+            : { type: 'pdf' as const, data: base64, ...auditFields, pdfVisibleFallback: qf.usePdfVisibleFallback }),
         };
       };
 
@@ -745,7 +795,14 @@ export default function SubmissionForm({
         setFileStatus(qf.id, { status: 'processing', error: 'Queued on server...' });
         let sourceWithAudit: ReviewSource | null = null;
         try {
-          sourceWithAudit = await buildSourceForFile(qf);
+          const auditFields = sourceAuditFieldsForFile(qf);
+          sourceWithAudit = {
+            type: qf.manualText?.trim() ? 'text' : 'pdf',
+            data: qf.manualText?.trim() || '',
+            ...auditFields,
+            pdfVisibleFallback: qf.usePdfVisibleFallback,
+          };
+          sourceWithAudit = await buildSourceForFile(qf, auditFields);
           const job = await onEnqueueReviewJob(sourceWithAudit);
           const jobId = job?.jobId || job?.attempt?.attemptId;
           if (!jobId) throw new Error('Review job was created without a job id.');
