@@ -23,7 +23,7 @@ Correctness is the first gate. Score only what the manuscript correctly establis
 
 After correctness, value comes from earned explanatory reach: what important outputs follow from the manuscript's primitive inputs and introduced constructions, how strongly those outputs are supported, how much those outputs matter, and how much they actually change, strengthen, constrain, replace, reorganize, simplify, or clarify the live explanatory structure of the field.
 
-A manuscript's value is the actual update it earns, not the importance of a hypothetical opposite outcome. A result that would have been revolutionary if it had come out differently does not receive revolutionary credit unless the result actually forces that explanatory change. For constraints, exclusions, and null results, Output Strength depends on the prior plausibility, breadth, naturalness, and centrality of what is constrained or excluded, plus the cleanliness of the test and any reusable method, formalism, representation, or diagnostic that survives.
+A manuscript's value is the actual update it earns. Do not give credit for the importance of a different result the manuscript did not obtain. For constraints, exclusions, and null results, Output Strength depends on how much serious theory space or explanatory uncertainty is actually removed, given the prior plausibility, breadth, naturalness, centrality, and robustness of what is constrained, plus any reusable method, formalism, representation, measurement, or diagnostic that survives.
 
 Do not treat a lack of new observational predictions as automatically disqualifying. Structural reconstructions, exact derivations, reformulations, classifications, representation identifications, constraints, exclusions, and null results can be scientifically important when they reveal the right variables, state description, coordinate system, invariant, abstraction, observable, model-space direction, or representation; remove ambiguity; separate conflated mechanisms; unify targets; produce new derivations; recover known results from fewer primitives; constrain serious alternatives; or make known laws follow from better-grounded constructions.
 
@@ -35,6 +35,19 @@ Representation and state-description note
 A state space is a representation of the possible states of a system using variables or coordinates sufficient for the questions being asked. More generally, the valuable act is representation identification: finding the right variables, state description, coordinate system, invariant, abstraction, model space, measurement, diagnostic, or representation so that important relations become simpler, more general, more predictive, more computable, less ambiguous, more tightly constrained, or more unified.
 
 Representation identification is not intrinsically valuable by itself. It is valuable only when it produces correct explanatory, predictive, computational, classificatory, methodological, diagnostic, constraining, or unifying gains.
+
+Experimental, observational, and instrumental work
+--------------------------------------------------
+
+The same Input -> Construction -> Output logic applies to experimental and observational manuscripts.
+
+Primitive inputs may include established background theory, known phenomena, prior measurements, samples, observational access, calibration standards, existing instruments, and accepted statistical or laboratory methods.
+
+Introduced constructions may include a new experiment, instrument, apparatus, measurement protocol, observable, dataset-building procedure, control scheme, calibration method, data-reduction pipeline, statistical identification strategy, or novel combination/application of existing methods.
+
+Outputs may include detections, non-detections, measurements, parameter estimates, constraints, anomalies, datasets, instrument capabilities, reproducible protocols, or empirical separations between competing explanations. Judge these outputs by correctness, robustness, precision, independence of checks, breadth, and actual explanatory update: what uncertainty is reduced, what models are ruled out or supported, what mechanism is established, what phenomenon becomes measurable, or what future explanation becomes possible because the manuscript created reliable access to it.
+
+An instrument, dataset, or method can have high scientific value even before it settles a major theory, if it opens a reliable new measurement channel, makes previously inaccessible structure observable, sharply improves precision, or enables broad future tests. But do not credit a tool merely for potential use; credit what the manuscript actually demonstrates the tool can measure, distinguish, constrain, or make reproducible.
 
 Actual update, constraints, and diagnostic probes
 ------------------------------------------------
@@ -63,7 +76,7 @@ Before assigning diagnostic subscores, construct the manuscript's Input -> Const
 
 Primitive inputs are the smallest set of background facts, equations, definitions, measurements, mathematical results, accepted theories, datasets, or assumptions the manuscript starts from and does not itself establish.
 
-Introduced constructions are what the manuscript builds from those inputs: new concepts, variables, state descriptions, coordinate systems, equations, action terms, ansatzes, dictionaries, transformations, mechanisms, representations, derivations, formal identities, organizing principles, algorithms, model classes, diagnostic probes, proposed physical structures, or novel combinations/applications of otherwise known elements.
+Introduced constructions are what the manuscript builds from those inputs: new concepts, variables, state descriptions, coordinate systems, equations, formal terms, ansatzes, dictionaries, transformations, mechanisms, representations, derivations, experimental designs, instruments, measurement protocols, statistical pipelines, organizing principles, algorithms, model classes, diagnostic probes, proposed physical structures, or novel combinations/applications of otherwise known elements.
 
 Outputs are the results or consequences that the manuscript establishes from its constructions. Outputs may include new results, recovered known results, successful matches to established facts, constraints, predictions, calculations, classifications, methods, datasets, reorganized laws, decompositions, translations, exclusions, or target systems whose understanding changes. Do not use output subtype labels. Treat all earned consequences as outputs and judge them by support, validity, centrality, independence, dependency on the construction, breadth, and actual explanatory update.
 
@@ -85,7 +98,7 @@ Practical rule:
 - If the manuscript introduces, defines, selects, combines, translates, or newly applies it as machinery used to produce later consequences, list it as an introduced construction.
 - If the manuscript presents it as a consequence produced by that machinery, list it as an output.
 
-Novel-in-this-manuscript rule: anything the manuscript newly introduces or newly makes operative in its contribution chain is a construction, even if its ingredients are known. This includes a new concept, term, variable, equation, action term, diagnostic coefficient, model, dictionary, representation, formal identity, or a novel combination/application of known concepts, equations, variables, or methods. Its mathematical cleanliness, minimality, or centrality affects Construction Strength, not Input Strength.
+Novel-in-this-manuscript rule: anything the manuscript newly introduces or newly makes operative in its contribution chain is a construction, even if its ingredients are known. This includes a new concept, term, variable, equation, parameter, model, dictionary, representation, formal identity, measurement, instrument, protocol, dataset-building procedure, analysis pipeline, or novel combination/application of known concepts, equations, variables, data, or methods. Its cleanliness, minimality, reliability, or centrality affects Construction Strength, not Input Strength.
 
 For each primitive input, state its role, grounding, groundingQuality, fundamentality, fundamentalityLevel, frameworkDependence, frameworkDependenceLevel, and assessment. The role should explain how the input is used. The assessment should be a self-contained judgment of that particular input.
 
@@ -126,10 +139,10 @@ Output Strength must judge what follows from the construction: whether the outpu
 If the manuscript starts from strong background inputs but obtains its central output only by adding a fragile, low-prior, or narrowly diagnostic construction, do not give high Construction Strength or Output Strength merely because the background inputs are strong.
 
 Examples:
-- If a paper starts from general relativity but adds a speculative modified-gravity action term, the established status of GR helps Input Strength, but the new action term must be evaluated under Construction Strength.
-- If that introduced action term violates strong empirical or theoretical constraints, Construction Strength and Output Strength should drop, and the assessment should be based only on any surviving method, calculation, representation, limited algebraic relation, or model-space insight.
-- If a paper uses a known entropy formula, field equation, dataset, theorem, or result merely as an assumption, do not count that imported item as an output.
-- If the manuscript derives, recovers, matches, explains, constrains, translates, or reorganizes a known item, count the earned relationship as an output.
+- If a manuscript starts from an established theory but adds a speculative new assumption, term, equation, model, mechanism, or parameter, the established status of the background theory helps Input Strength, but the added object must be evaluated under Construction Strength.
+- If an introduced construction violates strong empirical or theoretical constraints, Construction Strength and Output Strength should drop, and the assessment should be based only on any surviving method, calculation, representation, limited relation, dataset, diagnostic, or model-space insight.
+- If a manuscript uses a known entropy formula, field equation, dataset, theorem, or result merely as an assumption, do not count that imported item as an output.
+- If the manuscript derives, recovers, measures, matches, explains, constrains, translates, or reorganizes a known item, count the earned relationship as an output.
 
 Output validity
 ---------------
