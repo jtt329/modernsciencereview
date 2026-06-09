@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BookOpen, Search, ArrowLeft, Heart, Clock, User, Share2, AlertCircle, Loader2, Trash2, CheckSquare, XSquare, ExternalLink, Check, Pencil, ChevronDown } from 'lucide-react';
 import LatexText from './components/LatexText';
@@ -56,6 +56,7 @@ interface Paper {
   reviewSummary?: string | null;
   reviewCentralClaim?: string | null;
   reviewFinalJudgment?: string | null;
+  promptVersion?: string | null;
 }
 
 function dateMetaText(value?: string | null) {
@@ -309,6 +310,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedField, setSelectedField] = useState('All Fields');
   const [selectedSubfield, setSelectedSubfield] = useState('All Subfields');
+  const [selectedPromptVersion, setSelectedPromptVersion] = useState('All Prompt Versions');
   const [selectedRanking, setSelectedRanking] = useState('Top Rated');
   const [selectedTimeframe, setSelectedTimeframe] = useState('All Time');
 
@@ -624,6 +626,20 @@ export default function App() {
   useEffect(() => { setSelectedSubfield('All Subfields'); }, [selectedField]);
 
   const subfields = getSubfields();
+  const promptVersions = useMemo(() => {
+    const versions = new Set<string>();
+    papers.forEach((paper) => {
+      const version = typeof paper.promptVersion === 'string' ? paper.promptVersion.trim() : '';
+      if (version) versions.add(version);
+    });
+    return Array.from(versions).sort((a, b) => b.localeCompare(a));
+  }, [papers]);
+
+  useEffect(() => {
+    if (selectedPromptVersion !== 'All Prompt Versions' && !promptVersions.includes(selectedPromptVersion)) {
+      setSelectedPromptVersion('All Prompt Versions');
+    }
+  }, [promptVersions, selectedPromptVersion]);
 
   const filteredPapers = papers
     .filter(p => {
@@ -640,13 +656,14 @@ export default function App() {
         p.field.toLowerCase().includes(fieldLower) ||
         p.subfields?.some(s => s.toLowerCase().includes(fieldLower));
       const matchesSubfield = selectedSubfield === 'All Subfields' || p.subfields?.includes(selectedSubfield);
+      const matchesPromptVersion = selectedPromptVersion === 'All Prompt Versions' || p.promptVersion === selectedPromptVersion;
       const now = Date.now();
       const ts = new Date(p.createdAt).getTime();
       let matchesTime = true;
       if (selectedTimeframe === 'Past Week') matchesTime = ts > now - 7 * 86400000;
       else if (selectedTimeframe === 'Past Month') matchesTime = ts > now - 30 * 86400000;
       else if (selectedTimeframe === 'Past Year') matchesTime = ts > now - 365 * 86400000;
-      return matchesSearch && matchesField && matchesSubfield && matchesTime;
+      return matchesSearch && matchesField && matchesSubfield && matchesPromptVersion && matchesTime;
     })
     .sort((a, b) => {
       if (selectedRanking === 'Most Viewed') return b.viewCount - a.viewCount;
@@ -756,6 +773,26 @@ export default function App() {
                       <button key={t} onClick={() => setSelectedTimeframe(t)} className={`px-5 py-2 rounded-full font-bold text-sm transition-all ${selectedTimeframe === t ? 'bg-slate-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>{t}</button>
                     ))}
                   </div>
+                  {user && promptVersions.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                      <span className="mr-1 text-xs font-black uppercase tracking-widest text-slate-400">Prompt</span>
+                      <button
+                        onClick={() => setSelectedPromptVersion('All Prompt Versions')}
+                        className={`px-4 py-1.5 rounded-full font-bold text-xs transition-all border ${selectedPromptVersion === 'All Prompt Versions' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                      >
+                        All
+                      </button>
+                      {promptVersions.map(version => (
+                        <button
+                          key={version}
+                          onClick={() => setSelectedPromptVersion(version)}
+                          className={`px-4 py-1.5 rounded-full font-bold text-xs transition-all border ${selectedPromptVersion === version ? 'bg-violet-600 text-white border-violet-600' : 'bg-violet-50 text-violet-700 border-violet-100 hover:bg-violet-100'}`}
+                        >
+                          {version}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 

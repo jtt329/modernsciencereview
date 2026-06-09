@@ -43,6 +43,7 @@ export interface Paper {
   reviewSummary?: string | null;
   reviewCentralClaim?: string | null;
   reviewFinalJudgment?: string | null;
+  promptVersion?: string | null;
 }
 
 export type IcoPrimitiveInput =

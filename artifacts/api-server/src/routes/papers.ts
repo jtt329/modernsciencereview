@@ -944,6 +944,21 @@ function duplicateKey(paper: typeof papersTable.$inferSelect) {
   ].join("\0").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+function promptScopedFeedDuplicateKey(paper: typeof papersTable.$inferSelect, promptVersion?: string | null) {
+  const sourceHash = (paper as any).sourceHash;
+  if (sourceHash) {
+    return `source:${paper.authorId}:${sourceHash}:${paper.modelName ?? ""}:${promptVersion ?? "unknown-prompt"}`;
+  }
+  return [
+    "meta",
+    paper.authorId,
+    paper.title,
+    paper.paperAuthors ?? "",
+    paper.modelName ?? "",
+    promptVersion ?? "unknown-prompt",
+  ].join("\0").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
 function dedupePapers<T extends typeof papersTable.$inferSelect>(papers: T[]): T[] {
   const seen = new Set<string>();
   return papers.filter((paper) => {
@@ -1055,22 +1070,26 @@ async function existingSourceSubmission(
     const matchingPrompt =
       existingPromptHash === promptHash &&
       existingPromptVersion === promptVersion;
+    if (!matchingPrompt) {
+      logger.info({
+        paperId: paper.id,
+        title: paper.title,
+        existingPromptVersion,
+        existingPromptHash,
+        activePromptVersion: promptVersion,
+        activePromptHash: promptHash,
+      }, "Allowing exact-source submission because existing review used a different prompt");
+      continue;
+    }
     return {
       paper,
       review: review || null,
-      promptMatches: matchingPrompt,
+      promptMatches: true as const,
       existingPromptHash,
       existingPromptVersion,
     };
   }
 
-  let promptMismatchMatch: {
-    paper: typeof papersTable.$inferSelect;
-    review: typeof reviewsTable.$inferSelect | null;
-    promptMatches: false;
-    existingPromptHash: string | null;
-    existingPromptVersion: string | null;
-  } | null = null;
   for (const paper of userPapers) {
     const review = reviewByPaper.get(paper.id);
     const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
@@ -1100,15 +1119,16 @@ async function existingSourceSubmission(
         existingPromptVersion,
       };
     }
-    promptMismatchMatch ??= {
-      paper,
-      review: review || null,
-      promptMatches: false as const,
-      existingPromptHash,
+    logger.info({
+      paperId: paper.id,
+      title: paper.title,
       existingPromptVersion,
-    };
+      existingPromptHash,
+      activePromptVersion: promptVersion,
+      activePromptHash: promptHash,
+    }, "Allowing exact-source submission because existing review used a different prompt");
   }
-  return promptMismatchMatch;
+  return null;
 }
 
 type ExistingReviewSubmissionMatch = {
@@ -1328,22 +1348,32 @@ async function existingMetadataIdentitySubmission(
   ).orderBy(desc(papersTable.createdAt));
   if (userPapers.length === 0) return null;
 
-  const visiblePapers = dedupePapers(userPapers);
-  const visiblePaperIds = new Set(visiblePapers.map((paper) => paper.id));
   const reviews = await db.select().from(reviewsTable);
   const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
 
-  for (const paper of visiblePapers) {
+  for (const paper of userPapers) {
     const review = reviewByPaper.get(paper.id);
-    if (!review || !visiblePaperIds.has(paper.id)) continue;
+    if (!review) continue;
     const existing = paperMetadataIdentity(normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(review)));
     const duplicateReason = metadataIdentityDuplicateReason(target, existing);
     if (!duplicateReason) continue;
     const promptIdentity = promptIdentityForReview(review);
+    if (!promptIdentity.promptMatches) {
+      logger.info({
+        paperId: paper.id,
+        title: paper.title,
+        existingPromptVersion: promptIdentity.existingPromptVersion,
+        existingPromptHash: promptIdentity.existingPromptHash,
+        activePromptVersion: REVIEW_PROMPT_VERSION,
+        activePromptHash: REVIEW_PROMPT_HASH,
+        duplicateReason,
+      }, "Allowing metadata-matched submission because existing review used a different prompt");
+      continue;
+    }
     return {
       paper,
       review,
-      promptMatches: promptIdentity.promptMatches,
+      promptMatches: true,
       existingPromptHash: promptIdentity.existingPromptHash,
       existingPromptVersion: promptIdentity.existingPromptVersion,
       duplicateReason,
@@ -3524,23 +3554,31 @@ router.get("/papers", async (req, res) => {
     // Keep the public feed lightweight. Full review ledgers can be very large
     // because they include audit/input snapshots; loading them here was making
     // the homepage slow or unavailable as the benchmark grew.
-    const paperRecords = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)).limit(PAPER_FEED_LIMIT));
+    const paperRecords = await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)).limit(PAPER_FEED_LIMIT);
     const reviews = await db.select({
       paperId: reviewsTable.paperId,
       summary: reviewsTable.summary,
       centralClaim: reviewsTable.centralClaim,
       finalJudgment: reviewsTable.finalJudgment,
+      promptVersion: sql<string | null>`substring(${reviewsTable.coverageLedgerJson} from '"promptVersion"[[:space:]]*:[[:space:]]*"([^"]+)"')`,
     }).from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
     const papers = paperRecords.map((paper) => normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(reviewMap.get(paper.id))));
+    const seenPromptScopedPapers = new Set<string>();
     const papersWithSummary = papers.map(p => {
       const review = reviewMap.get(p.id);
       return {
         ...p,
+        promptVersion: review?.promptVersion || null,
         reviewSummary: review?.summary || review?.finalJudgment || null,
         reviewCentralClaim: review?.centralClaim || null,
         reviewFinalJudgment: review?.finalJudgment || review?.summary || null,
       };
+    }).filter((paper) => {
+      const key = promptScopedFeedDuplicateKey(paper, paper.promptVersion);
+      if (seenPromptScopedPapers.has(key)) return false;
+      seenPromptScopedPapers.add(key);
+      return true;
     });
     res.json({ papers: papersWithSummary });
   } catch (err: any) {
@@ -3859,9 +3897,7 @@ if (existingBySource?.review) {
     reviewStatus: "duplicate_existing",
     failureStatus: "completed",
     retryable: false,
-    errorMessage: existingBySource.promptMatches
-      ? `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}".`
-      : `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}" under a previous prompt.`,
+    errorMessage: `This exact PDF/text source is already in the system as "${existingDisplayPaper.title}" under the active prompt.`,
     debugPayload: completedAttemptDebugPayload(attemptContext, {
       cacheUsed: true,
       previousReviewUsed: true,
@@ -4225,9 +4261,7 @@ if (existingByMetadata?.review) {
     reviewStatus: "duplicate_existing",
     failureStatus: "completed",
     retryable: false,
-    errorMessage: existingByMetadata.promptMatches
-      ? `This paper is already in the system as "${existingDisplayPaper.title}" by ${existingDisplayPaper.paperAuthors || "Unknown Authors"} (${metadataDuplicateLabel} match).`
-      : `This paper is already in the system as "${existingDisplayPaper.title}" by ${existingDisplayPaper.paperAuthors || "Unknown Authors"} under a previous prompt (${metadataDuplicateLabel} match).`,
+    errorMessage: `This paper is already in the system as "${existingDisplayPaper.title}" by ${existingDisplayPaper.paperAuthors || "Unknown Authors"} under the active prompt (${metadataDuplicateLabel} match).`,
     debugPayload: completedAttemptDebugPayload(attemptContext, {
       cacheUsed: true,
       previousReviewUsed: true,
