@@ -695,7 +695,7 @@ type ReviewRunAuditEntry = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v17.1.3-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = "v17.1.4-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -717,7 +717,7 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V17_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V17_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v17.1.3 computed ICO half-point";
+export const REVIEW_PROMPT_NAME = "v17.1.4 computed ICO half-point";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")

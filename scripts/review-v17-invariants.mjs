@@ -49,8 +49,8 @@ function computedScore(i, c, o) {
 const blindPrompt = extractRawConst(promptSource, "BLIND_REVIEW_PASS_V17_1_PROMPT");
 const adjudicatorAddendum = extractRawConst(promptSource, "INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM");
 
-assert.match(promptSource, /v17\.1\.3 computed ICO half-point/i);
-assert.match(engineSource, /v17\.1\.3-computed-ico-halfpoint/);
+assert.match(promptSource, /v17\.1\.4 computed ICO half-point/i);
+assert.match(engineSource, /v17\.1\.4-computed-ico-halfpoint/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
 assert.match(engineSource, /REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1"/);
@@ -301,8 +301,11 @@ assert.match(blindPrompt, /Use 0 when no correct, relevant, manuscript-contained
 assert.match(blindPrompt, /Do not output, infer, or choose a 0-100 final score/);
 assert.match(blindPrompt, /The application will compute any public score/);
 assert.match(blindPrompt, /value is the actual explanatory update the manuscript earns/);
+assert.match(blindPrompt, /actual surprise\/update relative to the prior explanatory structure/);
+assert.match(blindPrompt, /Do not let quantity 1 automatically transfer to quantities 2 or 3/);
+assert.match(blindPrompt, /Near-maximum Output Strength is appropriate only if at least one/);
 assert.match(blindPrompt, /Experimental, observational, and instrumental work/);
-assert.match(blindPrompt, /A very tight numerical bound is not by itself a very high Output Strength/);
+assert.match(blindPrompt, /A tight numerical bound is not automatically a near-maximum output/);
 assert.match(blindPrompt, /Do not let the strength of the background theory being tested automatically transfer/);
 assert.match(blindPrompt, /Review input quality/);
 assert.match(blindPrompt, /reviewInputQuality/);
@@ -331,6 +334,8 @@ assert.match(blindPrompt, /"failedOutputsExcludedFromDiagnostics"/);
 assert.match(adjudicatorAddendum, /Read:\n- the blinded manuscript;\n- Blind Pass 1;\n- Blind Pass 2\./);
 assert.match(adjudicatorAddendum, /Do not output a 0-100 final score/);
 assert.match(adjudicatorAddendum, /Do not receive, request, or use comparator papers/);
+assert.match(adjudicatorAddendum, /actual-explanatory-update \/ prior-surprise principle/);
+assert.match(adjudicatorAddendum, /accept that high output score only if the pass explicitly justifies a near-maximum actual explanatory update/);
 assert.match(adjudicatorAddendum, /mark reviewInputQuality\.shouldInvalidateReview as true/);
 
 assert.equal(normalizeDiagnosticSubscore(0), 0);
@@ -635,4 +640,4 @@ for (const forbidden of [
   assert.equal(canonicalExport.includes(forbidden), false, `standard canonical export includes ${forbidden}`);
 }
 
-console.log("v17.1.3 review invariants passed");
+console.log("v17.1.4 review invariants passed");

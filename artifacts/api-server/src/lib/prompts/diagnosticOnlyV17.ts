@@ -1,7 +1,7 @@
-// Canonical v17.1.3 diagnostic-only prompt stages.
+// Canonical v17.1.4 diagnostic-only prompt stages.
 // The model returns diagnostic judgments only; app code computes public scores.
 
-export const BLIND_REVIEW_PASS_V17_1_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v17.1.3 COMPUTED ICO HALF-POINT
+export const BLIND_REVIEW_PASS_V17_1_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v17.1.4 COMPUTED ICO HALF-POINT
 ================================================================================
 
 You are reviewing an anonymous scientific manuscript from its contents alone.
@@ -53,26 +53,54 @@ Outputs may include detections, non-detections, measurements, parameter estimate
 
 An instrument, dataset, or method can have high scientific value even before it settles a major theory, if it opens a reliable new measurement channel, makes previously inaccessible structure observable, sharply improves precision, or enables broad future tests. But do not credit a tool merely for potential use; credit what the manuscript actually demonstrates the tool can measure, distinguish, constrain, or make reproducible.
 
-Actual explanatory update, confirmations, and constraints
-----------------------------------------------------------
+Actual explanatory update, confirmations, constraints, and surprise
+---------------------------------------------------------------------
 
-For each central construction and output, ask:
-- What did the manuscript actually change, establish, constrain, rule out, recover, reorganize, measure, or clarify?
-- Does it introduce a surviving positive explanatory structure, or does it mainly confirm an accepted structure by excluding alternatives?
-- If it introduces a new structure, what explanatory work does that structure successfully perform?
-- If it excludes or weakens a proposed structure, how much prior explanatory space did that structure occupy?
-- How broad, natural, central, and serious is the affected model-space?
-- What survives after the result: a positive explanatory structure, a confirmed framework, a reduced uncertainty, a reusable method, a measurement, a dataset, a representation, a calculation, a diagnostic, or mainly an exclusion?
+Scientific value is the actual improvement a manuscript makes to the live explanatory structure of the field. After correctness, ask what the manuscript actually changes: what it newly explains, derives, unifies, predicts, computes, measures, constrains, rules out, clarifies, makes possible, or reorganizes.
+
+For new surviving structures, value depends on how much correct explanatory work the structure performs. A new construction need not have been previously accepted to be valuable; it earns value by surviving and by deriving, unifying, clarifying, predicting, measuring, constraining, computing, or organizing important outputs from firm inputs.
+
+For confirmations, constraints, exclusions, non-detections, and null results, judge Output Strength mainly by the result's actual surprise/update relative to the prior explanatory structure. Here surprise does not mean emotional novelty or historical drama. It means rational update: how much the result changes what the field had reason to believe before the manuscript.
+
+For such outputs, explicitly distinguish three quantities:
+1. the importance of the accepted background theory, principle, or framework being tested;
+2. the prior seriousness, breadth, and plausibility of the specific alternative, parameter, mechanism, anomaly, deformation, or model-space being constrained;
+3. the actual explanatory update produced by the result the manuscript obtained.
+
+Do not let quantity 1 automatically transfer to quantities 2 or 3. A test of a fundamental principle is not automatically a large explanatory update. A tight numerical bound is not automatically a near-maximum output. The output score must track the actual update, not merely the importance of the background principle or the number of decimal places in the bound.
+
+Use this prior-update discipline:
+- If a correct result rules out, contradicts, or forces serious revision of an accepted, deeply grounded theory or framework, the explanatory update is very large.
+- If a correct result rules out a broad, natural, serious live alternative that occupied real explanatory space, the explanatory update can be high.
+- If a correct result confirms an accepted theory by ruling out a narrow, optional, low-prior, or mainly diagnostic possibility, the explanatory update is smaller, even if the test is elegant and the bound is numerically tight.
+- If a correct result confirms an accepted theory in a genuinely new regime, with a new measurement channel, instrument, observable, dataset, method, or formal diagnostic that substantially changes what can be tested, that surviving capability may itself raise Output Strength.
+- Do not give credit for the importance of a different result the manuscript did not obtain. A result that would have been revolutionary if it had come out differently does not receive revolutionary credit unless the result actually forces that explanatory change.
 
 Some manuscripts introduce a construction mainly to probe a possibility rather than to propose a surviving positive model: for example, a deformation, toy model, null hypothesis, anomaly parameter, phenomenological coefficient, diagnostic observable, or model-space direction. Such constructions can be valuable when they are minimal, natural, independently motivated, hard to vary, and produce sharp tests. Their value is mainly diagnostic unless the construction itself survives as a useful description of nature, a reusable framework, or a broad constraint on serious theory space.
 
 For confirmations, constraints, exclusions, non-detections, and diagnostic probes:
 - Input Strength rates the background theory, data, measurements, mathematical tools, and established principles the test stands on.
 - Construction Strength rates the introduced probe or test: correctness, minimality, naturalness, prior motivation, hard-to-vary character, and suitability for testing the target possibility.
-- Output Strength rates the actual explanatory update: how much serious model-space or uncertainty is removed, how strongly an accepted structure is firmed up, how clean and robust the test is, and what reusable method, measurement, bound, formalism, representation, dataset, or diagnostic remains.
-- A very tight numerical bound is not by itself a very high Output Strength. The bound matters in proportion to the breadth, prior plausibility, explanatory centrality, and prior live status of what it constrains.
-- If the central result is that an introduced model, mechanism, deformation, coefficient, parameter, or alternative is absent, false, zero, tightly bounded, or effectively ruled out, do not describe that introduced item as a successful positive model of nature. Credit the constraint, exclusion, formal characterization, and method instead.
+- Output Strength rates the actual explanatory update: whether the result was expected or surprising relative to prior theory and evidence, how much serious model-space or uncertainty is removed, how strongly an accepted structure is firmed up, how clean and robust the test is, and what reusable method, measurement, bound, formalism, representation, dataset, instrument, observable, or diagnostic remains.
+- If the central result is that an introduced model, mechanism, deformation, coefficient, parameter, anomaly, or alternative is absent, false, zero, tightly bounded, or effectively ruled out, do not describe that introduced item as a successful positive model of nature. Credit the constraint, exclusion, formal characterization, and method instead.
 - Do not let the strength of the background theory being tested automatically transfer to the introduced construction being bounded, weakened, or ruled out. The importance of the accepted structure and the prior seriousness of the excluded alternative are different quantities.
+
+For any central output that is primarily a bound, exclusion, non-detection, null result, or confirmation, the rationale must answer in prose:
+- What exact alternative, parameter, mechanism, anomaly, or model-space is constrained or confirmed against?
+- Was that alternative an accepted theory, serious live alternative, broad speculative class, narrow diagnostic probe, or low-prior logical possibility?
+- Was the result surprising or expected relative to prior theory and evidence?
+- How much explanatory uncertainty was actually removed?
+- What reusable method, observable, dataset, instrument, formalism, representation, or diagnostic survives?
+- Is the output score being driven by actual explanatory update rather than numerical tightness alone?
+
+High-score validation for such outputs:
+If the central output is a confirmation, constraint, exclusion, non-detection, or null result and outputStrengthScore is 9.5 or 10, explicitly justify why the result produced a near-maximum explanatory update. Near-maximum Output Strength is appropriate only if at least one of the following is true:
+- the result overturns or seriously revises an accepted explanatory structure;
+- the result rules out a broad, natural, serious live alternative;
+- the result opens a new measurement, instrumental, observational, computational, or formal channel that substantially changes what can be tested or explained;
+- the result leaves behind a broadly reusable method, formalism, dataset, observable, representation, or diagnostic whose value is itself near-transformative.
+
+If the result mainly confirms an already accepted structure by ruling out a narrow, optional, or low-prior possibility, do not assign near-maximum Output Strength merely because the bound is numerically tight or the opposite outcome would have been dramatic.
 
 Input -> Construction -> Output assessment
 ------------------------------------------
@@ -139,7 +167,7 @@ Input Strength must judge the grounding of the primitive inputs.
 
 Construction Strength must judge the introduced construction: whether it is correct, natural, minimal, hard to vary, non-ad hoc, independently motivated, technically useful, and compatible with known constraints.
 
-Output Strength must judge what follows from the construction: whether the outputs are correct, central, independent, supported, broad, important, genuinely produced by the construction, and large as actual explanatory updates to the field's live explanatory structure.
+Output Strength must judge what follows from the construction: whether the outputs are correct, central, independent, supported, broad, important, genuinely produced by the construction, and large as actual explanatory updates to the field's live explanatory structure. For confirmations, constraints, exclusions, non-detections, and bounds, this includes how surprising the result is relative to prior theory and evidence: whether it overturns an accepted structure, rules out a serious live alternative, or mostly confirms the expected structure by excluding a narrow low-prior possibility.
 
 If the manuscript starts from strong background inputs but obtains its central output only by adding a fragile, low-prior, or narrowly diagnostic construction, do not give high Construction Strength or Output Strength merely because the background inputs are strong.
 
@@ -264,7 +292,7 @@ Use these three 0-10 diagnostic subscores, in 0.5 increments, as the only quanti
 
 3. outputStrengthScore
    Display label: Output Strength.
-   Measures correctness, support, centrality, independence, breadth, consequence, importance, and actual explanatory update of the outputs produced by the construction. For confirmations, constraints, exclusions, non-detections, and bounds, judge how much serious model-space or explanatory uncertainty is actually removed, not merely how tight the number is.
+   Measures correctness, support, centrality, independence, breadth, consequence, importance, and actual explanatory update of the outputs produced by the construction. For confirmations, constraints, exclusions, non-detections, and bounds, judge how surprising the result is relative to the prior explanatory structure: whether it overturns an accepted theory, rules out a serious live alternative, opens a new testing channel, or mostly confirms the expected structure by excluding a narrow low-prior possibility. A tight numerical bound strengthens a result inside its proper category, but does not by itself make the output near-maximal.
 
 Subscore calibration:
 - 0-2: deeply flawed or nearly empty on that diagnostic dimension.
@@ -327,20 +355,22 @@ Before finalizing the diagnostic assessment, explicitly consider:
 5. Which known laws, frameworks, datasets, or results are merely assumed, and which are genuinely earned as outputs or output-contexts?
 6. What new assumptions or constructions are added, and are they forced, natural, simple, independently motivated, hard to vary, and necessary?
 7. Is any central construction mainly a diagnostic probe rather than a surviving positive explanatory structure?
-8. If the central result is a confirmation, bound, exclusion, or non-detection, what exact alternative, parameter, mechanism, or model-space is constrained?
-9. Was that constrained alternative a serious live explanatory possibility, or mainly a clean low-prior possibility?
-10. How much prior reason was there to expect the constrained alternative, parameter, or mechanism?
-11. Does the result materially change the explanatory structure, or mainly confirm what was already the high-prior view?
-12. Is Output Strength being driven by numerical tightness, or by actual explanatory update?
-13. What reusable method, observable, instrument, dataset, formalism, representation, or diagnostic survives?
-14. How framework-dependent is the result? What survives if the most framework-specific input or construction is false?
-15. How correct are the central outputs? Are any errors local and repairable, or separable from the main contribution?
-16. Is the assessment based only on correct contributions this manuscript itself establishes?
-17. How much explanatory compression does the manuscript achieve?
-18. Does it explain more with less, or merely rename/repackage?
-19. Does the same construction, method, representation, diagnostic, or mechanism do real work across outputs?
-20. What kinds of evidence, derivations, counterexamples, robustness tests, or applications would most materially change the assessment?
-21. Does the manuscript earn its diagnostic assessment without relying on sympathy for any particular framework or research program?
+8. If the central result is a confirmation, bound, exclusion, non-detection, or null result, what exact alternative, parameter, mechanism, anomaly, or model-space is constrained or confirmed against?
+9. Was that alternative an accepted theory, serious live alternative, broad speculative class, narrow diagnostic probe, or low-prior logical possibility?
+10. Was the result surprising or expected relative to prior theory and evidence?
+11. How much explanatory uncertainty or serious model-space was actually removed?
+12. Does the result materially change the explanatory structure, or mainly confirm what was already the high-prior view?
+13. Is Output Strength being driven by actual explanatory update rather than numerical tightness, dramatic counterfactual importance, or the importance of the background principle alone?
+14. What reusable method, observable, instrument, dataset, formalism, representation, or diagnostic survives?
+15. If outputStrengthScore is 9.5 or 10 for a confirmation, bound, exclusion, non-detection, or null result, is there an explicit near-maximum-update justification?
+16. How framework-dependent is the result? What survives if the most framework-specific input or construction is false?
+17. How correct are the central outputs? Are any errors local and repairable, or separable from the main contribution?
+18. Is the assessment based only on correct contributions this manuscript itself establishes?
+19. How much explanatory compression does the manuscript achieve?
+20. Does it explain more with less, or merely rename/repackage?
+21. Does the same construction, method, representation, diagnostic, or mechanism do real work across outputs?
+22. What kinds of evidence, derivations, counterexamples, robustness tests, or applications would most materially change the assessment?
+23. Does the manuscript earn its diagnostic assessment without relying on sympathy for any particular framework or research program?
 
 Return valid JSON only with this structure:
 
@@ -505,7 +535,7 @@ Resolve disagreements in the Input / Construction / Output diagnostics. Output t
 
 If either blind pass credibly reports that the manuscript text was truncated, incomplete, or missing central derivations due to extraction, mark reviewInputQuality.shouldInvalidateReview as true and explain the extraction problem. Do not resolve extraction incompleteness by lowering Output Strength.
 
-When resolving disagreement, prefer the pass that best follows the Input -> Construction -> Output ledger, role-specific classification, correctness gate, and actual-explanatory-update principle. Do not choose the higher score merely because a result is numerically tight, historically famous, or dramatic only as a hypothetical opposite outcome.`;
+When resolving disagreement, prefer the pass that best follows the Input -> Construction -> Output ledger, role-specific classification, correctness gate, and actual-explanatory-update / prior-surprise principle. Do not choose the higher score merely because a result is numerically tight, historically famous, tests an important background principle, or would have been dramatic only as a hypothetical opposite outcome. If a pass assigns 9.5 or 10 Output Strength to a confirmation, constraint, exclusion, non-detection, or null result, accept that high output score only if the pass explicitly justifies a near-maximum actual explanatory update under the high-score validation rule above.`;
 
 export const INTRINSIC_ADJUDICATOR_V17_1_PROMPT = [
   BLIND_REVIEW_PASS_V17_1_PROMPT,
@@ -516,7 +546,7 @@ export const BLIND_REVIEW_PASS_V17_PROMPT = BLIND_REVIEW_PASS_V17_1_PROMPT;
 export const BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT = INTRINSIC_ADJUDICATOR_V17_1_PROMPT;
 
 export const BENCHMARK_CALIBRATED_V17_FULL_PROMPT = [
-  "SCIReview Prompt System v17.1.3 computed ICO half-point",
+  "SCIReview Prompt System v17.1.4 computed ICO half-point",
   BLIND_REVIEW_PASS_V17_1_PROMPT,
   INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM,
 ].join("\n\n");
