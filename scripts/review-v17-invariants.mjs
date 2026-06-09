@@ -49,8 +49,8 @@ function computedScore(i, c, o) {
 const blindPrompt = extractRawConst(promptSource, "BLIND_REVIEW_PASS_V17_1_PROMPT");
 const adjudicatorAddendum = extractRawConst(promptSource, "INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM");
 
-assert.match(promptSource, /v17\.1\.2 computed ICO half-point/i);
-assert.match(engineSource, /v17\.1\.2-computed-ico-halfpoint/);
+assert.match(promptSource, /v17\.1\.3 computed ICO half-point/i);
+assert.match(engineSource, /v17\.1\.3-computed-ico-halfpoint/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
 assert.match(engineSource, /REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1"/);
@@ -300,7 +300,7 @@ assert.match(blindPrompt, /0 to 10 in 0\.5 increments/);
 assert.match(blindPrompt, /Use 0 when no correct, relevant, manuscript-contained contribution survives/);
 assert.match(blindPrompt, /Do not output, infer, or choose a 0-100 final score/);
 assert.match(blindPrompt, /The application will compute any public score/);
-assert.match(blindPrompt, /A manuscript's value is the actual update it earns/);
+assert.match(blindPrompt, /value is the actual explanatory update the manuscript earns/);
 assert.match(blindPrompt, /Experimental, observational, and instrumental work/);
 assert.match(blindPrompt, /A very tight numerical bound is not by itself a very high Output Strength/);
 assert.match(blindPrompt, /Do not let the strength of the background theory being tested automatically transfer/);
@@ -635,4 +635,4 @@ for (const forbidden of [
   assert.equal(canonicalExport.includes(forbidden), false, `standard canonical export includes ${forbidden}`);
 }
 
-console.log("v17.1.2 review invariants passed");
+console.log("v17.1.3 review invariants passed");
