@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable } from "@workspace/db";
+import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable, calibrationPairsTable } from "@workspace/db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 import OpenAI from "openai";
@@ -7,6 +7,7 @@ import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
 import {
   BENCHMARK_SET_VERSION,
+  GEMINI_CALIBRATION_MODEL,
   GEMINI_META_MODEL,
   GEMINI_METADATA_MODEL,
   GEMINI_PASS_MODEL,
@@ -21,6 +22,7 @@ import {
   compactAggregateForStorage,
   expectedReviewModelName,
   extractManuscriptTextFromPdfForReview,
+  detectReviewerDirectedText,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
   isExtractionBlockingStatus,
@@ -42,6 +44,25 @@ import {
 } from "../lib/reviewEngineCompat";
 import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
 import { stripPdfIdentifyingMetadataSafe } from "../lib/pdfBlinding";
+import {
+  PAIRWISE_CALIBRATION_PROMPT_HASH,
+  PAIRWISE_CALIBRATION_VERSION,
+  PAIRWISE_JUDGE_CONCURRENCY,
+  judgePair,
+  outcomeFromStoredPair,
+  planCohortPairs,
+  runWithConcurrency,
+  strippedReviewForPairwise,
+  type PairwiseCalibrationMember,
+  type PlannedPair,
+} from "../lib/pairwiseCalibration";
+import {
+  CALIBRATION_MODE_PAIRWISE_BT_V1,
+  calibrateCohorts,
+  type CalibrationCohortInput,
+  type CalibrationPairOutcome,
+  type CohortFitResult,
+} from "../lib/calibrationFit";
 
 let openai: OpenAI | null = null;
 function getOpenAI() {
@@ -1726,6 +1747,19 @@ function skippedPdfTextFallbackWarning(report: ExtractionCompletenessReport | nu
     : "Automatic PDF text fallback skipped because the PDF text layer yielded fewer than 100 readable characters; use manual OCR/text or PDF-visible last resort.";
 }
 
+// Injection scan for the PDF-visible lane: white-text or hidden-layer
+// instructions show up in the text layer even when the model reads the
+// rendered PDF, so the text layer is extracted separately and scanned.
+async function pdfTextLayerInjectionSuspected(buffer: Buffer): Promise<boolean> {
+  try {
+    const pdfParse = (await import("pdf-parse")).default;
+    const parsed = await pdfParse(buffer);
+    return detectReviewerDirectedText(parsed.text ?? "");
+  } catch {
+    return false;
+  }
+}
+
 function pdfVisibleLastResortExtractionReport(text: string): ExtractionCompletenessReport {
   const cleanText = cleanExtractedManuscriptText(text);
   return {
@@ -3034,9 +3068,21 @@ router.post("/papers/benchmark-clusters", async (req, res) => {
   }
 });
 
+// Calibration engine selection: the legacy sequential comparator backfill
+// stays available behind CALIBRATION_ENGINE=legacy; the default engine is
+// the pairwise Bradley-Terry calibration below.
+const CALIBRATION_ENGINE = process.env.CALIBRATION_ENGINE === "legacy" ? "legacy" : "pairwise";
+
 // POST /api/papers/comparator-backfill — admin-only recalibration after a batch has populated the database
 router.post("/papers/comparator-backfill", async (req, res) => {
   if (!requireAdmin(req, res)) return;
+  if (CALIBRATION_ENGINE !== "legacy") {
+    res.status(409).json({
+      error: "Legacy comparator calibration is disabled (CALIBRATION_ENGINE defaults to \"pairwise\"). Set CALIBRATION_ENGINE=legacy to run the legacy backfill.",
+      calibrationEngine: CALIBRATION_ENGINE,
+    });
+    return;
+  }
   try {
     const includeAll = req.body?.includeAll === true;
     const benchmarkSetVersion =
@@ -3176,6 +3222,381 @@ router.post("/papers/comparator-backfill", async (req, res) => {
   }
 });
 
+function pairwiseCohortIdForLedger(ledger: Record<string, any>): string | null {
+  const cohortId =
+    ledger.benchmarkClusterId ??
+    ledger.benchmarkCluster?.benchmarkClusterId ??
+    ledger.canonicalClusterLabel ??
+    ledger.finalLocalCohort ??
+    ledger.localCohort ??
+    null;
+  return typeof cohortId === "string" && cohortId.trim() ? cohortId.trim() : null;
+}
+
+type PairwiseCohortAssembly = {
+  cohorts: Map<string, PairwiseCalibrationMember[]>;
+  membersById: Map<string, PairwiseCalibrationMember>;
+  ledgersByReviewId: Map<string, Record<string, any>>;
+  reviewRowsById: Map<string, typeof reviewsTable.$inferSelect>;
+  paperIdByReviewId: Map<string, string>;
+};
+
+async function assemblePairwiseCohorts(): Promise<PairwiseCohortAssembly> {
+  const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+  const reviews = await db.select().from(reviewsTable);
+  const reviewMap = new Map(reviews.map((review) => [review.paperId, review]));
+  const cohorts = new Map<string, PairwiseCalibrationMember[]>();
+  const membersById = new Map<string, PairwiseCalibrationMember>();
+  const ledgersByReviewId = new Map<string, Record<string, any>>();
+  const reviewRowsById = new Map<string, typeof reviewsTable.$inferSelect>();
+  const paperIdByReviewId = new Map<string, string>();
+
+  for (const paper of papers) {
+    const review = reviewMap.get(paper.id);
+    if (!review) continue;
+    const ledger = parseJsonObject(review.coverageLedgerJson);
+    if (!ledger || !isCalibrationCompatibleReviewObject(ledger)) continue;
+    const cohortId = pairwiseCohortIdForLedger(ledger);
+    if (!cohortId) continue;
+
+    const comparatorProfile = ledger.organicCohortProfile ?? ledger.comparatorProfile ?? {};
+    const ico = ledger.inputConstructionOutputAssessment ?? {};
+    const profileText = [
+      cohortId,
+      ledger.canonicalClusterLabel,
+      ledger.localCohort,
+      ledger.finalLocalCohort,
+      ledger.specialtyField,
+      comparatorProfile?.localCohort,
+      comparatorProfile?.primaryCohort,
+      safeStringArray(comparatorProfile?.clusterFeatureTags).join(" "),
+      safeStringArray(comparatorProfile?.primitiveInputs).join(" "),
+      safeStringArray(comparatorProfile?.introducedConstructions).join(" "),
+      safeStringArray(comparatorProfile?.outputs).join(" "),
+      typeof ico?.input?.overallAssessment === "string" ? ico.input.overallAssessment : "",
+    ].filter(Boolean).join("\n");
+
+    const computedScore = Number(
+      ledger.computedScore ?? ledger.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? 0,
+    );
+    const member: PairwiseCalibrationMember = {
+      reviewId: review.id,
+      cohortId,
+      profileText,
+      strippedReview: strippedReviewForPairwise(ledger),
+      downWeighted: ledger.blindingStrength === "weaker" || ledger.recognitionSuspected === true,
+      computedScore: Number.isFinite(computedScore) ? computedScore : 0,
+      calibrationAnchor: ledger.calibrationAnchor === true && benchmarkAnchorEligible(ledger),
+    };
+    membersById.set(review.id, member);
+    ledgersByReviewId.set(review.id, ledger);
+    reviewRowsById.set(review.id, review);
+    paperIdByReviewId.set(review.id, paper.id);
+    cohorts.set(cohortId, [...(cohorts.get(cohortId) ?? []), member]);
+
+    const bridgeCohortId = typeof ledger.bridgeCohortId === "string" ? ledger.bridgeCohortId.trim() : "";
+    if (bridgeCohortId && bridgeCohortId !== cohortId) {
+      cohorts.set(bridgeCohortId, [...(cohorts.get(bridgeCohortId) ?? []), { ...member, cohortId: bridgeCohortId }]);
+    }
+  }
+
+  return { cohorts, membersById, ledgersByReviewId, reviewRowsById, paperIdByReviewId };
+}
+
+type PairwiseCalibrationPlan = {
+  cohortPlans: {
+    cohortId: string;
+    memberCount: number;
+    anchorCount: number;
+    downWeightedCount: number;
+    pairs: PlannedPair[];
+    cachedPairCount: number;
+    newPairCount: number;
+  }[];
+  plannedPairs: PlannedPair[];
+  newPairs: PlannedPair[];
+  cachedPairsByKey: Map<string, typeof calibrationPairsTable.$inferSelect>;
+};
+
+async function buildPairwiseCalibrationPlan(assembly: PairwiseCohortAssembly): Promise<PairwiseCalibrationPlan> {
+  const cachedRows = await db.select().from(calibrationPairsTable)
+    .where(eq(calibrationPairsTable.promptHash, PAIRWISE_CALIBRATION_PROMPT_HASH));
+  const cachedPairsByKey = new Map(cachedRows.map((row) => [`${row.reviewIdA}\0${row.reviewIdB}`, row]));
+
+  const cohortPlans: PairwiseCalibrationPlan["cohortPlans"] = [];
+  const plannedByKey = new Map<string, PlannedPair>();
+  for (const [cohortId, members] of [...assembly.cohorts.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    if (members.length < 2) continue;
+    const pairs = planCohortPairs(cohortId, members);
+    let cachedPairCount = 0;
+    for (const pair of pairs) {
+      const key = `${pair.reviewIdA}\0${pair.reviewIdB}`;
+      if (cachedPairsByKey.has(key)) cachedPairCount += 1;
+      if (!plannedByKey.has(key)) plannedByKey.set(key, pair);
+    }
+    cohortPlans.push({
+      cohortId,
+      memberCount: members.length,
+      anchorCount: members.filter((member) => member.calibrationAnchor).length,
+      downWeightedCount: members.filter((member) => member.downWeighted).length,
+      pairs,
+      cachedPairCount,
+      newPairCount: pairs.filter((pair) => !cachedPairsByKey.has(`${pair.reviewIdA}\0${pair.reviewIdB}`)).length,
+    });
+  }
+  const plannedPairs = [...plannedByKey.values()];
+  const newPairs = plannedPairs.filter((pair) => !cachedPairsByKey.has(`${pair.reviewIdA}\0${pair.reviewIdB}`));
+  return { cohortPlans, plannedPairs, newPairs, cachedPairsByKey };
+}
+
+// POST /api/papers/pairwise-calibration/dry-run — admin-only cost preview.
+// Prints planned cohorts, pair counts, and estimated model calls without
+// running any model calls.
+router.post("/papers/pairwise-calibration/dry-run", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const assembly = await assemblePairwiseCohorts();
+    const plan = await buildPairwiseCalibrationPlan(assembly);
+    res.json({
+      calibrationEngine: CALIBRATION_ENGINE,
+      calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
+      promptHash: PAIRWISE_CALIBRATION_PROMPT_HASH,
+      cohorts: plan.cohortPlans.map((cohort) => ({
+        cohortId: cohort.cohortId,
+        memberCount: cohort.memberCount,
+        anchorCount: cohort.anchorCount,
+        downWeightedCount: cohort.downWeightedCount,
+        pairCount: cohort.pairs.length,
+        cachedPairCount: cohort.cachedPairCount,
+        newPairCount: cohort.newPairCount,
+        unanchored: cohort.anchorCount === 0,
+      })),
+      totalPlannedPairs: plan.plannedPairs.length,
+      totalCachedPairs: plan.plannedPairs.length - plan.newPairs.length,
+      totalNewPairs: plan.newPairs.length,
+      // Two model calls per new pair (position-swapped double judgment).
+      estimatedModelCalls: plan.newPairs.length * 2,
+      modelCallsOnRerunWithNoNewReviews: 0,
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Pairwise calibration dry-run failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/papers/pairwise-calibration — admin-only pairwise BT calibration.
+// Judges uncached pairs (twice each, A/B swapped), persists outcomes, fits
+// Bradley-Terry per cohort in app code, maps through admin anchors, and
+// stores calibratedScore separately from the intrinsic computedScore.
+router.post("/papers/pairwise-calibration", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const assembly = await assemblePairwiseCohorts();
+    const plan = await buildPairwiseCalibrationPlan(assembly);
+
+    const judged = await runWithConcurrency(plan.newPairs, PAIRWISE_JUDGE_CONCURRENCY, async (pair) => {
+      const outcome = await judgePair(pair, assembly.membersById);
+      await db.insert(calibrationPairsTable).values({
+        reviewIdA: outcome.reviewIdA,
+        reviewIdB: outcome.reviewIdB,
+        promptHash: PAIRWISE_CALIBRATION_PROMPT_HASH,
+        cohortId: pair.cohortId,
+        calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
+        model: GEMINI_CALIBRATION_MODEL,
+        overallWinnerReviewId: outcome.overallWinnerReviewId,
+        margin: outcome.margin,
+        positionInconsistent: outcome.positionInconsistent ? 1 : 0,
+        inputStrengthWinnerReviewId: outcome.inputStrengthWinnerReviewId,
+        constructionStrengthWinnerReviewId: outcome.constructionStrengthWinnerReviewId,
+        outputStrengthWinnerReviewId: outcome.outputStrengthWinnerReviewId,
+        judgmentsJson: outcome.judgments as unknown as Record<string, unknown>[],
+      }).onConflictDoNothing();
+      return outcome;
+    });
+    const failedPairs = judged.filter((entry) => entry.error).map((entry) => ({
+      reviewIdA: entry.item.reviewIdA,
+      reviewIdB: entry.item.reviewIdB,
+      error: String((entry.error as any)?.message ?? entry.error),
+    }));
+
+    // Re-read the cache so the fit uses exactly the stored, reproducible rows.
+    const refreshed = await buildPairwiseCalibrationPlan(assembly);
+    const cohortInputs: CalibrationCohortInput[] = refreshed.cohortPlans.map((cohort) => {
+      const members = assembly.cohorts.get(cohort.cohortId) ?? [];
+      const memberIds = members.map((member) => member.reviewId);
+      const memberSet = new Set(memberIds);
+      const outcomes: CalibrationPairOutcome[] = [];
+      for (const pair of cohort.pairs) {
+        const row = refreshed.cachedPairsByKey.get(`${pair.reviewIdA}\0${pair.reviewIdB}`);
+        if (!row || !memberSet.has(row.reviewIdA) || !memberSet.has(row.reviewIdB)) continue;
+        const downWeighted =
+          assembly.membersById.get(row.reviewIdA)?.downWeighted ||
+          assembly.membersById.get(row.reviewIdB)?.downWeighted;
+        outcomes.push(outcomeFromStoredPair({
+          reviewIdA: row.reviewIdA,
+          reviewIdB: row.reviewIdB,
+          overallWinnerReviewId: row.overallWinnerReviewId,
+          inputStrengthWinnerReviewId: row.inputStrengthWinnerReviewId,
+          constructionStrengthWinnerReviewId: row.constructionStrengthWinnerReviewId,
+          outputStrengthWinnerReviewId: row.outputStrengthWinnerReviewId,
+          margin: row.margin,
+          positionInconsistent: row.positionInconsistent === 1,
+        }, downWeighted ? 0.5 : 1));
+      }
+      return {
+        cohortId: cohort.cohortId,
+        members: memberIds,
+        anchors: members
+          .filter((member) => member.calibrationAnchor)
+          .map((member) => ({ reviewId: member.reviewId, frozenComputedScore: member.computedScore })),
+        computedScores: Object.fromEntries(members.map((member) => [member.reviewId, member.computedScore])),
+        outcomes,
+      };
+    }).filter((input) => input.outcomes.length > 0);
+
+    const { fits, finalScores } = calibrateCohorts(cohortInputs);
+    const fitByCohort = new Map<string, CohortFitResult>(fits.map((fit) => [fit.cohortId, fit]));
+
+    let updatedReviews = 0;
+    for (const [reviewId, calibratedScore] of Object.entries(finalScores).sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      const ledger = assembly.ledgersByReviewId.get(reviewId);
+      const reviewRow = assembly.reviewRowsById.get(reviewId);
+      const paperId = assembly.paperIdByReviewId.get(reviewId);
+      if (!ledger || !reviewRow || !paperId) continue;
+
+      const memberCohorts = [...fitByCohort.values()].filter((fit) => reviewId in fit.calibratedScores);
+      const partnerIds = new Set<string>();
+      const pairSummaries: Record<string, unknown>[] = [];
+      for (const fit of memberCohorts) {
+        const cohortPlan = refreshed.cohortPlans.find((cohort) => cohort.cohortId === fit.cohortId);
+        for (const pair of cohortPlan?.pairs ?? []) {
+          if (pair.reviewIdA !== reviewId && pair.reviewIdB !== reviewId) continue;
+          const row = refreshed.cachedPairsByKey.get(`${pair.reviewIdA}\0${pair.reviewIdB}`);
+          if (!row) continue;
+          const partnerId = pair.reviewIdA === reviewId ? pair.reviewIdB : pair.reviewIdA;
+          partnerIds.add(partnerId);
+          pairSummaries.push({
+            cohortId: fit.cohortId,
+            partnerReviewId: partnerId,
+            overall: row.overallWinnerReviewId == null ? "equal" : row.overallWinnerReviewId === reviewId ? "win" : "loss",
+            margin: row.margin,
+            positionInconsistent: row.positionInconsistent === 1,
+          });
+        }
+      }
+      const primaryFit = memberCohorts[0];
+      const rank = primaryFit ? primaryFit.ranking.indexOf(reviewId) + 1 : 0;
+      const wins = pairSummaries.filter((pair) => pair.overall === "win").length;
+      const losses = pairSummaries.filter((pair) => pair.overall === "loss").length;
+      const equals = pairSummaries.filter((pair) => pair.overall === "equal").length;
+      const anchorsUsed = memberCohorts.flatMap((fit) => {
+        const input = cohortInputs.find((cohort) => cohort.cohortId === fit.cohortId);
+        return (input?.anchors ?? []).map((anchor) => anchor.reviewId);
+      });
+      const calibrationRationale = [
+        `Pairwise Bradley-Terry calibration: rank ${rank} of ${primaryFit ? primaryFit.ranking.length : 0} in cohort "${primaryFit?.cohortId ?? "unknown"}"`,
+        `(${wins} wins / ${losses} losses / ${equals} equal overall, ${pairSummaries.length} comparisons).`,
+        anchorsUsed.length > 0
+          ? `Mapped through ${anchorsUsed.length} admin anchor(s).`
+          : "No anchors in cohort; level set by virtual median anchor (unanchored).",
+      ].join(" ");
+
+      const updatedLedger = {
+        ...ledger,
+        calibratedScore,
+        rawCalibratedScore: calibratedScore,
+        calibrationMode: CALIBRATION_MODE_PAIRWISE_BT_V1,
+        calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
+        comparatorCalibrationStatus: "applied",
+        comparatorPromptHash: PAIRWISE_CALIBRATION_PROMPT_HASH,
+        comparatorRetrievalMethod: "pairwise-cohort-pairs-v1",
+        comparatorIds: [...partnerIds].sort(),
+        calibrationRationale,
+        pairwiseCalibration: {
+          calibrationMode: CALIBRATION_MODE_PAIRWISE_BT_V1,
+          calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
+          promptHash: PAIRWISE_CALIBRATION_PROMPT_HASH,
+          cohorts: memberCohorts.map((fit) => ({
+            cohortId: fit.cohortId,
+            rank: fit.ranking.indexOf(reviewId) + 1,
+            cohortSize: fit.ranking.length,
+            unanchored: fit.unanchored,
+            dimensionWinRates: fit.dimensionWinRates[reviewId] ?? null,
+          })),
+          anchorsUsed: [...new Set(anchorsUsed)].sort(),
+          pairs: pairSummaries,
+          calibratedAt: new Date().toISOString(),
+        },
+      };
+
+      await db.update(reviewsTable)
+        .set({ score: calibratedScore, coverageLedgerJson: JSON.stringify(updatedLedger) })
+        .where(eq(reviewsTable.id, reviewId));
+      await db.update(papersTable)
+        .set({ score: calibratedScore })
+        .where(eq(papersTable.id, paperId));
+      updatedReviews += 1;
+    }
+
+    res.json({
+      calibrationEngine: CALIBRATION_ENGINE,
+      calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
+      promptHash: PAIRWISE_CALIBRATION_PROMPT_HASH,
+      judgedNewPairs: plan.newPairs.length - failedPairs.length,
+      cachedPairs: plan.plannedPairs.length - plan.newPairs.length,
+      failedPairs,
+      updatedReviews,
+      cohorts: fits.map((fit) => ({
+        cohortId: fit.cohortId,
+        unanchored: fit.unanchored,
+        ranking: fit.ranking,
+        calibratedScores: fit.calibratedScores,
+      })),
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Pairwise calibration failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/reviews/:reviewId/calibration-flags — admin toggles for
+// calibrationAnchor and bridgeCohortId. Anchors are explicit human choices;
+// weaker-blinded or recognition-suspected reviews can never anchor.
+router.post("/admin/reviews/:reviewId/calibration-flags", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const [reviewRow] = await db.select().from(reviewsTable).where(eq(reviewsTable.id, req.params.reviewId));
+    if (!reviewRow) { res.status(404).json({ error: "Review not found" }); return; }
+    const ledger = parseJsonObject(reviewRow.coverageLedgerJson);
+    if (!ledger) { res.status(400).json({ error: "Review has no canonical coverage ledger." }); return; }
+
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    if (typeof body.calibrationAnchor === "boolean") {
+      if (body.calibrationAnchor && !benchmarkAnchorEligible(ledger)) {
+        res.status(400).json({ error: "Weaker-blinded or recognition-suspected reviews cannot serve as calibration anchors." });
+        return;
+      }
+      ledger.calibrationAnchor = body.calibrationAnchor;
+    }
+    if ("bridgeCohortId" in body) {
+      ledger.bridgeCohortId =
+        typeof body.bridgeCohortId === "string" && body.bridgeCohortId.trim() ? body.bridgeCohortId.trim() : null;
+    }
+
+    await db.update(reviewsTable)
+      .set({ coverageLedgerJson: JSON.stringify(ledger) })
+      .where(eq(reviewsTable.id, reviewRow.id));
+    res.json({
+      reviewId: reviewRow.id,
+      calibrationAnchor: ledger.calibrationAnchor === true,
+      bridgeCohortId: ledger.bridgeCohortId ?? null,
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Calibration flags update failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/papers/export — download all reviews as structured JSON (model output only)
 router.get("/papers/export", async (req, res) => {
   try {
@@ -3248,6 +3669,7 @@ router.get("/papers/export", async (req, res) => {
           blindingStrength: coverageLedger.blindingStrength ?? "strong",
           recognitionAssessment: coverageLedger.recognitionAssessment ?? null,
           recognitionSuspected: coverageLedger.recognitionSuspected ?? false,
+          injectionSuspected: coverageLedger.injectionSuspected ?? false,
           comparisonCohort: coverageLedger.comparisonCohort ?? null,
           localCohort: coverageLedger.localCohort ?? null,
           broadField: coverageLedger.broadField ?? null,
@@ -3281,6 +3703,9 @@ router.get("/papers/export", async (req, res) => {
           calibrationRationale: comparatorCalibrationRan ? coverageLedger.calibrationRationale ?? "" : "",
           calibrationMode: coverageLedger.calibrationMode ?? "none",
           calibrationVersion: coverageLedger.calibrationVersion ?? null,
+          calibrationAnchor: coverageLedger.calibrationAnchor === true,
+          bridgeCohortId: coverageLedger.bridgeCohortId ?? null,
+          pairwiseCalibration: coverageLedger.pairwiseCalibration ?? null,
           comparatorIds: coverageLedger.comparatorIds ?? [],
           targetOnly: coverageLedger.targetOnly ?? false,
           existingPapersModified: coverageLedger.existingPapersModified ?? false,
@@ -3972,12 +4397,16 @@ if (source.type === "pdf") {
     attemptContext.fallbackSucceeded = true;
     paperContent = buildPdfFallbackText(metadataHints);
     metadataExtractionText = paperContent;
-    extractionCompleteness = pdfVisibleLastResortExtractionReport(paperContent);
+    extractionCompleteness = {
+      ...pdfVisibleLastResortExtractionReport(paperContent),
+      injectionSuspected: await pdfTextLayerInjectionSuspected(buffer),
+    };
     updateAttemptExtractionContext(attemptContext, extractionCompleteness);
     updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
       pdfVisibleFallbackRequested: true,
       pdfVisibleTextExtractionBypassed: true,
       pdfByteCount: buffer.length,
+      injectionSuspectedInPdfTextLayer: Boolean(extractionCompleteness.injectionSuspected),
     });
     await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_visible_last_resort" });
   } else {
@@ -4057,12 +4486,16 @@ if (source.type === "pdf") {
     attemptContext.fallbackSucceeded = true;
     paperContent = buildPdfFallbackText(metadataHints);
     metadataExtractionText = paperContent;
-    extractionCompleteness = pdfVisibleLastResortExtractionReport(paperContent);
+    extractionCompleteness = {
+      ...pdfVisibleLastResortExtractionReport(paperContent),
+      injectionSuspected: await pdfTextLayerInjectionSuspected(buffer),
+    };
     updateAttemptExtractionContext(attemptContext, extractionCompleteness);
     updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
       pdfVisibleFallbackRequested: true,
       pdfVisibleTextExtractionBypassed: true,
       pdfByteCount: buffer.length,
+      injectionSuspectedInPdfTextLayer: Boolean(extractionCompleteness.injectionSuspected),
     });
     await updateReviewAttemptProgress(attemptContext, { reviewStatus: "pdf_visible_last_resort" });
   } else {

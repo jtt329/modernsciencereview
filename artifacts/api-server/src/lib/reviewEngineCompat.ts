@@ -332,6 +332,9 @@ export type ExtractionCompletenessReport = {
   extractedTextCharCount: number;
   extractedTextTokenCount: number;
   rawExtractedTextHash: string;
+  // Set by upload lanes that scan a PDF text layer separately (e.g. the
+  // PDF-visible fallback); merged with the raw-text scan in the snapshot.
+  injectionSuspected?: boolean;
 };
 
 type ReviewInputSnapshot = ExtractionCompletenessReport & {
@@ -721,7 +724,7 @@ type ReviewRunAuditEntry = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v18.1-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = "v18.1.1-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -743,7 +746,7 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V18_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V18_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v18.1 computed ICO half-point";
+export const REVIEW_PROMPT_NAME = "v18.1.1 computed ICO half-point";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -1851,6 +1854,7 @@ function buildReviewInputSnapshot(
   }
   return {
     ...completeness,
+    injectionSuspected: Boolean(completeness.injectionSuspected) || detectReviewerDirectedText(rawText),
     pdfHash,
     pdfVisibleFallbackUsed,
     rawExtractedTextHash: sha256Text(rawText),
@@ -3360,6 +3364,20 @@ function toMarkdownList(items: string[]) {
   return items.filter(Boolean).map((item) => `- ${item}`).join("\n");
 }
 
+// Prompt-injection hardening: lines that address the reviewer rather than
+// the reader are neutralized in the blinded text and flagged on the review.
+const REVIEWER_DIRECTED_TEXT_PATTERNS = [
+  /ignore (all |any )?(previous |prior )?instructions/i,
+  /system prompt/i,
+  /assign (a )?score/i,
+  /you are an? (AI|LLM|reviewer)/i,
+];
+export const INSTRUCTION_LIKE_TEXT_PLACEHOLDER = "[REMOVED: instruction-like text]";
+
+export function detectReviewerDirectedText(text: string) {
+  return REVIEWER_DIRECTED_TEXT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 const SELF_IDENTIFYING_PHRASE_PATTERN = /our previous work|our earlier paper|in our companion paper|we previously showed/gi;
 const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const ORCID_PATTERN = /(?:https?:\/\/)?orcid\.org\/\d{4}-\d{4}-\d{4}-\d{3}[\dXx]|\borcid\b[:\s]*\d{4}-\d{4}-\d{4}-\d{3}[\dXx]|\b\d{4}-\d{4}-\d{4}-\d{3}[\dXx]\b/g;
@@ -3441,6 +3459,7 @@ export function blindManuscriptText(paperContent: string) {
         if (/^\s*(authors?|affiliations?)\b/i.test(line)) return "";
       }
       if (GRANT_FUNDING_LINE_PATTERN.test(line)) return "";
+      if (detectReviewerDirectedText(line)) return INSTRUCTION_LIKE_TEXT_PLACEHOLDER;
       return line
         .replace(EMAIL_PATTERN, "[EMAIL REDACTED]")
         .replace(ORCID_PATTERN, "[ORCID REDACTED]")
@@ -7812,6 +7831,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     ...result.individualReviews.map((review) => review.recognitionAssessment),
     aggregate.recognitionAssessment,
   ].some(recognitionAssessmentIndicatesSuspected);
+  const injectionSuspected = Boolean(result.reviewInputSnapshot.injectionSuspected);
   const firstComparisonCohort = result.individualReviews.find((review) => review.comparisonCohort)?.comparisonCohort || null;
   const firstBroadField = result.individualReviews.find((review) => review.broadField)?.broadField || null;
   const firstSpecialtyField = result.individualReviews.find((review) => review.specialtyField)?.specialtyField || null;
@@ -7894,6 +7914,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     pdfVisibleFallbackUsed,
     blindingStrength,
     recognitionSuspected,
+    injectionSuspected,
     usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     intrinsicInputStrengthScore: canonicalReview.inputStrengthScore,

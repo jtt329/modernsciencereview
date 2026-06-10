@@ -405,6 +405,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const [showThinking, setShowThinking] = useState(false);
   const [activeTab, setActiveTab] = useState<'combined' | number>('combined');
   const [activeIcoTab, setActiveIcoTab] = useState<IcoTabId>('input');
+  const [calibrationAnchorOverride, setCalibrationAnchorOverride] = useState<boolean | null>(null);
+  const [calibrationAnchorBusy, setCalibrationAnchorBusy] = useState(false);
 
   const normalizeDisplayedBand = (
     low: number | null | undefined,
@@ -560,6 +562,26 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const pdfVisibleFallbackUsed = Boolean(parsedCoverage?.pdfVisibleFallbackUsed);
   const blindingStrength = parsedCoverage?.blindingStrength ?? (pdfVisibleFallbackUsed ? 'weaker' : 'strong');
   const recognitionSuspected = Boolean(parsedCoverage?.recognitionSuspected);
+  const injectionSuspected = Boolean(parsedCoverage?.injectionSuspected);
+  const calibrationAnchor = calibrationAnchorOverride ?? Boolean(parsedCoverage?.calibrationAnchor);
+  const calibrationAnchorEligible = blindingStrength !== 'weaker' && !recognitionSuspected;
+  const toggleCalibrationAnchor = async () => {
+    if (calibrationAnchorBusy) return;
+    setCalibrationAnchorBusy(true);
+    try {
+      const response = await fetch(`/api/admin/reviews/${review.id}/calibration-flags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ calibrationAnchor: !calibrationAnchor }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCalibrationAnchorOverride(Boolean(data.calibrationAnchor));
+      }
+    } finally {
+      setCalibrationAnchorBusy(false);
+    }
+  };
   const publicVerdict = review.publicVerdict || storedAggregate?.publicOneParagraphVerdict || parsedCoverage?.publicVerdict || review.finalJudgment || review.overallEvaluation;
   const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
   const localCohort =
@@ -1577,6 +1599,32 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     <p className="text-sm text-violet-50 mt-1">
                       A blind pass or the adjudicator disclosed recognizing this manuscript as a known published work. Scores remain blind-protocol diagnostics, but this review is not used as a benchmark anchor.
                     </p>
+                  </div>
+                )}
+                {injectionSuspected && (
+                  <div className="bg-rose-400/10 border border-rose-300/20 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-rose-200 uppercase tracking-widest">Instruction-Like Text Detected</p>
+                    <p className="text-sm text-rose-50 mt-1">
+                      The manuscript contained text addressed to the reviewer (e.g. scoring instructions). It was neutralized before review and treated as content, never as a command.
+                    </p>
+                  </div>
+                )}
+                {isAdmin && (
+                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Calibration Anchor</p>
+                    <div className="mt-1 flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={toggleCalibrationAnchor}
+                        disabled={calibrationAnchorBusy || (!calibrationAnchor && !calibrationAnchorEligible)}
+                        className={`rounded-full px-3 py-1 text-xs font-bold transition-colors disabled:opacity-50 ${calibrationAnchor ? 'bg-emerald-400/20 text-emerald-200 border border-emerald-300/30' : 'bg-white/10 text-slate-300 border border-white/10'}`}
+                      >
+                        {calibrationAnchorBusy ? 'Saving…' : calibrationAnchor ? 'Anchor: on' : 'Anchor: off'}
+                      </button>
+                      {!calibrationAnchorEligible && !calibrationAnchor && (
+                        <span className="text-xs text-slate-400">Not eligible (weaker blinding or recognition disclosed).</span>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>

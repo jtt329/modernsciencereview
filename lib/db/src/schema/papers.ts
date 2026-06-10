@@ -124,6 +124,30 @@ export const reviewAttemptsTable = pgTable("review_attempts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Pairwise calibration judgments. One row per unordered review pair per
+// prompt hash; reviewIdA < reviewIdB lexicographically. Rows are immutable
+// once written so any calibration fit is exactly reproducible from them.
+export const calibrationPairsTable = pgTable("calibration_pairs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  reviewIdA: varchar("review_id_a").notNull(),
+  reviewIdB: varchar("review_id_b").notNull(),
+  promptHash: varchar("prompt_hash").notNull(),
+  cohortId: varchar("cohort_id"),
+  calibrationVersion: varchar("calibration_version"),
+  model: varchar("model"),
+  // Reconciled outcome of the two position-swapped judgments.
+  overallWinnerReviewId: varchar("overall_winner_review_id"), // null = equal
+  margin: varchar("margin"),                                  // slight | clear | decisive
+  positionInconsistent: integer("position_inconsistent").notNull().default(0),
+  // Per-dimension reconciled winners (review id or null for equal).
+  inputStrengthWinnerReviewId: varchar("input_strength_winner_review_id"),
+  constructionStrengthWinnerReviewId: varchar("construction_strength_winner_review_id"),
+  outputStrengthWinnerReviewId: varchar("output_strength_winner_review_id"),
+  // Both raw judgments including the randomized A/B assignment per call.
+  judgmentsJson: jsonb("judgments_json").$type<Record<string, unknown>[] | null>(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [unique("unique_calibration_pair").on(t.reviewIdA, t.reviewIdB, t.promptHash)]);
+
 export type Paper = typeof papersTable.$inferSelect;
 export type InsertPaper = typeof papersTable.$inferInsert;
 export type Review = typeof reviewsTable.$inferSelect;
@@ -132,3 +156,5 @@ export type Comment = typeof commentsTable.$inferSelect;
 export type InsertComment = typeof commentsTable.$inferInsert;
 export type ReviewAttempt = typeof reviewAttemptsTable.$inferSelect;
 export type InsertReviewAttempt = typeof reviewAttemptsTable.$inferInsert;
+export type CalibrationPair = typeof calibrationPairsTable.$inferSelect;
+export type InsertCalibrationPair = typeof calibrationPairsTable.$inferInsert;
