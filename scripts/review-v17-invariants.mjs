@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 
 const root = process.cwd();
 const promptPath = join(root, "artifacts/api-server/src/lib/prompts/diagnosticOnlyV17.ts");
+const promptV18Path = join(root, "artifacts/api-server/src/lib/prompts/diagnosticOnlyV18.ts");
 const enginePath = join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts");
 const routesPath = join(root, "artifacts/api-server/src/routes/papers.ts");
 const apiBuildPath = join(root, "artifacts/api-server/build.mjs");
@@ -17,6 +18,7 @@ const apiPackagePath = join(root, "artifacts/api-server/package.json");
 const pdfParseTypesPath = join(root, "artifacts/api-server/src/types/pdf-parse.d.ts");
 
 const promptSource = readFileSync(promptPath, "utf8");
+const promptV18Source = readFileSync(promptV18Path, "utf8");
 const engineSource = readFileSync(enginePath, "utf8");
 const routesSource = readFileSync(routesPath, "utf8");
 const apiBuildSource = readFileSync(apiBuildPath, "utf8");
@@ -48,9 +50,20 @@ function computedScore(i, c, o) {
 
 const blindPrompt = extractRawConst(promptSource, "BLIND_REVIEW_PASS_V17_1_PROMPT");
 const adjudicatorAddendum = extractRawConst(promptSource, "INTRINSIC_ADJUDICATOR_V17_1_ADDENDUM");
+const blindPromptV18 = extractRawConst(promptV18Source, "BLIND_REVIEW_PASS_V18_PROMPT");
+const adjudicatorAddendumV18 = extractRawConst(promptV18Source, "INTRINSIC_ADJUDICATOR_V18_ADDENDUM");
 
+// v17 prompt file is kept frozen for stored-review compatibility.
 assert.match(promptSource, /v17\.1\.5 computed ICO half-point/i);
-assert.match(engineSource, /v17\.1\.5-computed-ico-halfpoint/);
+
+// v18.1 is the active prompt.
+assert.match(promptV18Source, /v18\.1 computed ICO half-point/i);
+assert.match(engineSource, /REVIEW_PROMPT_VERSION = "v18\.1-computed-ico-halfpoint"/);
+assert.match(engineSource, /REVIEW_PROMPT_NAME = "v18\.1 computed ICO half-point"/);
+assert.match(engineSource, /from "\.\/prompts\/diagnosticOnlyV18"/);
+assert.match(engineSource, /REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting\(BLIND_REVIEW_PASS_V18_PROMPT\)/);
+assert.match(engineSource, /REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting\(BENCHMARK_CALIBRATED_V18_FULL_PROMPT\)/);
+assert.match(engineSource, /BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting\(INTRINSIC_ADJUDICATOR_V18_PROMPT\)/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
 assert.match(engineSource, /REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1"/);
@@ -109,8 +122,86 @@ async function assertKnownBenchmarkMetadataRegression() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { extractMetadata, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
+    import { blindManuscriptText, extractMetadata, isCalibrationCompatibleReviewObject, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
     globalThis.__msrMetadataRegression = (async () => {
+    const storedV17ReviewWithoutRecognition = {
+      reviewObjectVersion: "v17.1-diagnostic-only-halfpoint",
+      schemaVersion: "v17.1",
+      calibrationCompatibilityFamily: "v17-diagnostic-ico-halfpoint",
+      diagnosticScaleVersion: "0-10-halfpoint-v1",
+      scoringFormulaVersion: "ico-average-rounded-v1",
+      promptVersion: "v17.1.5-computed-ico-halfpoint",
+      inputStrengthScore: 8,
+      constructionStrengthScore: 7.5,
+      outputStrengthScore: 7,
+      computedScore: 75,
+    };
+    if (!isCalibrationCompatibleReviewObject(storedV17ReviewWithoutRecognition)) {
+      throw new Error("stored v17 review without recognitionAssessment no longer parses as calibration-compatible");
+    }
+    const blinderInput = [
+      "Emergent Spacetime From Example Dynamics",
+      "Jane Q. Researcher and John A. Scientist (ORCID 0000-0002-1825-0097)",
+      "Department of Physics, Example University, jane.researcher@example.edu",
+      "Institute for Advanced Examples, john.scientist@example.org",
+      "",
+      "Abstract",
+      "We study horizon thermodynamics, extending our previous work on emergent gravity.",
+      "",
+      "1. Introduction",
+      "This work was supported by NSF grant PHY-1234567.",
+      "The setup follows standard conventions.",
+      "Contact: corresponding.author@example.edu for data.",
+      "",
+      "Acknowledgments",
+      "We thank Famous Person and the Example Foundation, award no. 42.",
+      "",
+      "2. Setup",
+      "The metric takes the standard FRW form.",
+      // Padding keeps the acknowledgments section mid-document so the new
+      // section stripper (not the legacy tail cut) is what removes it.
+      ...Array.from({ length: 24 }, (_, i) => "Body line " + i + " of the setup section continues the analysis."),
+    ].join("\\n");
+    const blinded = blindManuscriptText(blinderInput);
+    if (!blinded.startsWith("Abstract")) {
+      throw new Error("blinded text does not start at the abstract: " + blinded.slice(0, 80));
+    }
+    for (const leaked of [
+      "Emergent Spacetime From Example Dynamics",
+      "Jane Q. Researcher",
+      "John A. Scientist",
+      "0000-0002-1825-0097",
+      "Example University",
+      "jane.researcher@example.edu",
+      "corresponding.author@example.edu",
+      "PHY-1234567",
+      "Acknowledgments",
+      "Famous Person",
+      "award no. 42",
+      "our previous work",
+    ]) {
+      if (blinded.includes(leaked)) {
+        throw new Error("blinded text leaked: " + leaked);
+      }
+    }
+    if (!blinded.includes("prior work on emergent gravity")) {
+      throw new Error("self-identifying phrase was not rewritten to prior work");
+    }
+    if (!blinded.includes("2. Setup")) {
+      throw new Error("acknowledgments stripping consumed the next section heading");
+    }
+    const noAbstractInput = [
+      "Emergent Spacetime From Example Dynamics",
+      "Some manuscript body without an abstract heading.",
+      "More body text follows here.",
+    ].join("\\n");
+    const noAbstractBlinded = blindManuscriptText(noAbstractInput);
+    if (noAbstractBlinded.includes("Emergent Spacetime From Example Dynamics")) {
+      throw new Error("title survived when the pre-abstract cut did not trigger");
+    }
+    if (!noAbstractBlinded.startsWith("[TITLE REDACTED]")) {
+      throw new Error("missing [TITLE REDACTED] replacement: " + noAbstractBlinded.slice(0, 80));
+    }
     const staleRecord = {
       title: "Thermodynamics of Spacetime: The Einstein Equation of State",
       paperAuthors: "Ted Jacobson",
@@ -345,6 +436,63 @@ assert.match(adjudicatorAddendum, /Do not receive, request, or use comparator pa
 assert.match(adjudicatorAddendum, /actual-explanatory-update \/ prior-surprise principle/);
 assert.match(adjudicatorAddendum, /accept that high output score only if the pass explicitly justifies a near-maximum actual explanatory update/);
 assert.match(adjudicatorAddendum, /mark reviewInputQuality\.shouldInvalidateReview as true/);
+
+// Active v18.1 blind prompt content.
+assert.match(blindPromptV18, /Recognition disclosure/);
+assert.match(blindPromptV18, /Output centrality classes/);
+assert.match(blindPromptV18, /only by what the manuscript\s+itself demonstrates/);
+assert.match(blindPromptV18, /Experimental, observational, instrument, and proposal papers/);
+assert.match(blindPromptV18, /crediting eventual discoveries is the same counterfactual error/);
+assert.match(blindPromptV18, /"recognitionAssessment"/);
+assert.match(blindPromptV18, /"recognized": false/);
+assert.match(blindPromptV18, /"suspectedIdentity": ""/);
+assert.match(blindPromptV18, /"recognitionConfidence": 0\.0/);
+assert.match(blindPromptV18, /"recognitionBasis": ""/);
+assert.match(blindPromptV18, /Input -> Construction -> Output ledger/);
+assert.match(blindPromptV18, /weighted-bottleneck judgment/);
+assert.match(blindPromptV18, /reviewInputQuality/);
+assert.match(blindPromptV18, /shouldInvalidateReview/);
+for (const forbidden of [
+  '"intrinsicScore"',
+  '"publicMagnitudeLabel"',
+  '"scoreBand"',
+  '"finalScoreBand"',
+  '"fatalObjectionPresent"',
+  '"paperFatalError"',
+  '"survivingHighValueContributions"',
+  '"failedClaimsExcludedFromScore"',
+  '"failedConstructionsExcludedFromScore"',
+  '"failedOutputsExcludedFromScore"',
+]) {
+  assert.equal(blindPromptV18.includes(forbidden), false, `active v18 blind prompt still asks for ${forbidden}`);
+}
+assert.match(blindPromptV18, /"failedClaimsExcludedFromDiagnostics"/);
+assert.match(blindPromptV18, /"failedConstructionsExcludedFromDiagnostics"/);
+assert.match(blindPromptV18, /"failedOutputsExcludedFromDiagnostics"/);
+assert.match(adjudicatorAddendumV18, /Do not output a 0-100\s+score or public magnitude label/);
+assert.match(adjudicatorAddendumV18, /Complete your\s+own recognitionAssessment independently of the passes/);
+
+// recognitionAssessment plumbing and anchor hygiene.
+assert.match(engineSource, /recognitionAssessment/);
+assert.match(engineSource, /function normalizeRecognitionAssessment/);
+assert.match(engineSource, /RECOGNITION_SUSPECTED_CONFIDENCE_THRESHOLD = 0\.5/);
+assert.match(engineSource, /export function benchmarkAnchorEligible/);
+assert.match(engineSource, /recognitionSuspected/);
+assert.match(engineSource, /benchmarkAnchorEligible\(\{ blindingStrength, recognitionSuspected \}\)/);
+assert.match(routesSource, /recognitionAssessment: coverageLedger\.recognitionAssessment \?\? null/);
+assert.match(routesSource, /recognitionSuspected: coverageLedger\.recognitionSuspected \?\? false/);
+assert.match(routesSource, /metadata\.benchmarkSetCandidate && benchmarkAnchorEligible\(metadata\)/);
+assert.match(routesSource, /benchmarkSetCandidate: benchmarkAnchorEligible\(coverageLedger\)/);
+assert.doesNotMatch(routesSource, /benchmarkSetCandidate: true,\n\s+benchmarkSetVersion/);
+
+// Blinding hardening and upload-time PDF metadata stripping.
+assert.match(engineSource, /\[TITLE REDACTED\]/);
+assert.match(engineSource, /\[EMAIL REDACTED\]/);
+assert.match(engineSource, /\[ORCID REDACTED\]/);
+assert.match(engineSource, /grant\|funding\|award no/);
+assert.match(engineSource, /function stripAcknowledgmentsSections/);
+assert.match(engineSource, /prior work/);
+assert.match(routesSource, /stripPdfIdentifyingMetadataSafe/);
 
 assert.equal(normalizeDiagnosticSubscore(0), 0);
 assert.equal(normalizeDiagnosticSubscore(0.24), 0);
@@ -655,4 +803,4 @@ for (const forbidden of [
   assert.equal(canonicalExport.includes(forbidden), false, `standard canonical export includes ${forbidden}`);
 }
 
-console.log("v17.1.5 review invariants passed");
+console.log("v18.1 review invariants passed");

@@ -16,6 +16,7 @@ import {
   REVIEW_PROMPT_VERSION,
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   assessExtractionCompleteness,
+  benchmarkAnchorEligible,
   buildPdfFallbackText,
   compactAggregateForStorage,
   expectedReviewModelName,
@@ -40,6 +41,7 @@ import {
   type ExtractedPaperMetadata,
 } from "../lib/reviewEngineCompat";
 import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
+import { stripPdfIdentifyingMetadataSafe } from "../lib/pdfBlinding";
 
 let openai: OpenAI | null = null;
 function getOpenAI() {
@@ -2387,6 +2389,8 @@ function comparatorMetadata(review: typeof reviewsTable.$inferSelect | null) {
     clusterVersion: parsed?.clusterVersion || aggregate?.clusterVersion || aggregateFromField?.clusterVersion || null,
     clusterFeatureTags: safeStringArray(comparatorProfile?.clusterFeatureTags),
     benchmarkSetCandidate: Boolean(parsed?.benchmarkSetCandidate),
+    blindingStrength: typeof parsed?.blindingStrength === "string" ? parsed.blindingStrength : "strong",
+    recognitionSuspected: parsed?.recognitionSuspected === true,
     benchmarkSetVersion: parsed?.benchmarkSetVersion || comparatorCalibration?.benchmarkSetVersion || null,
     comparatorCalibrationStatus: parsed?.comparatorCalibrationStatus || diagnosticComparatorCalibration?.comparatorCalibrationStatus || comparatorCalibration?.comparatorCalibrationStatus || null,
     calibratedScoreBand: comparatorCalibration?.finalPublicScoreBand ?? aggregate?.finalScoreBand ?? aggregateFromField?.finalScoreBand ?? null,
@@ -2455,7 +2459,9 @@ async function selectComparatorContextForProfile(
 
       return {
         rankScore: overlap,
-        isBenchmarkCandidate: metadata.benchmarkSetCandidate,
+        // Weakly blinded or recognition-suspected reviews stay valid
+        // calibration targets but never serve as anchors.
+        isBenchmarkCandidate: metadata.benchmarkSetCandidate && benchmarkAnchorEligible(metadata),
         item: {
           comparatorId: "",
           sitePaperId: paper.id,
@@ -2988,7 +2994,7 @@ router.post("/papers/benchmark-clusters", async (req, res) => {
       if (!coverageLedger) continue;
       const updatedLedger = {
         ...coverageLedger,
-        benchmarkSetCandidate: true,
+        benchmarkSetCandidate: benchmarkAnchorEligible(coverageLedger),
         benchmarkSetVersion,
         clusterVersion,
         benchmarkClusterId: cluster.benchmarkClusterId,
@@ -3132,7 +3138,7 @@ router.post("/papers/comparator-backfill", async (req, res) => {
           calibratedScore: diagnosticCalibration?.calibratedScore ?? null,
           diagnosticChanges: diagnosticCalibration?.diagnosticChanges ?? [],
           calibrationRationale: diagnosticCalibration?.calibrationRationale ?? "",
-          benchmarkSetCandidate: true,
+          benchmarkSetCandidate: benchmarkAnchorEligible(coverageLedger),
           benchmarkSetVersion,
           backfilledAt: new Date().toISOString(),
         };
@@ -3240,6 +3246,8 @@ router.get("/papers/export", async (req, res) => {
           extractionWarnings: coverageLedger.extractionWarnings ?? [],
           pdfVisibleFallbackUsed: coverageLedger.pdfVisibleFallbackUsed ?? false,
           blindingStrength: coverageLedger.blindingStrength ?? "strong",
+          recognitionAssessment: coverageLedger.recognitionAssessment ?? null,
+          recognitionSuspected: coverageLedger.recognitionSuspected ?? false,
           comparisonCohort: coverageLedger.comparisonCohort ?? null,
           localCohort: coverageLedger.localCohort ?? null,
           broadField: coverageLedger.broadField ?? null,
@@ -3950,7 +3958,12 @@ if (source.pdfVisibleFallback === true && !isAdmin) {
 
 if (source.type === "pdf") {
   const buffer = Buffer.from(source.data, "base64");
-  metadataHints.pdfBase64 = source.data;
+  // DocInfo/XMP metadata is stripped before any model-visible use of the
+  // stored PDF (gemini PDF-fallback extraction, PDF-visible last resort,
+  // title-page metadata fallback). pdf-parse below still reads the original
+  // buffer so embedded Title/Author hints stay available to the unblinded
+  // metadata step.
+  metadataHints.pdfBase64 = (await stripPdfIdentifyingMetadataSafe(buffer)).toString("base64");
   metadataHints.mimeType = "application/pdf";
   if (pdfVisibleLastResortRequested) {
     setAttemptStage(attemptContext, "pdf_visible_last_resort", "extraction", null);
@@ -4035,7 +4048,7 @@ if (source.type === "pdf") {
   const arrayBuf = await fetchResp.arrayBuffer();
   const buffer = Buffer.from(arrayBuf);
   metadataHints.fileName ||= url.split("/").pop()?.split("?")[0];
-  metadataHints.pdfBase64 = buffer.toString("base64");
+  metadataHints.pdfBase64 = (await stripPdfIdentifyingMetadataSafe(buffer)).toString("base64");
   metadataHints.mimeType = "application/pdf";
   if (pdfVisibleLastResortRequested) {
     setAttemptStage(attemptContext, "pdf_visible_last_resort", "extraction", null);

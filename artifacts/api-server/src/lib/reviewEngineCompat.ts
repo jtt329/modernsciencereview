@@ -5,10 +5,10 @@ import {
   DATE_METADATA_EXTRACTION_V15_PROMPT,
 } from "./prompts/benchmarkCalibratedV15";
 import {
-  BENCHMARK_CALIBRATED_V17_FULL_PROMPT,
-  BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT,
-  BLIND_REVIEW_PASS_V17_PROMPT,
-} from "./prompts/diagnosticOnlyV17";
+  BENCHMARK_CALIBRATED_V18_FULL_PROMPT,
+  INTRINSIC_ADJUDICATOR_V18_PROMPT,
+  BLIND_REVIEW_PASS_V18_PROMPT,
+} from "./prompts/diagnosticOnlyV18";
 import { logger } from "./logger";
 
 export const GPT_MODEL = "gpt-5.4-pro";
@@ -279,6 +279,30 @@ type ReviewInputQuality = {
   shouldInvalidateReview: boolean;
 };
 
+// Optional on stored reviews: older v17 review objects never recorded it,
+// so parsing always defaults rather than requiring the field.
+export type RecognitionAssessment = {
+  recognized: boolean;
+  suspectedIdentity: string;
+  recognitionConfidence: number;
+  recognitionBasis: string;
+};
+
+export const RECOGNITION_SUSPECTED_CONFIDENCE_THRESHOLD = 0.5;
+
+export function recognitionAssessmentIndicatesSuspected(value: RecognitionAssessment | null | undefined) {
+  return value?.recognized === true && (value?.recognitionConfidence ?? 0) >= RECOGNITION_SUSPECTED_CONFIDENCE_THRESHOLD;
+}
+
+export function benchmarkAnchorEligible(
+  ledger: { blindingStrength?: string | null; recognitionSuspected?: boolean | null } | null | undefined,
+) {
+  if (!ledger) return false;
+  if (ledger.blindingStrength === "weaker") return false;
+  if (ledger.recognitionSuspected === true) return false;
+  return true;
+}
+
 export type ExtractionCompletenessStatus =
   | "complete"
   | "complete_with_warnings"
@@ -535,6 +559,7 @@ type IndividualReview = {
   finalJudgment: string;
   failureAnalysis: ReviewFailureAnalysis;
   reviewInputQuality: ReviewInputQuality;
+  recognitionAssessment: RecognitionAssessment;
 };
 
 type AggregateReview = {
@@ -636,6 +661,7 @@ type AggregateReview = {
   publicOneParagraphVerdict: string;
   internalCalibrationNotes: string;
   reviewInputQuality: ReviewInputQuality;
+  recognitionAssessment: RecognitionAssessment;
 };
 
 type MultiPassReviewResult = {
@@ -695,7 +721,7 @@ type ReviewRunAuditEntry = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v17.1.5-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = "v18.1-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -715,9 +741,9 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 
 
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V17_PROMPT);
-export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V17_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v17.1.5 computed ICO half-point";
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V18_PROMPT);
+export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V18_FULL_PROMPT);
+export const REVIEW_PROMPT_NAME = "v18.1 computed ICO half-point";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -750,7 +776,7 @@ export function isCalibrationCompatibleReviewObject(value: unknown) {
 
   return hasCanonicalDiagnostics && hasComputedScore && (explicitCompatible || v17DiagnosticFamily);
 }
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(BLIND_INTRINSIC_ADJUDICATOR_V17_PROMPT);
+const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(INTRINSIC_ADJUDICATOR_V18_PROMPT);
 const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(`
 You are the separate post-intrinsic comparator calibrator for Modern Science Review.
 
@@ -1040,6 +1066,7 @@ const individualReviewJsonSchema = {
     "constructionStrengthScore",
     "outputStrengthScore",
     "subscoreRationale",
+    "recognitionAssessment",
     "diagnosticAssessmentConfidence",
     "adjudicationRationale",
   ],
@@ -1116,6 +1143,17 @@ const individualReviewJsonSchema = {
         inputStrengthScore: jsonString,
         constructionStrengthScore: jsonString,
         outputStrengthScore: jsonString,
+      },
+    },
+    recognitionAssessment: {
+      type: "object",
+      required: ["recognized", "suspectedIdentity", "recognitionConfidence", "recognitionBasis"],
+      additionalProperties: false,
+      properties: {
+        recognized: jsonBoolean,
+        suspectedIdentity: jsonString,
+        recognitionConfidence: jsonNumber,
+        recognitionBasis: jsonString,
       },
     },
     diagnosticAssessmentConfidence: jsonNumber,
@@ -1704,6 +1742,16 @@ function normalizeReviewInputQuality(value: unknown, reasoningText = ""): Review
     truncationEvidence: evidence || (textSignal ? "Review text contains truncation or missing-section language." : ""),
     missingSectionsSuspected: missingSections,
     shouldInvalidateReview,
+  };
+}
+
+function normalizeRecognitionAssessment(value: unknown): RecognitionAssessment {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    recognized: source.recognized === true,
+    suspectedIdentity: firstString([source.suspectedIdentity]),
+    recognitionConfidence: asNumber(source.recognitionConfidence, 0, 0, 1),
+    recognitionBasis: firstString([source.recognitionBasis]),
   };
 }
 
@@ -3214,6 +3262,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
       ]),
     },
     reviewInputQuality,
+    recognitionAssessment: normalizeRecognitionAssessment(source.recognitionAssessment),
   };
 }
 
@@ -3311,12 +3360,63 @@ function toMarkdownList(items: string[]) {
   return items.filter(Boolean).map((item) => `- ${item}`).join("\n");
 }
 
-function blindManuscriptText(paperContent: string) {
+const SELF_IDENTIFYING_PHRASE_PATTERN = /our previous work|our earlier paper|in our companion paper|we previously showed/gi;
+const EMAIL_PATTERN = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+const ORCID_PATTERN = /(?:https?:\/\/)?orcid\.org\/\d{4}-\d{4}-\d{4}-\d{3}[\dXx]|\borcid\b[:\s]*\d{4}-\d{4}-\d{4}-\d{3}[\dXx]|\b\d{4}-\d{4}-\d{4}-\d{3}[\dXx]\b/g;
+const GRANT_FUNDING_LINE_PATTERN = /grant|funding|award no/i;
+const ACKNOWLEDGMENTS_MAX_SKIPPED_LINES = 60;
+
+function blindingNextSectionHeading(trimmedLine: string) {
+  if (/^(references|bibliography|works cited|appendix|appendices)\b/i.test(trimmedLine)) return true;
+  // Numbered or roman-numeral section headings such as "5. Conclusions" or "IV. Discussion".
+  if (/^(\d+|[ivxlc]+)[.)]?\s+[A-Za-z]/i.test(trimmedLine) && trimmedLine.split(/\s+/).length <= 8) return true;
+  return false;
+}
+
+function stripAcknowledgmentsSections(lines: string[]) {
+  const result: string[] = [];
+  let skippedInSection = 0;
+  let skipping = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!skipping && /^\s*acknowledg/i.test(line)) {
+      skipping = true;
+      skippedInSection = 0;
+      continue;
+    }
+    if (skipping) {
+      if (blindingNextSectionHeading(trimmed)) {
+        skipping = false;
+        result.push(line);
+        continue;
+      }
+      skippedInSection += 1;
+      if (skippedInSection >= ACKNOWLEDGMENTS_MAX_SKIPPED_LINES) {
+        // Safety bound: never silently consume large parts of a manuscript
+        // when no recognizable next-section heading follows the acknowledgments.
+        skipping = false;
+      }
+      continue;
+    }
+    result.push(line);
+  }
+  return result;
+}
+
+export function blindManuscriptText(paperContent: string) {
   const cleaned = stripControlChars(paperContent).replace(/\r\n/g, "\n");
   const lines = cleaned.split("\n");
   const abstractIndex = lines.findIndex((line) => /^\s*abstract\b/i.test(line));
-  const startIndex = abstractIndex > 0 && abstractIndex < 80 ? abstractIndex : 0;
+  const preAbstractCutTriggered = abstractIndex > 0 && abstractIndex < 80;
+  const startIndex = preAbstractCutTriggered ? abstractIndex : 0;
   let bodyLines = lines.slice(startIndex);
+
+  if (!preAbstractCutTriggered) {
+    const firstNonEmptyIndex = bodyLines.findIndex((line) => line.trim().length > 0);
+    if (firstNonEmptyIndex !== -1) {
+      bodyLines[firstNonEmptyIndex] = "[TITLE REDACTED]";
+    }
+  }
 
   const tailCutIndex = bodyLines.findIndex((line, index) => {
     const normalizedLine = line.trim();
@@ -3331,6 +3431,8 @@ function blindManuscriptText(paperContent: string) {
     bodyLines = bodyLines.slice(0, tailCutIndex);
   }
 
+  bodyLines = stripAcknowledgmentsSections(bodyLines);
+
   return bodyLines
     .map((line, index) => {
       if (index < 20) {
@@ -3338,7 +3440,11 @@ function blindManuscriptText(paperContent: string) {
         if (/\b(university|institute|department|laboratory|college|school)\b/i.test(line)) return "";
         if (/^\s*(authors?|affiliations?)\b/i.test(line)) return "";
       }
-      return line;
+      if (GRANT_FUNDING_LINE_PATTERN.test(line)) return "";
+      return line
+        .replace(EMAIL_PATTERN, "[EMAIL REDACTED]")
+        .replace(ORCID_PATTERN, "[ORCID REDACTED]")
+        .replace(SELF_IDENTIFYING_PHRASE_PATTERN, "prior work");
     })
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -5406,6 +5512,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       ...adjudicationRepairNotes,
     ].filter(Boolean).join("\n\n"),
     reviewInputQuality,
+    recognitionAssessment: normalizeRecognitionAssessment(source.recognitionAssessment ?? root.recognitionAssessment),
   };
 }
 
@@ -5614,6 +5721,7 @@ function v16CanonicalReviewFromIndividual(review: IndividualReview, index?: numb
     technicalAssessment: v16TechnicalAssessmentFromIndividual(review),
     failureAnalysis: v17FailureAnalysisFromIndividual(review),
     reviewInputQuality: review.reviewInputQuality,
+    recognitionAssessment: review.recognitionAssessment,
     organicCohortProfile: v16OrganicCohortProfileOnly(review.organicCohortProfile),
     rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(review)),
     computedScore: review.scoreBand.median,
@@ -5645,6 +5753,7 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
     technicalAssessment: v16TechnicalAssessmentFromAggregate(aggregate),
     failureAnalysis: v16FailureAnalysisFromAggregate(aggregate),
     reviewInputQuality: aggregate.reviewInputQuality,
+    recognitionAssessment: aggregate.recognitionAssessment,
     organicCohortProfile: v16OrganicCohortProfileOnly(aggregate.comparatorProfile),
     rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(aggregate)),
     computedScore: aggregate.finalScoreBand.median,
@@ -5694,6 +5803,9 @@ function compactIndividualReviewForStorage(review: IndividualReview, index: numb
     scoreConfidence: review.scoreConfidence,
     diagnosticAssessmentConfidence: review.diagnosticAssessmentConfidence,
     adjudicationRationale: review.adjudicationRationale,
+    // Stored only; not passed to the adjudicator, which must complete its
+    // own recognitionAssessment independently of the passes.
+    recognitionAssessment: review.recognitionAssessment,
   };
 }
 
@@ -5817,6 +5929,7 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
     finalScoreBand: aggregate.finalScoreBand,
     finalScoreConfidence: aggregate.finalScoreConfidence,
     internalCalibrationNotes: aggregate.internalCalibrationNotes,
+    recognitionAssessment: aggregate.recognitionAssessment,
   };
 }
 
@@ -7695,6 +7808,10 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
   const extractionMethod = reviewExtractionMethod(result.blindedContent);
   const pdfVisibleFallbackUsed = extractionMethod === "gemini-native-pdf-fallback";
   const blindingStrength = pdfVisibleFallbackUsed ? "weaker" : "strong";
+  const recognitionSuspected = [
+    ...result.individualReviews.map((review) => review.recognitionAssessment),
+    aggregate.recognitionAssessment,
+  ].some(recognitionAssessmentIndicatesSuspected);
   const firstComparisonCohort = result.individualReviews.find((review) => review.comparisonCohort)?.comparisonCohort || null;
   const firstBroadField = result.individualReviews.find((review) => review.broadField)?.broadField || null;
   const firstSpecialtyField = result.individualReviews.find((review) => review.specialtyField)?.specialtyField || null;
@@ -7737,7 +7854,9 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     validPassCount: result.individualReviews.length,
     pipelineMode: result.pipelineMode,
     clusterVersion: "v17.1-diagnostic-only-halfpoint",
-    benchmarkSetCandidate: result.pipelineMode === "benchmark-ingestion",
+    benchmarkSetCandidate:
+      result.pipelineMode === "benchmark-ingestion" &&
+      benchmarkAnchorEligible({ blindingStrength, recognitionSuspected }),
     benchmarkSetVersion: result.pipelineMode === "benchmark-ingestion"
       ? BENCHMARK_SET_VERSION
       : BENCHMARK_SET_VERSION,
@@ -7774,6 +7893,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     extractedPageCount: result.reviewInputSnapshot.extractedPageCount,
     pdfVisibleFallbackUsed,
     blindingStrength,
+    recognitionSuspected,
     usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     intrinsicInputStrengthScore: canonicalReview.inputStrengthScore,

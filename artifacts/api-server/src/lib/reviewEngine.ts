@@ -1,3 +1,4 @@
+// DEPRECATED legacy rubric — v17+/v18 pipeline does not use this prompt
 import OpenAI from "openai";
 import { createHash } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";

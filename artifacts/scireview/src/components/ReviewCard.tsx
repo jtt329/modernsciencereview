@@ -559,6 +559,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const adminComparatorNotes = parsedCoverage?.adminComparatorNotes ?? storedAggregate?.adminComparatorNotes ?? '';
   const pdfVisibleFallbackUsed = Boolean(parsedCoverage?.pdfVisibleFallbackUsed);
   const blindingStrength = parsedCoverage?.blindingStrength ?? (pdfVisibleFallbackUsed ? 'weaker' : 'strong');
+  const recognitionSuspected = Boolean(parsedCoverage?.recognitionSuspected);
   const publicVerdict = review.publicVerdict || storedAggregate?.publicOneParagraphVerdict || parsedCoverage?.publicVerdict || review.finalJudgment || review.overallEvaluation;
   const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
   const localCohort =
@@ -1567,6 +1568,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     <p className="text-[10px] font-black text-amber-200 uppercase tracking-widest">PDF Fallback</p>
                     <p className="text-sm text-amber-50 mt-1">
                       Plain text extraction was weak, so Gemini read the PDF directly. The review still ignores identity signals, but visible author/title information may be present in the source PDF.
+                    </p>
+                  </div>
+                )}
+                {recognitionSuspected && (
+                  <div className="bg-violet-400/10 border border-violet-300/20 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-violet-200 uppercase tracking-widest">Recognition Disclosed</p>
+                    <p className="text-sm text-violet-50 mt-1">
+                      A blind pass or the adjudicator disclosed recognizing this manuscript as a known published work. Scores remain blind-protocol diagnostics, but this review is not used as a benchmark anchor.
                     </p>
                   </div>
                 )}
