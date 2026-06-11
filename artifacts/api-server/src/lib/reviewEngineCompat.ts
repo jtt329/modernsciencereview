@@ -327,6 +327,14 @@ export function isAdminPinnedAnchorOverride(ledger: CalibrationAnchorLedgerField
   return ledger?.calibrationAnchor === true && !benchmarkAnchorEligible(ledger);
 }
 
+// Clustering scope: ALL calibration-compatible reviews receive cluster
+// labels and join cohorts — including recognition-suspected and
+// weaker-blinded reviews, which are excluded from anchor service only
+// (they still participate in pairwise comparisons, down-weighted 0.5).
+export function clusteringScopeIncludesReview(ledger: unknown) {
+  return isCalibrationCompatibleReviewObject(ledger);
+}
+
 export type ExtractionCompletenessStatus =
   | "complete"
   | "complete_with_warnings"

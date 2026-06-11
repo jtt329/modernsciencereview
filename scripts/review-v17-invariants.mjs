@@ -119,8 +119,15 @@ assert.doesNotMatch(routesSource, /promptMismatchMatch/);
 assert.match(routesSource, /Allowing exact-source submission because existing review used a different prompt/);
 assert.match(routesSource, /Allowing metadata-matched submission because existing review used a different prompt/);
 assert.match(routesSource, /promptScopedFeedDuplicateKey/);
-assert.match(routesSource, /isCalibrationCompatibleReviewObject\(coverageLedger\)/);
+assert.match(routesSource, /clusteringScopeIncludesReview\(coverageLedger\)/);
 assert.match(routesSource, /isCalibrationCompatibleReviewObject\(coverageLedger \?\? aggregateAny\)/);
+
+// Clustering scope: all calibration-compatible reviews are clustered;
+// benchmarkSetCandidate no longer gates clustering input, and the
+// label-write step preserves (never promotes) candidacy.
+assert.match(engineSource, /export function clusteringScopeIncludesReview/);
+assert.doesNotMatch(routesSource, /!includeAll && !coverageLedger\.benchmarkSetCandidate/);
+assert.match(routesSource, /benchmarkSetCandidate: coverageLedger\.benchmarkSetCandidate === true && benchmarkAnchorEligible\(coverageLedger\)/);
 assert.doesNotMatch(routesSource, /coverageLedger\.promptVersion !== REVIEW_PROMPT_VERSION/);
 
 async function assertKnownBenchmarkMetadataRegression() {
@@ -130,7 +137,7 @@ async function assertKnownBenchmarkMetadataRegression() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { benchmarkAnchorEligible, blindManuscriptText, calibrationAnchorEligible, detectReviewerDirectedText, extractMetadata, isAdminPinnedAnchorOverride, isCalibrationCompatibleReviewObject, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
+    import { benchmarkAnchorEligible, blindManuscriptText, calibrationAnchorEligible, clusteringScopeIncludesReview, detectReviewerDirectedText, extractMetadata, isAdminPinnedAnchorOverride, isCalibrationCompatibleReviewObject, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
     import { calibrateCohorts, fitBradleyTerry, fitCohort } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/calibrationFit.ts"))};
     import { reconcileSwappedJudgments } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pairwiseCalibration.ts"))};
     globalThis.__msrMetadataRegression = (async () => {
@@ -298,6 +305,33 @@ async function assertKnownBenchmarkMetadataRegression() {
     };
     if (!isCalibrationCompatibleReviewObject(storedV17ReviewWithoutRecognition)) {
       throw new Error("stored v17 review without recognitionAssessment no longer parses as calibration-compatible");
+    }
+
+    // Clustering scope: recognition-suspected and weaker-blinded reviews
+    // are excluded from anchor service only — they must still receive
+    // cluster labels (i.e. pass the clustering-scope predicate) even with
+    // benchmarkSetCandidate=false.
+    const recognitionSuspectedCompatibleReview = {
+      ...storedV17ReviewWithoutRecognition,
+      promptVersion: "v18.1.1-computed-ico-halfpoint",
+      recognitionSuspected: true,
+      benchmarkSetCandidate: false,
+    };
+    if (!clusteringScopeIncludesReview(recognitionSuspectedCompatibleReview)) {
+      throw new Error("recognition-suspected calibration-compatible review was excluded from clustering scope");
+    }
+    if (!clusteringScopeIncludesReview({
+      ...storedV17ReviewWithoutRecognition,
+      blindingStrength: "weaker",
+      benchmarkSetCandidate: false,
+    })) {
+      throw new Error("weaker-blinded calibration-compatible review was excluded from clustering scope");
+    }
+    if (clusteringScopeIncludesReview({ summary: "not a canonical review object" })) {
+      throw new Error("clustering scope admitted a non-calibration-compatible object");
+    }
+    if (benchmarkAnchorEligible(recognitionSuspectedCompatibleReview)) {
+      throw new Error("clustering-scope fix must not change automatic anchor candidacy");
     }
     const blinderInput = [
       "Emergent Spacetime From Example Dynamics",

@@ -19,6 +19,7 @@ import {
   assessExtractionCompleteness,
   benchmarkAnchorEligible,
   calibrationAnchorEligible,
+  clusteringScopeIncludesReview,
   isAdminPinnedAnchorOverride,
   buildPdfFallbackText,
   compactAggregateForStorage,
@@ -2964,7 +2965,6 @@ router.patch("/admin/review-attempts/:id/supersede", async (req, res) => {
 router.post("/papers/benchmark-clusters", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const includeAll = req.body?.includeAll === true;
     const benchmarkSetVersion =
       typeof req.body?.benchmarkSetVersion === "string" && req.body.benchmarkSetVersion.trim()
         ? req.body.benchmarkSetVersion.trim()
@@ -2984,8 +2984,11 @@ router.post("/papers/benchmark-clusters", async (req, res) => {
       if (!review) continue;
       const coverageLedger = parseJsonObject(review.coverageLedgerJson);
       if (!coverageLedger) continue;
-      if (!isCalibrationCompatibleReviewObject(coverageLedger)) continue;
-      if (!includeAll && !coverageLedger.benchmarkSetCandidate) continue;
+      // Cluster every calibration-compatible review, not just benchmark
+      // candidates: recognition-suspected and weaker-blinded reviews are
+      // excluded from anchor service only and must still receive cluster
+      // labels so they join pairwise-calibration cohorts.
+      if (!clusteringScopeIncludesReview(coverageLedger)) continue;
       profiles.push(benchmarkProfileForClustering(paper, review, coverageLedger));
     }
 
@@ -3030,7 +3033,10 @@ router.post("/papers/benchmark-clusters", async (req, res) => {
       if (!coverageLedger) continue;
       const updatedLedger = {
         ...coverageLedger,
-        benchmarkSetCandidate: benchmarkAnchorEligible(coverageLedger),
+        // Clustering must not promote non-candidates: candidacy is
+        // preserved (and still subject to the anchor-hygiene exclusions),
+        // while cluster labels are written for every compatible review.
+        benchmarkSetCandidate: coverageLedger.benchmarkSetCandidate === true && benchmarkAnchorEligible(coverageLedger),
         benchmarkSetVersion,
         clusterVersion,
         benchmarkClusterId: cluster.benchmarkClusterId,
