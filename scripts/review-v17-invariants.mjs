@@ -1,4 +1,5 @@
-import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -667,6 +668,66 @@ J. D. Bekenstein, Black Holes and Entropy, Phys. Rev. D 7, 2333 (1973), doi:10.1
 }
 
 await assertKnownBenchmarkMetadataRegression();
+
+// Every drizzle table referenced by the API source must be present in the
+// DDL that the drizzle config actually resolves — this tests the whole
+// chain (route import -> schema definition -> drizzle-kit scope), so a
+// table that would silently be missing from `drizzle-kit push` fails CI.
+function assertRouteTablesInDrizzleSchema() {
+  const walk = (dir) => readdirSync(dir).flatMap((entry) => {
+    const fullPath = join(dir, entry);
+    if (statSync(fullPath).isDirectory()) return walk(fullPath);
+    return fullPath.endsWith(".ts") ? [fullPath] : [];
+  });
+
+  // 1. Table identifiers imported from @workspace/db anywhere in the API.
+  const importedTableIdentifiers = new Set();
+  for (const file of walk(join(root, "artifacts/api-server/src"))) {
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(/import\s*\{([^}]*)\}\s*from\s*"@workspace\/db"/g)) {
+      for (const rawIdentifier of match[1].split(",")) {
+        const identifier = rawIdentifier.trim();
+        if (/Table$/.test(identifier)) importedTableIdentifiers.add(identifier);
+      }
+    }
+  }
+  assert.ok(importedTableIdentifiers.size >= 8, "expected the API to import drizzle tables from @workspace/db");
+
+  // 2. Identifier -> SQL table name, from every schema source file.
+  const tableNameByIdentifier = new Map();
+  for (const file of walk(join(root, "lib/db/src/schema"))) {
+    const source = readFileSync(file, "utf8");
+    for (const match of source.matchAll(/export const (\w+Table) = pgTable\(\s*"([a-z_]+)"/g)) {
+      tableNameByIdentifier.set(match[1], match[2]);
+    }
+  }
+  for (const identifier of importedTableIdentifiers) {
+    assert.ok(tableNameByIdentifier.has(identifier), `API imports ${identifier} but no schema file defines it via pgTable`);
+  }
+
+  // 3. The DDL drizzle-kit resolves from the real config must create every
+  // one of those tables (dummy DATABASE_URL: export never connects).
+  const ddl = execFileSync(
+    join(root, "lib/db/node_modules/.bin/drizzle-kit"),
+    ["export", "--config", "./drizzle.config.ts"],
+    {
+      cwd: join(root, "lib/db"),
+      env: { ...process.env, DATABASE_URL: "postgres://invariants:invariants@localhost:5432/invariants" },
+      encoding: "utf8",
+    },
+  );
+  for (const identifier of importedTableIdentifiers) {
+    const tableName = tableNameByIdentifier.get(identifier);
+    assert.ok(
+      ddl.includes(`CREATE TABLE "${tableName}"`),
+      `table "${tableName}" (${identifier}) is missing from the DDL resolved by lib/db/drizzle.config.ts — it would not be created by drizzle-kit push`,
+    );
+  }
+}
+
+assertRouteTablesInDrizzleSchema();
+const drizzleConfigSource = readFileSync(join(root, "lib/db/drizzle.config.ts"), "utf8");
+assert.match(drizzleConfigSource, /schema: path\.join\(__dirname, "\.\/src\/schema\/\*\.ts"\)/);
 
 assert.match(blindPrompt, /0 to 10 in 0\.5 increments/);
 assert.match(blindPrompt, /Use 0 when no correct, relevant, manuscript-contained contribution survives/);
