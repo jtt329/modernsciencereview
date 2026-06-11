@@ -18,6 +18,8 @@ import {
   REVIEW_SYSTEM_INSTRUCTION as LATEST_REVIEW_SYSTEM_INSTRUCTION,
   assessExtractionCompleteness,
   benchmarkAnchorEligible,
+  calibrationAnchorEligible,
+  isAdminPinnedAnchorOverride,
   buildPdfFallbackText,
   compactAggregateForStorage,
   expectedReviewModelName,
@@ -3286,7 +3288,8 @@ async function assemblePairwiseCohorts(): Promise<PairwiseCohortAssembly> {
       strippedReview: strippedReviewForPairwise(ledger),
       downWeighted: ledger.blindingStrength === "weaker" || ledger.recognitionSuspected === true,
       computedScore: Number.isFinite(computedScore) ? computedScore : 0,
-      calibrationAnchor: ledger.calibrationAnchor === true && benchmarkAnchorEligible(ledger),
+      calibrationAnchor: calibrationAnchorEligible(ledger),
+      anchorOverride: isAdminPinnedAnchorOverride(ledger),
     };
     membersById.set(review.id, member);
     ledgersByReviewId.set(review.id, ledger);
@@ -3365,6 +3368,8 @@ router.post("/papers/pairwise-calibration/dry-run", async (req, res) => {
         cohortId: cohort.cohortId,
         memberCount: cohort.memberCount,
         anchorCount: cohort.anchorCount,
+        anchorOverrideCount: (assembly.cohorts.get(cohort.cohortId) ?? [])
+          .filter((member) => member.calibrationAnchor && member.anchorOverride).length,
         downWeightedCount: cohort.downWeightedCount,
         pairCount: cohort.pairs.length,
         cachedPairCount: cohort.cachedPairCount,
@@ -3448,7 +3453,11 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
         members: memberIds,
         anchors: members
           .filter((member) => member.calibrationAnchor)
-          .map((member) => ({ reviewId: member.reviewId, frozenComputedScore: member.computedScore })),
+          .map((member) => ({
+            reviewId: member.reviewId,
+            frozenComputedScore: member.computedScore,
+            adminPinnedOverride: member.anchorOverride,
+          })),
         computedScores: Object.fromEntries(members.map((member) => [member.reviewId, member.computedScore])),
         outcomes,
       };
@@ -3493,6 +3502,11 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
         const input = cohortInputs.find((cohort) => cohort.cohortId === fit.cohortId);
         return (input?.anchors ?? []).map((anchor) => anchor.reviewId);
       });
+      const anchorOverrides = memberCohorts
+        .flatMap((fit) => fit.anchorOverrides)
+        .filter((override, index, array) =>
+          array.findIndex((candidate) => candidate.reviewId === override.reviewId) === index)
+        .sort((a, b) => (a.reviewId < b.reviewId ? -1 : 1));
       const calibrationRationale = [
         `Pairwise Bradley-Terry calibration: rank ${rank} of ${primaryFit ? primaryFit.ranking.length : 0} in cohort "${primaryFit?.cohortId ?? "unknown"}"`,
         `(${wins} wins / ${losses} losses / ${equals} equal overall, ${pairSummaries.length} comparisons).`,
@@ -3524,6 +3538,7 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
             dimensionWinRates: fit.dimensionWinRates[reviewId] ?? null,
           })),
           anchorsUsed: [...new Set(anchorsUsed)].sort(),
+          anchorOverrides,
           pairs: pairSummaries,
           calibratedAt: new Date().toISOString(),
         },
@@ -3551,6 +3566,7 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
         unanchored: fit.unanchored,
         ranking: fit.ranking,
         calibratedScores: fit.calibratedScores,
+        anchorOverrides: fit.anchorOverrides,
       })),
     });
   } catch (err: any) {
@@ -3572,10 +3588,9 @@ router.post("/admin/reviews/:reviewId/calibration-flags", async (req, res) => {
 
     const body = req.body && typeof req.body === "object" ? req.body : {};
     if (typeof body.calibrationAnchor === "boolean") {
-      if (body.calibrationAnchor && !benchmarkAnchorEligible(ledger)) {
-        res.status(400).json({ error: "Weaker-blinded or recognition-suspected reviews cannot serve as calibration anchors." });
-        return;
-      }
+      // Admin pinning is allowed even for weaker-blinded or
+      // recognition-suspected reviews; calibration runs record it as an
+      // anchorOverride ("admin-pinned") rather than refusing it.
       ledger.calibrationAnchor = body.calibrationAnchor;
     }
     if ("bridgeCohortId" in body) {
@@ -3589,6 +3604,7 @@ router.post("/admin/reviews/:reviewId/calibration-flags", async (req, res) => {
     res.json({
       reviewId: reviewRow.id,
       calibrationAnchor: ledger.calibrationAnchor === true,
+      anchorOverride: isAdminPinnedAnchorOverride(ledger),
       bridgeCohortId: ledger.bridgeCohortId ?? null,
     });
   } catch (err: any) {

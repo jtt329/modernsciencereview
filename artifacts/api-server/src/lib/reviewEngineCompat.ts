@@ -294,6 +294,9 @@ export function recognitionAssessmentIndicatesSuspected(value: RecognitionAssess
   return value?.recognized === true && (value?.recognitionConfidence ?? 0) >= RECOGNITION_SUSPECTED_CONFIDENCE_THRESHOLD;
 }
 
+// Automatic anchor candidacy (benchmarkSetCandidate): weaker-blinded or
+// recognition-suspected reviews are excluded. Admin pinning is handled
+// separately by calibrationAnchorEligible below.
 export function benchmarkAnchorEligible(
   ledger: { blindingStrength?: string | null; recognitionSuspected?: boolean | null } | null | undefined,
 ) {
@@ -301,6 +304,27 @@ export function benchmarkAnchorEligible(
   if (ledger.blindingStrength === "weaker") return false;
   if (ledger.recognitionSuspected === true) return false;
   return true;
+}
+
+type CalibrationAnchorLedgerFields = {
+  calibrationAnchor?: boolean | null;
+  blindingStrength?: string | null;
+  recognitionSuspected?: boolean | null;
+};
+
+// Calibration anchoring: an admin-set calibrationAnchor is eligible even
+// when the review is recognition-suspected or weaker-blinded — the pinned
+// anchor's value is a disclosed human assertion, not a model output, so
+// model-side recognition contamination does not taint it.
+export function calibrationAnchorEligible(ledger: CalibrationAnchorLedgerFields | null | undefined) {
+  return ledger?.calibrationAnchor === true;
+}
+
+// True when an admin-pinned anchor would have been excluded by the
+// automatic candidacy rules; calibration runs record this as an
+// anchorOverride with reason "admin-pinned".
+export function isAdminPinnedAnchorOverride(ledger: CalibrationAnchorLedgerFields | null | undefined) {
+  return ledger?.calibrationAnchor === true && !benchmarkAnchorEligible(ledger);
 }
 
 export type ExtractionCompletenessStatus =

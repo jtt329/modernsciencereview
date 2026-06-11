@@ -23,6 +23,14 @@ export type CalibrationPairOutcome = {
 export type CalibrationAnchor = {
   reviewId: string;
   frozenComputedScore: number;
+  // Admin pinned this anchor despite weaker blinding or suspected
+  // recognition; the fit records it in anchorOverrides.
+  adminPinnedOverride?: boolean;
+};
+
+export type CalibrationAnchorOverride = {
+  reviewId: string;
+  reason: "admin-pinned";
 };
 
 export type CalibrationCohortInput = {
@@ -51,6 +59,7 @@ export type CohortFitResult = {
   calibratedScores: Record<string, number>;
   dimensionWinRates: Record<string, DimensionWinRates>;
   comparisonCounts: Record<string, number>;
+  anchorOverrides: CalibrationAnchorOverride[];
 };
 
 export const CALIBRATION_MODE_PAIRWISE_BT_V1 = "pairwise-bt-v1";
@@ -321,6 +330,10 @@ export function fitCohort(input: CalibrationCohortInput): CohortFitResult {
     calibratedScores: monotone,
     dimensionWinRates: computeDimensionWinRates(members, input.outcomes),
     comparisonCounts,
+    anchorOverrides: input.anchors
+      .filter((anchor) => anchor.adminPinnedOverride === true && members.includes(anchor.reviewId))
+      .map((anchor) => ({ reviewId: anchor.reviewId, reason: "admin-pinned" as const }))
+      .sort((a, b) => (a.reviewId < b.reviewId ? -1 : 1)),
   };
 }
 

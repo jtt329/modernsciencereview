@@ -23,10 +23,14 @@ export type PairwiseCalibrationMember = {
   profileText: string;
   strippedReview: Record<string, unknown>;
   // Weaker-blinded or recognition-suspected reviews may serve as comparison
-  // partners but their outcomes carry weight 0.5 and they can never anchor.
+  // partners but their outcomes carry weight 0.5 and they never auto-anchor;
+  // an explicit admin-pinned calibrationAnchor overrides that exclusion.
   downWeighted: boolean;
   computedScore: number;
   calibrationAnchor: boolean;
+  // Admin pinned this anchor despite the automatic exclusions; recorded as
+  // an anchorOverride ("admin-pinned") in the calibration run output.
+  anchorOverride: boolean;
 };
 
 export type PlannedPair = {

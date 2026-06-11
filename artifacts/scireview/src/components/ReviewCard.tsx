@@ -1616,13 +1616,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       <button
                         type="button"
                         onClick={toggleCalibrationAnchor}
-                        disabled={calibrationAnchorBusy || (!calibrationAnchor && !calibrationAnchorEligible)}
+                        disabled={calibrationAnchorBusy}
                         className={`rounded-full px-3 py-1 text-xs font-bold transition-colors disabled:opacity-50 ${calibrationAnchor ? 'bg-emerald-400/20 text-emerald-200 border border-emerald-300/30' : 'bg-white/10 text-slate-300 border border-white/10'}`}
                       >
                         {calibrationAnchorBusy ? 'Saving…' : calibrationAnchor ? 'Anchor: on' : 'Anchor: off'}
                       </button>
-                      {!calibrationAnchorEligible && !calibrationAnchor && (
-                        <span className="text-xs text-slate-400">Not eligible (weaker blinding or recognition disclosed).</span>
+                      {!calibrationAnchorEligible && (
+                        <span className="text-xs text-slate-400">
+                          {calibrationAnchor
+                            ? 'Admin-pinned override (weaker blinding or recognition disclosed); recorded as anchorOverride in calibration runs.'
+                            : 'Pinning will be recorded as an admin override (weaker blinding or recognition disclosed).'}
+                        </span>
                       )}
                     </div>
                   </div>

@@ -130,7 +130,7 @@ async function assertKnownBenchmarkMetadataRegression() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { blindManuscriptText, detectReviewerDirectedText, extractMetadata, isCalibrationCompatibleReviewObject, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
+    import { benchmarkAnchorEligible, blindManuscriptText, calibrationAnchorEligible, detectReviewerDirectedText, extractMetadata, isAdminPinnedAnchorOverride, isCalibrationCompatibleReviewObject, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
     import { calibrateCohorts, fitBradleyTerry, fitCohort } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/calibrationFit.ts"))};
     import { reconcileSwappedJudgments } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pairwiseCalibration.ts"))};
     globalThis.__msrMetadataRegression = (async () => {
@@ -248,6 +248,41 @@ async function assertKnownBenchmarkMetadataRegression() {
     const disagreed = reconcileSwappedJudgments(firstJudgment, disagreeingSwapped);
     if (disagreed.overallWinnerReviewId !== null || !disagreed.positionInconsistent) {
       throw new Error("disagreeing swapped judgments must record equal with positionInconsistent=true");
+    }
+
+    // Anchor override: an admin-pinned anchor stays eligible despite
+    // suspected recognition, and the fit records the override.
+    const pinnedRecognizedLedger = { calibrationAnchor: true, recognitionSuspected: true, blindingStrength: "strong" };
+    if (!calibrationAnchorEligible(pinnedRecognizedLedger)) {
+      throw new Error("admin-pinned anchor with recognitionSuspected=true must stay anchor-eligible");
+    }
+    if (!isAdminPinnedAnchorOverride(pinnedRecognizedLedger)) {
+      throw new Error("admin-pinned anchor with recognitionSuspected=true must be recorded as an override");
+    }
+    if (benchmarkAnchorEligible(pinnedRecognizedLedger)) {
+      throw new Error("automatic anchor candidacy must keep excluding recognition-suspected reviews");
+    }
+    if (calibrationAnchorEligible({ recognitionSuspected: true, blindingStrength: "strong" })) {
+      throw new Error("reviews without the admin toggle must not be calibration anchors");
+    }
+    if (isAdminPinnedAnchorOverride({ calibrationAnchor: true, recognitionSuspected: false, blindingStrength: "strong" })) {
+      throw new Error("a normally eligible pinned anchor must not be recorded as an override");
+    }
+    const overrideFit = fitCohort({
+      cohortId: "override-cohort",
+      members: btIds,
+      anchors: [{ reviewId: "p2", frozenComputedScore: 80, adminPinnedOverride: true }],
+      computedScores: { p1: 90, p2: 80, p3: 70, p4: 60, p5: 50 },
+      outcomes: btOutcomes,
+    });
+    if (JSON.stringify(overrideFit.anchorOverrides) !== JSON.stringify([{ reviewId: "p2", reason: "admin-pinned" }])) {
+      throw new Error("fit output did not record the admin-pinned anchor override: " + JSON.stringify(overrideFit.anchorOverrides));
+    }
+    if (Math.abs(overrideFit.calibratedScores.p2 - 80) > 1e-6) {
+      throw new Error("overridden anchor did not map to its frozen computedScore");
+    }
+    if (fit.anchorOverrides.length !== 0) {
+      throw new Error("non-overridden anchors must not produce anchorOverrides entries");
     }
     const storedV17ReviewWithoutRecognition = {
       reviewObjectVersion: "v17.1-diagnostic-only-halfpoint",
@@ -654,7 +689,17 @@ assert.match(routesSource, /estimatedModelCalls: plan\.newPairs\.length \* 2/);
 assert.match(routesSource, /downWeighted \? 0\.5 : 1/);
 assert.match(routesSource, /pairwiseCalibration: coverageLedger\.pairwiseCalibration \?\? null/);
 assert.match(routesSource, /calibrationAnchor: coverageLedger\.calibrationAnchor === true/);
-assert.match(routesSource, /cannot serve as calibration anchors/);
+
+// Anchor override: admin-pinned anchors stay eligible despite weaker
+// blinding or suspected recognition; the override is recorded.
+assert.match(engineSource, /export function calibrationAnchorEligible/);
+assert.match(engineSource, /export function isAdminPinnedAnchorOverride/);
+assert.match(calibrationFitSource, /adminPinnedOverride/);
+assert.match(calibrationFitSource, /anchorOverrides/);
+assert.match(calibrationFitSource, /"admin-pinned"/);
+assert.match(routesSource, /anchorOverride: isAdminPinnedAnchorOverride\(ledger\)/);
+assert.match(routesSource, /anchorOverrides,/);
+assert.doesNotMatch(routesSource, /cannot serve as calibration anchors/);
 assert.match(dbPapersSchemaSource, /calibration_pairs/);
 assert.match(dbPapersSchemaSource, /unique_calibration_pair/);
 
