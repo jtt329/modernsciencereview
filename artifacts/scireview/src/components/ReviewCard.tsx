@@ -33,6 +33,162 @@ const Section = ({ icon, label, color, children }: { icon: React.ReactNode; labe
   </div>
 );
 
+const winRatePercent = (value: unknown) =>
+  typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 100)}%` : '—';
+
+// Calibration transparency tab: the full trail from the stored
+// pairwiseCalibration object plus the raw pair judgments. Nothing is
+// stripped — both model rationales are shown verbatim for every pair.
+const CalibrationPanel = ({ detail, loading }: { detail: any | null; loading: boolean }) => {
+  if (loading) {
+    return <p className="text-sm text-slate-400">Loading calibration trail…</p>;
+  }
+  if (!detail || detail.calibrated === false) {
+    return <p className="text-sm text-slate-400">No calibration data is stored for this paper yet.</p>;
+  }
+  const cohorts: any[] = Array.isArray(detail.cohorts) ? detail.cohorts : [];
+  const cohortMembers: any[] = Array.isArray(detail.cohortMembers) ? detail.cohortMembers : [];
+  const anchorsDetail: any[] = Array.isArray(detail.anchorsDetail) ? detail.anchorsDetail : [];
+  const pairs: any[] = Array.isArray(detail.pairs) ? detail.pairs : [];
+  const boundingAnchors: any[] = Array.isArray(detail.mapping?.boundingAnchors) ? detail.mapping.boundingAnchors : [];
+  const strainWarnings: any[] = Array.isArray(detail.mappingStrainWarnings) ? detail.mappingStrainWarnings : [];
+  return (
+    <div className="space-y-5">
+      {cohorts.map((cohort: any) => {
+        const members = cohortMembers.filter((member: any) => member.cohortId === cohort.cohortId);
+        return (
+          <Section key={cohort.cohortId} icon={<GitBranch className="w-4 h-4" />} label={`Cohort: ${cohort.cohortId}`} color="text-sky-300">
+            <div className="space-y-3 text-sm text-slate-300">
+              <p>
+                Rank <span className="font-black text-white">{cohort.rank}</span> of {cohort.cohortSize} after blind pairwise comparison.
+                {cohort.unanchored && (
+                  <span className="ml-2 rounded-full bg-amber-400/15 border border-amber-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-200">
+                    Unanchored cohort
+                  </span>
+                )}
+              </p>
+              {cohort.dimensionWinRates && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {[
+                    ['Input', cohort.dimensionWinRates.inputStrength],
+                    ['Construction', cohort.dimensionWinRates.constructionStrength],
+                    ['Output', cohort.dimensionWinRates.outputStrength],
+                    ['Overall', cohort.dimensionWinRates.overall],
+                  ].map(([label, rate]) => (
+                    <div key={String(label)} className="bg-slate-950/30 border border-white/10 rounded-xl p-2 text-center">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label} win rate</p>
+                      <p className="text-lg font-black text-white">{winRatePercent(rate)}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {members.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Cohort members</p>
+                  <ul className="list-disc list-inside text-xs text-slate-400 space-y-0.5">
+                    {members.map((member: any) => (
+                      <li key={member.reviewId}>{member.title ?? member.reviewId}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </Section>
+        );
+      })}
+
+      {anchorsDetail.length > 0 ? (
+        <Section icon={<Target className="w-4 h-4" />} label="Anchors Used" color="text-emerald-300">
+          <ul className="space-y-1 text-sm text-slate-300">
+            {anchorsDetail.map((anchor: any) => (
+              <li key={anchor.reviewId} className="flex flex-wrap items-center gap-2">
+                <span>{anchor.title ?? anchor.reviewId}</span>
+                {anchor.frozenComputedScore != null && (
+                  <span className="font-black text-emerald-200">pinned at {anchor.frozenComputedScore}</span>
+                )}
+                {anchor.adminPinnedOverride && (
+                  <span className="rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200">
+                    Admin override
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : (
+        <Section icon={<Target className="w-4 h-4" />} label="Anchors Used" color="text-amber-300">
+          <p className="text-sm text-slate-400">
+            No pinned anchors in this paper's cohort; its level was set from the cohort median (unanchored).
+          </p>
+        </Section>
+      )}
+
+      <Section icon={<ListChecks className="w-4 h-4" />} label="Pairwise Comparisons" color="text-fuchsia-300">
+        <div className="space-y-2">
+          {pairs.length === 0 && <p className="text-sm text-slate-400">No stored pair outcomes.</p>}
+          {pairs.map((pair: any, index: number) => (
+            <details key={`${pair.partnerReviewId}-${index}`} className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+              <summary className="cursor-pointer text-sm text-slate-200 flex flex-wrap items-center gap-2">
+                <span className={`font-black uppercase text-xs ${pair.overall === 'win' ? 'text-emerald-300' : pair.overall === 'loss' ? 'text-rose-300' : 'text-slate-300'}`}>
+                  {pair.overall}
+                </span>
+                <span className="text-xs text-slate-400">({pair.margin})</span>
+                <span>vs {pair.partnerTitle ?? pair.partnerReviewId}</span>
+                {pair.positionInconsistent && (
+                  <span className="rounded-full bg-amber-400/15 border border-amber-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-200">
+                    Position inconsistent
+                  </span>
+                )}
+              </summary>
+              <div className="mt-3 space-y-3">
+                {(Array.isArray(pair.judgments) ? pair.judgments : []).map((judgment: any, judgmentIndex: number) => (
+                  <div key={judgmentIndex} className="border-l-2 border-white/15 pl-3">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                      Judgment {judgmentIndex + 1} · overall {judgment.overall} ({judgment.margin}) · confidence {judgment.confidence}
+                    </p>
+                    {judgment.rationale && (
+                      <p className="text-xs text-slate-300 mt-1 whitespace-pre-wrap">{judgment.rationale}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </details>
+          ))}
+        </div>
+      </Section>
+
+      <Section icon={<TrendingUp className="w-4 h-4" />} label="Mapping" color="text-indigo-300">
+        <div className="space-y-2 text-sm text-slate-300">
+          <p>
+            Intrinsic <span className="font-black text-slate-100">{detail.intrinsicScore ?? '—'}</span>
+            {' '}→ calibrated <span className="font-black text-emerald-200">{detail.calibratedScore ?? '—'}</span>
+          </p>
+          {boundingAnchors.length > 0 && (
+            <p className="text-xs text-slate-400">
+              Bounded on the global anchor curve by{' '}
+              {boundingAnchors.map((anchor: any) => `${anchor.title ?? anchor.reviewId} (${anchor.frozenComputedScore})`).join(' and ')}.
+            </p>
+          )}
+          {strainWarnings.length > 0 && (
+            <div className="bg-amber-400/10 border border-amber-300/20 rounded-xl p-3">
+              <p className="text-[10px] font-black text-amber-200 uppercase tracking-widest">Mapping strain</p>
+              {strainWarnings.map((warning: any, index: number) => (
+                <p key={index} className="text-xs text-amber-50 mt-1">
+                  Cohort {warning.cohortId}: adjacent ranks {warning.gap} points apart.
+                </p>
+              ))}
+            </div>
+          )}
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest">
+            {detail.calibrationVersion} · prompt {detail.promptHash} · {detail.calibratedAt ? format(new Date(detail.calibratedAt), 'MMM d, yyyy HH:mm') : 'undated'}
+          </p>
+          {detail.calibrationRationale && <p className="text-xs text-slate-400">{detail.calibrationRationale}</p>}
+        </div>
+      </Section>
+    </div>
+  );
+};
+
 const asArray = (value: unknown): string[] =>
   Array.isArray(value)
     ? value.map((item) => {
@@ -403,10 +559,16 @@ const asLedgerOutputs = (ledger: any): Array<{
 export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }: ReviewCardProps) {
   const [showPrompt, setShowPrompt] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
-  const [activeTab, setActiveTab] = useState<'combined' | number>('combined');
+  const [activeTab, setActiveTab] = useState<'combined' | 'calibration' | number>('combined');
   const [activeIcoTab, setActiveIcoTab] = useState<IcoTabId>('input');
   const [calibrationAnchorOverride, setCalibrationAnchorOverride] = useState<boolean | null>(null);
   const [calibrationAnchorBusy, setCalibrationAnchorBusy] = useState(false);
+  const [calibrationDetail, setCalibrationDetail] = useState<any | null>(null);
+  const [calibrationDetailLoading, setCalibrationDetailLoading] = useState(false);
+  const [clusterLabels, setClusterLabels] = useState<string[] | null>(null);
+  const [clusterLabelDraft, setClusterLabelDraft] = useState('');
+  const [clusterLabelOverride, setClusterLabelOverride] = useState<string | null>(null);
+  const [clusterReassignBusy, setClusterReassignBusy] = useState(false);
 
   const normalizeDisplayedBand = (
     low: number | null | undefined,
@@ -582,6 +744,48 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       setCalibrationAnchorBusy(false);
     }
   };
+  const pairwiseCalibrated = Boolean(parsedCoverage?.pairwiseCalibration) && parsedCoverage?.calibratedScore != null;
+  const calibratedDisplayScore = Math.round(Number(parsedCoverage?.calibratedScore ?? 0));
+  const intrinsicDisplayScore = Math.round(Number(
+    parsedCoverage?.computedScore ?? parsedCoverage?.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? 0,
+  ));
+  const openCalibrationTab = () => {
+    setActiveTab('calibration');
+    if (calibrationDetail || calibrationDetailLoading) return;
+    setCalibrationDetailLoading(true);
+    fetch(`/api/papers/${review.paperId}/calibration`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => setCalibrationDetail(data))
+      .catch(() => setCalibrationDetail(null))
+      .finally(() => setCalibrationDetailLoading(false));
+  };
+  const openClusterReassign = () => {
+    if (clusterLabels !== null) return;
+    setClusterLabels([]);
+    fetch('/api/admin/calibration/cluster-labels')
+      .then((response) => (response.ok ? response.json() : { labels: [] }))
+      .then((data) => setClusterLabels(Array.isArray(data.labels) ? data.labels : []))
+      .catch(() => setClusterLabels([]));
+  };
+  const reassignCluster = async () => {
+    const label = clusterLabelDraft.trim();
+    if (!label || clusterReassignBusy) return;
+    setClusterReassignBusy(true);
+    try {
+      const response = await fetch(`/api/admin/reviews/${review.id}/calibration-flags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ canonicalClusterLabel: label }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setClusterLabelOverride(data.canonicalClusterLabel ?? label);
+        setClusterLabelDraft('');
+      }
+    } finally {
+      setClusterReassignBusy(false);
+    }
+  };
   const publicVerdict = review.publicVerdict || storedAggregate?.publicOneParagraphVerdict || parsedCoverage?.publicVerdict || review.finalJudgment || review.overallEvaluation;
   const comparisonCohort = review.comparisonCohort || parsedCoverage?.finalComparisonCohort || review.specialtyField || review.broadField;
   const localCohort =
@@ -609,7 +813,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     storedAggregate?.scoreStability ||
     parsedCoverage?.scoreStability ||
     null;
-  const selectedPass = activeTab === 'combined' ? null : storedIndividualReviews[activeTab] ?? null;
+  const selectedPass = typeof activeTab === 'number' ? storedIndividualReviews[activeTab] ?? null : null;
   const passScoreBands = storedIndividualReviews.map((pass: any) =>
     normalizeDisplayedBand(
       pass.scoreBand?.low ?? pass.intrinsicScore ?? pass.score,
@@ -1011,19 +1215,37 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-5">
               <div className="space-y-2">
-                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">{displayedScoreLabel}</p>
+                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">
+                  {pairwiseCalibrated && !selectedPass ? 'Calibrated Score' : displayedScoreLabel}
+                </p>
                 <div className="flex flex-wrap items-end gap-4">
-                  <p className="text-6xl font-black text-emerald-200 leading-none">{displayedScore}</p>
+                  <p className="text-6xl font-black text-emerald-200 leading-none">
+                    {pairwiseCalibrated && !selectedPass ? calibratedDisplayScore : displayedScore}
+                  </p>
                   <div className="pb-1">
                     <p className="text-lg font-black text-white capitalize">{currentClassification}</p>
                     <p className="text-xs text-slate-400">{currentLocalCohort || 'Comparison cohort not specified'}</p>
                     {canonicalClusterLabel && (
                       <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
-                        Cluster: {canonicalClusterLabel}
+                        Cluster: {clusterLabelOverride ?? canonicalClusterLabel}
                       </p>
                     )}
                   </div>
                 </div>
+                {pairwiseCalibrated && !selectedPass && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-400 max-w-md">
+                      Position after blind pairwise comparison against neighboring benchmark papers, scaled through admin-pinned anchors.
+                    </p>
+                    <div className="pt-1 border-t border-white/10">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2">Intrinsic Review Score</p>
+                      <p className="text-2xl font-black text-slate-200 leading-none mt-1">{intrinsicDisplayScore}</p>
+                      <p className="text-xs text-slate-500 max-w-md mt-1">
+                        Score computed from the blind review's diagnostic subscores alone.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
               {adjudicatorFallbackActive && (
                 <div className="bg-rose-500/10 border border-rose-300/25 rounded-xl px-4 py-3 max-w-sm">
@@ -1073,6 +1295,20 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     </button>
                   );
                 })}
+                {pairwiseCalibrated && (
+                  <button
+                    role="tab"
+                    aria-selected={activeTab === 'calibration'}
+                    onClick={openCalibrationTab}
+                    className={`rounded-xl border px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${
+                      activeTab === 'calibration'
+                        ? 'border-white bg-sky-400/25 text-white ring-2 ring-white/50'
+                        : 'border-white/15 bg-white/5 text-slate-300 hover:border-white/40 hover:text-white'
+                    }`}
+                  >
+                    Calibration
+                  </button>
+                )}
               </div>
               {blindPassScores.length > 0 && storedIndividualReviews.length === 0 && (
                 <p className="text-xs text-slate-500">Only blind pass scores were stored for this older review.</p>
@@ -1090,6 +1326,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             className="relative rounded-3xl border border-white/45 bg-white/[0.03] p-4 space-y-8 shadow-[0_20px_70px_rgba(15,23,42,0.35)]"
             role="tabpanel"
           >
+          {activeTab === 'calibration' ? (
+            <CalibrationPanel detail={calibrationDetail} loading={calibrationDetailLoading} />
+          ) : (<>
           {selectedPass && (
             <div className="bg-slate-950/30 border border-white/10 rounded-2xl p-5 space-y-2">
               <h3 className="text-xs font-black text-fuchsia-300 uppercase tracking-widest">Blind Pass {(activeTab as number) + 1}</h3>
@@ -1631,6 +1870,45 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     </div>
                   </div>
                 )}
+                {isAdmin && (
+                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+                    <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Cluster Assignment</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      Current: {clusterLabelOverride ?? canonicalClusterLabel ?? 'unassigned'}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <select
+                        value=""
+                        onFocus={openClusterReassign}
+                        onChange={(event) => event.target.value && setClusterLabelDraft(event.target.value)}
+                        className="rounded-lg bg-white/10 border border-white/10 px-2 py-1 text-xs text-slate-200"
+                      >
+                        <option value="">{clusterLabels === null ? 'Existing clusters…' : 'Pick existing cluster…'}</option>
+                        {(clusterLabels ?? []).map((label) => (
+                          <option key={label} value={label} className="text-slate-900">{label}</option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        value={clusterLabelDraft}
+                        onChange={(event) => setClusterLabelDraft(event.target.value)}
+                        placeholder="or type a new cluster label"
+                        className="rounded-lg bg-white/10 border border-white/10 px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500 min-w-[14rem]"
+                      />
+                      <button
+                        type="button"
+                        onClick={reassignCluster}
+                        disabled={clusterReassignBusy || !clusterLabelDraft.trim()}
+                        className="rounded-full px-3 py-1 text-xs font-bold bg-sky-400/20 text-sky-200 border border-sky-300/30 transition-colors disabled:opacity-50"
+                      >
+                        {clusterReassignBusy ? 'Saving…' : 'Reassign'}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mt-2">
+                      Takes effect at the next cohort assembly. A later clustering run may regroup this paper.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {isAdmin && !selectedPass && storedIndividualReviews.length > 0 && (
@@ -1703,6 +1981,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               </div>
             </details>
           )}
+          </>)}
 
           </div>
 

@@ -5,7 +5,10 @@ import { GEMINI_CALIBRATION_MODEL, parseGeminiJsonResponse } from "./reviewEngin
 import type { CalibrationPairOutcome, DimensionOutcome, PairwiseMargin } from "./calibrationFit";
 import { logger } from "./logger";
 
-export const PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v1";
+// v2: pooled global anchor mapping. Pair judgments are version-independent
+// (cache key is pair + promptHash), so v1 rows stay valid and recompute is
+// free of model calls.
+export const PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2";
 export const PAIRWISE_CALIBRATION_PROMPT_HASH = createHash("sha256")
   .update(PAIRWISE_CALIBRATION_V1_PROMPT)
   .digest("hex")

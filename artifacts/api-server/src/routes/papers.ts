@@ -60,8 +60,8 @@ import {
   type PlannedPair,
 } from "../lib/pairwiseCalibration";
 import {
-  CALIBRATION_MODE_PAIRWISE_BT_V1,
-  calibrateCohorts,
+  CALIBRATION_MODE_PAIRWISE_BT_V2,
+  calibrateCohortsV2,
   type CalibrationCohortInput,
   type CalibrationPairOutcome,
   type CohortFitResult,
@@ -3358,6 +3358,21 @@ async function buildPairwiseCalibrationPlan(assembly: PairwiseCohortAssembly): P
   return { cohortPlans, plannedPairs, newPairs, cachedPairsByKey };
 }
 
+// A cohort mixing reviews whose intrinsic computedScores span more than
+// this many points likely mixes frontier and failed papers; flagged for a
+// human split decision (never auto-split).
+const COHORT_HETEROGENEITY_SPAN_POINTS = 55;
+
+function cohortHeterogeneityWarning(cohortId: string, members: PairwiseCalibrationMember[]) {
+  const scores = members.map((member) => member.computedScore);
+  if (scores.length < 2) return null;
+  const minScore = Math.min(...scores);
+  const maxScore = Math.max(...scores);
+  const span = maxScore - minScore;
+  if (span <= COHORT_HETEROGENEITY_SPAN_POINTS) return null;
+  return { cohortId, span, minScore, maxScore };
+}
+
 // POST /api/papers/pairwise-calibration/dry-run — admin-only cost preview.
 // Prints planned cohorts, pair counts, and estimated model calls without
 // running any model calls.
@@ -3366,6 +3381,9 @@ router.post("/papers/pairwise-calibration/dry-run", async (req, res) => {
   try {
     const assembly = await assemblePairwiseCohorts();
     const plan = await buildPairwiseCalibrationPlan(assembly);
+    const cohortHeterogeneityWarnings = plan.cohortPlans
+      .map((cohort) => cohortHeterogeneityWarning(cohort.cohortId, assembly.cohorts.get(cohort.cohortId) ?? []))
+      .filter((warning): warning is NonNullable<typeof warning> => warning !== null);
     res.json({
       calibrationEngine: CALIBRATION_ENGINE,
       calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
@@ -3381,7 +3399,9 @@ router.post("/papers/pairwise-calibration/dry-run", async (req, res) => {
         cachedPairCount: cohort.cachedPairCount,
         newPairCount: cohort.newPairCount,
         unanchored: cohort.anchorCount === 0,
+        heterogeneityWarning: cohortHeterogeneityWarnings.some((warning) => warning.cohortId === cohort.cohortId),
       })),
+      cohortHeterogeneityWarnings,
       totalPlannedPairs: plan.plannedPairs.length,
       totalCachedPairs: plan.plannedPairs.length - plan.newPairs.length,
       totalNewPairs: plan.newPairs.length,
@@ -3469,7 +3489,8 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
       };
     }).filter((input) => input.outcomes.length > 0);
 
-    const { fits, finalScores } = calibrateCohorts(cohortInputs);
+    const { fits, finalScores, pooledAnchors, mappingStrainWarnings, boundingAnchorsByReview } =
+      calibrateCohortsV2(cohortInputs);
     const fitByCohort = new Map<string, CohortFitResult>(fits.map((fit) => [fit.cohortId, fit]));
 
     let updatedReviews = 0;
@@ -3521,11 +3542,20 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
           : "No anchors in cohort; level set by virtual median anchor (unanchored).",
       ].join(" ");
 
+      const anchorDetailById = new Map(cohortInputs
+        .flatMap((cohort) => cohort.anchors)
+        .map((anchor) => [anchor.reviewId, anchor]));
+      const anchorsDetail = [...new Set(anchorsUsed)].sort().map((anchorReviewId) => ({
+        reviewId: anchorReviewId,
+        frozenComputedScore: anchorDetailById.get(anchorReviewId)?.frozenComputedScore ?? null,
+        adminPinnedOverride: anchorDetailById.get(anchorReviewId)?.adminPinnedOverride === true,
+      }));
+      const memberCohortIds = new Set(memberCohorts.map((fit) => fit.cohortId));
       const updatedLedger = {
         ...ledger,
         calibratedScore,
         rawCalibratedScore: calibratedScore,
-        calibrationMode: CALIBRATION_MODE_PAIRWISE_BT_V1,
+        calibrationMode: CALIBRATION_MODE_PAIRWISE_BT_V2,
         calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
         comparatorCalibrationStatus: "applied",
         comparatorPromptHash: PAIRWISE_CALIBRATION_PROMPT_HASH,
@@ -3533,7 +3563,7 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
         comparatorIds: [...partnerIds].sort(),
         calibrationRationale,
         pairwiseCalibration: {
-          calibrationMode: CALIBRATION_MODE_PAIRWISE_BT_V1,
+          calibrationMode: CALIBRATION_MODE_PAIRWISE_BT_V2,
           calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
           promptHash: PAIRWISE_CALIBRATION_PROMPT_HASH,
           cohorts: memberCohorts.map((fit) => ({
@@ -3544,7 +3574,15 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
             dimensionWinRates: fit.dimensionWinRates[reviewId] ?? null,
           })),
           anchorsUsed: [...new Set(anchorsUsed)].sort(),
+          anchorsDetail,
           anchorOverrides,
+          mapping: {
+            // The pooled global-curve anchors bounding this paper's
+            // position; the curve is shared by all cohorts in v2.
+            boundingAnchors: boundingAnchorsByReview[reviewId] ?? [],
+            pooledAnchorCount: pooledAnchors.length,
+          },
+          mappingStrainWarnings: mappingStrainWarnings.filter((warning) => memberCohortIds.has(warning.cohortId)),
           pairs: pairSummaries,
           calibratedAt: new Date().toISOString(),
         },
@@ -3567,6 +3605,8 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
       cachedPairs: plan.plannedPairs.length - plan.newPairs.length,
       failedPairs,
       updatedReviews,
+      pooledAnchors,
+      mappingStrainWarnings,
       cohorts: fits.map((fit) => ({
         cohortId: fit.cohortId,
         unanchored: fit.unanchored,
@@ -3603,6 +3643,17 @@ router.post("/admin/reviews/:reviewId/calibration-flags", async (req, res) => {
       ledger.bridgeCohortId =
         typeof body.bridgeCohortId === "string" && body.bridgeCohortId.trim() ? body.bridgeCohortId.trim() : null;
     }
+    if ("canonicalClusterLabel" in body) {
+      // Admin cluster reassignment: written to both the cluster id and the
+      // label (benchmarkClusterId is what pairwiseCohortIdForLedger reads
+      // first), so the next cohort assembly respects the human decision.
+      const label = typeof body.canonicalClusterLabel === "string" && body.canonicalClusterLabel.trim()
+        ? body.canonicalClusterLabel.trim()
+        : null;
+      ledger.benchmarkClusterId = label;
+      ledger.canonicalClusterLabel = label;
+      ledger.clusterReassignedAt = label ? new Date().toISOString() : null;
+    }
 
     await db.update(reviewsTable)
       .set({ coverageLedgerJson: JSON.stringify(ledger) })
@@ -3612,9 +3663,119 @@ router.post("/admin/reviews/:reviewId/calibration-flags", async (req, res) => {
       calibrationAnchor: ledger.calibrationAnchor === true,
       anchorOverride: isAdminPinnedAnchorOverride(ledger),
       bridgeCohortId: ledger.bridgeCohortId ?? null,
+      canonicalClusterLabel: ledger.canonicalClusterLabel ?? null,
     });
   } catch (err: any) {
     logger.error({ err }, "Calibration flags update failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/calibration/cluster-labels — distinct cluster labels for
+// the admin reassign-cluster dropdown.
+router.get("/admin/calibration/cluster-labels", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const reviews = await db.select().from(reviewsTable);
+    const labels = new Set<string>();
+    for (const review of reviews) {
+      const ledger = parseJsonObject(review.coverageLedgerJson);
+      if (!ledger) continue;
+      const label = pairwiseCohortIdForLedger(ledger);
+      if (label) labels.add(label);
+    }
+    res.json({ labels: [...labels].sort() });
+  } catch (err: any) {
+    logger.error({ err }, "Cluster label listing failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/papers/:id/calibration — full calibration trail for the
+// transparency tab: cohort membership, BT outcome, every pair with both
+// raw model rationales, and the anchor mapping. Nothing is stripped.
+router.get("/papers/:id/calibration", async (req, res) => {
+  try {
+    const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, req.params.id));
+    if (!paper) { res.status(404).json({ error: "Paper not found" }); return; }
+    const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
+    const ledger = review ? parseJsonObject(review.coverageLedgerJson) : null;
+    const pairwiseCalibration = ledger?.pairwiseCalibration;
+    if (!review || !ledger || !pairwiseCalibration || typeof pairwiseCalibration !== "object") {
+      res.json({ calibrated: false });
+      return;
+    }
+
+    const allPapers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+    const allReviews = await db.select().from(reviewsTable);
+    const reviewById = new Map(allReviews.map((row) => [row.id, row]));
+    const paperById = new Map(allPapers.map((row) => [row.id, row]));
+    const titleByReviewId = (reviewId: string) => {
+      const reviewRow = reviewById.get(reviewId);
+      const paperRow = reviewRow ? paperById.get(reviewRow.paperId) : null;
+      return paperRow?.title ?? null;
+    };
+
+    const cohortIds = new Set(
+      (Array.isArray(pairwiseCalibration.cohorts) ? pairwiseCalibration.cohorts : [])
+        .map((cohort: any) => cohort?.cohortId)
+        .filter((cohortId: unknown): cohortId is string => typeof cohortId === "string"),
+    );
+    const cohortMembers: { reviewId: string; paperId: string; title: string | null; cohortId: string }[] = [];
+    for (const paperRow of allPapers) {
+      const memberReview = allReviews.find((row) => row.paperId === paperRow.id);
+      if (!memberReview) continue;
+      const memberLedger = parseJsonObject(memberReview.coverageLedgerJson);
+      if (!memberLedger) continue;
+      const memberCohortId = pairwiseCohortIdForLedger(memberLedger);
+      if (!memberCohortId || !cohortIds.has(memberCohortId)) continue;
+      cohortMembers.push({ reviewId: memberReview.id, paperId: paperRow.id, title: paperRow.title, cohortId: memberCohortId });
+    }
+
+    const promptHash = typeof pairwiseCalibration.promptHash === "string"
+      ? pairwiseCalibration.promptHash
+      : PAIRWISE_CALIBRATION_PROMPT_HASH;
+    const pairRows = await db.select().from(calibrationPairsTable)
+      .where(eq(calibrationPairsTable.promptHash, promptHash));
+    const pairRowByKey = new Map(pairRows.map((row) => [`${row.reviewIdA}\0${row.reviewIdB}`, row]));
+    const pairs = (Array.isArray(pairwiseCalibration.pairs) ? pairwiseCalibration.pairs : []).map((pair: any) => {
+      const partnerReviewId = typeof pair?.partnerReviewId === "string" ? pair.partnerReviewId : "";
+      const [reviewIdA, reviewIdB] = review.id < partnerReviewId ? [review.id, partnerReviewId] : [partnerReviewId, review.id];
+      const row = pairRowByKey.get(`${reviewIdA}\0${reviewIdB}`);
+      return {
+        ...pair,
+        partnerTitle: titleByReviewId(partnerReviewId),
+        judgments: Array.isArray(row?.judgmentsJson) ? row.judgmentsJson : [],
+      };
+    });
+
+    const anchorsDetail = (Array.isArray(pairwiseCalibration.anchorsDetail) ? pairwiseCalibration.anchorsDetail : [])
+      .map((anchor: any) => ({ ...anchor, title: typeof anchor?.reviewId === "string" ? titleByReviewId(anchor.reviewId) : null }));
+    const boundingAnchors = (Array.isArray(pairwiseCalibration.mapping?.boundingAnchors) ? pairwiseCalibration.mapping.boundingAnchors : [])
+      .map((anchor: any) => ({ ...anchor, title: typeof anchor?.reviewId === "string" ? titleByReviewId(anchor.reviewId) : null }));
+
+    res.json({
+      calibrated: true,
+      paperId: paper.id,
+      reviewId: review.id,
+      calibratedScore: ledger.calibratedScore ?? null,
+      intrinsicScore: ledger.computedScore ?? ledger.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? null,
+      calibrationMode: ledger.calibrationMode ?? null,
+      calibrationVersion: pairwiseCalibration.calibrationVersion ?? ledger.calibrationVersion ?? null,
+      promptHash,
+      calibratedAt: pairwiseCalibration.calibratedAt ?? null,
+      calibrationRationale: ledger.calibrationRationale ?? "",
+      cohorts: pairwiseCalibration.cohorts ?? [],
+      cohortMembers,
+      anchorsUsed: pairwiseCalibration.anchorsUsed ?? [],
+      anchorsDetail,
+      anchorOverrides: pairwiseCalibration.anchorOverrides ?? [],
+      mapping: { ...(pairwiseCalibration.mapping ?? {}), boundingAnchors },
+      mappingStrainWarnings: pairwiseCalibration.mappingStrainWarnings ?? [],
+      pairs,
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Calibration detail lookup failed");
     res.status(500).json({ error: err.message });
   }
 });

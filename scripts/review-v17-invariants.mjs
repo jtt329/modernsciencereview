@@ -138,7 +138,7 @@ async function assertKnownBenchmarkMetadataRegression() {
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
     import { benchmarkAnchorEligible, blindManuscriptText, calibrationAnchorEligible, clusteringScopeIncludesReview, detectReviewerDirectedText, extractMetadata, isAdminPinnedAnchorOverride, isCalibrationCompatibleReviewObject, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
-    import { calibrateCohorts, fitBradleyTerry, fitCohort } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/calibrationFit.ts"))};
+    import { calibrateCohorts, calibrateCohortsV2, fitBradleyTerry, fitCohort } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/calibrationFit.ts"))};
     import { reconcileSwappedJudgments } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pairwiseCalibration.ts"))};
     globalThis.__msrMetadataRegression = (async () => {
     // Sanitizer: reviewer-directed text must be neutralized and flagged.
@@ -290,6 +290,76 @@ async function assertKnownBenchmarkMetadataRegression() {
     }
     if (fit.anchorOverrides.length !== 0) {
       throw new Error("non-overridden anchors must not produce anchorOverrides entries");
+    }
+
+    // Calibration mapping v2: a 3-cohort fixture with pooled anchors. The
+    // mid-rank paper a2 (narrow loss to its cohort's 100-anchor) must map
+    // between its GLOBAL anchor neighbors (b2 at 70, b1 at 85), not be
+    // interpolated along its own cohort's extreme 30-100 anchor line; all
+    // pooled anchors must map exactly to their pinned values.
+    const v2Outcome = (aId, bId, margin) => ({
+      aId, bId, overall: "a", margin: margin ?? "decisive",
+      inputStrength: "a", constructionStrength: "a", outputStrength: "a",
+      positionInconsistent: false, weightFactor: 1,
+    });
+    const v2Fixture = [
+      {
+        cohortId: "cluster-a",
+        members: ["a1", "a2", "a3", "a4"],
+        anchors: [
+          { reviewId: "a1", frozenComputedScore: 100 },
+          { reviewId: "a4", frozenComputedScore: 30 },
+        ],
+        computedScores: { a1: 100, a2: 95, a3: 55, a4: 30 },
+        outcomes: [
+          v2Outcome("a1", "a2", "slight"),
+          v2Outcome("a1", "a3"), v2Outcome("a1", "a4"),
+          v2Outcome("a2", "a3"), v2Outcome("a2", "a4"),
+          v2Outcome("a3", "a4"),
+        ],
+      },
+      {
+        cohortId: "cluster-b",
+        members: ["b1", "b2", "b3"],
+        anchors: [
+          { reviewId: "b1", frozenComputedScore: 85 },
+          { reviewId: "b2", frozenComputedScore: 70 },
+          { reviewId: "b3", frozenComputedScore: 55 },
+        ],
+        computedScores: { b1: 85, b2: 70, b3: 55 },
+        outcomes: [v2Outcome("b1", "b2"), v2Outcome("b1", "b3"), v2Outcome("b2", "b3")],
+      },
+      {
+        cohortId: "cluster-c",
+        members: ["c1", "c2"],
+        anchors: [],
+        computedScores: { c1: 60, c2: 50 },
+        outcomes: [v2Outcome("c1", "c2", "clear")],
+      },
+    ];
+    const v2Result = calibrateCohortsV2(v2Fixture);
+    for (const [anchorId, pinned] of [["a1", 100], ["a4", 30], ["b1", 85], ["b2", 70], ["b3", 55]]) {
+      if (v2Result.finalScores[anchorId] !== pinned) {
+        throw new Error("v2 anchor " + anchorId + " did not map exactly to its pinned value: " + v2Result.finalScores[anchorId]);
+      }
+    }
+    if (!(v2Result.finalScores.a2 > 70 && v2Result.finalScores.a2 < 85)) {
+      throw new Error("v2 mid-rank paper was not mapped between its global anchor neighbors: " + v2Result.finalScores.a2);
+    }
+    const a2Bounds = (v2Result.boundingAnchorsByReview.a2 ?? []).map((anchor) => anchor.reviewId).sort().join(",");
+    if (a2Bounds !== "b1,b2") {
+      throw new Error("v2 bounding anchors for the mid-rank paper are wrong: " + a2Bounds);
+    }
+    if (!v2Result.mappingStrainWarnings.some((warning) => warning.cohortId === "cluster-a" && warning.gap > 8)) {
+      throw new Error("v2 strain warning did not fire for the sparse-anchor cohort");
+    }
+    const v2Unanchored = v2Result.fits.filter((fitResult) => fitResult.unanchored).map((fitResult) => fitResult.cohortId);
+    if (v2Unanchored.join(",") !== "cluster-c") {
+      throw new Error("v2 unanchored flag is wrong: " + v2Unanchored.join(","));
+    }
+    const v2Rerun = calibrateCohortsV2(v2Fixture);
+    if (JSON.stringify(v2Rerun.finalScores) !== JSON.stringify(v2Result.finalScores)) {
+      throw new Error("v2 calibration is not deterministic for identical inputs");
     }
     const storedV17ReviewWithoutRecognition = {
       reviewObjectVersion: "v17.1-diagnostic-only-halfpoint",
@@ -734,6 +804,20 @@ assert.match(calibrationFitSource, /"admin-pinned"/);
 assert.match(routesSource, /anchorOverride: isAdminPinnedAnchorOverride\(ledger\)/);
 assert.match(routesSource, /anchorOverrides,/);
 assert.doesNotMatch(routesSource, /cannot serve as calibration anchors/);
+
+// Calibration mapping v2: pooled global anchor curve.
+assert.match(calibrationFitSource, /export function calibrateCohortsV2/);
+assert.match(calibrationFitSource, /CALIBRATION_MODE_PAIRWISE_BT_V2 = "pairwise-bt-v2"/);
+assert.match(calibrationFitSource, /MAPPING_STRAIN_GAP_POINTS = 8/);
+assert.match(pairwiseEngineSource, /PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2"/);
+assert.match(routesSource, /calibrateCohortsV2\(cohortInputs\)/);
+assert.match(routesSource, /mappingStrainWarnings/);
+assert.match(routesSource, /boundingAnchors/);
+assert.match(routesSource, /COHORT_HETEROGENEITY_SPAN_POINTS = 55/);
+assert.match(routesSource, /cohortHeterogeneityWarnings/);
+assert.match(routesSource, /\/admin\/calibration\/cluster-labels/);
+assert.match(routesSource, /\/papers\/:id\/calibration/);
+assert.match(routesSource, /ledger\.benchmarkClusterId = label/);
 assert.match(dbPapersSchemaSource, /calibration_pairs/);
 assert.match(dbPapersSchemaSource, /unique_calibration_pair/);
 
