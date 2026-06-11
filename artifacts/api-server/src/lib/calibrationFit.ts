@@ -421,6 +421,21 @@ export function calibrateCohorts(inputs: CalibrationCohortInput[]): {
 // ---------------------------------------------------------------------------
 
 export const CALIBRATION_MODE_PAIRWISE_BT_V2 = "pairwise-bt-v2";
+
+// Publish-safety tripwire: a calibrated score is held for human review
+// (intrinsic score stays public) when it moves more than this many points
+// from the intrinsic score, or when the fit emitted a mapping strain
+// warning for the paper's cohort. Everything else publishes automatically.
+export const CALIBRATION_TRIPWIRE_DELTA_POINTS = 12;
+
+export function calibrationTripwireTriggered(input: {
+  calibratedScore: number;
+  computedScore: number;
+  cohortHasMappingStrainWarning: boolean;
+}): boolean {
+  if (Math.abs(input.calibratedScore - input.computedScore) > CALIBRATION_TRIPWIRE_DELTA_POINTS) return true;
+  return input.cohortHasMappingStrainWarning;
+}
 // Adjacent BT ranks mapped further apart than this many points indicate
 // sparse-anchor geometry worth human attention (diagnostic, not an error).
 export const MAPPING_STRAIN_GAP_POINTS = 8;

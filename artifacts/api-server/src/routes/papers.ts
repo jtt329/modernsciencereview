@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable, calibrationPairsTable } from "@workspace/db";
+import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable, calibrationPairsTable, sandboxReviewsTable, realizedYieldAssessmentsTable } from "@workspace/db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 import OpenAI from "openai";
@@ -46,6 +46,7 @@ import {
   type ExtractedPaperMetadata,
 } from "../lib/reviewEngineCompat";
 import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
+import { REALIZED_YIELD_V1_PROMPT } from "../lib/prompts/realizedYieldV1";
 import { stripPdfIdentifyingMetadataSafe } from "../lib/pdfBlinding";
 import {
   PAIRWISE_CALIBRATION_PROMPT_HASH,
@@ -61,7 +62,9 @@ import {
 } from "../lib/pairwiseCalibration";
 import {
   CALIBRATION_MODE_PAIRWISE_BT_V2,
+  CALIBRATION_TRIPWIRE_DELTA_POINTS,
   calibrateCohortsV2,
+  calibrationTripwireTriggered,
   type CalibrationCohortInput,
   type CalibrationPairOutcome,
   type CohortFitResult,
@@ -3492,6 +3495,7 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
     const { fits, finalScores, pooledAnchors, mappingStrainWarnings, boundingAnchorsByReview } =
       calibrateCohortsV2(cohortInputs);
     const fitByCohort = new Map<string, CohortFitResult>(fits.map((fit) => [fit.cohortId, fit]));
+    const calibrationHolds: { reviewId: string; paperId: string; intrinsicScore: number; calibratedScore: number; reason: string }[] = [];
 
     let updatedReviews = 0;
     for (const [reviewId, calibratedScore] of Object.entries(finalScores).sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
@@ -3542,6 +3546,29 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
           : "No anchors in cohort; level set by virtual median anchor (unanchored).",
       ].join(" ");
 
+      // Publish-safety tripwire: large intrinsic-to-calibrated movement or
+      // strain in the paper's cohort holds the calibrated score for human
+      // approval; the intrinsic score stays public meanwhile.
+      const intrinsicScoreForReview = Math.round(Number(
+        ledger.computedScore ?? ledger.intrinsicScore ?? reviewRow.overallIntrinsicScore ?? reviewRow.score ?? 0,
+      ));
+      const cohortStrainHit = [...fitByCohort.values()].some((fit) =>
+        reviewId in fit.calibratedScores &&
+        mappingStrainWarnings.some((warning) => warning.cohortId === fit.cohortId));
+      const calibrationUnderReview = calibrationTripwireTriggered({
+        calibratedScore,
+        computedScore: intrinsicScoreForReview,
+        cohortHasMappingStrainWarning: cohortStrainHit,
+      });
+      const calibrationHoldReason = calibrationUnderReview
+        ? [
+            Math.abs(calibratedScore - intrinsicScoreForReview) > CALIBRATION_TRIPWIRE_DELTA_POINTS
+              ? `calibrated score moved ${Math.abs(calibratedScore - intrinsicScoreForReview)} points from intrinsic (limit ${CALIBRATION_TRIPWIRE_DELTA_POINTS})`
+              : "",
+            cohortStrainHit ? "mapping strain warning in this paper's cohort" : "",
+          ].filter(Boolean).join("; ")
+        : null;
+      const publicScore = calibrationUnderReview ? intrinsicScoreForReview : calibratedScore;
       const anchorDetailById = new Map(cohortInputs
         .flatMap((cohort) => cohort.anchors)
         .map((anchor) => [anchor.reviewId, anchor]));
@@ -3555,6 +3582,9 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
         ...ledger,
         calibratedScore,
         rawCalibratedScore: calibratedScore,
+        calibrationUnderReview,
+        calibrationHoldReason,
+        calibrationApprovedAt: calibrationUnderReview ? null : (ledger.calibrationApprovedAt ?? null),
         calibrationMode: CALIBRATION_MODE_PAIRWISE_BT_V2,
         calibrationVersion: PAIRWISE_CALIBRATION_VERSION,
         comparatorCalibrationStatus: "applied",
@@ -3589,11 +3619,20 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
       };
 
       await db.update(reviewsTable)
-        .set({ score: calibratedScore, coverageLedgerJson: JSON.stringify(updatedLedger) })
+        .set({ score: publicScore, coverageLedgerJson: JSON.stringify(updatedLedger) })
         .where(eq(reviewsTable.id, reviewId));
       await db.update(papersTable)
-        .set({ score: calibratedScore })
+        .set({ score: publicScore })
         .where(eq(papersTable.id, paperId));
+      if (calibrationUnderReview) {
+        calibrationHolds.push({
+          reviewId,
+          paperId,
+          intrinsicScore: intrinsicScoreForReview,
+          calibratedScore,
+          reason: calibrationHoldReason ?? "",
+        });
+      }
       updatedReviews += 1;
     }
 
@@ -3605,6 +3644,7 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
       cachedPairs: plan.plannedPairs.length - plan.newPairs.length,
       failedPairs,
       updatedReviews,
+      calibrationHolds,
       pooledAnchors,
       mappingStrainWarnings,
       cohorts: fits.map((fit) => ({
@@ -3667,6 +3707,402 @@ router.post("/admin/reviews/:reviewId/calibration-flags", async (req, res) => {
     });
   } catch (err: any) {
     logger.error({ err }, "Calibration flags update failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function sandboxSubscores(reviewJson: string | null) {
+  const ledger = parseJsonObject(reviewJson);
+  return {
+    inputStrengthScore: ledger?.inputStrengthScore ?? null,
+    constructionStrengthScore: ledger?.constructionStrengthScore ?? null,
+    outputStrengthScore: ledger?.outputStrengthScore ?? null,
+    computedScore: ledger?.computedScore ?? ledger?.intrinsicScore ?? null,
+  };
+}
+
+// Resolves the manuscript text a sandbox run reviews: an explicit override,
+// else the stored blinded snapshot (exactly what the canonical review saw),
+// else the paper's stored content when it is real text rather than the
+// "[PDF] <title>" stub written for PDF uploads.
+function resolveSandboxManuscriptText(
+  paper: typeof papersTable.$inferSelect,
+  review: typeof reviewsTable.$inferSelect | null,
+  explicitText: unknown,
+): { text: string; source: string } | null {
+  if (typeof explicitText === "string" && explicitText.trim().length > 200) {
+    return { text: explicitText, source: "request-body" };
+  }
+  const ledger = review ? parseJsonObject(review.coverageLedgerJson) : null;
+  const snapshot = ledger?.reviewInputSnapshot && typeof ledger.reviewInputSnapshot === "object"
+    ? ledger.reviewInputSnapshot as Record<string, unknown>
+    : null;
+  if (typeof snapshot?.blindedReviewText === "string" && snapshot.blindedReviewText.length > 200) {
+    // Prepend a placeholder line so re-blinding is a no-op: the blinder's
+    // pre-abstract cut (or title redaction) consumes it instead of eating
+    // the stored text's own first line.
+    return { text: `[TITLE REDACTED]\n\n${snapshot.blindedReviewText}`, source: "stored-blinded-snapshot" };
+  }
+  if (typeof paper.content === "string" && !paper.content.startsWith("[PDF]") && paper.content.length > 2000) {
+    return { text: paper.content, source: "paper-content" };
+  }
+  return null;
+}
+
+// POST /api/admin/sandbox-reviews — run a paper's stored blinded text
+// through an arbitrary prompt. The result lives only in sandbox_reviews:
+// never in feeds, public exports, clustering, or calibration.
+router.post("/admin/sandbox-reviews", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const paperId = typeof body.paperId === "string" ? body.paperId.trim() : "";
+    const label = typeof body.label === "string" && body.label.trim() ? body.label.trim() : "unlabeled";
+    const promptText = typeof body.promptText === "string" ? body.promptText : "";
+    if (!paperId || promptText.trim().length < 200) {
+      res.status(400).json({ error: "paperId and a full promptText (>= 200 chars) are required." });
+      return;
+    }
+    const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, paperId));
+    if (!paper) { res.status(404).json({ error: "Paper not found" }); return; }
+    const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paperId));
+    const resolved = resolveSandboxManuscriptText(paper, review ?? null, body.manuscriptText);
+    if (!resolved) {
+      res.status(422).json({
+        error: "No stored manuscript text for this paper. The blinded snapshot was not stored (STORE_FULL_REVIEW_INPUT_SNAPSHOTS) and the paper content is a PDF stub; pass manuscriptText explicitly.",
+      });
+      return;
+    }
+    const promptHash = createHash("sha256").update(promptText).digest("hex").slice(0, 16);
+    const { metadata, reviewValues } = await generateCompatReview(resolved.text, "gemini", promptText, {
+      reviewMode: "benchmark-ingestion",
+    });
+    const [inserted] = await db.insert(sandboxReviewsTable).values({
+      paperId,
+      label,
+      promptHash,
+      promptText,
+      modelName: metadata.modelName,
+      reviewJson: reviewValues.coverageLedgerJson ?? "{}",
+    }).returning();
+    res.json({
+      sandboxReview: {
+        id: inserted.id,
+        paperId,
+        label,
+        promptHash,
+        manuscriptTextSource: resolved.source,
+        createdAt: inserted.createdAt,
+        ...sandboxSubscores(inserted.reviewJson),
+      },
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Sandbox review failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/sandbox-reviews?paperId= — sandbox runs with the paper's
+// canonical subscores for side-by-side comparison.
+router.get("/admin/sandbox-reviews", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const paperId = typeof req.query.paperId === "string" ? req.query.paperId.trim() : "";
+    const rows = paperId
+      ? await db.select().from(sandboxReviewsTable).where(eq(sandboxReviewsTable.paperId, paperId)).orderBy(desc(sandboxReviewsTable.createdAt))
+      : await db.select().from(sandboxReviewsTable).orderBy(desc(sandboxReviewsTable.createdAt));
+    const canonical = paperId
+      ? await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paperId))
+      : [];
+    const canonicalLedger = canonical[0] ? parseJsonObject(canonical[0].coverageLedgerJson) : null;
+    res.json({
+      canonical: canonicalLedger ? {
+        promptVersion: canonicalLedger.promptVersion ?? null,
+        inputStrengthScore: canonicalLedger.inputStrengthScore ?? null,
+        constructionStrengthScore: canonicalLedger.constructionStrengthScore ?? null,
+        outputStrengthScore: canonicalLedger.outputStrengthScore ?? null,
+        computedScore: canonicalLedger.computedScore ?? canonicalLedger.intrinsicScore ?? null,
+      } : null,
+      sandboxReviews: rows.map((row) => ({
+        id: row.id,
+        paperId: row.paperId,
+        label: row.label,
+        promptHash: row.promptHash,
+        modelName: row.modelName,
+        createdAt: row.createdAt,
+        ...sandboxSubscores(row.reviewJson),
+      })),
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Sandbox review listing failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/sandbox-reviews/export — the dedicated sandbox export
+// (full stored review objects; the public export never includes these).
+router.get("/admin/sandbox-reviews/export", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const rows = await db.select().from(sandboxReviewsTable).orderBy(desc(sandboxReviewsTable.createdAt));
+    res.json({
+      sandboxReviews: rows.map((row) => ({
+        id: row.id,
+        paperId: row.paperId,
+        label: row.label,
+        promptHash: row.promptHash,
+        promptText: row.promptText,
+        modelName: row.modelName,
+        createdAt: row.createdAt,
+        review: parseJsonObject(row.reviewJson),
+      })),
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Sandbox export failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const REALIZED_YIELD_PROMPT_HASH = createHash("sha256").update(REALIZED_YIELD_V1_PROMPT).digest("hex").slice(0, 16);
+
+const realizedYieldJsonSchema = {
+  type: "object",
+  required: ["realizedYieldScore", "trajectoryAssessment", "rationale", "evidence", "refutationNoted", "confidence"],
+  additionalProperties: false,
+  properties: {
+    realizedYieldScore: { type: "number" },
+    trajectoryAssessment: { type: "string", enum: ["ahead", "typical", "behind"] },
+    rationale: { type: "string" },
+    evidence: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["construction", "terminalFirmness", "loadBearingness", "evidence"],
+        additionalProperties: false,
+        properties: {
+          construction: { type: "string" },
+          terminalFirmness: { type: "string", enum: ["F1", "F2", "F3", "F4", "refuted"] },
+          loadBearingness: { type: "string", enum: ["essential", "supporting", "incidental"] },
+          evidence: { type: "string" },
+        },
+      },
+    },
+    refutationNoted: { type: "boolean" },
+    confidence: { type: "number" },
+  },
+};
+
+function realizedYieldPublicationDate(paper: typeof papersTable.$inferSelect): string | null {
+  const metadata = paper.dateMetadata as Record<string, string> | null;
+  const candidate = metadata?.originalPublicationDateBestGuess || metadata?.journalPublicationDate || metadata?.arxivFirstSubmissionDate || "";
+  return candidate && Number.isFinite(Date.parse(candidate)) ? candidate : null;
+}
+
+// Runs one realized-yield assessment and appends a row. Each row logs
+// (age, paperType, yield) so empirical age-yield curves accumulate;
+// parametric scaling may be fit later from that data, never assumed now.
+async function runRealizedYieldAssessment(paper: typeof papersTable.$inferSelect) {
+  const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
+  const ledger = review ? parseJsonObject(review.coverageLedgerJson) : null;
+  const publicationDate = realizedYieldPublicationDate(paper);
+  const paperAgeYears = publicationDate
+    ? Math.max(0, (Date.now() - Date.parse(publicationDate)) / (365.25 * 24 * 3600 * 1000))
+    : null;
+  const previousRows = await db.select().from(realizedYieldAssessmentsTable)
+    .where(eq(realizedYieldAssessmentsTable.paperId, paper.id))
+    .orderBy(desc(realizedYieldAssessmentsTable.assessedAt));
+  const previousMax = previousRows.reduce((max, row) => Math.max(max, row.realizedYieldScore), 0);
+
+  const response = await (geminiAI.models.generateContent as any)({
+    model: GEMINI_META_MODEL,
+    contents: [{
+      role: "user",
+      parts: [{
+        text: JSON.stringify({
+          title: paper.title,
+          authors: paper.paperAuthors,
+          publicationDate,
+          paperAgeYears: paperAgeYears != null ? Math.round(paperAgeYears * 10) / 10 : null,
+          paperType: ledger?.paperType ?? null,
+          centralClaim: ledger?.centralClaim ?? null,
+          inputConstructionOutputAssessment: ledger?.inputConstructionOutputAssessment ?? null,
+          previousAssessment: previousRows[0]
+            ? { realizedYieldScore: previousRows[0].realizedYieldScore, assessedAt: previousRows[0].assessedAt }
+            : null,
+        }, null, 2),
+      }],
+    }],
+    config: {
+      systemInstruction: REALIZED_YIELD_V1_PROMPT,
+      responseMimeType: "application/json",
+      responseJsonSchema: realizedYieldJsonSchema,
+      temperature: 0.2,
+      maxOutputTokens: 8192,
+    },
+  });
+  const parsed = parseGeminiJsonResponse(response.text ?? "") as Record<string, any>;
+  const modelScore = Math.round(Math.max(0, Math.min(100, Number(parsed.realizedYieldScore ?? 0))));
+  const refutationNoted = parsed.refutationNoted === true;
+  // Confirmed yield is monotonically non-decreasing across re-assessments
+  // unless a central claim was actually refuted.
+  const realizedYieldScore = refutationNoted ? modelScore : Math.max(modelScore, previousMax);
+  const trajectoryAssessment = ["ahead", "typical", "behind"].includes(parsed.trajectoryAssessment)
+    ? parsed.trajectoryAssessment
+    : "typical";
+
+  const [inserted] = await db.insert(realizedYieldAssessmentsTable).values({
+    paperId: paper.id,
+    realizedYieldScore,
+    trajectoryAssessment,
+    rationale: typeof parsed.rationale === "string" ? parsed.rationale : "",
+    evidenceJson: Array.isArray(parsed.evidence) ? parsed.evidence : [],
+    publicationDate,
+    paperAgeYears: paperAgeYears != null ? String(Math.round(paperAgeYears * 10) / 10) : null,
+    paperType: typeof ledger?.paperType === "string" ? ledger.paperType : null,
+    promptHash: REALIZED_YIELD_PROMPT_HASH,
+    modelName: GEMINI_META_MODEL,
+    assessmentJson: parsed,
+  }).returning();
+  return inserted;
+}
+
+function realizedYieldForResponse(row: typeof realizedYieldAssessmentsTable.$inferSelect) {
+  return {
+    assessed: true,
+    paperId: row.paperId,
+    realizedYieldScore: row.realizedYieldScore,
+    trajectoryAssessment: row.trajectoryAssessment,
+    rationale: row.rationale,
+    evidence: row.evidenceJson ?? [],
+    publicationDate: row.publicationDate,
+    paperAgeYears: row.paperAgeYears != null ? Number(row.paperAgeYears) : null,
+    paperType: row.paperType,
+    promptHash: row.promptHash,
+    assessedAt: row.assessedAt,
+  };
+}
+
+// POST /api/admin/papers/:id/realized-yield — run one hindsight-permitted
+// realized-yield assessment. Separate axis: never blended with intrinsic
+// or calibrated scores, never anchor-eligible, excluded from calibration.
+router.post("/admin/papers/:id/realized-yield", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, req.params.id));
+    if (!paper) { res.status(404).json({ error: "Paper not found" }); return; }
+    const row = await runRealizedYieldAssessment(paper);
+    res.json({ realizedYield: realizedYieldForResponse(row) });
+  } catch (err: any) {
+    logger.error({ err }, "Realized yield assessment failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/realized-yield/batch — assess every reviewed paper.
+router.post("/admin/realized-yield/batch", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+    const reviews = await db.select().from(reviewsTable);
+    const reviewedPaperIds = new Set(reviews.map((review) => review.paperId));
+    const targets = papers.filter((paper) => reviewedPaperIds.has(paper.id));
+    const results = await runWithConcurrency(targets, 2, (paper) => runRealizedYieldAssessment(paper));
+    const assessed = results.filter((entry) => entry.result).map((entry) => realizedYieldForResponse(entry.result!));
+    const failures = results.filter((entry) => entry.error).map((entry) => ({
+      paperId: entry.item.id,
+      title: entry.item.title,
+      error: String((entry.error as any)?.message ?? entry.error),
+    }));
+    res.json({ assessedCount: assessed.length, failures, assessed });
+  } catch (err: any) {
+    logger.error({ err }, "Realized yield batch failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/papers/:id/realized-yield — latest assessment for the chip.
+router.get("/papers/:id/realized-yield", async (req, res) => {
+  try {
+    const [latest] = await db.select().from(realizedYieldAssessmentsTable)
+      .where(eq(realizedYieldAssessmentsTable.paperId, req.params.id))
+      .orderBy(desc(realizedYieldAssessmentsTable.assessedAt))
+      .limit(1);
+    if (!latest) { res.json({ assessed: false }); return; }
+    res.json(realizedYieldForResponse(latest));
+  } catch (err: any) {
+    logger.error({ err }, "Realized yield lookup failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/admin/calibration/holds — reviews whose calibrated score is
+// held by the publish-safety tripwire (intrinsic score shown publicly).
+router.get("/admin/calibration/holds", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+    const reviews = await db.select().from(reviewsTable);
+    const paperById = new Map(papers.map((paper) => [paper.id, paper]));
+    const holds = reviews.flatMap((review) => {
+      const ledger = parseJsonObject(review.coverageLedgerJson);
+      if (!ledger || ledger.calibrationUnderReview !== true) return [];
+      const paper = paperById.get(review.paperId);
+      return [{
+        reviewId: review.id,
+        paperId: review.paperId,
+        title: paper?.title ?? null,
+        intrinsicScore: ledger.computedScore ?? ledger.intrinsicScore ?? null,
+        calibratedScore: ledger.calibratedScore ?? null,
+        reason: ledger.calibrationHoldReason ?? "",
+        calibratedAt: ledger.pairwiseCalibration?.calibratedAt ?? null,
+      }];
+    });
+    res.json({ holds });
+  } catch (err: any) {
+    logger.error({ err }, "Calibration holds listing failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/calibration/holds/:reviewId — one-tap approve/hold.
+// Approval publishes the calibrated score; hold keeps the intrinsic score
+// public and the review in the queue.
+router.post("/admin/calibration/holds/:reviewId", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const action = req.body?.action === "approve" ? "approve" : req.body?.action === "hold" ? "hold" : null;
+    if (!action) { res.status(400).json({ error: "action must be \"approve\" or \"hold\"" }); return; }
+    const [reviewRow] = await db.select().from(reviewsTable).where(eq(reviewsTable.id, req.params.reviewId));
+    if (!reviewRow) { res.status(404).json({ error: "Review not found" }); return; }
+    const ledger = parseJsonObject(reviewRow.coverageLedgerJson);
+    if (!ledger || typeof ledger.calibratedScore !== "number") {
+      res.status(400).json({ error: "Review has no calibrated score to approve." });
+      return;
+    }
+    if (action === "approve") {
+      ledger.calibrationUnderReview = false;
+      ledger.calibrationApprovedAt = new Date().toISOString();
+      await db.update(reviewsTable)
+        .set({ score: ledger.calibratedScore, coverageLedgerJson: JSON.stringify(ledger) })
+        .where(eq(reviewsTable.id, reviewRow.id));
+      await db.update(papersTable)
+        .set({ score: ledger.calibratedScore })
+        .where(eq(papersTable.id, reviewRow.paperId));
+    } else {
+      ledger.calibrationUnderReview = true;
+      ledger.calibrationHeldAt = new Date().toISOString();
+      await db.update(reviewsTable)
+        .set({ coverageLedgerJson: JSON.stringify(ledger) })
+        .where(eq(reviewsTable.id, reviewRow.id));
+    }
+    res.json({
+      reviewId: reviewRow.id,
+      action,
+      calibrationUnderReview: ledger.calibrationUnderReview === true,
+      publishedScore: action === "approve" ? ledger.calibratedScore : ledger.computedScore ?? null,
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Calibration hold action failed");
     res.status(500).json({ error: err.message });
   }
 });
@@ -3793,6 +4229,14 @@ router.get("/papers/export", async (req, res) => {
     const papers = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
     const reviews = await db.select().from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
+    // Latest realized-yield assessment per paper: the intrinsic-vs-realized
+    // scatter across the benchmark is the instrument-validation dataset.
+    const realizedYieldRows = await db.select().from(realizedYieldAssessmentsTable)
+      .orderBy(desc(realizedYieldAssessmentsTable.assessedAt));
+    const latestRealizedYieldByPaper = new Map<string, typeof realizedYieldAssessmentsTable.$inferSelect>();
+    for (const row of realizedYieldRows) {
+      if (!latestRealizedYieldByPaper.has(row.paperId)) latestRealizedYieldByPaper.set(row.paperId, row);
+    }
     const persistedFailedAttempts = includeFailedAttempts
       ? (requestedBatchRunId
           ? await db.select()
@@ -3889,6 +4333,11 @@ router.get("/papers/export", async (req, res) => {
           calibrationAnchor: coverageLedger.calibrationAnchor === true,
           bridgeCohortId: coverageLedger.bridgeCohortId ?? null,
           pairwiseCalibration: coverageLedger.pairwiseCalibration ?? null,
+          calibrationUnderReview: coverageLedger.calibrationUnderReview === true,
+          calibrationHoldReason: coverageLedger.calibrationHoldReason ?? null,
+          realizedYield: latestRealizedYieldByPaper.has(p.id)
+            ? realizedYieldForResponse(latestRealizedYieldByPaper.get(p.id)!)
+            : null,
           comparatorIds: coverageLedger.comparatorIds ?? [],
           targetOnly: coverageLedger.targetOnly ?? false,
           existingPapersModified: coverageLedger.existingPapersModified ?? false,

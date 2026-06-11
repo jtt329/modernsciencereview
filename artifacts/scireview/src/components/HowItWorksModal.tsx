@@ -16,8 +16,8 @@ const STEPS = [
   {
     icon: Brain,
     color: 'bg-violet-50 text-violet-600 border-violet-100',
-    title: 'The system runs multiple blind reviews',
-    desc: 'The manuscript is anonymized and reviewed several times independently. The system then compares those reviews, looks for agreement and disagreement, and creates one combined result.',
+    title: 'The system runs multiple identity-blind reviews',
+    desc: 'The manuscript is stripped of identifying information before review — an identity-blind protocol, not a guarantee of non-recognition: the model discloses when it nevertheless recognizes a work, recognition is flagged on the review, and recognition rates are published in the audit export. Each manuscript is reviewed several times independently and the system combines those reviews into one result.',
   },
   {
     icon: Globe,

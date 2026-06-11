@@ -43,13 +43,13 @@ const reviewModeCopy: Record<ReviewMode, { label: string; shortLabel: string; de
   'benchmark-ingestion': {
     label: 'Benchmark ingestion',
     shortLabel: 'Gemini Pro x2 + blind adjudicator',
-    description: 'Blind intrinsic review only. Use this for building the benchmark suite before calibration backfill.',
+    description: 'Identity-blind intrinsic review only (the manuscript is stripped of identifying information; the model discloses if it nevertheless recognizes the work). Use this for building the benchmark suite before calibration backfill.',
     processing: 'Reviewing with Gemini Pro x2 + blind adjudicator...',
   },
   'normal-review': {
     label: 'Normal calibrated review',
     shortLabel: 'Gemini Pro x2 + blind adjudicator + calibration',
-    description: 'Blind review first, then calibrate against nearby benchmark papers if available.',
+    description: 'Identity-blind review first, then calibrate against nearby benchmark papers if available.',
     processing: 'Reviewing with Gemini Pro x2 + blind adjudicator + calibration...',
   },
 };

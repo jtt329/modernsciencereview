@@ -148,6 +148,40 @@ export const calibrationPairsTable = pgTable("calibration_pairs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [unique("unique_calibration_pair").on(t.reviewIdA, t.reviewIdB, t.promptHash)]);
 
+// Prompt-sandbox reviews: a paper's stored blinded text run through an
+// arbitrary prompt. Never joined into feeds, public exports, clustering,
+// or calibration — only the dedicated sandbox endpoints read this table.
+export const sandboxReviewsTable = pgTable("sandbox_reviews", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  paperId: varchar("paper_id").notNull().references(() => papersTable.id, { onDelete: "cascade" }),
+  label: varchar("label").notNull(),
+  promptHash: varchar("prompt_hash").notNull(),
+  promptText: text("prompt_text").notNull(),
+  modelName: varchar("model_name"),
+  reviewJson: text("review_json").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Realized Yield layer: separate, hindsight-permitted axis. Each
+// assessment appends a row so empirical age-yield curves accumulate;
+// never blended with intrinsic or calibrated scores, never anchor-
+// eligible, excluded from calibration.
+export const realizedYieldAssessmentsTable = pgTable("realized_yield_assessments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  paperId: varchar("paper_id").notNull().references(() => papersTable.id, { onDelete: "cascade" }),
+  realizedYieldScore: integer("realized_yield_score").notNull(),
+  trajectoryAssessment: varchar("trajectory_assessment").notNull(), // ahead | typical | behind
+  rationale: text("rationale").notNull().default(""),
+  evidenceJson: jsonb("evidence_json").$type<unknown[] | null>(),
+  publicationDate: varchar("publication_date"),
+  paperAgeYears: numeric("paper_age_years"),
+  paperType: varchar("paper_type"),
+  promptHash: varchar("prompt_hash"),
+  modelName: varchar("model_name"),
+  assessmentJson: jsonb("assessment_json").$type<Record<string, unknown> | null>(),
+  assessedAt: timestamp("assessed_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Paper = typeof papersTable.$inferSelect;
 export type InsertPaper = typeof papersTable.$inferInsert;
 export type Review = typeof reviewsTable.$inferSelect;
@@ -158,3 +192,7 @@ export type ReviewAttempt = typeof reviewAttemptsTable.$inferSelect;
 export type InsertReviewAttempt = typeof reviewAttemptsTable.$inferInsert;
 export type CalibrationPair = typeof calibrationPairsTable.$inferSelect;
 export type InsertCalibrationPair = typeof calibrationPairsTable.$inferInsert;
+export type SandboxReview = typeof sandboxReviewsTable.$inferSelect;
+export type InsertSandboxReview = typeof sandboxReviewsTable.$inferInsert;
+export type RealizedYieldAssessment = typeof realizedYieldAssessmentsTable.$inferSelect;
+export type InsertRealizedYieldAssessment = typeof realizedYieldAssessmentsTable.$inferInsert;

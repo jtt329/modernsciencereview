@@ -23,6 +23,9 @@ const pdfParseTypesPath = join(root, "artifacts/api-server/src/types/pdf-parse.d
 
 const promptSource = readFileSync(promptPath, "utf8");
 const promptV18Source = readFileSync(promptV18Path, "utf8");
+const promptV19Source = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/diagnosticOnlyV19.ts"), "utf8");
+const realizedYieldPromptSource = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/realizedYieldV1.ts"), "utf8");
+const howItWorksSource = readFileSync(join(root, "artifacts/scireview/src/components/HowItWorksModal.tsx"), "utf8");
 const pairwisePromptSource = readFileSync(pairwisePromptPath, "utf8");
 const pairwiseEngineSource = readFileSync(pairwiseEnginePath, "utf8");
 const calibrationFitSource = readFileSync(calibrationFitPath, "utf8");
@@ -138,7 +141,7 @@ async function assertKnownBenchmarkMetadataRegression() {
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
     import { benchmarkAnchorEligible, blindManuscriptText, calibrationAnchorEligible, clusteringScopeIncludesReview, detectReviewerDirectedText, extractMetadata, isAdminPinnedAnchorOverride, isCalibrationCompatibleReviewObject, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
-    import { calibrateCohorts, calibrateCohortsV2, fitBradleyTerry, fitCohort } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/calibrationFit.ts"))};
+    import { calibrateCohorts, calibrateCohortsV2, calibrationTripwireTriggered, fitBradleyTerry, fitCohort } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/calibrationFit.ts"))};
     import { reconcileSwappedJudgments } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pairwiseCalibration.ts"))};
     globalThis.__msrMetadataRegression = (async () => {
     // Sanitizer: reviewer-directed text must be neutralized and flagged.
@@ -360,6 +363,20 @@ async function assertKnownBenchmarkMetadataRegression() {
     const v2Rerun = calibrateCohortsV2(v2Fixture);
     if (JSON.stringify(v2Rerun.finalScores) !== JSON.stringify(v2Result.finalScores)) {
       throw new Error("v2 calibration is not deterministic for identical inputs");
+    }
+
+    // Publish-safety tripwire.
+    if (!calibrationTripwireTriggered({ calibratedScore: 80, computedScore: 60, cohortHasMappingStrainWarning: false })) {
+      throw new Error("tripwire must fire on a 20-point intrinsic-to-calibrated move");
+    }
+    if (calibrationTripwireTriggered({ calibratedScore: 72, computedScore: 60, cohortHasMappingStrainWarning: false })) {
+      throw new Error("tripwire must not fire at exactly the 12-point limit");
+    }
+    if (!calibrationTripwireTriggered({ calibratedScore: 62, computedScore: 60, cohortHasMappingStrainWarning: true })) {
+      throw new Error("tripwire must fire on a cohort mapping strain warning");
+    }
+    if (calibrationTripwireTriggered({ calibratedScore: 62, computedScore: 60, cohortHasMappingStrainWarning: false })) {
+      throw new Error("tripwire fired on a small move with no strain warning");
     }
     const storedV17ReviewWithoutRecognition = {
       reviewObjectVersion: "v17.1-diagnostic-only-halfpoint",
@@ -804,6 +821,55 @@ assert.match(calibrationFitSource, /"admin-pinned"/);
 assert.match(routesSource, /anchorOverride: isAdminPinnedAnchorOverride\(ledger\)/);
 assert.match(routesSource, /anchorOverrides,/);
 assert.doesNotMatch(routesSource, /cannot serve as calibration anchors/);
+
+// v19 draft exists with all five deltas but is NOT active: the engine must
+// keep importing the v18 module until the sandbox test protocol passes.
+assert.match(promptV19Source, /DRAFT v19\.0 .* NOT ACTIVE/);
+assert.match(promptV19Source, /v19\.0 COMPUTED ICO HALF-POINT/);
+assert.match(promptV19Source, /Output firmness/);
+assert.match(promptV19Source, /F1\. Directly measured phenomena or data\./);
+assert.match(promptV19Source, /F4\. Constructs internal to untested frameworks/);
+assert.match(promptV19Source, /must not score\s+as if it established a fact about nature/);
+assert.match(promptV19Source, /Construction firmness/);
+assert.match(promptV19Source, /RIGOR \(proven theorem > checked derivation > consistent heuristic >\s*\nconjecture\)/);
+assert.match(promptV19Source, /FORCEDNESS \(uniquely determined by the inputs >/);
+assert.match(promptV19Source, /Do not equate polish with\s+strength/);
+assert.match(promptV19Source, /by empirical confirmation\s+status alone/);
+assert.match(promptV19Source, /Apply this\s+grading symmetrically to all research programs/);
+assert.match(promptV19Source, /Popularity within the theoretical literature is not\s+evidence; do not import its prestige hierarchy\./);
+assert.match(promptV19Source, /Never print C1-C5\s+or F1-F4 labels in scientificReview/);
+assert.doesNotMatch(engineSource, /diagnosticOnlyV19/);
+
+// Prompt sandbox: separate table and admin routes only; the public export
+// path never reads sandbox_reviews.
+assert.match(dbPapersSchemaSource, /sandbox_reviews/);
+assert.match(routesSource, /\/admin\/sandbox-reviews/);
+assert.match(routesSource, /\/admin\/sandbox-reviews\/export/);
+assert.match(routesSource, /function resolveSandboxManuscriptText/);
+
+// Calibration tripwire: publish-safety hold for large movement or strain.
+assert.match(calibrationFitSource, /CALIBRATION_TRIPWIRE_DELTA_POINTS = 12/);
+assert.match(calibrationFitSource, /export function calibrationTripwireTriggered/);
+assert.match(routesSource, /calibrationUnderReview/);
+assert.match(routesSource, /score: publicScore/);
+assert.match(routesSource, /\/admin\/calibration\/holds/);
+assert.match(routesSource, /calibrationApprovedAt/);
+
+// Realized Yield layer: separate hindsight axis, never blended.
+assert.match(dbPapersSchemaSource, /realized_yield_assessments/);
+assert.match(realizedYieldPromptSource, /REALIZED_YIELD_V1_PROMPT/);
+assert.match(realizedYieldPromptSource, /NOT citations, activity, volume of literature, or fame/);
+assert.match(realizedYieldPromptSource, /monotonically non-decreasing/);
+assert.match(realizedYieldPromptSource, /"ahead \| typical \| behind"/);
+assert.match(realizedYieldPromptSource, /Causal-chain credit\s+only/);
+assert.match(routesSource, /\/admin\/papers\/:id\/realized-yield/);
+assert.match(routesSource, /\/admin\/realized-yield\/batch/);
+assert.match(routesSource, /\/papers\/:id\/realized-yield/);
+assert.match(routesSource, /realizedYield: latestRealizedYieldByPaper\.has\(p\.id\)/);
+
+// Site copy honesty: identity-blind protocol claim.
+assert.match(howItWorksSource, /identity-blind/);
+assert.match(howItWorksSource, /discloses when it nevertheless recognizes a work/);
 
 // Calibration mapping v2: pooled global anchor curve.
 assert.match(calibrationFitSource, /export function calibrateCohortsV2/);

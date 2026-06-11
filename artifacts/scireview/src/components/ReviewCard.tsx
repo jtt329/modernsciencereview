@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Sparkles, CheckCircle2, Award, Heart, Info, X, Target, BookOpen, Shield, AlertTriangle, Microscope, TrendingUp, GitBranch, ListChecks, BrainCircuit } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -569,6 +569,24 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const [clusterLabelDraft, setClusterLabelDraft] = useState('');
   const [clusterLabelOverride, setClusterLabelOverride] = useState<string | null>(null);
   const [clusterReassignBusy, setClusterReassignBusy] = useState(false);
+  const [sandboxOpen, setSandboxOpen] = useState(false);
+  const [sandboxRuns, setSandboxRuns] = useState<any[] | null>(null);
+  const [sandboxCanonical, setSandboxCanonical] = useState<any | null>(null);
+  const [sandboxLabel, setSandboxLabel] = useState('');
+  const [sandboxPrompt, setSandboxPrompt] = useState('');
+  const [sandboxBusy, setSandboxBusy] = useState(false);
+  const [sandboxError, setSandboxError] = useState('');
+  const [realizedYield, setRealizedYield] = useState<any | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/papers/${review.paperId}/realized-yield`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (!cancelled && data?.assessed) setRealizedYield(data);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [review.paperId]);
 
   const normalizeDisplayedBand = (
     low: number | null | undefined,
@@ -744,7 +762,30 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       setCalibrationAnchorBusy(false);
     }
   };
-  const pairwiseCalibrated = Boolean(parsedCoverage?.pairwiseCalibration) && parsedCoverage?.calibratedScore != null;
+  const calibrationUnderReview = parsedCoverage?.calibrationUnderReview === true;
+  const [calibrationHoldOverride, setCalibrationHoldOverride] = useState<boolean | null>(null);
+  const [calibrationHoldBusy, setCalibrationHoldBusy] = useState(false);
+  const effectiveCalibrationUnderReview = calibrationHoldOverride ?? calibrationUnderReview;
+  const resolveCalibrationHold = async (action: 'approve' | 'hold') => {
+    if (calibrationHoldBusy) return;
+    setCalibrationHoldBusy(true);
+    try {
+      const response = await fetch(`/api/admin/calibration/holds/${review.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCalibrationHoldOverride(Boolean(data.calibrationUnderReview));
+      }
+    } finally {
+      setCalibrationHoldBusy(false);
+    }
+  };
+  const pairwiseCalibrated = Boolean(parsedCoverage?.pairwiseCalibration) &&
+    parsedCoverage?.calibratedScore != null &&
+    !effectiveCalibrationUnderReview;
   const calibratedDisplayScore = Math.round(Number(parsedCoverage?.calibratedScore ?? 0));
   const intrinsicDisplayScore = Math.round(Number(
     parsedCoverage?.computedScore ?? parsedCoverage?.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? 0,
@@ -766,6 +807,45 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       .then((response) => (response.ok ? response.json() : { labels: [] }))
       .then((data) => setClusterLabels(Array.isArray(data.labels) ? data.labels : []))
       .catch(() => setClusterLabels([]));
+  };
+  const loadSandboxRuns = () => {
+    fetch(`/api/admin/sandbox-reviews?paperId=${review.paperId}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        setSandboxRuns(Array.isArray(data?.sandboxReviews) ? data.sandboxReviews : []);
+        setSandboxCanonical(data?.canonical ?? null);
+      })
+      .catch(() => setSandboxRuns([]));
+  };
+  const openSandbox = () => {
+    setSandboxOpen(true);
+    if (sandboxRuns === null) loadSandboxRuns();
+  };
+  const runSandbox = async () => {
+    if (sandboxBusy || sandboxPrompt.trim().length < 200) return;
+    setSandboxBusy(true);
+    setSandboxError('');
+    try {
+      const response = await fetch('/api/admin/sandbox-reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          paperId: review.paperId,
+          label: sandboxLabel.trim() || 'unlabeled',
+          promptText: sandboxPrompt,
+        }),
+      });
+      if (response.ok) {
+        loadSandboxRuns();
+      } else {
+        const data = await response.json().catch(() => null);
+        setSandboxError(data?.error ?? `Sandbox run failed (${response.status}).`);
+      }
+    } catch {
+      setSandboxError('Sandbox run failed.');
+    } finally {
+      setSandboxBusy(false);
+    }
   };
   const reassignCluster = async () => {
     const label = clusterLabelDraft.trim();
@@ -1230,6 +1310,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         Cluster: {clusterLabelOverride ?? canonicalClusterLabel}
                       </p>
                     )}
+                    {recognitionSuspected && (
+                      <span
+                        className="inline-block mt-1 rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200"
+                        title="A blind pass or the adjudicator disclosed recognizing this manuscript as a known published work. Recognition does not affect diagnostic scores; recognized reviews never serve as benchmark anchors."
+                      >
+                        Recognition disclosed
+                      </span>
+                    )}
                   </div>
                 </div>
                 {pairwiseCalibrated && !selectedPass && (
@@ -1244,6 +1332,53 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         Score computed from the blind review's diagnostic subscores alone.
                       </p>
                     </div>
+                  </div>
+                )}
+                {realizedYield && !selectedPass && (
+                  <div className={`pt-1 border-t border-white/10 ${realizedYield.paperAgeYears != null && realizedYield.paperAgeYears < 5 ? 'opacity-75' : ''}`}>
+                    <p className="text-[10px] font-black text-amber-300/90 uppercase tracking-widest mt-2">
+                      Realized yield (hindsight, as of {realizedYield.assessedAt ? format(new Date(realizedYield.assessedAt), 'MMM yyyy') : 'now'})
+                    </p>
+                    <p className="text-2xl font-black text-amber-100 leading-none mt-1">
+                      {realizedYield.realizedYieldScore}
+                      <span className="text-xs font-bold text-amber-200/80 ml-2">
+                        at {realizedYield.paperAgeYears != null ? `${Math.round(realizedYield.paperAgeYears)} yrs` : 'unknown age'} — {realizedYield.trajectoryAssessment}
+                        {realizedYield.paperAgeYears != null && realizedYield.paperAgeYears < 5 ? ' (provisional)' : ''}
+                      </span>
+                    </p>
+                    <p className="text-xs text-slate-500 max-w-md mt-1">
+                      Confirmed knowledge and capabilities this paper's constructions actually produced in the historical record. A separate hindsight axis — never blended with the identity-blind scores.
+                    </p>
+                  </div>
+                )}
+                {effectiveCalibrationUnderReview && !selectedPass && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-amber-400/15 border border-amber-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-200">
+                      Calibration under review
+                    </span>
+                    {isAdmin && (
+                      <>
+                        <span className="text-xs text-slate-400">
+                          Calibrated {Math.round(Number(parsedCoverage?.calibratedScore ?? 0))} held; intrinsic shown.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => resolveCalibrationHold('approve')}
+                          disabled={calibrationHoldBusy}
+                          className="rounded-full px-3 py-1 text-xs font-bold bg-emerald-400/20 text-emerald-200 border border-emerald-300/30 disabled:opacity-50"
+                        >
+                          Approve calibrated
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => resolveCalibrationHold('hold')}
+                          disabled={calibrationHoldBusy}
+                          className="rounded-full px-3 py-1 text-xs font-bold bg-white/10 text-slate-300 border border-white/10 disabled:opacity-50"
+                        >
+                          Keep held
+                        </button>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
@@ -1907,6 +2042,83 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     <p className="text-[10px] text-slate-500 mt-2">
                       Takes effect at the next cohort assembly. A later clustering run may regroup this paper.
                     </p>
+                  </div>
+                )}
+                {isAdmin && (
+                  <div className="bg-slate-950/30 border border-white/10 rounded-xl p-3 md:col-span-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Prompt Sandbox</p>
+                      <button
+                        type="button"
+                        onClick={() => (sandboxOpen ? setSandboxOpen(false) : openSandbox())}
+                        className="text-xs font-bold text-sky-300 hover:text-sky-200"
+                      >
+                        {sandboxOpen ? 'Hide' : 'Open'}
+                      </button>
+                    </div>
+                    {sandboxOpen && (
+                      <div className="mt-2 space-y-2">
+                        <p className="text-xs text-slate-400">
+                          Runs this paper's stored blinded text through an arbitrary prompt. Sandbox reviews never enter feeds, exports, clustering, or calibration.
+                        </p>
+                        <input
+                          type="text"
+                          value={sandboxLabel}
+                          onChange={(event) => setSandboxLabel(event.target.value)}
+                          placeholder="label (e.g. v19-draft-1)"
+                          className="w-full rounded-lg bg-white/10 border border-white/10 px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500"
+                        />
+                        <textarea
+                          value={sandboxPrompt}
+                          onChange={(event) => setSandboxPrompt(event.target.value)}
+                          placeholder="Paste the full prompt text to test (the whole blind-pass prompt)…"
+                          rows={5}
+                          className="w-full rounded-lg bg-white/10 border border-white/10 px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={runSandbox}
+                          disabled={sandboxBusy || sandboxPrompt.trim().length < 200}
+                          className="rounded-full px-3 py-1 text-xs font-bold bg-emerald-400/20 text-emerald-200 border border-emerald-300/30 disabled:opacity-50"
+                        >
+                          {sandboxBusy ? 'Running (2 passes + adjudicator, takes minutes)…' : 'Run sandbox review'}
+                        </button>
+                        {sandboxError && <p className="text-xs text-rose-300">{sandboxError}</p>}
+                        {sandboxRuns !== null && (
+                          <table className="w-full text-xs text-slate-300 mt-2">
+                            <thead>
+                              <tr className="text-[10px] uppercase tracking-widest text-slate-500 text-left">
+                                <th className="py-1 pr-2">Run</th>
+                                <th className="py-1 pr-2">I</th>
+                                <th className="py-1 pr-2">C</th>
+                                <th className="py-1 pr-2">O</th>
+                                <th className="py-1">Score</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sandboxCanonical && (
+                                <tr className="border-t border-white/10 font-bold text-white">
+                                  <td className="py-1 pr-2">canonical ({sandboxCanonical.promptVersion ?? 'active'})</td>
+                                  <td className="py-1 pr-2">{sandboxCanonical.inputStrengthScore ?? '—'}</td>
+                                  <td className="py-1 pr-2">{sandboxCanonical.constructionStrengthScore ?? '—'}</td>
+                                  <td className="py-1 pr-2">{sandboxCanonical.outputStrengthScore ?? '—'}</td>
+                                  <td className="py-1">{sandboxCanonical.computedScore ?? '—'}</td>
+                                </tr>
+                              )}
+                              {sandboxRuns.map((run: any) => (
+                                <tr key={run.id} className="border-t border-white/10">
+                                  <td className="py-1 pr-2">{run.label} · {run.promptHash}</td>
+                                  <td className="py-1 pr-2">{run.inputStrengthScore ?? '—'}</td>
+                                  <td className="py-1 pr-2">{run.constructionStrengthScore ?? '—'}</td>
+                                  <td className="py-1 pr-2">{run.outputStrengthScore ?? '—'}</td>
+                                  <td className="py-1">{run.computedScore ?? '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
