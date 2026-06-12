@@ -18,7 +18,7 @@ interface ReviewChatProps {
   review: AIReview;
 }
 
-const GREETING = `I'm the model that reviewed this manuscript. Ask me anything about the paper or analysis.`;
+const GREETING = `I'm an AI assistant with this paper and its full review in front of me — ask me anything about either.`;
 
 export default function ReviewChat({ review }: ReviewChatProps) {
   const [isOpen, setIsOpen] = useState(false);

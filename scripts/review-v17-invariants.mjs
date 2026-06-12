@@ -932,6 +932,36 @@ assert.match(routesSource, /realizedYield: latestRealizedYieldByPaper\.has\(p\.i
 assert.match(howItWorksSource, /identity-blind/);
 assert.match(howItWorksSource, /discloses when it nevertheless recognizes a work/);
 
+// Epoch-relative pairwise clause is drafted but NOT active: the pairwise
+// engine must keep importing v1 until the v19 activation bundle (the v2
+// hash invalidates the pair cache).
+const pairwisePromptV2Source = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/pairwiseCalibrationV2.ts"), "utf8");
+assert.match(pairwisePromptV2Source, /DRAFT pairwise calibration prompt v2 — NOT ACTIVE/);
+assert.match(pairwisePromptV2Source, /relative to its OWN prior\s*\nexplanatory structure/);
+assert.match(pairwisePromptV2Source, /not the stylistic standards of a later era/);
+assert.match(pairwiseEngineSource, /from "\.\/prompts\/pairwiseCalibrationV1"/);
+assert.doesNotMatch(pairwiseEngineSource, /pairwiseCalibrationV2/);
+
+// Era-bias measurement script (reads stored pairs only; no model calls).
+const eraBiasSource = readFileSync(join(root, "scripts/era-bias-check.mjs"), "utf8");
+assert.match(eraBiasSource, /calibration_pairs/);
+assert.match(eraBiasSource, /controlling\s+for intrinsic score difference/);
+assert.doesNotMatch(eraBiasSource, /generateContent/);
+
+// Honest chat: assistant framing, Gemini backend only.
+const reviewChatSource = readFileSync(join(root, "artifacts/scireview/src/components/ReviewChat.tsx"), "utf8");
+assert.match(reviewChatSource, /I'm an AI assistant with this paper and its full review in front of me/);
+assert.doesNotMatch(reviewChatSource, /model that reviewed/);
+assert.match(routesSource, /You did not produce the review yourself/);
+assert.doesNotMatch(routesSource, /You are a scientific manuscript reviewer who produced/);
+assert.doesNotMatch(routesSource, /from "openai"/);
+
+// "Make it simpler": generate once with the exact prompt, cache on the review.
+assert.match(routesSource, /\/papers\/:id\/simpler/);
+assert.match(routesSource, /What does this mean in simple language\? How does it change our understanding\?/);
+assert.match(routesSource, /simplifiedExplanation, cached: true/);
+assert.match(dbPapersSchemaSource, /simplified_explanation/);
+
 // Calibration mapping v2: pooled global anchor curve.
 assert.match(calibrationFitSource, /export function calibrateCohortsV2/);
 assert.match(calibrationFitSource, /CALIBRATION_MODE_PAIRWISE_BT_V2 = "pairwise-bt-v2"/);

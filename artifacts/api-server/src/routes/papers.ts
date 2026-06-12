@@ -2,7 +2,6 @@ import { Router } from "express";
 import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable, calibrationPairsTable, sandboxReviewsTable, realizedYieldAssessmentsTable } from "@workspace/db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
-import OpenAI from "openai";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
 import {
@@ -69,17 +68,6 @@ import {
   type CalibrationPairOutcome,
   type CohortFitResult,
 } from "../lib/calibrationFit";
-
-let openai: OpenAI | null = null;
-function getOpenAI() {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is required for OpenAI-powered chat replies.");
-  }
-  openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  return openai;
-}
-
-const GPT_MODEL = "gpt-5.4-pro";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
@@ -4181,7 +4169,13 @@ router.get("/papers/:id/calibration", async (req, res) => {
       return {
         ...pair,
         partnerTitle: titleByReviewId(partnerReviewId),
-        judgments: Array.isArray(row?.judgmentsJson) ? row.judgmentsJson : [],
+        judgments: (Array.isArray(row?.judgmentsJson) ? row.judgmentsJson : []).map((judgment: any) => ({
+          ...judgment,
+          // Per-judgment A/B assignment resolved to real titles; rationale
+          // prose may still say "Paper A"/"Paper B", so the UI shows a key.
+          paperATitle: typeof judgment?.paperAReviewId === "string" ? titleByReviewId(judgment.paperAReviewId) : null,
+          paperBTitle: typeof judgment?.paperBReviewId === "string" ? titleByReviewId(judgment.paperBReviewId) : null,
+        })),
       };
     });
 
@@ -5626,6 +5620,53 @@ function buildReviewContext(review: any, paper: any): string {
   return parts.join('\n\n');
 }
 
+// POST /api/papers/:id/simpler — plain-language explanation of the review.
+// Generated once with the same model family as the reviewer, then cached
+// on the review so re-opening the disclosure never re-calls the model.
+router.post("/papers/:id/simpler", async (req, res) => {
+  try {
+    const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, req.params.id));
+    if (!paper) { res.status(404).json({ error: "Paper not found" }); return; }
+    const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
+    if (!review) { res.status(404).json({ error: "Review not found" }); return; }
+    if (review.simplifiedExplanation && review.simplifiedExplanation.trim()) {
+      res.json({ simplifiedExplanation: review.simplifiedExplanation, cached: true });
+      return;
+    }
+
+    const reviewContext = buildReviewContext(review, paper);
+    const ledger = parseJsonObject(review.coverageLedgerJson);
+    const snapshot = ledger?.reviewInputSnapshot && typeof ledger.reviewInputSnapshot === "object"
+      ? ledger.reviewInputSnapshot as Record<string, unknown>
+      : null;
+    const manuscriptText = typeof snapshot?.blindedReviewText === "string" && snapshot.blindedReviewText.length > 200
+      ? snapshot.blindedReviewText.slice(0, 60000)
+      : null;
+    const response = await (geminiAI.models.generateContent as any)({
+      model: GEMINI_META_MODEL,
+      config: {
+        systemInstruction: `You are explaining a completed scientific review to a curious non-specialist. You have the full review${manuscriptText ? " and the manuscript text" : ""} below. Answer in plain prose, no headers or lists, 2-4 short paragraphs.\n\nReview:\n---\n${reviewContext}\n---${manuscriptText ? `\n\nManuscript (blinded):\n---\n${manuscriptText}\n---` : ""}`,
+      },
+      contents: [{
+        role: "user",
+        parts: [{ text: "What does this mean in simple language? How does it change our understanding?" }],
+      }],
+    });
+    const simplifiedExplanation = (response.text ?? "").trim();
+    if (!simplifiedExplanation) {
+      res.status(502).json({ error: "Model returned an empty explanation." });
+      return;
+    }
+    await db.update(reviewsTable)
+      .set({ simplifiedExplanation })
+      .where(eq(reviewsTable.id, review.id));
+    res.json({ simplifiedExplanation, cached: false });
+  } catch (err: any) {
+    logger.error({ err }, "Simplified explanation failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/reviews/:reviewId/chat
 router.post("/reviews/:reviewId/chat", async (req, res) => {
   try {
@@ -5641,52 +5682,58 @@ router.post("/reviews/:reviewId/chat", async (req, res) => {
     const [paper] = await db.select().from(papersTable).where(eq(papersTable.id, review.paperId));
 
     const reviewContext = buildReviewContext(review, paper);
+    const ledger = parseJsonObject(review.coverageLedgerJson);
+    const snapshot = ledger?.reviewInputSnapshot && typeof ledger.reviewInputSnapshot === "object"
+      ? ledger.reviewInputSnapshot as Record<string, unknown>
+      : null;
+    const manuscriptText = typeof snapshot?.blindedReviewText === "string" && snapshot.blindedReviewText.length > 200
+      ? snapshot.blindedReviewText
+      : typeof paper?.content === "string" && !paper.content.startsWith("[PDF]")
+        ? paper.content
+        : null;
+    const calibrationSummary = ledger?.pairwiseCalibration
+      ? JSON.stringify({
+          calibratedScore: ledger.calibratedScore ?? null,
+          intrinsicScore: ledger.computedScore ?? ledger.intrinsicScore ?? null,
+          calibrationUnderReview: ledger.calibrationUnderReview === true,
+          calibrationRationale: ledger.calibrationRationale ?? "",
+          cohorts: ledger.pairwiseCalibration.cohorts ?? [],
+          anchorsUsed: ledger.pairwiseCalibration.anchorsUsed ?? [],
+        }, null, 2)
+      : null;
 
-    const systemMessage = `You are a scientific manuscript reviewer who produced a detailed review and is now discussing it with a reader.
+    // Honest framing: the chat assistant is not the reviewer session and
+    // must never claim model or session identity with it.
+    const systemMessage = `You are an AI assistant with this paper and its full review in front of you. You did not produce the review yourself; it was generated earlier by an identity-blind multi-pass review pipeline. Never claim to be the reviewer or to remember producing the review — you are reading the same record the user sees.
 
-You evaluated this manuscript using the following framework:
+The review was produced under this framework:
 ---
 ${review.systemPrompt}
 ---
 
-Here is the complete review you produced:
+The complete review:
 ---
 ${reviewContext}
----${review.thinkingText ? `\n\nHere was your internal reasoning during this review:\n---\n${review.thinkingText}\n---` : ''}
+---${manuscriptText ? `\n\nThe manuscript text the review was based on (blinded):\n---\n${manuscriptText.slice(0, 60000)}\n---` : ''}${calibrationSummary ? `\n\nCalibration summary (pairwise benchmark comparison applied after the blind review):\n---\n${calibrationSummary}\n---` : ''}${review.thinkingText ? `\n\nInternal reasoning recorded during the review:\n---\n${review.thinkingText}\n---` : ''}
 
-You are now in a conversational mode. Help the user understand your review by:
-- Explaining any part of your analysis in more depth
-- Clarifying why you scored specific dimensions the way you did
-- Discussing the paper's strengths and weaknesses in more detail
-- Being honest about uncertainty and the limits of your assessment
-- Speculating about implications or related work when asked
-
-Maintain the same anonymous evaluation perspective: you assessed this manuscript without knowing author identity, institution, publication history, or historical significance.
+Help the user understand the paper and its review:
+- Explain any part of the analysis in more depth
+- Clarify why specific dimensions were scored the way they were, based on the recorded rationales
+- Discuss the paper's strengths and weaknesses in more detail
+- Be honest about uncertainty and the limits of the assessment
+- Speculate about implications or related work when asked, clearly labeled as speculation
 
 Be concise, intellectually honest, and use markdown where helpful.`;
 
-    const isGemini = (review.modelName ?? "").includes("gemini");
-
-    if (isGemini) {
-      const response = await (geminiAI.models.generateContent as any)({
-        model: GEMINI_META_MODEL,
-        config: { systemInstruction: systemMessage },
-        contents: messages.map((m: any) => ({
-          role: m.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: m.content }],
-        })),
-      });
-      res.json({ reply: response.text ?? "" });
-    } else {
-      const completion = await getOpenAI().chat.completions.create({
-        model: review.modelName || GPT_MODEL,
-        messages: [
-          { role: 'system', content: systemMessage },
-          ...messages.map((m: any) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-        ],
-      });
-      res.json({ reply: completion.choices[0]?.message?.content ?? "" });
-    }
+    const response = await (geminiAI.models.generateContent as any)({
+      model: GEMINI_META_MODEL,
+      config: { systemInstruction: systemMessage },
+      contents: messages.map((m: any) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }],
+      })),
+    });
+    res.json({ reply: response.text ?? "" });
   } catch (err: any) {
     logger.error({ err }, "Chat error");
     res.status(500).json({ error: err.message });

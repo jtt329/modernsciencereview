@@ -71,6 +71,9 @@ export const reviewsTable = pgTable("reviews", {
   finalJudgment: text("final_judgment"),
   coverageLedgerJson: text("coverage_ledger_json"),
   thinkingText: text("thinking_text"),
+  // "Make it simpler" plain-language explanation; generated once on first
+  // request and cached here.
+  simplifiedExplanation: text("simplified_explanation"),
   // Metadata
   modelName: varchar("model_name").notNull(),
   systemPrompt: text("system_prompt").notNull().default(""),

@@ -54,6 +54,20 @@ const CalibrationPanel = ({ detail, loading }: { detail: any | null; loading: bo
   const strainWarnings: any[] = Array.isArray(detail.mappingStrainWarnings) ? detail.mappingStrainWarnings : [];
   return (
     <div className="space-y-5">
+      <div className="bg-slate-950/30 border border-white/10 rounded-2xl p-4 text-sm text-slate-300 space-y-2">
+        <p className="text-[10px] font-black text-sky-300 uppercase tracking-widest">How calibration works</p>
+        <p>
+          After the blind review, this paper was compared head-to-head against similar benchmark papers — each comparison
+          done blind, on the reviews alone. Those pairwise outcomes are fit into a Bradley-Terry ranking (which paper wins
+          how often, and by what margin), and the ranking is mapped to a 0-100 score through a single global curve fixed by
+          admin-pinned anchor papers whose scores are frozen by a human.
+        </p>
+        <p className="text-xs text-slate-400">
+          An <span className="font-bold text-amber-200">unanchored cohort</span> has no pinned anchor of its own: its scale
+          is inherited from the global frame via shared papers or a median fallback. That is lower confidence, and it is
+          flagged on purpose rather than hidden.
+        </p>
+      </div>
       {cohorts.map((cohort: any) => {
         const members = cohortMembers.filter((member: any) => member.cohortId === cohort.cohortId);
         return (
@@ -125,6 +139,12 @@ const CalibrationPanel = ({ detail, loading }: { detail: any | null; loading: bo
 
       <Section icon={<ListChecks className="w-4 h-4" />} label="Pairwise Comparisons" color="text-fuchsia-300">
         <div className="space-y-2">
+          <p className="text-xs text-slate-400">
+            Each pair was judged twice with the papers' positions swapped, to cancel position bias. If the two judgments
+            disagree on the overall winner, the pair is recorded as <span className="font-bold">equal</span> and flagged
+            position-inconsistent. "Overall" is its own judged question — not an average of the three dimension verdicts —
+            so dimension win rates and the overall win rate can legitimately differ.
+          </p>
           {pairs.length === 0 && <p className="text-sm text-slate-400">No stored pair outcomes.</p>}
           {pairs.map((pair: any, index: number) => (
             <details key={`${pair.partnerReviewId}-${index}`} className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
@@ -141,16 +161,26 @@ const CalibrationPanel = ({ detail, loading }: { detail: any | null; loading: bo
                 )}
               </summary>
               <div className="mt-3 space-y-3">
-                {(Array.isArray(pair.judgments) ? pair.judgments : []).map((judgment: any, judgmentIndex: number) => (
-                  <div key={judgmentIndex} className="border-l-2 border-white/15 pl-3">
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Judgment {judgmentIndex + 1} · overall {judgment.overall} ({judgment.margin}) · confidence {judgment.confidence}
-                    </p>
-                    {judgment.rationale && (
-                      <p className="text-xs text-slate-300 mt-1 whitespace-pre-wrap">{judgment.rationale}</p>
-                    )}
-                  </div>
-                ))}
+                {(Array.isArray(pair.judgments) ? pair.judgments : []).map((judgment: any, judgmentIndex: number) => {
+                  const winnerTitle = judgment.overall === 'A'
+                    ? judgment.paperATitle ?? 'Paper A'
+                    : judgment.overall === 'B'
+                      ? judgment.paperBTitle ?? 'Paper B'
+                      : 'equal';
+                  return (
+                    <div key={judgmentIndex} className="border-l-2 border-white/15 pl-3">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                        Judgment {judgmentIndex + 1} · overall: {winnerTitle} ({judgment.margin}) · confidence {judgment.confidence}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">
+                        Paper A = {judgment.paperATitle ?? judgment.paperAReviewId}; Paper B = {judgment.paperBTitle ?? judgment.paperBReviewId}
+                      </p>
+                      {judgment.rationale && (
+                        <p className="text-xs text-slate-300 mt-1 whitespace-pre-wrap">{judgment.rationale}</p>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </details>
           ))}
@@ -577,6 +607,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const [sandboxBusy, setSandboxBusy] = useState(false);
   const [sandboxError, setSandboxError] = useState('');
   const [realizedYield, setRealizedYield] = useState<any | null>(null);
+  const [simplerText, setSimplerText] = useState<string | null>(null);
+  const [simplerLoading, setSimplerLoading] = useState(false);
+  const [simplerError, setSimplerError] = useState('');
+  const loadSimplerExplanation = () => {
+    if (simplerText || simplerLoading) return;
+    setSimplerLoading(true);
+    setSimplerError('');
+    fetch(`/api/papers/${review.paperId}/simpler`, { method: 'POST' })
+      .then(async (response) => {
+        const data = await response.json().catch(() => null);
+        if (response.ok && data?.simplifiedExplanation) setSimplerText(data.simplifiedExplanation);
+        else setSimplerError(data?.error ?? 'Could not generate an explanation.');
+      })
+      .catch(() => setSimplerError('Could not generate an explanation.'))
+      .finally(() => setSimplerLoading(false));
+  };
   useEffect(() => {
     let cancelled = false;
     fetch(`/api/papers/${review.paperId}/realized-yield`)
@@ -1295,9 +1341,16 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
           <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-5">
               <div className="space-y-2">
-                <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">
-                  {pairwiseCalibrated && !selectedPass ? 'Calibrated Score' : displayedScoreLabel}
-                </p>
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">
+                    {pairwiseCalibrated && !selectedPass ? 'Calibrated Score' : displayedScoreLabel}
+                  </p>
+                  {pairwiseCalibrated && !selectedPass && (
+                    <p className="text-xs text-slate-400 max-w-xl">
+                      position after blind pairwise comparison against neighboring benchmark papers, scaled through admin-pinned anchors
+                    </p>
+                  )}
+                </div>
                 <div className="flex flex-wrap items-end gap-4">
                   <p className="text-6xl font-black text-emerald-200 leading-none">
                     {pairwiseCalibrated && !selectedPass ? calibratedDisplayScore : displayedScore}
@@ -1321,16 +1374,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   </div>
                 </div>
                 {pairwiseCalibrated && !selectedPass && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-slate-400 max-w-md">
-                      Position after blind pairwise comparison against neighboring benchmark papers, scaled through admin-pinned anchors.
-                    </p>
-                    <div className="pt-1 border-t border-white/10">
-                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-2">Intrinsic Review Score</p>
-                      <p className="text-2xl font-black text-slate-200 leading-none mt-1">{intrinsicDisplayScore}</p>
-                      <p className="text-xs text-slate-500 max-w-md mt-1">
-                        Score computed from the blind review's diagnostic subscores alone.
+                  <div className="pt-3 mt-1 border-t border-white/10">
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Intrinsic Review Score</p>
+                      <p className="text-xs text-slate-500 max-w-xl">
+                        score computed from the blind review's diagnostic subscores alone
                       </p>
+                      <p className="text-2xl font-black text-slate-200 leading-none ml-auto">{intrinsicDisplayScore}</p>
                     </div>
                   </div>
                 )}
@@ -1504,6 +1554,23 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <Award className="w-4 h-4" /> {selectedPass ? 'Pass Review' : 'Scientific Review'}
               </h3>
               <Markdown>{scientificReviewText}</Markdown>
+              {!selectedPass && (
+                <details
+                  className="bg-slate-950/30 border border-white/10 rounded-xl p-3"
+                  onToggle={(event) => {
+                    if ((event.target as HTMLDetailsElement).open) loadSimplerExplanation();
+                  }}
+                >
+                  <summary className="cursor-pointer text-xs font-black text-sky-300 uppercase tracking-widest">
+                    Make it simpler
+                  </summary>
+                  <div className="mt-2 text-sm text-slate-300">
+                    {simplerLoading && <p className="text-slate-400">Writing a plain-language explanation…</p>}
+                    {simplerError && <p className="text-rose-300 text-xs">{simplerError}</p>}
+                    {simplerText && <p className="whitespace-pre-wrap leading-relaxed">{simplerText}</p>}
+                  </div>
+                </details>
+              )}
               {submittedAtLabel && (
                 <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
                   Submitted {submittedAtLabel}
@@ -1518,10 +1585,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <BrainCircuit className="w-4 h-4" /> Input → Construction → Output Assessment
               </h3>
               <div className="space-y-3">
-                <div className="grid items-start gap-3 md:grid-cols-3">
+                <div className="grid items-stretch gap-3 grid-cols-3">
                   {diagnosticCards.map((card) => {
                     const active = activeIcoTab === card.id;
-                    const cardRationale = active ? card.fullRationale || card.previewRationale : card.previewRationale;
                     return (
                       <button
                         key={card.label}
@@ -1529,27 +1595,30 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         role="tab"
                         aria-selected={active}
                         onClick={() => setActiveIcoTab(card.id)}
-                        className={`flex min-h-[10.5rem] flex-col justify-start rounded-2xl border-2 p-4 text-left transition-all ${active ? `h-auto ${ICO_TAB_THEME.activeCard}` : `h-full ${ICO_TAB_THEME.inactiveCard}`}`}
+                        className={`flex h-24 flex-col items-start justify-between rounded-2xl border-2 p-3 text-left transition-all ${active ? ICO_TAB_THEME.activeCard : ICO_TAB_THEME.inactiveCard}`}
                       >
-                        <div className="flex items-start justify-between gap-3">
-                          <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{card.label}</p>
-                          <p className={`text-2xl font-black ${card.color}`}>
-                            {formatDiagnosticSubscore(card.value)}
-                            {card.value != null && <span className="text-sm font-bold text-slate-400">/10</span>}
-                          </p>
-                        </div>
-                        {cardRationale && <div className="mt-3 text-xs leading-relaxed text-slate-300"><Markdown>{cardRationale}</Markdown></div>}
+                        <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{card.label}</p>
+                        <p className={`text-2xl font-black ${card.color}`}>
+                          {formatDiagnosticSubscore(card.value)}
+                          {card.value != null && <span className="text-sm font-bold text-slate-400">/10</span>}
+                        </p>
                       </button>
                     );
                   })}
                 </div>
                 <div className={`rounded-2xl border-2 p-4 ${ICO_TAB_THEME.panel}`}>
-                {activeDiagnosticRationale && (
+                {activeDiagnosticCard && (
                   <div className="mb-4 rounded-xl border border-indigo-300/15 bg-indigo-300/[0.045] p-4 text-sm leading-relaxed text-slate-200">
-                    <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-indigo-300">
-                      Selected Preview
-                    </p>
-                    <Markdown>{activeDiagnosticRationale}</Markdown>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-[10px] font-black uppercase tracking-widest text-indigo-300">
+                        {activeDiagnosticCard.label}
+                      </p>
+                      <p className={`text-2xl font-black ${activeDiagnosticCard.color}`}>
+                        {formatDiagnosticSubscore(activeDiagnosticCard.value)}
+                        {activeDiagnosticCard.value != null && <span className="text-sm font-bold text-slate-400">/10</span>}
+                      </p>
+                    </div>
+                    {activeDiagnosticRationale && <Markdown>{activeDiagnosticRationale}</Markdown>}
                   </div>
                 )}
                 {activeIcoTab === 'input' && <div className="space-y-3">
