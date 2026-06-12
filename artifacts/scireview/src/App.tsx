@@ -11,6 +11,7 @@ import CommentSection from './components/CommentSection';
 import SubmissionForm from './components/SubmissionForm';
 import PromptAnalysis from './components/PromptAnalysis';
 import HowItWorksModal from './components/HowItWorksModal';
+import SandboxViewer from './components/SandboxViewer';
 import { ReviewSource } from './services/reviewService';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || '';
@@ -277,6 +278,7 @@ function readRoute() {
   return {
     paperId: paperMatch ? decodeURIComponent(paperMatch[1]) : queryPaper,
     showHowItWorks: path === '/how-it-works',
+    showSandbox: path === '/admin/sandbox',
     usedLegacyPaperQuery: !paperMatch && !!queryPaper,
   };
 }
@@ -296,6 +298,7 @@ export default function App() {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showPromptAnalysis, setShowPromptAnalysis] = useState(false);
   const [showHowItWorks, setShowHowItWorks] = useState(false);
+  const [showSandbox, setShowSandbox] = useState(false);
   const [papersLoading, setPapersLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -339,6 +342,7 @@ export default function App() {
       const route = readRoute();
       setSelectedPaperId(route.paperId);
       setShowHowItWorks(route.showHowItWorks);
+      setShowSandbox(route.showSandbox);
       if (route.paperId && route.usedLegacyPaperQuery) {
         window.history.replaceState({}, '', paperPath(route.paperId));
       }
@@ -1043,6 +1047,14 @@ export default function App() {
       <AnimatePresence>
         {showHowItWorks && (
           <HowItWorksModal onClose={handleCloseHowItWorks} />
+        )}
+        {showSandbox && isAdmin && (
+          <SandboxViewer
+            onClose={() => {
+              window.history.pushState({}, '', '/');
+              setShowSandbox(false);
+            }}
+          />
         )}
         {showPromptAnalysis && (
           <PromptAnalysis onClose={() => setShowPromptAnalysis(false)} />

@@ -47,6 +47,7 @@ import {
 } from "../lib/reviewEngineCompat";
 import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
 import { REALIZED_YIELD_V1_PROMPT } from "../lib/prompts/realizedYieldV1";
+import { ANCHOR_SENSITIVITY_V1 } from "../lib/anchorSensitivityV1";
 import { stripPdfIdentifyingMetadataSafe } from "../lib/pdfBlinding";
 import {
   PAIRWISE_CALIBRATION_PROMPT_HASH,
@@ -2608,6 +2609,13 @@ router.get("/stats/recognition", async (_req, res) => {
   }
 });
 
+// GET /api/stats/anchor-sensitivity — the published anchor-sensitivity
+// analysis (four anchor-set variants fit from the same cached pair
+// judgments). Regenerated at each freeze via dryRunAnchors.
+router.get("/stats/anchor-sensitivity", (_req, res) => {
+  res.json(ANCHOR_SENSITIVITY_V1);
+});
+
 // GET /api/papers/system-prompt — return the review system prompt
 router.get("/papers/system-prompt", (_req, res) => {
   res.json({
@@ -3444,6 +3452,70 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
     const assembly = await assemblePairwiseCohorts();
     const plan = await buildPairwiseCalibrationPlan(assembly);
 
+    // dryRunAnchors: fit from cached pairs under an anchor-set override and
+    // return the scores WITHOUT judging new pairs or writing anything —
+    // sensitivity regeneration is a zero-cost call at every freeze.
+    const dryRunAnchorsBody = req.body?.dryRunAnchors;
+    if (dryRunAnchorsBody && typeof dryRunAnchorsBody === "object") {
+      const overrideAnchors = (Array.isArray(dryRunAnchorsBody.anchors) ? dryRunAnchorsBody.anchors : [])
+        .filter((anchor: any) => typeof anchor?.reviewId === "string" && Number.isFinite(Number(anchor?.frozenComputedScore)))
+        .map((anchor: any) => ({
+          reviewId: anchor.reviewId as string,
+          frozenComputedScore: Number(anchor.frozenComputedScore),
+          adminPinnedOverride: false,
+        }));
+      const dryTruthByKey = new Map<string, ReturnType<typeof storedPairTruth>["outcome"]>();
+      for (const [key, row] of plan.cachedPairsByKey) {
+        dryTruthByKey.set(key, storedPairTruth(row).outcome);
+      }
+      const dryCohortInputs: CalibrationCohortInput[] = plan.cohortPlans.map((cohort) => {
+        const members = assembly.cohorts.get(cohort.cohortId) ?? [];
+        const memberIds = members.map((member) => member.reviewId);
+        const memberSet = new Set(memberIds);
+        const outcomes: CalibrationPairOutcome[] = [];
+        for (const pair of cohort.pairs) {
+          const truth = dryTruthByKey.get(`${pair.reviewIdA}\0${pair.reviewIdB}`);
+          if (!truth || !memberSet.has(truth.reviewIdA) || !memberSet.has(truth.reviewIdB)) continue;
+          const downWeighted =
+            assembly.membersById.get(truth.reviewIdA)?.downWeighted ||
+            assembly.membersById.get(truth.reviewIdB)?.downWeighted;
+          outcomes.push(outcomeFromStoredPair({
+            reviewIdA: truth.reviewIdA,
+            reviewIdB: truth.reviewIdB,
+            overallWinnerReviewId: truth.overallWinnerReviewId,
+            inputStrengthWinnerReviewId: truth.inputStrengthWinnerReviewId,
+            constructionStrengthWinnerReviewId: truth.constructionStrengthWinnerReviewId,
+            outputStrengthWinnerReviewId: truth.outputStrengthWinnerReviewId,
+            margin: truth.margin,
+            positionInconsistent: truth.positionInconsistent,
+          }, downWeighted ? 0.5 : 1));
+        }
+        return {
+          cohortId: cohort.cohortId,
+          members: memberIds,
+          anchors: overrideAnchors.filter((anchor: { reviewId: string }) => memberSet.has(anchor.reviewId)),
+          computedScores: Object.fromEntries(members.map((member) => [member.reviewId, member.computedScore])),
+          outcomes,
+        };
+      }).filter((input) => input.outcomes.length > 0);
+      const dryResult = calibrateCohortsV2(dryCohortInputs);
+      res.json({
+        dryRun: true,
+        anchorsApplied: overrideAnchors,
+        finalScores: dryResult.finalScores,
+        pooledAnchors: dryResult.pooledAnchors,
+        mappingStrainWarnings: dryResult.mappingStrainWarnings,
+        cohorts: dryResult.fits.map((fit) => ({
+          cohortId: fit.cohortId,
+          unanchored: fit.unanchored,
+          ranking: fit.ranking,
+          calibratedScores: fit.calibratedScores,
+        })),
+        note: "Dry run: nothing was judged or written; stored calibratedScores are unchanged.",
+      });
+      return;
+    }
+
     const judged = await runWithConcurrency(plan.newPairs, PAIRWISE_JUDGE_CONCURRENCY, async (pair) => {
       const outcome = await judgePair(pair, assembly.membersById);
       await db.insert(calibrationPairsTable).values({
@@ -3774,6 +3846,21 @@ function sandboxSubscores(reviewJson: string | null) {
     constructionStrengthScore: ledger?.constructionStrengthScore ?? null,
     outputStrengthScore: ledger?.outputStrengthScore ?? null,
     computedScore: ledger?.computedScore ?? ledger?.intrinsicScore ?? null,
+    subscoreRationale: ledger?.subscoreRationale ?? null,
+    scientificReview: typeof ledger?.scientificReview === "string" ? ledger.scientificReview : null,
+  };
+}
+
+function canonicalSubscoresForPaper(review: typeof reviewsTable.$inferSelect | undefined) {
+  const ledger = review ? parseJsonObject(review.coverageLedgerJson) : null;
+  if (!ledger) return null;
+  return {
+    promptVersion: ledger.promptVersion ?? null,
+    inputStrengthScore: ledger.inputStrengthScore ?? null,
+    constructionStrengthScore: ledger.constructionStrengthScore ?? null,
+    outputStrengthScore: ledger.outputStrengthScore ?? null,
+    computedScore: ledger.computedScore ?? ledger.intrinsicScore ?? null,
+    subscoreRationale: ledger.subscoreRationale ?? null,
   };
 }
 
@@ -3867,26 +3954,23 @@ router.get("/admin/sandbox-reviews", async (req, res) => {
     const rows = paperId
       ? await db.select().from(sandboxReviewsTable).where(eq(sandboxReviewsTable.paperId, paperId)).orderBy(desc(sandboxReviewsTable.createdAt))
       : await db.select().from(sandboxReviewsTable).orderBy(desc(sandboxReviewsTable.createdAt));
-    const canonical = paperId
-      ? await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paperId))
-      : [];
-    const canonicalLedger = canonical[0] ? parseJsonObject(canonical[0].coverageLedgerJson) : null;
+    const allPapers = await db.select().from(papersTable);
+    const allReviews = await db.select().from(reviewsTable);
+    const paperById = new Map(allPapers.map((paper) => [paper.id, paper]));
+    const reviewByPaperId = new Map(allReviews.map((review) => [review.paperId, review]));
     res.json({
-      canonical: canonicalLedger ? {
-        promptVersion: canonicalLedger.promptVersion ?? null,
-        inputStrengthScore: canonicalLedger.inputStrengthScore ?? null,
-        constructionStrengthScore: canonicalLedger.constructionStrengthScore ?? null,
-        outputStrengthScore: canonicalLedger.outputStrengthScore ?? null,
-        computedScore: canonicalLedger.computedScore ?? canonicalLedger.intrinsicScore ?? null,
-      } : null,
+      canonical: paperId ? canonicalSubscoresForPaper(reviewByPaperId.get(paperId)) : null,
       sandboxReviews: rows.map((row) => ({
         id: row.id,
         paperId: row.paperId,
+        paperTitle: paperById.get(row.paperId)?.title ?? null,
         label: row.label,
         promptHash: row.promptHash,
+        promptText: row.promptText,
         modelName: row.modelName,
         createdAt: row.createdAt,
         ...sandboxSubscores(row.reviewJson),
+        canonical: canonicalSubscoresForPaper(reviewByPaperId.get(row.paperId)),
       })),
     });
   } catch (err: any) {

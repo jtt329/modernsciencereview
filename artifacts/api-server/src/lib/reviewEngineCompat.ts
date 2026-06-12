@@ -5,10 +5,10 @@ import {
   DATE_METADATA_EXTRACTION_V15_PROMPT,
 } from "./prompts/benchmarkCalibratedV15";
 import {
-  BENCHMARK_CALIBRATED_V18_FULL_PROMPT,
-  INTRINSIC_ADJUDICATOR_V18_PROMPT,
-  BLIND_REVIEW_PASS_V18_PROMPT,
-} from "./prompts/diagnosticOnlyV18";
+  BENCHMARK_CALIBRATED_V19_FULL_PROMPT,
+  INTRINSIC_ADJUDICATOR_V19_PROMPT,
+  BLIND_REVIEW_PASS_V19_PROMPT,
+} from "./prompts/diagnosticOnlyV19";
 import { logger } from "./logger";
 
 export const GPT_MODEL = "gpt-5.4-pro";
@@ -766,7 +766,7 @@ type ReviewRunAuditEntry = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v18.1.1-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = "v19.0.2-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -786,11 +786,11 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 
 
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V18_PROMPT);
-export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V18_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v18.1.1 computed ICO half-point";
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V19_PROMPT);
+export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
+export const REVIEW_PROMPT_NAME = "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = "2026-06-09";
+export const REVIEW_PROMPT_DATE = "2026-06-12";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -823,7 +823,7 @@ export function isCalibrationCompatibleReviewObject(value: unknown) {
 
   return hasCanonicalDiagnostics && hasComputedScore && (explicitCompatible || v17DiagnosticFamily);
 }
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(INTRINSIC_ADJUDICATOR_V18_PROMPT);
+const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(INTRINSIC_ADJUDICATOR_V19_PROMPT);
 const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(`
 You are the separate post-intrinsic comparator calibrator for Modern Science Review.
 
@@ -1114,6 +1114,7 @@ const individualReviewJsonSchema = {
     "outputStrengthScore",
     "subscoreRationale",
     "recognitionAssessment",
+    "hindsightAssessment",
     "diagnosticAssessmentConfidence",
     "adjudicationRationale",
   ],
@@ -1203,9 +1204,9 @@ const individualReviewJsonSchema = {
         recognitionBasis: jsonString,
       },
     },
-    // Optional (not in `required`): instructed by the v19 prompt; the
-    // active v18.1.1 prompt does not request it, so the schema must not
-    // force the model to fabricate it.
+    // Required since v19 activation: the active prompt instructs the
+    // hindsight disclosure. Stored pre-v19 reviews simply lack the field
+    // and parse with defaults.
     hindsightAssessment: {
       type: "object",
       required: ["hindsightSuspected", "statements"],
@@ -3719,7 +3720,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
 }> = [
   {
     id: "carroll-field-jackiw-lorentz-violating-electrodynamics",
-    match: /\b(?:limits\s+on\s+a\s+lorentz[-\s]*and[-\s]*parity[-\s]*violating\s+modification\s+of\s+electrodynamics|carroll[\s\S]{0,80}field[\s\S]{0,80}jackiw|chern[-\s]*simons\s+modification[\s\S]{0,180}(?:3\s*\+?\s*1|four)[-\s]*dimensional\s+electrodynamics|vacuum\s+birefringence[\s\S]{0,180}radio\s+galaxies|lorentz\s+invariance[\s\S]{0,180}vacuum\s+birefringence|physrevd\.41\.1231|10\.1103\/physrevd\.41\.1231)\b/i,
+    match: /\b(?:limits\s+on\s+a\s+lorentz[-\s]*and[-\s]*parity[-\s]*violating\s+modification\s+of\s+electrodynamics|carroll[\s\S]{0,80}field[\s\S]{0,80}jackiw|chern[-\s]*simons\s+modification[\s\S]{0,180}(?:3\s*\+?\s*1|four)[-\s]*dimensional\s+electrodynamics|vacuum\s+birefringence[\s\S]{0,180}radio\s+galaxies|lorentz\s+invariance[\s\S]{0,180}vacuum\s+birefringence|filename\s+hint:?\s*54[\s_-]*cfj|\b54[\s_-]*cfj[\s_-]*ocr\b|\bcfj[\s_-]*ocr\b|physrevd\.41\.1231|10\.1103\/physrevd\.41\.1231)\b/i,
     override: {
       title: "Limits on a Lorentz- and Parity-Violating Modification of Electrodynamics",
       authors: ["Sean M. Carroll", "George B. Field", "Roman Jackiw"],

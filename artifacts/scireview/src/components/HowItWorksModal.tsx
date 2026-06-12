@@ -7,9 +7,8 @@ interface HowItWorksModalProps {
 }
 
 // Sections 5-6 and the extended era paragraph describe clauses that exist
-// only in the v19 prompt. Flip this with v19 activation; until then the
-// page shows only what is true under the active prompt.
-const V19_ACTIVE = false;
+// only in the v19 prompt; v19.0.2 activated 2026-06-12.
+const V19_ACTIVE = true;
 
 const CENTRALITY_CLASSES = [
   ['C1', 'Establishes a new law, dynamics, mechanism, phenomenon, or empirical fact (including a major new measurement capability demonstrated in the manuscript).'],
@@ -67,6 +66,14 @@ export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
   const [chatMessages, setChatMessages] = useState<ProtocolChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
+  const [sensitivity, setSensitivity] = useState<any | null>(null);
+  const loadSensitivity = () => {
+    if (sensitivity) return;
+    fetch('/api/stats/anchor-sensitivity')
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d) setSensitivity(d); })
+      .catch(() => {});
+  };
 
   useEffect(() => {
     if (prompt !== null) return;
@@ -330,10 +337,61 @@ export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
                 . Nothing in the ranking is asserted; all of it is auditable.
               </p>
               <p>
-                We also publish sensitivity analyses: re-fitting the calibration under different anchor choices moves
-                most papers by 0–3 points, which is the evidence that the scores are measurement-dominated rather than
+                We also publish the{' '}
+                <a href="/api/stats/anchor-sensitivity" className="font-bold text-indigo-600 hover:underline">
+                  anchor-sensitivity analysis
+                </a>
+                : re-fitting the calibration under different anchor choices moved 48 of 49 benchmark papers by 0–3
+                points (one moved 4) — the evidence that the scores are measurement-dominated rather than
                 anchor-dominated.
               </p>
+              <details
+                className="border border-slate-200 rounded-2xl bg-slate-50 px-4 py-3"
+                onToggle={(event) => { if ((event.target as HTMLDetailsElement).open) loadSensitivity(); }}
+              >
+                <summary className="cursor-pointer text-sm font-bold text-slate-700">
+                  View the sensitivity table
+                </summary>
+                {sensitivity ? (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs text-slate-500">
+                      Engine {sensitivity.calibrationEngine} · prompt hash {sensitivity.promptHash} · generated{' '}
+                      {sensitivity.generated} · pre-dates the v2 mapping fix. {sensitivity.note}
+                    </p>
+                    <div className="max-h-80 overflow-y-auto">
+                      <table className="w-full text-xs text-slate-600">
+                        <thead>
+                          <tr className="text-left text-[10px] uppercase tracking-widest text-slate-400">
+                            <th className="py-1 pr-2">Paper</th>
+                            <th className="py-1 pr-2">Intrinsic</th>
+                            <th className="py-1 pr-2">A</th>
+                            <th className="py-1 pr-2">B</th>
+                            <th className="py-1 pr-2">C</th>
+                            <th className="py-1">M</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(Array.isArray(sensitivity.rows) ? sensitivity.rows : []).map((row: any) => (
+                            <tr key={row.title} className="border-t border-slate-200">
+                              <td className="py-1 pr-2">
+                                {row.title}
+                                {row.note && <span className="block text-[10px] text-slate-400">{row.note}</span>}
+                              </td>
+                              <td className="py-1 pr-2">{row.intrinsic}</td>
+                              <td className="py-1 pr-2">{row.A}</td>
+                              <td className="py-1 pr-2">{row.B}</td>
+                              <td className="py-1 pr-2">{row.C}</td>
+                              <td className="py-1">{row.M}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-slate-400">Loading…</p>
+                )}
+              </details>
             </Section>
 
             <Section id="hiw-publication-safety" number={nextNumber()} title="Publication safety">

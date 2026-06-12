@@ -1,16 +1,16 @@
 import { createHash } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
-import { PAIRWISE_CALIBRATION_V1_PROMPT } from "./prompts/pairwiseCalibrationV1";
+import { PAIRWISE_CALIBRATION_V2_PROMPT } from "./prompts/pairwiseCalibrationV2";
 import { GEMINI_CALIBRATION_MODEL, parseGeminiJsonResponse } from "./reviewEngineCompat";
 import type { CalibrationPairOutcome, DimensionOutcome, PairwiseMargin } from "./calibrationFit";
 import { logger } from "./logger";
 
-// v2: pooled global anchor mapping. Pair judgments are version-independent
-// (cache key is pair + promptHash), so v1 rows stay valid and recompute is
-// free of model calls.
+// v2: pooled global anchor mapping + the v2 judging prompt (epoch-relative
+// clause, itemized keyComparisons). The new prompt hash invalidates the v1
+// pair cache by design; v1 rows remain stored under their own hash.
 export const PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2";
 export const PAIRWISE_CALIBRATION_PROMPT_HASH = createHash("sha256")
-  .update(PAIRWISE_CALIBRATION_V1_PROMPT)
+  .update(PAIRWISE_CALIBRATION_V2_PROMPT)
   .digest("hex")
   .slice(0, 16);
 
@@ -153,14 +153,38 @@ export function planCohortPairs(cohortId: string, members: PairwiseCalibrationMe
     .slice(0, PAIR_CAP_PER_MEMBER * sorted.length);
 }
 
+// v2 itemized form: each dimension carries its verdict plus 1-3
+// keyComparisons citing ledger items from both papers.
+const dimensionJudgmentJsonSchema = {
+  type: "object",
+  required: ["verdict", "keyComparisons"],
+  additionalProperties: false,
+  properties: {
+    verdict: { type: "string", enum: ["A", "B", "equal"] },
+    keyComparisons: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["itemA", "itemB", "judgment"],
+        additionalProperties: false,
+        properties: {
+          itemA: { type: "string" },
+          itemB: { type: "string" },
+          judgment: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
 const pairwiseJudgmentJsonSchema = {
   type: "object",
   required: ["inputStrength", "constructionStrength", "outputStrength", "overall", "margin", "rationale", "confidence"],
   additionalProperties: false,
   properties: {
-    inputStrength: { type: "string", enum: ["A", "B", "equal"] },
-    constructionStrength: { type: "string", enum: ["A", "B", "equal"] },
-    outputStrength: { type: "string", enum: ["A", "B", "equal"] },
+    inputStrength: dimensionJudgmentJsonSchema,
+    constructionStrength: dimensionJudgmentJsonSchema,
+    outputStrength: dimensionJudgmentJsonSchema,
     overall: { type: "string", enum: ["A", "B", "equal"] },
     margin: { type: "string", enum: ["slight", "clear", "decisive"] },
     rationale: { type: "string" },
@@ -203,7 +227,7 @@ async function judgeOnce(
       }],
     }],
     config: {
-      systemInstruction: PAIRWISE_CALIBRATION_V1_PROMPT,
+      systemInstruction: PAIRWISE_CALIBRATION_V2_PROMPT,
       responseMimeType: "application/json",
       responseJsonSchema: pairwiseJudgmentJsonSchema,
       temperature: 0.1,

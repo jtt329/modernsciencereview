@@ -1,7 +1,6 @@
-// DRAFT v19.0.2 diagnostic-only prompt stages (dated 2026-06-12) — NOT
-// ACTIVE. Sandbox gate (Bousso + controls, 2026-06-12) PASSED; activation
-// happens only as part of the deliberate v19 bundle (epoch-relative
-// pairwise + full re-run + re-cluster + re-calibrate + freeze).
+// Canonical v19.0.2 diagnostic-only prompt stages (dated 2026-06-12) —
+// ACTIVE since the deliberate v19 activation bundle (sandbox gate PASSED
+// 2026-06-12: Bousso 97 with conjectural status stated; controls Δ <= 1).
 // The model returns diagnostic judgments only; app code computes public scores.
 // Schema is identical to v17.1.5 plus recognitionAssessment and
 // hindsightAssessment.

@@ -1,7 +1,7 @@
-// DRAFT pairwise calibration prompt v2 — NOT ACTIVE. Adds the epoch-relative
-// comparison clause. Activating it changes the pairwise prompt hash and
-// invalidates the pair cache (~250 re-judging calls), so it must ship in the
-// same activation as prompt v19 (which already forces a full re-run).
+// Pairwise calibration prompt v2 — ACTIVE since the v19.0.2 activation
+// (2026-06-12). Adds the epoch-relative comparison clause and itemized
+// keyComparisons; the new prompt hash invalidated the v1 pair cache, as
+// designed (v1 rows remain stored under their own hash).
 // Original v1 header: One call compares exactly two completed
 // blind reviews ("Paper A" and "Paper B") and returns categorical
 // stronger/weaker judgments only. The application fits all scores outside

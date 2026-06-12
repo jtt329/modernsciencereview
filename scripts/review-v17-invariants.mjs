@@ -69,14 +69,15 @@ const adjudicatorAddendumV18 = extractRawConst(promptV18Source, "INTRINSIC_ADJUD
 // v17 prompt file is kept frozen for stored-review compatibility.
 assert.match(promptSource, /v17\.1\.5 computed ICO half-point/i);
 
-// v18.1.1 is the active prompt.
+// v19.0.2 is the active prompt (activated 2026-06-12); the v18 module
+// stays on disk for stored-review compatibility.
 assert.match(promptV18Source, /v18\.1\.1 computed ICO half-point/i);
-assert.match(engineSource, /REVIEW_PROMPT_VERSION = "v18\.1\.1-computed-ico-halfpoint"/);
-assert.match(engineSource, /REVIEW_PROMPT_NAME = "v18\.1\.1 computed ICO half-point"/);
-assert.match(engineSource, /from "\.\/prompts\/diagnosticOnlyV18"/);
-assert.match(engineSource, /REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting\(BLIND_REVIEW_PASS_V18_PROMPT\)/);
-assert.match(engineSource, /REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting\(BENCHMARK_CALIBRATED_V18_FULL_PROMPT\)/);
-assert.match(engineSource, /BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting\(INTRINSIC_ADJUDICATOR_V18_PROMPT\)/);
+assert.match(engineSource, /REVIEW_PROMPT_VERSION = "v19\.0\.2-computed-ico-halfpoint"/);
+assert.match(engineSource, /REVIEW_PROMPT_NAME = "v19\.0\.2 computed ICO half-point"/);
+assert.match(engineSource, /from "\.\/prompts\/diagnosticOnlyV19"/);
+assert.match(engineSource, /REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting\(BLIND_REVIEW_PASS_V19_PROMPT\)/);
+assert.match(engineSource, /REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting\(BENCHMARK_CALIBRATED_V19_FULL_PROMPT\)/);
+assert.match(engineSource, /BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting\(INTRINSIC_ADJUDICATOR_V19_PROMPT\)/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
 assert.match(engineSource, /REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1"/);
@@ -617,6 +618,23 @@ async function assertKnownBenchmarkMetadataRegression() {
     if (normalizedEntanglement.dateMetadata?.arxivId !== "1505.04753") {
       throw new Error("wrong Entanglement Equilibrium arXiv id: " + normalizedEntanglement.dateMetadata?.arxivId);
     }
+    // CFJ feed-title bug: the stored title is the PDF-visible extraction
+    // fallback note; the benchmark override must repair the display title.
+    const staleCfjRecord = {
+      title: "Plain-Text Extraction from This Pdf Was Not Reliable, So the Manuscript Pdf Is Attached for Gemini-Native Reading. Filename Hint: 54 Cfj Ocr",
+      paperAuthors: "",
+      dateMetadata: null,
+    };
+    const normalizedCfj = normalizePaperDisplayMetadata(
+      staleCfjRecord,
+      "The manuscript constrains a Chern-Simons modification of (3+1)-dimensional electrodynamics using vacuum birefringence limits from distant radio galaxies.",
+    );
+    if (normalizedCfj.title !== "Limits on a Lorentz- and Parity-Violating Modification of Electrodynamics") {
+      throw new Error("CFJ extraction-fallback title was not repaired: " + normalizedCfj.title);
+    }
+    if (normalizedCfj.paperAuthors !== "Sean M. Carroll, George B. Field, Roman Jackiw") {
+      throw new Error("CFJ authors were not repaired: " + normalizedCfj.paperAuthors);
+    }
     const extracted = await extractMetadata(\`
 McGill/94-45; UMDGR-95-047
 Increase of Black Hole Entropy in Higher Curvature Gravity
@@ -943,9 +961,9 @@ assert.match(routesSource, /anchorOverride: isAdminPinnedAnchorOverride\(ledger\
 assert.match(routesSource, /anchorOverrides,/);
 assert.doesNotMatch(routesSource, /cannot serve as calibration anchors/);
 
-// v19 draft exists with all five deltas but is NOT active: the engine must
-// keep importing the v18 module until the sandbox test protocol passes.
-assert.match(promptV19Source, /DRAFT v19\.0\.2 .* NOT\s*\n?\/\/ ACTIVE/);
+// v19.0.2 is active with all deltas; the v18 module remains on disk for
+// stored-review compatibility.
+assert.match(promptV19Source, /Canonical v19\.0\.2 diagnostic-only prompt stages .*\n\/\/ ACTIVE since the deliberate v19 activation bundle/);
 assert.match(promptV19Source, /v19\.0\.2 COMPUTED ICO HALF-POINT/);
 assert.match(promptV19Source, /Output firmness/);
 assert.match(promptV19Source, /F1\. Directly measured phenomena or data\./);
@@ -959,7 +977,7 @@ assert.match(promptV19Source, /by empirical confirmation\s+status alone/);
 assert.match(promptV19Source, /Apply this\s+grading symmetrically to all research programs/);
 assert.match(promptV19Source, /Popularity within the theoretical literature is not\s+evidence; do not import its prestige hierarchy\./);
 assert.match(promptV19Source, /Never print C1-C5\s+or F1-F4 labels in scientificReview/);
-assert.doesNotMatch(engineSource, /diagnosticOnlyV19/);
+assert.match(engineSource, /diagnosticOnlyV19/);
 
 // v19.0.2 deltas: values-first construction grading, output-conjecture
 // rule, hindsight disclosure; F1-F4 ladder intact; still not active.
@@ -993,7 +1011,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = "2026-06-09"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -1029,7 +1047,7 @@ assert.match(howItWorksSource, /must disclose when it suspects it recognizes the
 // How-it-works page: v19 sections are gated off until activation; section
 // anchors exist for the paper-page cross-links; recognition stats are
 // queried live.
-assert.match(howItWorksSource, /const V19_ACTIVE = false/);
+assert.match(howItWorksSource, /const V19_ACTIVE = true/);
 assert.match(howItWorksSource, /\{V19_ACTIVE && \(/);
 assert.match(howItWorksSource, /id="hiw-calibration"/);
 assert.match(howItWorksSource, /id="hiw-diagnostic"/);
@@ -1038,15 +1056,14 @@ assert.match(routesSource, /\/stats\/recognition/);
 assert.match(reviewCardSource, /href="\/how-it-works#hiw-calibration"/);
 assert.match(reviewCardSource, /href="\/how-it-works#hiw-diagnostic"/);
 
-// Epoch-relative pairwise clause is drafted but NOT active: the pairwise
-// engine must keep importing v1 until the v19 activation bundle (the v2
-// hash invalidates the pair cache).
+// Epoch-relative pairwise clause is ACTIVE (v19 bundle): the engine
+// imports v2 and the judgment schema is the nested itemized form.
 const pairwisePromptV2Source = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/pairwiseCalibrationV2.ts"), "utf8");
-assert.match(pairwisePromptV2Source, /DRAFT pairwise calibration prompt v2 — NOT ACTIVE/);
+assert.match(pairwisePromptV2Source, /ACTIVE since the v19\.0\.2 activation/);
 assert.match(pairwisePromptV2Source, /relative to its OWN prior\s*\nexplanatory structure/);
 assert.match(pairwisePromptV2Source, /not the stylistic standards of a later era/);
-assert.match(pairwiseEngineSource, /from "\.\/prompts\/pairwiseCalibrationV1"/);
-assert.doesNotMatch(pairwiseEngineSource, /pairwiseCalibrationV2/);
+assert.match(pairwiseEngineSource, /from "\.\/prompts\/pairwiseCalibrationV2"/);
+assert.match(pairwiseEngineSource, /dimensionJudgmentJsonSchema/);
 
 // Era-bias measurement script (reads stored pairs only; no model calls).
 const eraBiasSource = readFileSync(join(root, "scripts/era-bias-check.mjs"), "utf8");
@@ -1086,6 +1103,27 @@ assert.match(reviewCardSource, /withGlossaryLinks/);
 assert.match(reviewCardSource, /Bridge pair/);
 assert.match(howItWorksSource, /barred from automatic anchor\s+service; an administrator can deliberately pin one as an anchor/);
 assert.doesNotMatch(howItWorksSource, /Recognized papers cannot serve as\s+anchors/);
+
+// Activation state: hindsightAssessment is required of the active prompt's
+// responses; the nested itemized pairwise schema is live.
+assert.match(engineSource, /"recognitionAssessment",\s*\n\s*"hindsightAssessment",/);
+
+// Anchor-sensitivity analysis published; dry-run anchor refits never write.
+const anchorSensitivitySource = readFileSync(join(root, "artifacts/api-server/src/lib/anchorSensitivityV1.ts"), "utf8");
+assert.match(anchorSensitivitySource, /anchor-sensitivity-analysis/);
+assert.match(anchorSensitivitySource, /d29df044413e7d57/);
+assert.match(routesSource, /\/stats\/anchor-sensitivity/);
+assert.match(routesSource, /dryRunAnchors/);
+assert.match(routesSource, /stored calibratedScores are unchanged/);
+assert.match(howItWorksSource, /anchor-sensitivity/);
+assert.match(howItWorksSource, /moved 48 of 49 benchmark/);
+
+// Sandbox viewer route and component; CFJ title repair pattern present
+// (behavior covered by the bundled regression).
+const appSourceForRoutes = readFileSync(join(root, "artifacts/scireview/src/App.tsx"), "utf8");
+assert.match(appSourceForRoutes, /showSandbox: path === '\/admin\/sandbox'/);
+assert.match(appSourceForRoutes, /SandboxViewer/);
+assert.match(engineSource, /cfj\[\\s_-\]\*ocr/);
 
 // Calibration mapping v2: pooled global anchor curve.
 assert.match(calibrationFitSource, /export function calibrateCohortsV2/);
@@ -1412,4 +1450,4 @@ for (const forbidden of [
   assert.equal(canonicalExport.includes(forbidden), false, `standard canonical export includes ${forbidden}`);
 }
 
-console.log("v18.1.1 review and pairwise-calibration invariants passed");
+console.log("v19.0.2 review and pairwise-calibration invariants passed");
