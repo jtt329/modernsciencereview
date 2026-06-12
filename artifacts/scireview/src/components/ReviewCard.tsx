@@ -1346,9 +1346,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     {pairwiseCalibrated && !selectedPass ? 'Calibrated Score' : displayedScoreLabel}
                   </p>
                   {pairwiseCalibrated && !selectedPass && (
-                    <p className="text-xs text-slate-400 max-w-xl">
+                    <a href="/how-it-works#hiw-calibration" className="text-xs text-slate-400 max-w-xl hover:text-slate-300 hover:underline">
                       position after blind pairwise comparison against neighboring benchmark papers, scaled through admin-pinned anchors
-                    </p>
+                    </a>
                   )}
                 </div>
                 <div className="flex flex-wrap items-end gap-4">
@@ -1377,9 +1377,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <div className="pt-3 mt-1 border-t border-white/10">
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                       <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Intrinsic Review Score</p>
-                      <p className="text-xs text-slate-500 max-w-xl">
+                      <a href="/how-it-works#hiw-diagnostic" className="text-xs text-slate-500 max-w-xl hover:text-slate-300 hover:underline">
                         score computed from the blind review's diagnostic subscores alone
-                      </p>
+                      </a>
                       <p className="text-2xl font-black text-slate-200 leading-none ml-auto">{intrinsicDisplayScore}</p>
                     </div>
                   </div>

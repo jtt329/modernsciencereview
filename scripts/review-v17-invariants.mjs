@@ -930,7 +930,20 @@ assert.match(routesSource, /realizedYield: latestRealizedYieldByPaper\.has\(p\.i
 
 // Site copy honesty: identity-blind protocol claim.
 assert.match(howItWorksSource, /identity-blind/);
-assert.match(howItWorksSource, /discloses when it nevertheless recognizes a work/);
+assert.match(howItWorksSource, /must disclose when it suspects it recognizes the\s+work/);
+
+// How-it-works page: v19 sections are gated off until activation; section
+// anchors exist for the paper-page cross-links; recognition stats are
+// queried live.
+assert.match(howItWorksSource, /const V19_ACTIVE = false/);
+assert.match(howItWorksSource, /\{V19_ACTIVE && \(/);
+assert.match(howItWorksSource, /id="hiw-calibration"/);
+assert.match(howItWorksSource, /id="hiw-diagnostic"/);
+assert.match(howItWorksSource, /\/api\/stats\/recognition/);
+assert.match(routesSource, /\/stats\/recognition/);
+const reviewCardSource = readFileSync(join(root, "artifacts/scireview/src/components/ReviewCard.tsx"), "utf8");
+assert.match(reviewCardSource, /href="\/how-it-works#hiw-calibration"/);
+assert.match(reviewCardSource, /href="\/how-it-works#hiw-diagnostic"/);
 
 // Epoch-relative pairwise clause is drafted but NOT active: the pairwise
 // engine must keep importing v1 until the v19 activation bundle (the v2

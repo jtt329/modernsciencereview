@@ -2581,6 +2581,31 @@ function benchmarkProfileForClustering(
   };
 }
 
+// GET /api/stats/recognition — live recognition rate under the active
+// prompt, for the How-it-works page ("recognition rates are published"),
+// plus an example anchored paper to deep-link the Calibration tab.
+router.get("/stats/recognition", async (_req, res) => {
+  try {
+    const reviews = await db.select().from(reviewsTable);
+    let totalReviews = 0;
+    let recognizedReviews = 0;
+    let exampleAnchoredPaperId: string | null = null;
+    for (const review of reviews) {
+      const ledger = parseJsonObject(review.coverageLedgerJson);
+      if (!ledger || ledger.promptVersion !== REVIEW_PROMPT_VERSION) continue;
+      totalReviews += 1;
+      if (ledger.recognitionSuspected === true) recognizedReviews += 1;
+      if (!exampleAnchoredPaperId && ledger.calibrationAnchor === true && ledger.pairwiseCalibration) {
+        exampleAnchoredPaperId = review.paperId;
+      }
+    }
+    res.json({ promptVersion: REVIEW_PROMPT_VERSION, totalReviews, recognizedReviews, exampleAnchoredPaperId });
+  } catch (err: any) {
+    logger.error({ err }, "Recognition stats failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/papers/system-prompt — return the review system prompt
 router.get("/papers/system-prompt", (_req, res) => {
   res.json({
