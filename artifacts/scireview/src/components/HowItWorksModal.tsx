@@ -53,20 +53,66 @@ type HowItWorksStats = {
   exampleAnchoredPaperId: string | null;
 };
 
+type ProtocolChatMessage = { role: 'user' | 'assistant'; content: string };
+
+const PROTOCOL_CHAT_GREETING =
+  "I'm an AI assistant with this protocol in front of me — not the reviewing model. Ask me anything about how the review system works.";
+
 export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
   const [prompt, setPrompt] = useState<string | null>(null);
   const [promptLoading, setPromptLoading] = useState(false);
+  const [promptMeta, setPromptMeta] = useState<{ version: string; hash: string; date: string } | null>(null);
+  const [promptCopied, setPromptCopied] = useState(false);
   const [stats, setStats] = useState<HowItWorksStats | null>(null);
+  const [chatMessages, setChatMessages] = useState<ProtocolChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
 
   useEffect(() => {
     if (prompt !== null) return;
     setPromptLoading(true);
     fetch('/api/papers/system-prompt', { credentials: 'include' })
       .then(r => r.json())
-      .then(d => setPrompt(d.prompt))
+      .then(d => {
+        setPrompt(d.prompt);
+        setPromptMeta({ version: d.promptVersion ?? '', hash: d.promptHash ?? '', date: d.promptDate ?? '' });
+      })
       .catch(() => setPrompt('Failed to load system prompt.'))
       .finally(() => setPromptLoading(false));
   }, [prompt]);
+
+  const copyPrompt = () => {
+    if (!prompt) return;
+    navigator.clipboard?.writeText(prompt).then(() => {
+      setPromptCopied(true);
+      setTimeout(() => setPromptCopied(false), 2000);
+    }).catch(() => {});
+  };
+
+  const sendProtocolChat = async () => {
+    const content = chatInput.trim();
+    if (!content || chatBusy) return;
+    const nextMessages: ProtocolChatMessage[] = [...chatMessages, { role: 'user', content }];
+    setChatMessages(nextMessages);
+    setChatInput('');
+    setChatBusy(true);
+    try {
+      const response = await fetch('/api/protocol-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: nextMessages }),
+      });
+      const data = await response.json().catch(() => null);
+      setChatMessages([...nextMessages, {
+        role: 'assistant',
+        content: response.ok && data?.reply ? data.reply : 'Sorry — I could not answer that right now.',
+      }]);
+    } catch {
+      setChatMessages([...nextMessages, { role: 'assistant', content: 'Sorry — I could not answer that right now.' }]);
+    } finally {
+      setChatBusy(false);
+    }
+  };
 
   useEffect(() => {
     fetch('/api/stats/recognition')
@@ -333,21 +379,85 @@ export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
               </p>
             </Section>
 
-            <div className="border border-slate-200 rounded-3xl overflow-hidden bg-white">
-              <div className="px-6 py-5 border-b border-slate-100">
-                <span className="font-black text-slate-900 text-xl">The exact prompt</span>
-                <p className="text-sm text-slate-500 mt-1">The full instructions the review system receives for every review pass — the protocol described above, verbatim</p>
-              </div>
-              <div className="bg-slate-950 px-6 py-6">
+            <details className="border border-slate-200 rounded-3xl bg-white overflow-hidden">
+              <summary className="cursor-pointer px-6 py-5 hover:bg-slate-50 transition-colors">
+                <span className="font-black text-slate-900 text-xl">View the exact protocol (verbatim)</span>
+                <span className="block text-sm text-slate-500 mt-1">
+                  The full instructions the review system receives for every review pass
+                  {promptMeta && (promptMeta.version || promptMeta.hash) && (
+                    <span className="block text-xs text-slate-400 mt-1 font-mono">
+                      {[promptMeta.version, promptMeta.hash && `hash ${promptMeta.hash}`, promptMeta.date && `dated ${promptMeta.date}`]
+                        .filter(Boolean).join(' · ')}
+                    </span>
+                  )}
+                </span>
+              </summary>
+              <div className="border-t border-slate-100 px-6 py-5">
+                <div className="flex justify-end mb-3">
+                  <button
+                    onClick={copyPrompt}
+                    disabled={!prompt}
+                    className="rounded-full px-3 py-1 text-xs font-bold text-indigo-600 border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 transition-colors disabled:opacity-50"
+                  >
+                    {promptCopied ? 'Copied' : 'Copy prompt'}
+                  </button>
+                </div>
                 {promptLoading ? (
                   <div className="flex items-center gap-2 text-slate-400 text-sm py-2">
                     <Loader2 className="w-4 h-4 animate-spin" /> Loading…
                   </div>
                 ) : (
-                  <pre className="text-slate-200 text-[15px] leading-8 whitespace-pre-wrap font-mono">
+                  <pre className="max-h-[28rem] overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50 p-5 text-slate-700 text-sm leading-7 whitespace-pre-wrap font-mono">
                     {prompt}
                   </pre>
                 )}
+              </div>
+            </details>
+
+            <div className="border border-slate-200 rounded-3xl bg-white overflow-hidden">
+              <div className="px-6 py-5 border-b border-slate-100">
+                <span className="font-black text-slate-900 text-xl">Ask about how this works</span>
+                <p className="text-sm text-slate-500 mt-1">{PROTOCOL_CHAT_GREETING}</p>
+              </div>
+              <div className="px-6 py-5 space-y-3">
+                {chatMessages.length > 0 && (
+                  <div className="space-y-3 max-h-96 overflow-y-auto">
+                    {chatMessages.map((message, index) => (
+                      <div
+                        key={index}
+                        className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
+                          message.role === 'user'
+                            ? 'bg-indigo-50 border border-indigo-100 text-slate-800 ml-8'
+                            : 'bg-slate-50 border border-slate-200 text-slate-700 mr-8'
+                        }`}
+                      >
+                        {message.content}
+                      </div>
+                    ))}
+                    {chatBusy && (
+                      <div className="flex items-center gap-2 text-slate-400 text-sm">
+                        <Loader2 className="w-4 h-4 animate-spin" /> Thinking…
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === 'Enter') sendProtocolChat(); }}
+                    placeholder="e.g. Why are there two blind passes? What does an anchor do?"
+                    className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                  />
+                  <button
+                    onClick={sendProtocolChat}
+                    disabled={chatBusy || !chatInput.trim()}
+                    className="rounded-xl px-4 py-2.5 text-sm font-bold text-white bg-indigo-600 hover:bg-indigo-700 transition-colors disabled:opacity-50"
+                  >
+                    Ask
+                  </button>
+                </div>
               </div>
             </div>
           </div>

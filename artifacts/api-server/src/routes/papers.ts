@@ -11,6 +11,7 @@ import {
   GEMINI_METADATA_MODEL,
   GEMINI_PASS_MODEL,
   REVIEW_FULL_PROMPT_SYSTEM,
+  REVIEW_PROMPT_DATE,
   REVIEW_PROMPT_HASH,
   REVIEW_PROMPT_NAME,
   REVIEW_PROMPT_VERSION,
@@ -2615,6 +2616,7 @@ router.get("/papers/system-prompt", (_req, res) => {
     promptVersion: REVIEW_PROMPT_VERSION,
     promptName: REVIEW_PROMPT_NAME,
     promptHash: REVIEW_PROMPT_HASH,
+    promptDate: REVIEW_PROMPT_DATE,
     defaultReviewMode: "benchmark-ingestion",
     benchmarkSetVersion: BENCHMARK_SET_VERSION,
   });
@@ -4411,6 +4413,8 @@ router.get("/papers/export", async (req, res) => {
           blindingStrength: coverageLedger.blindingStrength ?? "strong",
           recognitionAssessment: coverageLedger.recognitionAssessment ?? null,
           recognitionSuspected: coverageLedger.recognitionSuspected ?? false,
+          hindsightAssessment: coverageLedger.hindsightAssessment ?? null,
+          hindsightSuspected: coverageLedger.hindsightSuspected ?? false,
           injectionSuspected: coverageLedger.injectionSuspected ?? false,
           comparisonCohort: coverageLedger.comparisonCohort ?? null,
           localCohort: coverageLedger.localCohort ?? null,
@@ -5740,6 +5744,50 @@ function buildReviewContext(review: any, paper: any): string {
   }
   return parts.join('\n\n');
 }
+
+// POST /api/protocol-chat — "Ask about how this works" on the How-it-works
+// page. Same Gemini backend as review chat; context is the active prompt
+// text, a summary of the published mechanism, and the C/F glossary. The
+// assistant must never claim to be the reviewing model.
+router.post("/protocol-chat", async (req, res) => {
+  try {
+    const { messages } = req.body ?? {};
+    if (!Array.isArray(messages) || messages.length === 0) {
+      res.status(400).json({ error: "messages array required" });
+      return;
+    }
+    const systemMessage = `You are an AI assistant with the Modern Science Review protocol in front of you. You are not the reviewing model and you never claim to be; you are reading the same public protocol any visitor can read, and your job is to make it maximally interrogable.
+
+The exact active review prompt (${REVIEW_PROMPT_VERSION}, hash ${REVIEW_PROMPT_HASH}, dated ${REVIEW_PROMPT_DATE}):
+---
+${LATEST_REVIEW_SYSTEM_INSTRUCTION}
+---
+
+How the published pipeline works, beyond the prompt itself:
+- Identity-blind protocol: manuscripts are stripped of identifying information before review; the reviewer must disclose suspected recognition; recognition is flagged on the review and recognized papers are barred from automatic anchor service (an admin can deliberately pin one, publicly badged).
+- Two independent blind passes plus an adjudication pass; per-pass scores and spread are stored and public.
+- The intrinsic score is 10 x the average of three 0-10 diagnostic subscores (Input, Construction, Output Strength), each with a written rationale and itemized ledger.
+- Output centrality classes: C1 establishes a new law/mechanism/phenomenon/empirical fact; C2 derives known laws from fewer or firmer premises or proves a new theorem; C3 unifies or systematizes known results; C4 constrains or excludes alternatives (confirmations and null results); C5 provides methods/datasets/instruments at the demonstrated capability.
+- Calibration: papers are clustered into cohorts; the model judges blind pairs of reviews twice with positions swapped (inconsistencies flagged); a Bradley-Terry fit ranks each cohort; one global monotone curve through all admin-pinned anchors maps rank to 0-100; bridge papers tie cohorts together; anchor-less, bridge-less cohorts are flagged "unanchored".
+- Publish-safety tripwire: if calibrated and intrinsic scores diverge by more than 12 points, or the cohort mapping shows strain, the intrinsic score stays public with a "calibration under review" badge until a human approves.
+- Realized Yield: a separate, explicitly hindsight-permitted assessment of what confirmed science a paper's constructions actually produced; never blended with the blind scores.
+
+Answer questions about how any of this works, grounded in the protocol text above. Be concise and honest about limitations; if something is not specified in the protocol, say so rather than inventing it. Use markdown where helpful.`;
+
+    const response = await (geminiAI.models.generateContent as any)({
+      model: GEMINI_META_MODEL,
+      config: { systemInstruction: systemMessage },
+      contents: messages.map((m: any) => ({
+        role: m.role === "assistant" ? "model" : "user",
+        parts: [{ text: String(m.content ?? "") }],
+      })),
+    });
+    res.json({ reply: response.text ?? "" });
+  } catch (err: any) {
+    logger.error({ err }, "Protocol chat error");
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // POST /api/papers/:id/simpler — plain-language explanation of the review.
 // Generated once with the same model family as the reviewer, then cached

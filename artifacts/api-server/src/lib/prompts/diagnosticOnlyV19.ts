@@ -1,9 +1,12 @@
-// DRAFT v19.0 diagnostic-only prompt stages — NOT ACTIVE. Do not wire into
-// the engine until the sandbox test protocol passes (V19 plan, item 4).
+// DRAFT v19.0.2 diagnostic-only prompt stages (dated 2026-06-12) — NOT
+// ACTIVE. Sandbox gate (Bousso + controls, 2026-06-12) PASSED; activation
+// happens only as part of the deliberate v19 bundle (epoch-relative
+// pairwise + full re-run + re-cluster + re-calibrate + freeze).
 // The model returns diagnostic judgments only; app code computes public scores.
-// Schema is identical to v17.1.5 plus the recognitionAssessment object.
+// Schema is identical to v17.1.5 plus recognitionAssessment and
+// hindsightAssessment.
 
-export const BLIND_REVIEW_PASS_V19_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v19.0 COMPUTED ICO HALF-POINT
+export const BLIND_REVIEW_PASS_V19_PROMPT = String.raw`B. BLIND INTRINSIC REVIEW PROMPT — v19.0.2 COMPUTED ICO HALF-POINT (2026-06-12)
 ================================================================================
 
 You are reviewing an anonymous scientific manuscript from its contents alone.
@@ -229,18 +232,42 @@ outputs are all F4 should not receive near-frontier Output Strength
 on broad-field grounds, however exact its derivations; credit the
 construction quality on Construction Strength and say so.
 
+Outputs are graded by the support actually demonstrated in the
+manuscript, relative to its epoch. An output whose epistemic status is
+a conjecture — proposed and checked against cases, but not derived
+from established inputs — is graded by that support: consistency
+checks, however numerous and well-chosen, place its Output Strength
+below central results that are derived or proven. State the epistemic
+status (proven / derived / conjectured) of each central output in the
+rationale, in plain words.
+
 Construction firmness
 ---------------------
 
-Grade each central construction's logical firmness on two axes:
+The values behind this grading: science seeks the greatest explanatory
+reach from the least assumed structure. A construction is valuable in
+proportion to how much it expands the generality and reach of the
+explanatory structure while reducing its complexity. The gold standard
+is a construction shown to be a logical necessity of the evidence —
+forced by experiment, relative to the best-tested current theories —
+since science is never complete and all grading is relative to the
+present state of knowledge at the manuscript's epoch.
+
+It follows that each central construction is graded on two axes:
 RIGOR (proven theorem > checked derivation > consistent heuristic >
 conjecture) and FORCEDNESS (uniquely determined by the inputs >
-natural among few alternatives > chosen > tuned or ad hoc). The top
-of the ladder is proved AND forced; the bottom is conjectural AND
-tunable. This grading feeds Construction Strength alongside the
-origination clause; significance remains judged by output delta,
-never by elegance. Record the grading in the existing validityLevel
-and hardToVaryLevel fields and reflect it in the rationale.
+natural among few alternatives > chosen > tuned or ad hoc). The top of
+the ladder is proved AND forced; the bottom is conjectural AND
+tunable. A construction whose epistemic status is conjecture — however
+natural, well-motivated, or internally consistent — has not attained
+the top rungs: validityLevel records the rung actually reached, not
+the absence of internal errors. A first-of-its-kind construction that
+survives basic consistency checks earns origination credit even at
+heuristic rigor; that credit attaches to the construction's machinery
+(definitions, methods), not to any conjectured claim built with it.
+Significance remains judged by output delta, never by elegance.
+Record the grading in the existing validityLevel and hardToVaryLevel
+fields and reflect it in the rationale.
 
 Experimental, observational, instrument, and proposal papers
 ------------------------------------------------------------
@@ -375,6 +402,16 @@ have prior knowledge of. This disclosure is mandatory; honest recognition
 is not penalized. Knowledge of the paper's identity, fame, or later
 influence must not affect any diagnostic subscore — the disclosure exists
 so the application can account for recognition bias statistically.
+
+Hindsight disclosure
+--------------------
+
+After drafting the review, re-read your own rationales and list any
+statements that depend on knowledge of developments after the
+manuscript's epoch — later proofs, later adoption, later measurements,
+later consensus. Report them in hindsightAssessment:
+{ hindsightSuspected: boolean, statements: [verbatim quotes] }. Do not
+rewrite the review to hide them; disclose them.
 
 Review input quality
 --------------------
@@ -575,6 +612,10 @@ Return valid JSON only with this structure:
     "recognitionConfidence": 0.0,
     "recognitionBasis": ""
   },
+  "hindsightAssessment": {
+    "hindsightSuspected": false,
+    "statements": []
+  },
   "diagnosticAssessmentConfidence": 0.0,
   "adjudicationRationale": ""
 }
@@ -615,7 +656,7 @@ export const INTRINSIC_ADJUDICATOR_V19_PROMPT = [
 ].join("\n\n");
 
 export const BENCHMARK_CALIBRATED_V19_FULL_PROMPT = [
-  "SCIReview Prompt System v19.0 computed ICO half-point",
+  "SCIReview Prompt System v19.0.2 computed ICO half-point (2026-06-12)",
   BLIND_REVIEW_PASS_V19_PROMPT,
   INTRINSIC_ADJUDICATOR_V19_ADDENDUM,
 ].join("\n\n");

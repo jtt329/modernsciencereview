@@ -27,6 +27,7 @@ const promptV18Source = readFileSync(promptV18Path, "utf8");
 const promptV19Source = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/diagnosticOnlyV19.ts"), "utf8");
 const realizedYieldPromptSource = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/realizedYieldV1.ts"), "utf8");
 const howItWorksSource = readFileSync(join(root, "artifacts/scireview/src/components/HowItWorksModal.tsx"), "utf8");
+const reviewCardSource = readFileSync(join(root, "artifacts/scireview/src/components/ReviewCard.tsx"), "utf8");
 const pairwisePromptSource = readFileSync(pairwisePromptPath, "utf8");
 const pairwiseEngineSource = readFileSync(pairwiseEnginePath, "utf8");
 const calibrationFitSource = readFileSync(calibrationFitPath, "utf8");
@@ -944,8 +945,8 @@ assert.doesNotMatch(routesSource, /cannot serve as calibration anchors/);
 
 // v19 draft exists with all five deltas but is NOT active: the engine must
 // keep importing the v18 module until the sandbox test protocol passes.
-assert.match(promptV19Source, /DRAFT v19\.0 .* NOT ACTIVE/);
-assert.match(promptV19Source, /v19\.0 COMPUTED ICO HALF-POINT/);
+assert.match(promptV19Source, /DRAFT v19\.0\.2 .* NOT\s*\n?\/\/ ACTIVE/);
+assert.match(promptV19Source, /v19\.0\.2 COMPUTED ICO HALF-POINT/);
 assert.match(promptV19Source, /Output firmness/);
 assert.match(promptV19Source, /F1\. Directly measured phenomena or data\./);
 assert.match(promptV19Source, /F4\. Constructs internal to untested frameworks/);
@@ -959,6 +960,40 @@ assert.match(promptV19Source, /Apply this\s+grading symmetrically to all researc
 assert.match(promptV19Source, /Popularity within the theoretical literature is not\s+evidence; do not import its prestige hierarchy\./);
 assert.match(promptV19Source, /Never print C1-C5\s+or F1-F4 labels in scientificReview/);
 assert.doesNotMatch(engineSource, /diagnosticOnlyV19/);
+
+// v19.0.2 deltas: values-first construction grading, output-conjecture
+// rule, hindsight disclosure; F1-F4 ladder intact; still not active.
+assert.match(promptV19Source, /v19\.0\.2 COMPUTED ICO HALF-POINT \(2026-06-12\)/);
+assert.match(promptV19Source, /science seeks the greatest explanatory\s+reach from the least assumed structure/);
+assert.match(promptV19Source, /a logical necessity of the evidence/);
+assert.match(promptV19Source, /has not attained\s+the top rungs: validityLevel records the rung actually reached/);
+assert.match(promptV19Source, /that credit attaches to the construction's machinery\s+\(definitions, methods\), not to any conjectured claim built with it/);
+assert.match(promptV19Source, /Outputs are graded by the support actually demonstrated in the\s+manuscript, relative to its epoch/);
+assert.match(promptV19Source, /consistency\s+checks, however numerous and well-chosen, place its Output Strength\s+below central results that are derived or proven/);
+assert.match(promptV19Source, /State the epistemic\s+status \(proven \/ derived \/ conjectured\) of each central output/);
+assert.match(promptV19Source, /Hindsight disclosure/);
+assert.match(promptV19Source, /Report them in hindsightAssessment/);
+assert.match(promptV19Source, /Do not\s+rewrite the review to hide them; disclose them\./);
+assert.match(promptV19Source, /"hindsightAssessment": \{/);
+
+// Hindsight wiring is live in the engine (field optional under v18.1.1),
+// surfaced beside the recognition badge.
+assert.match(engineSource, /export type HindsightAssessment/);
+assert.match(engineSource, /function normalizeHindsightAssessment/);
+assert.match(engineSource, /hindsightSuspected,/);
+assert.match(routesSource, /hindsightAssessment: coverageLedger\.hindsightAssessment \?\? null/);
+assert.match(routesSource, /hindsightSuspected: coverageLedger\.hindsightSuspected \?\? false/);
+assert.match(reviewCardSource, /Hindsight disclosed/);
+
+// How-it-works: collapsed verbatim-protocol disclosure and protocol chat.
+assert.match(howItWorksSource, /View the exact protocol \(verbatim\)/);
+assert.match(howItWorksSource, /Copy prompt/);
+assert.match(howItWorksSource, /\/api\/protocol-chat/);
+assert.match(howItWorksSource, /not the reviewing model/);
+assert.match(routesSource, /\/protocol-chat/);
+assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
+assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = "2026-06-09"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -1000,7 +1035,6 @@ assert.match(howItWorksSource, /id="hiw-calibration"/);
 assert.match(howItWorksSource, /id="hiw-diagnostic"/);
 assert.match(howItWorksSource, /\/api\/stats\/recognition/);
 assert.match(routesSource, /\/stats\/recognition/);
-const reviewCardSource = readFileSync(join(root, "artifacts/scireview/src/components/ReviewCard.tsx"), "utf8");
 assert.match(reviewCardSource, /href="\/how-it-works#hiw-calibration"/);
 assert.match(reviewCardSource, /href="\/how-it-works#hiw-diagnostic"/);
 

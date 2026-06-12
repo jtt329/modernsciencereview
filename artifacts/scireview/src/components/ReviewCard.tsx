@@ -892,6 +892,12 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const pdfVisibleFallbackUsed = Boolean(parsedCoverage?.pdfVisibleFallbackUsed);
   const blindingStrength = parsedCoverage?.blindingStrength ?? (pdfVisibleFallbackUsed ? 'weaker' : 'strong');
   const recognitionSuspected = Boolean(parsedCoverage?.recognitionSuspected);
+  const hindsightSuspected = parsedCoverage?.hindsightSuspected === true;
+  const hindsightStatements: string[] = [
+    ...(Array.isArray(parsedCoverage?.hindsightAssessment?.statements) ? parsedCoverage.hindsightAssessment.statements : []),
+    ...storedIndividualReviews.flatMap((pass: any) =>
+      Array.isArray(pass?.hindsightAssessment?.statements) ? pass.hindsightAssessment.statements : []),
+  ].filter((statement, index, array) => statement && array.indexOf(statement) === index);
   const injectionSuspected = Boolean(parsedCoverage?.injectionSuspected);
   const calibrationAnchor = calibrationAnchorOverride ?? Boolean(parsedCoverage?.calibrationAnchor);
   const calibrationAnchorEligible = blindingStrength !== 'weaker' && !recognitionSuspected;
@@ -1467,14 +1473,33 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         Cluster: {clusterLabelOverride ?? canonicalClusterLabel}
                       </p>
                     )}
-                    {recognitionSuspected && (
-                      <span
-                        className="inline-block mt-1 rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200"
-                        title="A blind pass or the adjudicator disclosed recognizing this manuscript as a known published work. Recognition does not affect diagnostic scores; recognized reviews never serve as benchmark anchors."
-                      >
-                        Recognition disclosed
-                      </span>
-                    )}
+                    <span className="flex flex-wrap items-start gap-1.5 mt-1">
+                      {recognitionSuspected && (
+                        <span
+                          className="inline-block rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200"
+                          title="A blind pass or the adjudicator disclosed recognizing this manuscript as a known published work. Recognition does not affect diagnostic scores; recognized reviews are barred from automatic anchor service."
+                        >
+                          Recognition disclosed
+                        </span>
+                      )}
+                      {hindsightSuspected && (
+                        <details className="inline-block">
+                          <summary
+                            className="cursor-pointer inline-block rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200"
+                            title="The reviewer flagged statements in its own rationales that depend on knowledge of developments after the manuscript's epoch. Disclosed, not hidden; click to read."
+                          >
+                            Hindsight disclosed
+                          </summary>
+                          {hindsightStatements.length > 0 && (
+                            <ul className="mt-1 max-w-md list-disc list-inside text-xs text-slate-400 space-y-0.5">
+                              {hindsightStatements.map((statement) => (
+                                <li key={statement}>"{statement}"</li>
+                              ))}
+                            </ul>
+                          )}
+                        </details>
+                      )}
+                    </span>
                   </div>
                 </div>
                 {pairwiseCalibrated && !selectedPass && (

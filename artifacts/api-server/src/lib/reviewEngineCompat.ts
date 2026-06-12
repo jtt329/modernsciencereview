@@ -288,6 +288,14 @@ export type RecognitionAssessment = {
   recognitionBasis: string;
 };
 
+// Optional on stored reviews, like recognitionAssessment: hindsight, like
+// recognition, is measured and disclosed rather than fought. Instructed by
+// the v19 prompt; absent (defaulted) under earlier prompts.
+export type HindsightAssessment = {
+  hindsightSuspected: boolean;
+  statements: string[];
+};
+
 export const RECOGNITION_SUSPECTED_CONFIDENCE_THRESHOLD = 0.5;
 
 export function recognitionAssessmentIndicatesSuspected(value: RecognitionAssessment | null | undefined) {
@@ -595,6 +603,7 @@ type IndividualReview = {
   failureAnalysis: ReviewFailureAnalysis;
   reviewInputQuality: ReviewInputQuality;
   recognitionAssessment: RecognitionAssessment;
+  hindsightAssessment: HindsightAssessment;
 };
 
 type AggregateReview = {
@@ -697,6 +706,7 @@ type AggregateReview = {
   internalCalibrationNotes: string;
   reviewInputQuality: ReviewInputQuality;
   recognitionAssessment: RecognitionAssessment;
+  hindsightAssessment: HindsightAssessment;
 };
 
 type MultiPassReviewResult = {
@@ -779,6 +789,8 @@ function withLatexMarkdownFormatting(prompt: string) {
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V18_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V18_FULL_PROMPT);
 export const REVIEW_PROMPT_NAME = "v18.1.1 computed ICO half-point";
+// Date the active prompt text was adopted; bump together with the version.
+export const REVIEW_PROMPT_DATE = "2026-06-09";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -1189,6 +1201,18 @@ const individualReviewJsonSchema = {
         suspectedIdentity: jsonString,
         recognitionConfidence: jsonNumber,
         recognitionBasis: jsonString,
+      },
+    },
+    // Optional (not in `required`): instructed by the v19 prompt; the
+    // active v18.1.1 prompt does not request it, so the schema must not
+    // force the model to fabricate it.
+    hindsightAssessment: {
+      type: "object",
+      required: ["hindsightSuspected", "statements"],
+      additionalProperties: false,
+      properties: {
+        hindsightSuspected: jsonBoolean,
+        statements: jsonStringArray,
       },
     },
     diagnosticAssessmentConfidence: jsonNumber,
@@ -1787,6 +1811,14 @@ function normalizeRecognitionAssessment(value: unknown): RecognitionAssessment {
     suspectedIdentity: firstString([source.suspectedIdentity]),
     recognitionConfidence: asNumber(source.recognitionConfidence, 0, 0, 1),
     recognitionBasis: firstString([source.recognitionBasis]),
+  };
+}
+
+function normalizeHindsightAssessment(value: unknown): HindsightAssessment {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+  return {
+    hindsightSuspected: source.hindsightSuspected === true,
+    statements: firstStringArray([source.statements]),
   };
 }
 
@@ -3299,6 +3331,7 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     },
     reviewInputQuality,
     recognitionAssessment: normalizeRecognitionAssessment(source.recognitionAssessment),
+    hindsightAssessment: normalizeHindsightAssessment(source.hindsightAssessment),
   };
 }
 
@@ -5564,6 +5597,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     ].filter(Boolean).join("\n\n"),
     reviewInputQuality,
     recognitionAssessment: normalizeRecognitionAssessment(source.recognitionAssessment ?? root.recognitionAssessment),
+    hindsightAssessment: normalizeHindsightAssessment(source.hindsightAssessment ?? root.hindsightAssessment),
   };
 }
 
@@ -5773,6 +5807,7 @@ function v16CanonicalReviewFromIndividual(review: IndividualReview, index?: numb
     failureAnalysis: v17FailureAnalysisFromIndividual(review),
     reviewInputQuality: review.reviewInputQuality,
     recognitionAssessment: review.recognitionAssessment,
+    hindsightAssessment: review.hindsightAssessment,
     organicCohortProfile: v16OrganicCohortProfileOnly(review.organicCohortProfile),
     rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(review)),
     computedScore: review.scoreBand.median,
@@ -5805,6 +5840,7 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
     failureAnalysis: v16FailureAnalysisFromAggregate(aggregate),
     reviewInputQuality: aggregate.reviewInputQuality,
     recognitionAssessment: aggregate.recognitionAssessment,
+    hindsightAssessment: aggregate.hindsightAssessment,
     organicCohortProfile: v16OrganicCohortProfileOnly(aggregate.comparatorProfile),
     rawDiagnosticScore: rawDiagnosticScore(diagnosticSubscoreValues(aggregate)),
     computedScore: aggregate.finalScoreBand.median,
@@ -5857,6 +5893,7 @@ function compactIndividualReviewForStorage(review: IndividualReview, index: numb
     // Stored only; not passed to the adjudicator, which must complete its
     // own recognitionAssessment independently of the passes.
     recognitionAssessment: review.recognitionAssessment,
+    hindsightAssessment: review.hindsightAssessment,
   };
 }
 
@@ -5981,6 +6018,7 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
     finalScoreConfidence: aggregate.finalScoreConfidence,
     internalCalibrationNotes: aggregate.internalCalibrationNotes,
     recognitionAssessment: aggregate.recognitionAssessment,
+    hindsightAssessment: aggregate.hindsightAssessment,
   };
 }
 
@@ -7863,6 +7901,10 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     ...result.individualReviews.map((review) => review.recognitionAssessment),
     aggregate.recognitionAssessment,
   ].some(recognitionAssessmentIndicatesSuspected);
+  const hindsightSuspected = [
+    ...result.individualReviews.map((review) => review.hindsightAssessment),
+    aggregate.hindsightAssessment,
+  ].some((assessment) => assessment?.hindsightSuspected === true);
   const injectionSuspected = Boolean(result.reviewInputSnapshot.injectionSuspected);
   const firstComparisonCohort = result.individualReviews.find((review) => review.comparisonCohort)?.comparisonCohort || null;
   const firstBroadField = result.individualReviews.find((review) => review.broadField)?.broadField || null;
@@ -7946,6 +7988,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     pdfVisibleFallbackUsed,
     blindingStrength,
     recognitionSuspected,
+    hindsightSuspected,
     injectionSuspected,
     usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
     usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
