@@ -59,6 +59,9 @@ export type PairwiseJudgment = {
   // Which review id was shown as Paper A / Paper B in this call.
   paperAReviewId: string;
   paperBReviewId: string;
+  // v2 (itemized) responses cite the ledger items weighed per dimension;
+  // preserved verbatim for the audit UI. Absent on v1 judgments.
+  keyComparisons?: Partial<Record<"inputStrength" | "constructionStrength" | "outputStrength", unknown[]>>;
 };
 
 export type ReconciledPairOutcome = {
@@ -165,8 +168,16 @@ const pairwiseJudgmentJsonSchema = {
   },
 };
 
+// Accepts both the v1 letter form ("A") and the v2 itemized form
+// ({ verdict: "A", keyComparisons: [...] }).
 function normalizeVerdict(value: unknown): "A" | "B" | "equal" {
-  return value === "A" || value === "B" ? value : "equal";
+  const letter = value && typeof value === "object" ? (value as Record<string, unknown>).verdict : value;
+  return letter === "A" || letter === "B" ? letter : "equal";
+}
+
+function keyComparisonsOf(value: unknown): unknown[] | null {
+  const comparisons = value && typeof value === "object" ? (value as Record<string, unknown>).keyComparisons : null;
+  return Array.isArray(comparisons) && comparisons.length > 0 ? comparisons : null;
 }
 
 function normalizeMargin(value: unknown): PairwiseMargin {
@@ -200,6 +211,11 @@ async function judgeOnce(
     },
   });
   const parsed = parseGeminiJsonResponse(response.text ?? "") as Record<string, unknown>;
+  const keyComparisons: PairwiseJudgment["keyComparisons"] = {};
+  for (const dimension of ["inputStrength", "constructionStrength", "outputStrength"] as const) {
+    const comparisons = keyComparisonsOf(parsed[dimension]);
+    if (comparisons) keyComparisons[dimension] = comparisons;
+  }
   return {
     inputStrength: normalizeVerdict(parsed.inputStrength),
     constructionStrength: normalizeVerdict(parsed.constructionStrength),
@@ -210,6 +226,7 @@ async function judgeOnce(
     confidence: typeof parsed.confidence === "number" ? Math.max(0, Math.min(1, parsed.confidence)) : 0,
     paperAReviewId,
     paperBReviewId,
+    ...(Object.keys(keyComparisons).length > 0 ? { keyComparisons } : {}),
   };
 }
 
@@ -271,6 +288,81 @@ export async function judgePair(
   const first = await judgeOnce(firstA.reviewId, firstB.reviewId, firstA.strippedReview, firstB.strippedReview);
   const second = await judgeOnce(firstB.reviewId, firstA.reviewId, firstB.strippedReview, firstA.strippedReview);
   return reconcileSwappedJudgments(first, second);
+}
+
+// Parses one stored judgment (from judgments_json) back into a typed
+// PairwiseJudgment, requiring the presentation assignment to be present.
+// Accepts both the v1 letter form ("A") and the v2 itemized form
+// ({ verdict: "A", keyComparisons: [...] }) so re-derivation keeps working
+// across the v19-era schema change.
+export function judgmentFromStored(value: unknown): PairwiseJudgment | null {
+  const source = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  if (!source) return null;
+  if (typeof source.paperAReviewId !== "string" || typeof source.paperBReviewId !== "string") return null;
+  const verdict = (raw: unknown): PresentationVerdict => {
+    const letter = raw && typeof raw === "object" ? (raw as Record<string, unknown>).verdict : raw;
+    return letter === "A" || letter === "B" ? letter : "equal";
+  };
+  return {
+    inputStrength: verdict(source.inputStrength),
+    constructionStrength: verdict(source.constructionStrength),
+    outputStrength: verdict(source.outputStrength),
+    overall: verdict(source.overall),
+    margin: source.margin === "clear" || source.margin === "decisive" ? source.margin : "slight",
+    rationale: typeof source.rationale === "string" ? source.rationale : "",
+    confidence: typeof source.confidence === "number" ? source.confidence : 0,
+    paperAReviewId: source.paperAReviewId,
+    paperBReviewId: source.paperBReviewId,
+  };
+}
+
+export type StoredPairRowLike = {
+  reviewIdA: string;
+  reviewIdB: string;
+  overallWinnerReviewId: string | null;
+  inputStrengthWinnerReviewId: string | null;
+  constructionStrengthWinnerReviewId: string | null;
+  outputStrengthWinnerReviewId: string | null;
+  margin: string | null;
+  positionInconsistent: number | boolean;
+  judgmentsJson?: unknown;
+};
+
+// Ground truth for a stored pair is its raw judgments: each carries its own
+// presentation assignment, so the reconciled winners can always be
+// re-derived from them. The denormalized winner columns are convenience
+// only; rows whose columns disagree with their own judgments are flagged
+// (and healed by the calibration run). This is the single translation
+// shared by the win-rate fit, the pair list, and the calibration detail
+// endpoint, so the displayed stats and the rendered judgments cannot
+// drift apart.
+export function storedPairTruth(row: StoredPairRowLike): {
+  outcome: ReconciledPairOutcome;
+  rederived: boolean;
+  columnsMismatchJudgments: boolean;
+} {
+  const columnOutcome: ReconciledPairOutcome = {
+    reviewIdA: row.reviewIdA,
+    reviewIdB: row.reviewIdB,
+    overallWinnerReviewId: row.overallWinnerReviewId,
+    inputStrengthWinnerReviewId: row.inputStrengthWinnerReviewId,
+    constructionStrengthWinnerReviewId: row.constructionStrengthWinnerReviewId,
+    outputStrengthWinnerReviewId: row.outputStrengthWinnerReviewId,
+    margin: row.margin === "clear" || row.margin === "decisive" ? row.margin : "slight",
+    positionInconsistent: row.positionInconsistent === true || row.positionInconsistent === 1,
+    judgments: [],
+  };
+  const parsed = Array.isArray(row.judgmentsJson) ? row.judgmentsJson.map(judgmentFromStored) : [];
+  if (parsed.length !== 2 || parsed.some((judgment) => judgment === null)) {
+    return { outcome: columnOutcome, rederived: false, columnsMismatchJudgments: false };
+  }
+  const rederived = reconcileSwappedJudgments(parsed[0]!, parsed[1]!);
+  const columnsMismatchJudgments =
+    rederived.overallWinnerReviewId !== columnOutcome.overallWinnerReviewId ||
+    rederived.inputStrengthWinnerReviewId !== columnOutcome.inputStrengthWinnerReviewId ||
+    rederived.constructionStrengthWinnerReviewId !== columnOutcome.constructionStrengthWinnerReviewId ||
+    rederived.outputStrengthWinnerReviewId !== columnOutcome.outputStrengthWinnerReviewId;
+  return { outcome: rederived, rederived: true, columnsMismatchJudgments };
 }
 
 export function outcomeFromStoredPair(stored: {

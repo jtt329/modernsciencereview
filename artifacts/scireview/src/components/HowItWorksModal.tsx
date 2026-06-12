@@ -256,8 +256,9 @@ export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
                   <strong className="text-slate-800">Anchors.</strong> A small set of admin-pinned anchor papers —
                   endorsed reference points spanning the full quality range, from a field-defining landmark pinned at
                   100 down to a failed paper pinned near 0 — fixes the scale. One global monotone curve maps every
-                  paper's ranked position to 0–100 through all anchors pooled. Recognized papers cannot serve as
-                  anchors.
+                  paper's ranked position to 0–100 through all anchors pooled. Papers the reviewer recognized are
+                  barred from automatic anchor service; an administrator can deliberately pin one as an anchor, and
+                  that override is publicly badged on every page that uses it.
                 </li>
                 <li>
                   <strong className="text-slate-800">Bridges.</strong> Selected papers are compared across cohort

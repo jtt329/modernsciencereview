@@ -143,7 +143,7 @@ async function assertKnownBenchmarkMetadataRegression() {
   writeFileSync(entry, `
     import { benchmarkAnchorEligible, blindManuscriptText, calibrationAnchorEligible, clusteringScopeIncludesReview, detectReviewerDirectedText, extractMetadata, isAdminPinnedAnchorOverride, isCalibrationCompatibleReviewObject, normalizePaperDisplayMetadata } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
     import { calibrateCohorts, calibrateCohortsV2, calibrationTripwireTriggered, fitBradleyTerry, fitCohort } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/calibrationFit.ts"))};
-    import { reconcileSwappedJudgments } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pairwiseCalibration.ts"))};
+    import { reconcileSwappedJudgments, storedPairTruth } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pairwiseCalibration.ts"))};
     globalThis.__msrMetadataRegression = (async () => {
     // Sanitizer: reviewer-directed text must be neutralized and flagged.
     const injectionInput = [
@@ -259,6 +259,65 @@ async function assertKnownBenchmarkMetadataRegression() {
     const disagreed = reconcileSwappedJudgments(firstJudgment, disagreeingSwapped);
     if (disagreed.overallWinnerReviewId !== null || !disagreed.positionInconsistent) {
       throw new Error("disagreeing swapped judgments must record equal with positionInconsistent=true");
+    }
+
+    // Synthetic swapped DOUBLE-LOSS (the Hawking-vs-Unruh scenario): the
+    // perspective paper loses output and overall in both position-swapped
+    // judgments. Reconciliation must record the opponent as winner.
+    const doubleLossFirst = {
+      inputStrength: "equal", constructionStrength: "equal", outputStrength: "A",
+      overall: "A", margin: "decisive", rationale: "", confidence: 0.9,
+      paperAReviewId: "unruh", paperBReviewId: "hawking",
+    };
+    const doubleLossSecond = {
+      inputStrength: "equal", constructionStrength: "equal", outputStrength: "B",
+      overall: "B", margin: "decisive", rationale: "", confidence: 0.9,
+      paperAReviewId: "hawking", paperBReviewId: "unruh",
+    };
+    const doubleLoss = reconcileSwappedJudgments(doubleLossFirst, doubleLossSecond);
+    if (doubleLoss.overallWinnerReviewId !== "unruh" || doubleLoss.outputStrengthWinnerReviewId !== "unruh") {
+      throw new Error("swapped double-loss did not reconcile to the opponent as winner");
+    }
+    if (doubleLoss.positionInconsistent) {
+      throw new Error("consistent swapped double-loss must not be flagged position-inconsistent");
+    }
+
+    // Corrupt-row healing: a stored row whose denormalized winner columns
+    // contradict its own judgments (the reported bug shape: a stored win
+    // over a judged double-loss) must re-derive to the judgments' verdict
+    // and be flagged for healing.
+    const corruptRow = {
+      reviewIdA: "hawking",
+      reviewIdB: "unruh",
+      overallWinnerReviewId: "hawking",
+      inputStrengthWinnerReviewId: null,
+      constructionStrengthWinnerReviewId: null,
+      outputStrengthWinnerReviewId: "hawking",
+      margin: "decisive",
+      positionInconsistent: 0,
+      judgmentsJson: [doubleLossFirst, doubleLossSecond],
+    };
+    const healedTruth = storedPairTruth(corruptRow);
+    if (!healedTruth.rederived || !healedTruth.columnsMismatchJudgments) {
+      throw new Error("corrupt pair row was not detected as mismatching its judgments");
+    }
+    if (healedTruth.outcome.overallWinnerReviewId !== "unruh" || healedTruth.outcome.outputStrengthWinnerReviewId !== "unruh") {
+      throw new Error("corrupt pair row did not re-derive to the judgments' true winner");
+    }
+    const cleanTruth = storedPairTruth({ ...corruptRow, overallWinnerReviewId: "unruh", outputStrengthWinnerReviewId: "unruh" });
+    if (cleanTruth.columnsMismatchJudgments) {
+      throw new Error("consistent pair row was wrongly flagged as mismatching");
+    }
+    // v2 itemized judgment form must re-derive identically.
+    const itemizedTruth = storedPairTruth({
+      ...corruptRow,
+      judgmentsJson: [
+        { ...doubleLossFirst, outputStrength: { verdict: "A", keyComparisons: [{ itemA: "x", itemB: "y", judgment: "z" }] } },
+        { ...doubleLossSecond, outputStrength: { verdict: "B", keyComparisons: [] } },
+      ],
+    });
+    if (itemizedTruth.outcome.outputStrengthWinnerReviewId !== "unruh") {
+      throw new Error("itemized (v2-form) judgments did not re-derive correctly");
     }
 
     // Anchor override: an admin-pinned anchor stays eligible despite
@@ -974,6 +1033,25 @@ assert.match(routesSource, /\/papers\/:id\/simpler/);
 assert.match(routesSource, /What does this mean in simple language\? How does it change our understanding\?/);
 assert.match(routesSource, /simplifiedExplanation, cached: true/);
 assert.match(dbPapersSchemaSource, /simplified_explanation/);
+
+// Pairwise audit fixes: stats and pair list share one re-derived truth;
+// rows are healed; bridge pairs labeled; glossary affordances; anchor
+// copy states the admin-override semantics.
+assert.match(pairwiseEngineSource, /export function storedPairTruth/);
+assert.match(pairwiseEngineSource, /export function judgmentFromStored/);
+assert.match(routesSource, /storedPairTruth/);
+assert.match(routesSource, /healedPairRows/);
+assert.match(routesSource, /partnerViaBridge/);
+assert.match(routesSource, /dimensionVerdicts/);
+assert.doesNotMatch(routesSource, /row\.overallWinnerReviewId === reviewId \? "win" : "loss"/);
+assert.match(pairwisePromptV2Source, /keyComparisons/);
+assert.match(pairwisePromptV2Source, /ACTIVATION CHECKLIST/);
+assert.match(reviewCardSource, /GLOSSARY_DEFINITIONS/);
+assert.match(reviewCardSource, /GlossaryLegend/);
+assert.match(reviewCardSource, /withGlossaryLinks/);
+assert.match(reviewCardSource, /Bridge pair/);
+assert.match(howItWorksSource, /barred from automatic anchor\s+service; an administrator can deliberately pin one as an anchor/);
+assert.doesNotMatch(howItWorksSource, /Recognized papers cannot serve as\s+anchors/);
 
 // Calibration mapping v2: pooled global anchor curve.
 assert.match(calibrationFitSource, /export function calibrateCohortsV2/);

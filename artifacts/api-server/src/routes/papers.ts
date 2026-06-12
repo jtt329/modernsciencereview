@@ -55,6 +55,7 @@ import {
   outcomeFromStoredPair,
   planCohortPairs,
   runWithConcurrency,
+  storedPairTruth,
   strippedReviewForPairwise,
   type PairwiseCalibrationMember,
   type PlannedPair,
@@ -3468,26 +3469,52 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
 
     // Re-read the cache so the fit uses exactly the stored, reproducible rows.
     const refreshed = await buildPairwiseCalibrationPlan(assembly);
+
+    // Ground-truth pass: re-derive every pair's reconciled outcome from its
+    // raw stored judgments, and heal rows whose denormalized winner columns
+    // disagree with their own judgments (the win-rate fit and the pair list
+    // both read the re-derived truth, never the raw columns).
+    const pairTruthByKey = new Map<string, ReturnType<typeof storedPairTruth>["outcome"]>();
+    const healedPairRows: { reviewIdA: string; reviewIdB: string; field: string }[] = [];
+    for (const [key, row] of refreshed.cachedPairsByKey) {
+      const truth = storedPairTruth(row);
+      pairTruthByKey.set(key, truth.outcome);
+      if (truth.columnsMismatchJudgments) {
+        healedPairRows.push({ reviewIdA: row.reviewIdA, reviewIdB: row.reviewIdB, field: "winner columns re-derived from judgments" });
+        await db.update(calibrationPairsTable)
+          .set({
+            overallWinnerReviewId: truth.outcome.overallWinnerReviewId,
+            inputStrengthWinnerReviewId: truth.outcome.inputStrengthWinnerReviewId,
+            constructionStrengthWinnerReviewId: truth.outcome.constructionStrengthWinnerReviewId,
+            outputStrengthWinnerReviewId: truth.outcome.outputStrengthWinnerReviewId,
+            margin: truth.outcome.margin,
+            positionInconsistent: truth.outcome.positionInconsistent ? 1 : 0,
+          })
+          .where(eq(calibrationPairsTable.id, row.id));
+      }
+    }
+
     const cohortInputs: CalibrationCohortInput[] = refreshed.cohortPlans.map((cohort) => {
       const members = assembly.cohorts.get(cohort.cohortId) ?? [];
       const memberIds = members.map((member) => member.reviewId);
       const memberSet = new Set(memberIds);
       const outcomes: CalibrationPairOutcome[] = [];
       for (const pair of cohort.pairs) {
-        const row = refreshed.cachedPairsByKey.get(`${pair.reviewIdA}\0${pair.reviewIdB}`);
-        if (!row || !memberSet.has(row.reviewIdA) || !memberSet.has(row.reviewIdB)) continue;
+        const key = `${pair.reviewIdA}\0${pair.reviewIdB}`;
+        const truth = pairTruthByKey.get(key);
+        if (!truth || !memberSet.has(truth.reviewIdA) || !memberSet.has(truth.reviewIdB)) continue;
         const downWeighted =
-          assembly.membersById.get(row.reviewIdA)?.downWeighted ||
-          assembly.membersById.get(row.reviewIdB)?.downWeighted;
+          assembly.membersById.get(truth.reviewIdA)?.downWeighted ||
+          assembly.membersById.get(truth.reviewIdB)?.downWeighted;
         outcomes.push(outcomeFromStoredPair({
-          reviewIdA: row.reviewIdA,
-          reviewIdB: row.reviewIdB,
-          overallWinnerReviewId: row.overallWinnerReviewId,
-          inputStrengthWinnerReviewId: row.inputStrengthWinnerReviewId,
-          constructionStrengthWinnerReviewId: row.constructionStrengthWinnerReviewId,
-          outputStrengthWinnerReviewId: row.outputStrengthWinnerReviewId,
-          margin: row.margin,
-          positionInconsistent: row.positionInconsistent === 1,
+          reviewIdA: truth.reviewIdA,
+          reviewIdB: truth.reviewIdB,
+          overallWinnerReviewId: truth.overallWinnerReviewId,
+          inputStrengthWinnerReviewId: truth.inputStrengthWinnerReviewId,
+          constructionStrengthWinnerReviewId: truth.constructionStrengthWinnerReviewId,
+          outputStrengthWinnerReviewId: truth.outputStrengthWinnerReviewId,
+          margin: truth.margin,
+          positionInconsistent: truth.positionInconsistent,
         }, downWeighted ? 0.5 : 1));
       }
       return {
@@ -3524,16 +3551,29 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
         const cohortPlan = refreshed.cohortPlans.find((cohort) => cohort.cohortId === fit.cohortId);
         for (const pair of cohortPlan?.pairs ?? []) {
           if (pair.reviewIdA !== reviewId && pair.reviewIdB !== reviewId) continue;
-          const row = refreshed.cachedPairsByKey.get(`${pair.reviewIdA}\0${pair.reviewIdB}`);
-          if (!row) continue;
+          const truth = pairTruthByKey.get(`${pair.reviewIdA}\0${pair.reviewIdB}`);
+          if (!truth) continue;
           const partnerId = pair.reviewIdA === reviewId ? pair.reviewIdB : pair.reviewIdA;
           partnerIds.add(partnerId);
+          const verdictFor = (winner: string | null) =>
+            winner == null ? "equal" : winner === reviewId ? "win" : "loss";
           pairSummaries.push({
             cohortId: fit.cohortId,
             partnerReviewId: partnerId,
-            overall: row.overallWinnerReviewId == null ? "equal" : row.overallWinnerReviewId === reviewId ? "win" : "loss",
-            margin: row.margin,
-            positionInconsistent: row.positionInconsistent === 1,
+            overall: verdictFor(truth.overallWinnerReviewId),
+            margin: truth.margin,
+            positionInconsistent: truth.positionInconsistent,
+            dimensionVerdicts: {
+              inputStrength: verdictFor(truth.inputStrengthWinnerReviewId),
+              constructionStrength: verdictFor(truth.constructionStrengthWinnerReviewId),
+              outputStrength: verdictFor(truth.outputStrengthWinnerReviewId),
+              overall: verdictFor(truth.overallWinnerReviewId),
+            },
+            // Either side participating in this cohort through a
+            // bridgeCohortId assignment marks the pair as a bridge pair.
+            partnerViaBridge:
+              assembly.membersById.get(partnerId)?.cohortId !== fit.cohortId ||
+              assembly.membersById.get(reviewId)?.cohortId !== fit.cohortId,
           });
         }
       }
@@ -3656,6 +3696,7 @@ router.post("/papers/pairwise-calibration", async (req, res) => {
       judgedNewPairs: plan.newPairs.length - failedPairs.length,
       cachedPairs: plan.plannedPairs.length - plan.newPairs.length,
       failedPairs,
+      healedPairRows,
       updatedReviews,
       calibrationHolds,
       pooledAnchors,
@@ -4187,12 +4228,40 @@ router.get("/papers/:id/calibration", async (req, res) => {
     const pairRows = await db.select().from(calibrationPairsTable)
       .where(eq(calibrationPairsTable.promptHash, promptHash));
     const pairRowByKey = new Map(pairRows.map((row) => [`${row.reviewIdA}\0${row.reviewIdB}`, row]));
+    const primaryCohortOfReview = (reviewId: string): string | null => {
+      const reviewRow = reviewById.get(reviewId);
+      const rowLedger = reviewRow ? parseJsonObject(reviewRow.coverageLedgerJson) : null;
+      return rowLedger ? pairwiseCohortIdForLedger(rowLedger) : null;
+    };
     const pairs = (Array.isArray(pairwiseCalibration.pairs) ? pairwiseCalibration.pairs : []).map((pair: any) => {
       const partnerReviewId = typeof pair?.partnerReviewId === "string" ? pair.partnerReviewId : "";
       const [reviewIdA, reviewIdB] = review.id < partnerReviewId ? [review.id, partnerReviewId] : [partnerReviewId, review.id];
       const row = pairRowByKey.get(`${reviewIdA}\0${reviewIdB}`);
+      // Display always re-derives from the raw judgments (storedPairTruth),
+      // never trusts the stored summary or the row's winner columns: the
+      // stats and the rendered judgments must agree by construction.
+      const truth = row ? storedPairTruth(row) : null;
+      const verdictFor = (winner: string | null) =>
+        winner == null ? "equal" : winner === review.id ? "win" : "loss";
       return {
         ...pair,
+        ...(truth ? {
+          overall: verdictFor(truth.outcome.overallWinnerReviewId),
+          margin: truth.outcome.margin,
+          positionInconsistent: truth.outcome.positionInconsistent,
+          dimensionVerdicts: {
+            inputStrength: verdictFor(truth.outcome.inputStrengthWinnerReviewId),
+            constructionStrength: verdictFor(truth.outcome.constructionStrengthWinnerReviewId),
+            outputStrength: verdictFor(truth.outcome.outputStrengthWinnerReviewId),
+            overall: verdictFor(truth.outcome.overallWinnerReviewId),
+          },
+          columnsMismatchJudgments: truth.columnsMismatchJudgments,
+        } : {}),
+        partnerViaBridge: pair.partnerViaBridge === true ||
+          (typeof pair?.cohortId === "string" && (
+            primaryCohortOfReview(partnerReviewId) !== pair.cohortId ||
+            primaryCohortOfReview(review.id) !== pair.cohortId
+          )),
         partnerTitle: titleByReviewId(partnerReviewId),
         judgments: (Array.isArray(row?.judgmentsJson) ? row.judgmentsJson : []).map((judgment: any) => ({
           ...judgment,
@@ -4201,6 +4270,33 @@ router.get("/papers/:id/calibration", async (req, res) => {
           paperATitle: typeof judgment?.paperAReviewId === "string" ? titleByReviewId(judgment.paperAReviewId) : null,
           paperBTitle: typeof judgment?.paperBReviewId === "string" ? titleByReviewId(judgment.paperBReviewId) : null,
         })),
+      };
+    });
+
+    // Win-rate headers recomputed live from the same re-derived pair
+    // verdicts the list shows (equal counts half), replacing whatever the
+    // last calibration run stored.
+    const liveCohorts = (Array.isArray(pairwiseCalibration.cohorts) ? pairwiseCalibration.cohorts : []).map((cohort: any) => {
+      const cohortPairs = pairs.filter((pair: any) => pair.cohortId === cohort.cohortId && pair.dimensionVerdicts);
+      if (cohortPairs.length === 0) return cohort;
+      const rateOf = (dimension: string) => {
+        let wins = 0;
+        let equals = 0;
+        for (const pair of cohortPairs) {
+          const verdict = pair.dimensionVerdicts[dimension];
+          if (verdict === "win") wins += 1;
+          else if (verdict === "equal") equals += 1;
+        }
+        return (wins + equals / 2) / cohortPairs.length;
+      };
+      return {
+        ...cohort,
+        dimensionWinRates: {
+          inputStrength: rateOf("inputStrength"),
+          constructionStrength: rateOf("constructionStrength"),
+          outputStrength: rateOf("outputStrength"),
+          overall: rateOf("overall"),
+        },
       };
     });
 
@@ -4220,7 +4316,7 @@ router.get("/papers/:id/calibration", async (req, res) => {
       promptHash,
       calibratedAt: pairwiseCalibration.calibratedAt ?? null,
       calibrationRationale: ledger.calibrationRationale ?? "",
-      cohorts: pairwiseCalibration.cohorts ?? [],
+      cohorts: liveCohorts,
       cohortMembers,
       anchorsUsed: pairwiseCalibration.anchorsUsed ?? [],
       anchorsDetail,

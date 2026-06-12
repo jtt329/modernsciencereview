@@ -74,12 +74,20 @@ papers on that dimension. The margin describes the overall judgment:
 reviewer applying this protocol should reliably reach the same answer,
 "decisive" means the papers are not in the same band at all.
 
+For each of the three dimensions, cite the specific ledger items you
+weighed: 1-3 keyComparisons, each naming one item from Paper A's ledger
+and one from Paper B's ledger (use the item names as written in the
+ledgers) and stating the comparison in one sentence (e.g. itemA: "quantum
+field theory on curved spacetime", itemB: "entropic force postulate",
+judgment: "A's input is directly tested physics; B's is a chosen
+postulate"). Overall keeps its prose rationale.
+
 Return valid JSON only with this structure:
 
 {
-  "inputStrength": "A | B | equal",
-  "constructionStrength": "A | B | equal",
-  "outputStrength": "A | B | equal",
+  "inputStrength": { "verdict": "A | B | equal", "keyComparisons": [{ "itemA": "", "itemB": "", "judgment": "" }] },
+  "constructionStrength": { "verdict": "A | B | equal", "keyComparisons": [{ "itemA": "", "itemB": "", "judgment": "" }] },
+  "outputStrength": { "verdict": "A | B | equal", "keyComparisons": [{ "itemA": "", "itemB": "", "judgment": "" }] },
   "overall": "A | B | equal",
   "margin": "slight | clear | decisive",
   "rationale": "",
@@ -90,3 +98,8 @@ Do not output numeric scores, score bands, magnitude labels, or
 percentages anywhere. rationale is 1-2 concise paragraphs explaining the
 overall judgment via the Input -> Construction -> Output logic.
 confidence is 0-1. Output valid JSON only.`;
+
+// ACTIVATION CHECKLIST (bundle with v19): besides swapping the import in
+// pairwiseCalibration.ts, update pairwiseJudgmentJsonSchema to the nested
+// per-dimension shape above. judgmentFromStored and the UI already accept
+// both the v1 letter form and this itemized form.

@@ -16,10 +16,73 @@ interface ReviewCardProps {
   isAdmin?: boolean;
 }
 
+// Stored v18.1.1 prose uses C1-C5 (and later F1-F4) labels freely; until
+// the v19 plain-language rule regenerates that text, every rendered
+// occurrence gets a tooltip + link to the How-it-works definitions.
+const GLOSSARY_DEFINITIONS: Record<string, string> = {
+  C1: 'C1 — establishes a new law, mechanism, phenomenon, or empirical fact.',
+  C2: 'C2 — derives known laws from fewer or more fundamental premises, or proves a new theorem about them.',
+  C3: 'C3 — unifies or systematizes known results under one construction.',
+  C4: 'C4 — constrains or excludes alternatives; confirmations and null results.',
+  C5: 'C5 — provides methods, datasets, or instruments, valued at the capability demonstrated.',
+  F1: 'F1 — about directly measured phenomena or data.',
+  F2: 'F2 — about established-theory regimes with strong indirect evidence.',
+  F3: 'F3 — about plausible but unobserved constructs of established theory.',
+  F4: 'F4 — about constructs internal to untested frameworks.',
+};
+const glossaryHref = (label: string) => (label.startsWith('C') ? '/how-it-works#hiw-centrality' : '/how-it-works');
+
+// Markdown pass: wraps glossary tokens in links with tooltip titles,
+// skipping $-delimited math segments.
+const withGlossaryLinks = (text: string) =>
+  text
+    .split(/(\$[^$]*\$)/g)
+    .map((segment) =>
+      segment.startsWith('$')
+        ? segment
+        : segment.replace(/\b(C[1-5]|F[1-4])\b/g, (token) => `[${token}](${glossaryHref(token)} "${GLOSSARY_DEFINITIONS[token]}")`),
+    )
+    .join('');
+
+const GlossaryProse = ({ text, className }: { text: string; className?: string }) => (
+  <p className={className}>
+    {text.split(/(\b(?:C[1-5]|F[1-4])\b)/g).map((part, index) =>
+      GLOSSARY_DEFINITIONS[part] ? (
+        <a
+          key={index}
+          href={glossaryHref(part)}
+          title={GLOSSARY_DEFINITIONS[part]}
+          className="font-bold text-indigo-300 underline decoration-dotted"
+        >
+          {part}
+        </a>
+      ) : (
+        <React.Fragment key={index}>{part}</React.Fragment>
+      ),
+    )}
+  </p>
+);
+
+const GlossaryLegend = () => (
+  <details className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
+    <summary className="cursor-pointer text-[10px] font-black text-slate-400 uppercase tracking-widest">
+      C1–C5 / F1–F4 legend
+    </summary>
+    <ul className="mt-2 space-y-1 text-xs text-slate-400">
+      {Object.values(GLOSSARY_DEFINITIONS).map((definition) => (
+        <li key={definition}>{definition}</li>
+      ))}
+    </ul>
+    <a href="/how-it-works#hiw-centrality" className="text-xs text-indigo-300 hover:underline mt-2 inline-block">
+      Full definitions on the How-it-works page
+    </a>
+  </details>
+);
+
 const Markdown = ({ children }: { children: string }) => (
   <div className="prose prose-invert prose-sm prose-p:my-0 prose-li:my-0 max-w-none text-slate-300 leading-relaxed">
     <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-      {normalizeMathMarkdown(children)}
+      {withGlossaryLinks(normalizeMathMarkdown(children))}
     </ReactMarkdown>
   </div>
 );
@@ -145,26 +208,53 @@ const CalibrationPanel = ({ detail, loading }: { detail: any | null; loading: bo
             position-inconsistent. "Overall" is its own judged question — not an average of the three dimension verdicts —
             so dimension win rates and the overall win rate can legitimately differ.
           </p>
+          <GlossaryLegend />
           {pairs.length === 0 && <p className="text-sm text-slate-400">No stored pair outcomes.</p>}
           {pairs.map((pair: any, index: number) => (
             <details key={`${pair.partnerReviewId}-${index}`} className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-              <summary className="cursor-pointer text-sm text-slate-200 flex flex-wrap items-center gap-2">
-                <span className={`font-black uppercase text-xs ${pair.overall === 'win' ? 'text-emerald-300' : pair.overall === 'loss' ? 'text-rose-300' : 'text-slate-300'}`}>
-                  {pair.overall}
+              <summary className="cursor-pointer text-sm text-slate-200">
+                <span className="flex flex-wrap items-center gap-2">
+                  <span className={`font-black uppercase text-xs ${pair.overall === 'win' ? 'text-emerald-300' : pair.overall === 'loss' ? 'text-rose-300' : 'text-slate-300'}`}>
+                    {pair.overall}
+                  </span>
+                  <span className="text-xs text-slate-400">({pair.margin})</span>
+                  <span>vs {pair.partnerTitle ?? pair.partnerReviewId}</span>
+                  {pair.partnerViaBridge && (
+                    <span className="rounded-full bg-sky-400/15 border border-sky-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-sky-200">
+                      Bridge pair
+                    </span>
+                  )}
+                  {pair.positionInconsistent && (
+                    <span className="rounded-full bg-amber-400/15 border border-amber-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-200">
+                      Position inconsistent
+                    </span>
+                  )}
                 </span>
-                <span className="text-xs text-slate-400">({pair.margin})</span>
-                <span>vs {pair.partnerTitle ?? pair.partnerReviewId}</span>
-                {pair.positionInconsistent && (
-                  <span className="rounded-full bg-amber-400/15 border border-amber-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-amber-200">
-                    Position inconsistent
+                {pair.dimensionVerdicts && (
+                  <span className="mt-1.5 flex flex-wrap gap-1.5">
+                    {([['Input', 'inputStrength'], ['Construction', 'constructionStrength'], ['Output', 'outputStrength'], ['Overall', 'overall']] as const).map(([label, key]) => {
+                      const verdict = pair.dimensionVerdicts[key];
+                      const tone = verdict === 'win'
+                        ? 'bg-emerald-400/15 border-emerald-300/25 text-emerald-200'
+                        : verdict === 'loss'
+                          ? 'bg-rose-400/15 border-rose-300/25 text-rose-200'
+                          : 'bg-white/5 border-white/10 text-slate-300';
+                      return (
+                        <span key={key} className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-widest ${tone}`}>
+                          {label}: {verdict}
+                        </span>
+                      );
+                    })}
                   </span>
                 )}
               </summary>
               <div className="mt-3 space-y-3">
                 {(Array.isArray(pair.judgments) ? pair.judgments : []).map((judgment: any, judgmentIndex: number) => {
-                  const winnerTitle = judgment.overall === 'A'
+                  const verdictOf = (value: any) => (value && typeof value === 'object' ? value.verdict : value);
+                  const overallVerdict = verdictOf(judgment.overall);
+                  const winnerTitle = overallVerdict === 'A'
                     ? judgment.paperATitle ?? 'Paper A'
-                    : judgment.overall === 'B'
+                    : overallVerdict === 'B'
                       ? judgment.paperBTitle ?? 'Paper B'
                       : 'equal';
                   return (
@@ -173,10 +263,24 @@ const CalibrationPanel = ({ detail, loading }: { detail: any | null; loading: bo
                         Judgment {judgmentIndex + 1} · overall: {winnerTitle} ({judgment.margin}) · confidence {judgment.confidence}
                       </p>
                       <p className="text-[10px] text-slate-500 mt-0.5">
-                        Paper A = {judgment.paperATitle ?? judgment.paperAReviewId}; Paper B = {judgment.paperBTitle ?? judgment.paperBReviewId}
+                        Paper A = {judgment.paperATitle ?? judgment.paperAReviewId} · Paper B = {judgment.paperBTitle ?? judgment.paperBReviewId}
                       </p>
+                      {(['inputStrength', 'constructionStrength', 'outputStrength'] as const).map((dimension) => {
+                        const comparisons = judgment?.[dimension]?.keyComparisons ?? judgment?.keyComparisons?.[dimension];
+                        if (!Array.isArray(comparisons) || comparisons.length === 0) return null;
+                        return (
+                          <ul key={dimension} className="mt-1 text-[11px] text-slate-400 space-y-0.5 list-disc list-inside">
+                            {comparisons.map((comparison: any, comparisonIndex: number) => (
+                              <li key={comparisonIndex}>
+                                <span className="text-slate-300">{comparison.itemA}</span> vs{' '}
+                                <span className="text-slate-300">{comparison.itemB}</span>: {comparison.judgment}
+                              </li>
+                            ))}
+                          </ul>
+                        );
+                      })}
                       {judgment.rationale && (
-                        <p className="text-xs text-slate-300 mt-1 whitespace-pre-wrap">{judgment.rationale}</p>
+                        <GlossaryProse text={judgment.rationale} className="text-xs text-slate-300 mt-1 whitespace-pre-wrap" />
                       )}
                     </div>
                   );
@@ -1584,6 +1688,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <h3 className="text-xs font-black text-indigo-300 uppercase tracking-widest flex items-center gap-2">
                 <BrainCircuit className="w-4 h-4" /> Input → Construction → Output Assessment
               </h3>
+              <GlossaryLegend />
               <div className="space-y-3">
                 <div className="grid items-stretch gap-3 grid-cols-3">
                   {diagnosticCards.map((card) => {
