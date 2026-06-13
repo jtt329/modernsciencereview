@@ -4034,7 +4034,7 @@ const BENCHMARK_METADATA_OVERRIDES: Array<{
   },
 ];
 
-function benchmarkMetadataOverrideForText(value?: string): BenchmarkMetadataOverride | null {
+export function benchmarkMetadataOverrideForText(value?: string): BenchmarkMetadataOverride | null {
   const haystack = stripControlChars(value || "").replace(/\s+/g, " ");
   if (!haystack) return null;
   const dois = doiIdsFromText(haystack);
@@ -4381,6 +4381,14 @@ function titleCaseMetadataTitle(value: string) {
   }).join(" ");
 }
 
+// The PDF-visible fallback's placeholder body (buildPdfFallbackText) must
+// never be accepted or stored as a paper title. A no-text-layer scan
+// reviewed via PDF-visible would otherwise persist "Plain-Text Extraction
+// from This PDF Was Not Reliable… Filename Hint: …" as its title.
+export function looksLikePdfFallbackPlaceholder(value?: string) {
+  return /plain-?text extraction from this pdf was not reliable|filename hint:|embedded pdf (?:title|author) hint:/i.test(value || "");
+}
+
 function cleanDisplayTitle(value?: string) {
   const raw = stripControlChars(value || "")
     .replace(/\.[Pp][Dd][Ff]$/, "")
@@ -4389,12 +4397,16 @@ function cleanDisplayTitle(value?: string) {
     .trim();
   const arxivIds = uniqueCleanStrings(raw.match(ARXIV_ID_REGEX) || []);
   const reportCodes = uniqueCleanStrings(raw.match(REPORT_CODE_SCAN_REGEX) || []);
-  if (!raw || looksLikeJournalCitation(raw) || looksLikeAffiliationOrAddressJunk(raw)) {
+  if (!raw || looksLikeJournalCitation(raw) || looksLikeAffiliationOrAddressJunk(raw) || looksLikePdfFallbackPlaceholder(raw)) {
     return {
       title: "Unknown Title",
       arxivId: arxivIds[0] || "",
       reportCodes,
-      notes: raw ? "Rejected journal citation, address, or affiliation text as title." : "No title text found.",
+      notes: raw
+        ? looksLikePdfFallbackPlaceholder(raw)
+          ? "Rejected PDF-visible fallback placeholder text as title."
+          : "Rejected journal citation, address, or affiliation text as title."
+        : "No title text found.",
     };
   }
 
@@ -6866,6 +6878,7 @@ export async function extractMetadata(paperContent: string, hints: MetadataHints
     !value ||
     value === "Unknown Title" ||
     looksLikeJournalCitation(value) ||
+    looksLikePdfFallbackPlaceholder(value) ||
     /^(arxiv:|submitted by\b)/i.test(value) ||
     /^\s*(?:[a-z-]+\/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?\s*$/i.test(value) ||
     isOnlyReportCodeLine(value) ||

@@ -1543,4 +1543,68 @@ async function assertPdfStripSizeGate() {
 }
 await assertPdfStripSizeGate();
 
+// B1 — PDF-visible benchmark title: the fallback placeholder is never a
+// title; the benchmark override applies on the PDF-visible repair branch.
+assert.match(engineSource, /export function looksLikePdfFallbackPlaceholder/);
+assert.match(engineSource, /looksLikePdfFallbackPlaceholder\(raw\)/);
+assert.match(engineSource, /looksLikePdfFallbackPlaceholder\(value\)/);
+assert.match(engineSource, /export function benchmarkMetadataOverrideForText/);
+assert.match(routesSource, /benchmarkMetadataOverrideForText\(\[/);
+assert.match(routesSource, /benchmarkOverride\?\.title/);
+
+// B2 — auto PDF-visible for scanned PDFs.
+assert.match(routesSource, /AUTO_PDF_VISIBLE_MIN_CHARS/);
+assert.match(routesSource, /const autoPdfVisible =/);
+assert.match(routesSource, /pdfVisibleLastResortRequested \|\| autoPdfVisible/);
+assert.match(routesSource, /readableCharCount < AUTO_PDF_VISIBLE_MIN_CHARS/);
+
+// Calibration plan inspector is read-only (no mutating endpoint calls).
+const calPlanSource = readFileSync(join(root, "scripts/calibration-plan.mjs"), "utf8");
+assert.match(calPlanSource, /READ-ONLY/);
+assert.doesNotMatch(calPlanSource, /method:\s*["']POST["']/);
+
+// Functional: cleanDisplayTitle rejects the PDF-visible placeholder.
+async function assertPlaceholderTitleRejected() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-placeholder-title-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import { normalizePaperDisplayMetadata, looksLikePdfFallbackPlaceholder } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
+    globalThis.__placeholder = (async () => {
+      const placeholder = "Plain-Text Extraction from This PDF Was Not Reliable, So the Manuscript PDF Is Attached for Gemini-Native Reading. Filename Hint: 54 Cfj Ocr";
+      if (!looksLikePdfFallbackPlaceholder(placeholder)) throw new Error("placeholder detector missed the fallback text");
+      const normalized = normalizePaperDisplayMetadata({ title: placeholder, paperAuthors: "", dateMetadata: null });
+      if (/plain-?text extraction/i.test(normalized.title)) {
+        throw new Error("placeholder text was kept as the display title: " + normalized.title);
+      }
+      // The CFJ benchmark override fires off the filename-hint signal in the
+      // placeholder and supplies the canonical title.
+      if (normalized.title !== "Limits on a Lorentz- and Parity-Violating Modification of Electrodynamics") {
+        throw new Error("CFJ override did not set the canonical title from the placeholder filename hint: " + normalized.title);
+      }
+    })();
+  `);
+  await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousGeminiUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  const previousGeminiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  process.env.NODE_ENV = "production";
+  process.env.AI_INTEGRATIONS_GEMINI_BASE_URL = previousGeminiUrl || "https://example.invalid";
+  process.env.AI_INTEGRATIONS_GEMINI_API_KEY = previousGeminiKey || "test-key";
+  try {
+    await import(pathToFileURL(out).href);
+    await globalThis.__placeholder;
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+    if (previousGeminiUrl === undefined) delete process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+    else process.env.AI_INTEGRATIONS_GEMINI_BASE_URL = previousGeminiUrl;
+    if (previousGeminiKey === undefined) delete process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+    else process.env.AI_INTEGRATIONS_GEMINI_API_KEY = previousGeminiKey;
+  }
+}
+await assertPlaceholderTitleRejected();
+
 console.log("v19.0.2 review, pairwise-calibration, and submission-hardening invariants passed");

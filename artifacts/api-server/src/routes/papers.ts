@@ -25,6 +25,7 @@ import {
   compactAggregateForStorage,
   expectedReviewModelName,
   extractManuscriptTextFromPdfForReview,
+  benchmarkMetadataOverrideForText,
   detectReviewerDirectedText,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
@@ -1638,6 +1639,10 @@ const MAX_EXTRACTED_TEXT_CHARS = Number(process.env.MAX_EXTRACTED_TEXT_CHARS) ||
 // 504 instead of pinning a worker indefinitely. Default 20 min sits below
 // the 30-min HTTP requestTimeout; override with REVIEW_WALL_CLOCK_MS.
 const REVIEW_WALL_CLOCK_MS = Number(process.env.REVIEW_WALL_CLOCK_MS) || 20 * 60 * 1000;
+
+// A PDF whose extracted text layer has fewer than this many non-whitespace
+// characters is treated as a pure scan and auto-routed to PDF-visible review.
+const AUTO_PDF_VISIBLE_MIN_CHARS = Number(process.env.AUTO_PDF_VISIBLE_MIN_CHARS) || 100;
 
 function withReviewWallClock<T>(work: Promise<T>, budgetMs = REVIEW_WALL_CLOCK_MS): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -5434,7 +5439,25 @@ metadataExtractionText = cleanExtractedManuscriptText(metadataExtractionText || 
 extractionCompleteness ??= assessExtractionCompleteness(paperContent);
 updateAttemptExtractionContext(attemptContext, extractionCompleteness);
 updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness);
-const usePdfVisibleLastResort = pdfVisibleLastResortRequested && Boolean(metadataHints.pdfBase64);
+// Auto PDF-visible for pure scans: when the text layer yields almost no
+// readable characters but we have the PDF bytes, route to the PDF-visible
+// review path automatically instead of failing with a 422 that needs a
+// manual retry. Memory is bounded (pdf-lib is size-gated; the model reads
+// the attached PDF), so this is safe and removes operator toil.
+const readableCharCount = (metadataExtractionText || paperContent || "").replace(/\s+/g, "").length;
+const autoPdfVisible =
+  !pdfVisibleLastResortRequested &&
+  Boolean(metadataHints.pdfBase64) &&
+  readableCharCount < AUTO_PDF_VISIBLE_MIN_CHARS &&
+  isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
+if (autoPdfVisible) {
+  attemptContext.pdfVisibleFallbackUsed = true;
+  // Replace the near-empty extraction with the fallback instruction text so
+  // the model reads the attached PDF rather than a blank text part.
+  paperContent = buildPdfFallbackText(metadataHints);
+  metadataExtractionText = paperContent;
+}
+const usePdfVisibleLastResort = (pdfVisibleLastResortRequested || autoPdfVisible) && Boolean(metadataHints.pdfBase64);
 setAttemptStage(attemptContext, "extraction_quality_check", "validation", null);
 await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
 if (isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus) && !usePdfVisibleLastResort) {
@@ -5451,12 +5474,15 @@ if (usePdfVisibleLastResort && isExtractionBlockingStatus(extractionCompleteness
     extractionCompletenessStatus: "reviewable_with_warnings",
     extractionWarnings: [
       ...extractionCompleteness.extractionWarnings,
-      "Admin selected PDF-visible last-resort review after text extraction remained incomplete. Blinding strength is lower.",
+      autoPdfVisible
+        ? "Text layer was effectively empty (scanned PDF); automatically routed to PDF-visible review. Blinding strength is lower."
+        : "Admin selected PDF-visible last-resort review after text extraction remained incomplete. Blinding strength is lower.",
     ],
   };
   updateAttemptExtractionContext(attemptContext, extractionCompleteness);
   updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleteness, {
-    pdfVisibleFallbackRequested: true,
+    pdfVisibleFallbackRequested: !autoPdfVisible,
+    pdfVisibleFallbackAuto: autoPdfVisible,
   });
   await updateReviewAttemptProgress(attemptContext, { reviewStatus: extractionCompleteness.extractionCompletenessStatus });
 }
@@ -5476,15 +5502,34 @@ const metadataNeedsRepair =
     /^Unknown Authors$/i.test(metadataAuthors.trim())
   );
 if (metadataNeedsRepair && usePdfVisibleLastResort) {
+  // A known benchmark paper reviewed via PDF-visible (no usable text layer)
+  // should still get its canonical title/authors from the override, keyed
+  // on any identity signal (filename, embedded PDF hints, header text),
+  // before falling back to a filename-derived title.
+  const benchmarkOverride = benchmarkMetadataOverrideForText([
+    source.fileName,
+    metadataHints.pdfTitle,
+    metadataHints.pdfAuthor,
+    metadata.dateMetadata?.rawExtractedTitle,
+    metadataExtractionText,
+  ].filter(Boolean).join("\n"));
+  const placeholderTitle = /plain-?text extraction from this pdf was not reliable|filename hint:/i;
+  const usableExtractedTitle = metadataTitle.trim() &&
+    !/^Unknown Title$/i.test(metadataTitle.trim()) &&
+    !placeholderTitle.test(metadataTitle);
   const fallbackTitle = typeof source.fileName === "string" && source.fileName.trim()
     ? source.fileName.replace(/\.pdf$/i, "").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim()
     : "Untitled PDF-visible review";
-  metadata.title = metadataTitle.trim() && !/^Unknown Title$/i.test(metadataTitle.trim())
-    ? metadataTitle.trim()
-    : fallbackTitle;
-  metadata.authors = metadataAuthors.trim() && !/^Unknown Authors$/i.test(metadataAuthors.trim())
-    ? metadataAuthors.trim()
-    : "Unknown Authors";
+  metadata.title = benchmarkOverride?.title
+    ? benchmarkOverride.title
+    : usableExtractedTitle
+      ? metadataTitle.trim()
+      : fallbackTitle;
+  metadata.authors = benchmarkOverride?.authors?.length
+    ? benchmarkOverride.authors.join(", ")
+    : metadataAuthors.trim() && !/^Unknown Authors$/i.test(metadataAuthors.trim())
+      ? metadataAuthors.trim()
+      : "Unknown Authors";
   metadata.dateMetadata = {
     ...(metadata.dateMetadata ?? {}),
     displayedTitle: metadata.title,
