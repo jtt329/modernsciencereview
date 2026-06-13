@@ -10,10 +10,10 @@
   "scripts": {
     "dev": "export NODE_ENV=development && pnpm run build && pnpm run start",
     "build": "node ./build.mjs",
-    "start": "node --enable-source-maps ./dist/supervisor.mjs",
-    "start:web": "REVIEW_PROCESS_ROLE=web REVIEW_JOB_PROCESSING_ENABLED=false node --enable-source-maps ./dist/index.mjs",
-    "start:worker": "REVIEW_PROCESS_ROLE=worker REVIEW_JOB_PROCESSING_ENABLED=true node --enable-source-maps ./dist/worker.mjs",
-    "start:with-db-push": "pnpm --filter @workspace/db push-force && node --enable-source-maps ./dist/supervisor.mjs",
+    "start": "node --enable-source-maps --max-old-space-size=8192 ./dist/supervisor.mjs",
+    "start:web": "REVIEW_PROCESS_ROLE=web REVIEW_JOB_PROCESSING_ENABLED=false node --enable-source-maps --max-old-space-size=8192 ./dist/index.mjs",
+    "start:worker": "REVIEW_PROCESS_ROLE=worker REVIEW_JOB_PROCESSING_ENABLED=true node --enable-source-maps --max-old-space-size=8192 ./dist/worker.mjs",
+    "start:with-db-push": "pnpm --filter @workspace/db push-force && node --enable-source-maps --max-old-space-size=8192 ./dist/supervisor.mjs",
     "pretypecheck": "pnpm -w run typecheck:libs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

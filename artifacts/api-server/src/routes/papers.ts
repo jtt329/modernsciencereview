@@ -1626,8 +1626,45 @@ function extractionErrorPayload(report: ExtractionCompletenessReport) {
   };
 }
 
+// Hard cap on extracted manuscript text. A pathological OCR/text layer can
+// run to many MB, which then drives unbounded memory and model token use
+// downstream. Real manuscripts are well under this; OCR garbage is not.
+// Truncating (with a logged warning) bounds the budget without failing the
+// review. Override with MAX_EXTRACTED_TEXT_CHARS.
+const MAX_EXTRACTED_TEXT_CHARS = Number(process.env.MAX_EXTRACTED_TEXT_CHARS) || 1_500_000;
+
+// Per-review wall-clock budget. A review that runs past this (a wedged
+// model call, a pathological input) is abandoned with a clean, retryable
+// 504 instead of pinning a worker indefinitely. Default 20 min sits below
+// the 30-min HTTP requestTimeout; override with REVIEW_WALL_CLOCK_MS.
+const REVIEW_WALL_CLOCK_MS = Number(process.env.REVIEW_WALL_CLOCK_MS) || 20 * 60 * 1000;
+
+function withReviewWallClock<T>(work: Promise<T>, budgetMs = REVIEW_WALL_CLOCK_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      const err: any = new Error(`Review exceeded the ${Math.round(budgetMs / 1000)}s wall-clock budget; marked failed-retryable.`);
+      err.statusCode = 504;
+      err.reviewStatus = "review_timeout";
+      reject(err);
+    }, budgetMs);
+    timer.unref?.();
+  });
+  return Promise.race([work, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  }) as Promise<T>;
+}
+
 function cleanExtractedManuscriptText(text: string) {
-  return (text || "").replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
+  const cleaned = (text || "").replace(/\x00/g, "").replace(/[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]/g, " ");
+  if (cleaned.length > MAX_EXTRACTED_TEXT_CHARS) {
+    logger.warn(
+      { originalChars: cleaned.length, cap: MAX_EXTRACTED_TEXT_CHARS },
+      "Extracted text layer exceeds cap; truncating to bound memory and tokens",
+    );
+    return `${cleaned.slice(0, MAX_EXTRACTED_TEXT_CHARS)}\n\n[TEXT TRUNCATED: extracted text exceeded the ${MAX_EXTRACTED_TEXT_CHARS}-character cap]`;
+  }
+  return cleaned;
 }
 
 function textEdgeSnippets(text: string) {
@@ -5603,11 +5640,13 @@ const reviewInput: ReviewInput = usePdfVisibleLastResort && metadataHints.pdfBas
       mimeType: metadataHints.mimeType || "application/pdf",
     }
   : paperContent;
-const { reviewValues, metadata: reviewMetadata } = await generateCompatReview(
-  reviewInput,
-  selectedModel,
-  undefined,
-  { selectComparatorContext, reviewMode, extractionCompleteness },
+const { reviewValues, metadata: reviewMetadata } = await withReviewWallClock(
+  generateCompatReview(
+    reviewInput,
+    selectedModel,
+    undefined,
+    { selectComparatorContext, reviewMode, extractionCompleteness },
+  ),
 );
 addSubmissionCostControls(reviewValues, sourceHash, reviewMode);
 setAttemptStage(attemptContext, "review_validation", "validation", null);
@@ -5720,13 +5759,27 @@ function submissionResponsePayload(err: any) {
   };
 }
 
-// POST /api/papers — compatibility synchronous submission path
+// POST /api/papers — async durable-job submission. The heavy 2-pass +
+// adjudicator review (and all PDF parsing) runs in the separate worker
+// process, never inline in the web request, so no single submission —
+// however large or OCR-heavy — can crash or wedge the web service. The
+// web request only validates, snapshots the upload, and enqueues, then
+// returns 202 with a job handle; the client polls the status URL. This is
+// the same machinery the site already uses via POST /api/review-jobs.
 router.post("/papers", async (req, res) => {
   if (!req.isAuthenticated()) { res.status(401).json({ error: "Unauthorized" }); return; }
   try {
     const { source } = req.body;
-    const payload = await processPaperSubmission(req.user, source);
-    res.json(payload);
+    const attempt = await createDurableReviewJob(req.user, source);
+    res.status(202).json({
+      jobId: attempt.attemptId,
+      status: "queued",
+      statusUrl: `/api/review-jobs/${attempt.attemptId}`,
+      attempt: attemptForResponse(attempt),
+      batchRunId: attempt.batchRunId,
+      queueItemId: attempt.queueItemId,
+      apiRuntime: reviewRuntimeInfo(),
+    });
   } catch (err: any) {
     const response = submissionResponsePayload(err);
     res.status(response.status).json(response.body);

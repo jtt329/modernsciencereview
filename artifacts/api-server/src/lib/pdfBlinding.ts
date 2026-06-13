@@ -21,10 +21,28 @@ export async function stripPdfIdentifyingMetadata(pdfBytes: Buffer): Promise<Buf
   return Buffer.from(saved);
 }
 
-// Upload paths must keep working even for malformed PDFs that pdf-lib
-// cannot parse; in that case the original bytes flow on and the blind
-// prompt's ignore-identity rules remain the only protection.
+// Above this size, skip pdf-lib stripping. pdf-lib loads the entire
+// document into a JS object graph many times the byte size — the dominant
+// allocation in the submission path and the prime OOM suspect for large or
+// image-only/OCR'd scans. Past the gate the original bytes flow on and the
+// blind prompt's ignore-identity rules remain the protection (the same
+// fallback already used for malformed PDFs). Default 4 MB covers the
+// largest benchmark PDF (Brown-York ~2.4 MB) while excluding pathological
+// scans; override with PDF_STRIP_MAX_BYTES.
+const PDF_STRIP_MAX_BYTES = Number(process.env.PDF_STRIP_MAX_BYTES) || 4 * 1024 * 1024;
+
+// Upload paths must keep working even for malformed or very large PDFs that
+// pdf-lib cannot parse / would balloon memory on; in those cases the
+// original bytes flow on and the blind prompt's ignore-identity rules
+// remain the protection.
 export async function stripPdfIdentifyingMetadataSafe(pdfBytes: Buffer): Promise<Buffer> {
+  if (pdfBytes.length > PDF_STRIP_MAX_BYTES) {
+    logger.warn(
+      { byteCount: pdfBytes.length, limit: PDF_STRIP_MAX_BYTES },
+      "PDF exceeds metadata-strip size gate; skipping pdf-lib load to bound memory and continuing with original bytes",
+    );
+    return pdfBytes;
+  }
   try {
     return await stripPdfIdentifyingMetadata(pdfBytes);
   } catch (err) {

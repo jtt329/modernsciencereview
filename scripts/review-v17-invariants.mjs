@@ -41,6 +41,10 @@ const appSource = readFileSync(appPath, "utf8");
 const submissionFormSource = readFileSync(submissionFormPath, "utf8");
 const apiPackageSource = readFileSync(apiPackagePath, "utf8");
 const pdfParseTypesSource = readFileSync(pdfParseTypesPath, "utf8");
+const apiAppSource = readFileSync(join(root, "artifacts/api-server/src/app.ts"), "utf8");
+const apiIndexSource = readFileSync(join(root, "artifacts/api-server/src/index.ts"), "utf8");
+const processSafetySource = readFileSync(join(root, "artifacts/api-server/src/lib/processSafety.ts"), "utf8");
+const pdfBlindingSource = readFileSync(join(root, "artifacts/api-server/src/lib/pdfBlinding.ts"), "utf8");
 
 function extractRawConst(source, name) {
   const marker = `export const ${name} = String.raw\``;
@@ -1201,7 +1205,7 @@ assert.match(engineSource, /Structured PDF extraction JSON failed; plain-text PD
 assert.match(engineSource, /export function parseGeminiJsonResponse/);
 
 assert.match(apiPackageSource, /"pretypecheck": "pnpm -w run typecheck:libs"/);
-assert.match(apiPackageSource, /"start": "node --enable-source-maps \.\/dist\/supervisor\.mjs"/);
+assert.match(apiPackageSource, /"start": "node --enable-source-maps --max-old-space-size=8192 \.\/dist\/supervisor\.mjs"/);
 assert.match(apiPackageSource, /"start:web": "REVIEW_PROCESS_ROLE=web REVIEW_JOB_PROCESSING_ENABLED=false/);
 assert.match(apiPackageSource, /"start:worker": "REVIEW_PROCESS_ROLE=worker REVIEW_JOB_PROCESSING_ENABLED=true/);
 assert.match(apiBuildSource, /src\/index\.ts/);
@@ -1450,4 +1454,93 @@ for (const forbidden of [
   assert.equal(canonicalExport.includes(forbidden), false, `standard canonical export includes ${forbidden}`);
 }
 
-console.log("v19.0.2 review and pairwise-calibration invariants passed");
+// Phase 2 — submission hardening (no single submission may crash the web
+// process). These guard the wiring so a future refactor can't silently
+// re-introduce the inline/unguarded path.
+//
+// Process safety nets.
+assert.match(processSafetySource, /process\.on\("unhandledRejection"/);
+assert.match(processSafetySource, /process\.on\("uncaughtException"/);
+assert.match(apiIndexSource, /installProcessSafetyNets\("web"/);
+assert.match(apiWorkerSource, /installProcessSafetyNets\("worker"\)/);
+// Express terminal error middleware mapping oversized bodies to 413.
+assert.match(apiAppSource, /entity\.too\.large/);
+assert.match(apiAppSource, /res\.status\(413\)/);
+assert.match(apiAppSource, /code: "upload_too_large"/);
+// app.use of a 4-arg error handler.
+assert.match(apiAppSource, /app\.use\(\(err: any, req: Request, res: Response, _next: NextFunction\)/);
+
+// POST /api/papers is async durable-job (202 + jobId), not inline.
+const papersPostStart = routesSource.indexOf('router.post("/papers", async');
+assert.notEqual(papersPostStart, -1, "POST /api/papers route missing");
+const papersPostBlock = routesSource.slice(papersPostStart, papersPostStart + 900);
+assert.match(papersPostBlock, /createDurableReviewJob\(req\.user, source\)/);
+assert.match(papersPostBlock, /res\.status\(202\)/);
+assert.match(papersPostBlock, /statusUrl: `\/api\/review-jobs\/\$\{attempt\.attemptId\}`/);
+assert.doesNotMatch(papersPostBlock, /processPaperSubmission\(req\.user, source\)/);
+// processPaperSubmission is still the worker's entry point.
+assert.match(routesSource, /await processPaperSubmission\(userSnapshot, source\)/);
+
+// Memory bound: heap cap on the start scripts, sized up (not down) for the
+// 24 GB container.
+assert.match(apiPackageSource, /"start:web": "[^"]*--max-old-space-size=8192/);
+assert.match(apiPackageSource, /"start:worker": "[^"]*--max-old-space-size=8192/);
+
+// pdf-lib size gate + OCR text cap + wall-clock 504.
+assert.match(pdfBlindingSource, /PDF_STRIP_MAX_BYTES/);
+assert.match(pdfBlindingSource, /pdfBytes\.length > PDF_STRIP_MAX_BYTES/);
+assert.match(routesSource, /MAX_EXTRACTED_TEXT_CHARS/);
+assert.match(routesSource, /TEXT TRUNCATED/);
+assert.match(routesSource, /function withReviewWallClock/);
+assert.match(routesSource, /err\.statusCode = 504/);
+assert.match(routesSource, /reviewStatus = "review_timeout"/);
+assert.match(routesSource, /withReviewWallClock\(\s*\n\s*generateCompatReview/);
+
+// Functional: pdf-lib size gate returns original bytes untouched above the
+// threshold (no pdf-lib load), and strips a real small PDF below it.
+async function assertPdfStripSizeGate() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-pdfstrip-gate-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import { PDFDocument } from "pdf-lib";
+    import { stripPdfIdentifyingMetadataSafe } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pdfBlinding.ts"))};
+    globalThis.__pdfGate = (async () => {
+      // Above the 4 MB gate: must return the SAME buffer (pdf-lib skipped).
+      const big = Buffer.alloc(5 * 1024 * 1024, 1);
+      const bigOut = await stripPdfIdentifyingMetadataSafe(big);
+      if (bigOut !== big) throw new Error("size gate did not skip pdf-lib for an oversized PDF");
+
+      // Below the gate: a real small PDF with author metadata gets stripped.
+      const doc = await PDFDocument.create();
+      doc.setAuthor("Jane Q. Researcher");
+      doc.addPage([200, 200]);
+      const small = Buffer.from(await doc.save());
+      const smallOut = await stripPdfIdentifyingMetadataSafe(small);
+      const reloaded = await PDFDocument.load(smallOut, { updateMetadata: false });
+      if (reloaded.getAuthor()) throw new Error("small PDF author metadata was not stripped below the gate");
+    })();
+  `);
+  await build({
+    entryPoints: [entry],
+    outfile: out,
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    nodePaths: [join(root, "artifacts/api-server/node_modules")],
+  });
+  const previousNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production"; // avoid pino-pretty transport in the bundled logger
+  try {
+    await import(pathToFileURL(out).href);
+    await globalThis.__pdfGate;
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousNodeEnv;
+  }
+}
+await assertPdfStripSizeGate();
+
+console.log("v19.0.2 review, pairwise-calibration, and submission-hardening invariants passed");

@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { installProcessSafetyNets } from "./lib/processSafety";
 
 const rawPort = process.env["PORT"];
 
@@ -29,3 +30,7 @@ if (!Number.isNaN(requestTimeoutMs) && requestTimeoutMs > 0) {
   server.requestTimeout = requestTimeoutMs;
   server.headersTimeout = Math.max(60_000, requestTimeoutMs + 5_000);
 }
+
+// On a fatal error, stop accepting new connections before the clean exit so
+// the platform restarts a fresh web process rather than one in unknown state.
+installProcessSafetyNets("web", () => server.close());
