@@ -82,6 +82,13 @@ Configure the Google OAuth client with redirect URIs for every web origin:
 
 The API computes callback URLs from `PUBLIC_WEB_ORIGIN`, so each environment's `PUBLIC_WEB_ORIGIN` must exactly match the site users browse.
 
+## Database schema pushes (data-loss risk — flagged)
+
+`start:with-db-push` runs `drizzle-kit push --force` on boot, which can auto-truncate tables to satisfy a schema change (it offered to truncate `calibration_pairs` during the v19 deploy). This is a destructive footgun on a data-bearing service.
+
+- A guarded variant exists: `pnpm --filter @workspace/db run push-force-guarded`, which refuses unless `ALLOW_DESTRUCTIVE_DB_PUSH=true`. It is intentionally **not** wired into the deploy `start:with-db-push` command (doing so once broke a staging deploy by failing the guard on boot).
+- Recommended: move schema changes to reviewed migrations (`drizzle-kit generate` + a `migrate` step), or have the deploy use `start` (no push) and run a guarded push as a separate, deliberate step. This change to the deploy command is left to the operator.
+
 ## Prompt Changes
 
 The active review prompt lives in code in the API review engine. Change it in Git, deploy to staging, test, then deploy to production. There is intentionally no production admin button that mutates the active prompt at runtime.
