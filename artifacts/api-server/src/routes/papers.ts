@@ -1933,9 +1933,26 @@ async function reviewAttemptById(attemptId: string) {
   return row ? withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row)) : null;
 }
 
+// A consistency-calibration job is a durable background job that runs the
+// rubric-consistency engine over the whole corpus instead of reviewing one
+// paper. It rides the same reviewAttempts/worker machinery but carries no
+// source/user snapshot — the work is identified by jobKind in debugPayload.
+function isConsistencyCalibrationJob(record: ReviewAttemptRecord) {
+  return debugPayloadObject(record.debugPayload).jobKind === "consistency-calibration";
+}
+
+function consistencyCalibrationJobParams(record: ReviewAttemptRecord): Record<string, any> {
+  const params = debugPayloadObject(record.debugPayload).consistencyCalibrationJob;
+  return params && typeof params === "object" && !Array.isArray(params)
+    ? params as Record<string, any>
+    : {};
+}
+
 function shouldResumeReviewJob(record: ReviewAttemptRecord, now = Date.now()) {
   const payload = debugPayloadObject(record.debugPayload);
-  if (!sourceSnapshotFromAttempt(record)) return false;
+  // Calibration jobs have no source snapshot; everything else below (queued
+  // status, lease expiry, restart interruption) applies to them unchanged.
+  if (!isConsistencyCalibrationJob(record) && !sourceSnapshotFromAttempt(record)) return false;
   if (isCompletedAttempt(record)) return false;
   if (isClientAttempt(record)) return false;
   if (payload.jobStatus === "auto_recovery_exceeded") return false;
@@ -2115,6 +2132,14 @@ async function runReviewJob(attemptId: string) {
   if (!record) return;
   if (isCompletedAttempt(record)) return;
 
+  // Consistency-calibration jobs run the corpus calibration, not a paper
+  // review. They share the queue/lease/heartbeat plumbing but their own
+  // execution path (no source/user snapshot, no processPaperSubmission).
+  if (isConsistencyCalibrationJob(record)) {
+    await runConsistencyCalibrationJob(record);
+    return;
+  }
+
   const sourceSnapshot = sourceSnapshotFromAttempt(record);
   const userSnapshot = userSnapshotFromAttempt(record);
   if (!sourceSnapshot || !userSnapshot?.id) {
@@ -2162,6 +2187,145 @@ async function runReviewJob(attemptId: string) {
   } finally {
     clearInterval(heartbeat);
   }
+}
+
+// Worker-side execution of a durable consistency-calibration job: lease +
+// heartbeat (the corpus run can take minutes), run the calibration engine,
+// then persist the full result onto the attempt's debugPayload so the
+// operator can poll GET /api/review-jobs/:id for it.
+async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
+  const runningRecord = await markReviewJobRunning(record, "worker_start");
+  const attemptId = runningRecord.attemptId;
+  const heartbeat = setInterval(() => {
+    void touchReviewJobHeartbeat(attemptId).catch((err) => {
+      logger.warn({ err, attemptId }, "Failed to update consistency calibration job heartbeat");
+    });
+  }, REVIEW_JOB_HEARTBEAT_MS);
+  heartbeat.unref?.();
+  try {
+    const params = consistencyCalibrationJobParams(runningRecord);
+    const result = await executeConsistencyCalibration({
+      apply: params.apply === true,
+      groupThreshold: typeof params.groupThreshold === "number" ? params.groupThreshold : undefined,
+      embedThreshold: typeof params.embedThreshold === "number" ? params.embedThreshold : undefined,
+    });
+    const latest = (await reviewAttemptById(attemptId)) ?? runningRecord;
+    await persistReviewAttemptRecord({
+      ...latest,
+      stageName: "save_review",
+      stageType: "storage",
+      reviewStatus: "completed",
+      failureStatus: "completed",
+      errorMessage: "",
+      rawErrorCode: null,
+      retryable: false,
+      debugPayload: {
+        ...debugPayloadObject(latest.debugPayload),
+        jobStatus: "completed",
+        completedAt: new Date().toISOString(),
+        consistencyCalibrationResult: result,
+        apiRuntimeAtConsistencyComplete: reviewRuntimeInfo(),
+      },
+    });
+  } catch (err: any) {
+    logger.error({ err, attemptId }, "Consistency calibration job failed");
+    const latest = (await reviewAttemptById(attemptId)) ?? runningRecord;
+    const message = err?.message ? String(err.message) : "consistency calibration failed";
+    await persistReviewAttemptRecord({
+      ...latest,
+      stageName: "review_validation",
+      stageType: "validation",
+      reviewStatus: "failed",
+      failureStatus: "failed",
+      errorMessage: message,
+      retryable: true,
+      debugPayload: {
+        ...debugPayloadObject(latest.debugPayload),
+        jobStatus: "failed",
+        failedAt: new Date().toISOString(),
+        consistencyCalibrationError: message,
+        apiRuntimeAtConsistencyFailure: reviewRuntimeInfo(),
+      },
+    });
+  } finally {
+    clearInterval(heartbeat);
+  }
+}
+
+// Persist a queued consistency-calibration job. enqueueReviewJob is a no-op
+// on the web role, so the worker picks the queued row up via its recovery
+// loop — the same cross-process handoff the paper-review jobs use.
+async function createConsistencyCalibrationJob(
+  user: any,
+  params: { apply: boolean; groupThreshold?: number; embedThreshold?: number },
+) {
+  const now = new Date().toISOString();
+  const attemptId = createHash("sha256")
+    .update(`consistency-calibration\0${user?.id ?? ""}\0${Date.now()}\0${Math.random()}`)
+    .digest("hex")
+    .slice(0, 32);
+  const requestId = attemptId.slice(0, 16);
+  const context: ReviewAttemptContext = {
+    attemptId,
+    batchRunId: null,
+    queueItemId: null,
+    frontendSiteVersion: null,
+    createdAt: now,
+    userId: user?.id ?? null,
+    paperId: null,
+    fileName: null,
+    reviewRunId: null,
+    stageName: "upload_received",
+    stageType: "queue",
+    model: GEMINI_META_MODEL,
+    promptVersion: CONSISTENCY_CALIBRATION_VERSION,
+    promptHash: null,
+    requestId,
+    retryCount: 0,
+    extractionCompletenessStatus: null,
+    extractionWarnings: [],
+    extractionRetryAttempted: false,
+    pdfFallbackAttempted: false,
+    pdfVisibleFallbackUsed: false,
+    fallbackSucceeded: false,
+    reviewStatus: "queued",
+    scientificScoringAttempted: false,
+    debugPayload: {
+      jobKind: "consistency-calibration",
+      consistencyCalibrationJob: {
+        calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
+        apply: params.apply === true,
+        groupThreshold: params.groupThreshold ?? null,
+        embedThreshold: params.embedThreshold ?? null,
+      },
+      jobStatus: "queued",
+      durableJob: true,
+      queuedAt: now,
+      apiRuntimeAtRegistration: reviewRuntimeInfo(),
+    },
+  };
+  const record = reviewAttemptRecordFromContext(context, { reviewStatus: "queued", retryable: true });
+  await persistReviewAttemptRecord(record);
+  enqueueReviewJob(record.attemptId);
+  return record;
+}
+
+// If a calibration job is already queued or running, return it instead of
+// spawning a second full corpus run (e.g. operator double-submits).
+async function findInflightConsistencyCalibrationJob(): Promise<ReviewAttemptRecord | null> {
+  const rows = await db.select()
+    .from(reviewAttemptsTable)
+    .orderBy(desc(reviewAttemptsTable.createdAt))
+    .limit(REVIEW_JOB_RECOVERY_LIMIT);
+  for (const row of rows) {
+    const record = withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row));
+    if (!isConsistencyCalibrationJob(record)) continue;
+    if (isCompletedAttempt(record)) continue;
+    if (record.errorMessage.trim() || record.failureStatus === "failed") continue;
+    const status = record.reviewStatus;
+    if (status === "queued" || status === "upload_received" || status === "running") return record;
+  }
+  return null;
 }
 
 function reviewAttemptContextFromRecord(
@@ -4286,6 +4450,139 @@ const normalizeRung = (value: unknown): string | undefined =>
 // and defaults to a DRY RUN (compute + return, no write). The legacy
 // anchored pairwise path is untouched and remains the active engine until
 // this is validated; this never runs in prod by default.
+// Runs the rubric-consistency engine over the whole corpus. This is the
+// heavy work (embeddings + per-group Gemini adjudication for ~50+ reviews)
+// and is invoked from the durable background worker, never inline in the
+// web request — the corpus run exceeds the edge timeout. The calibration
+// logic itself is unchanged from the original synchronous route.
+async function executeConsistencyCalibration(opts: {
+  apply: boolean;
+  groupThreshold?: number;
+  embedThreshold?: number;
+}) {
+  const { apply } = opts;
+  const papersRows = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+  const reviews = await db.select().from(reviewsTable);
+  const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
+  const subjects: { reviewId: string; paperId: string; ledger: Record<string, any> | null; adjudicatorTotal: number }[] = [];
+  for (const paper of papersRows) {
+    const review = reviewByPaper.get(paper.id);
+    if (!review) continue;
+    const ledger = parseJsonObject(review.coverageLedgerJson);
+    if (!ledger || !isCalibrationCompatibleReviewObject(ledger)) continue;
+    subjects.push({
+      reviewId: review.id,
+      paperId: paper.id,
+      ledger,
+      adjudicatorTotal: Math.round(Number(ledger.computedScore ?? ledger.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? 0)),
+    });
+  }
+
+  const judge: ConsistencyJudge = async (group: ElementGroup) => {
+    const response = await (geminiAI.models.generateContent as any)({
+      model: GEMINI_META_MODEL,
+      contents: [{
+        role: "user",
+        parts: [{
+          text: JSON.stringify({
+            auditNote: "Audit whether these comparable elements apply the rubric's rungs consistently; re-adjudicate each misplaced element against the rung definitions (never toward the group).",
+            kind: group.kind,
+            elements: group.elements.map((el) => ({
+              reviewId: el.reviewId, kind: el.kind, index: el.index, text: el.text,
+              firmness: el.firmness ?? null, centrality: el.centrality ?? null,
+              validityLevel: el.validityLevel ?? null, hardToVaryLevel: el.hardToVaryLevel ?? null,
+            })),
+          }, null, 2),
+        }],
+      }],
+      config: {
+        systemInstruction: CONSISTENCY_CALIBRATION_V1_PROMPT,
+        responseMimeType: "application/json",
+        responseJsonSchema: consistencyVerdictJsonSchema,
+        temperature: 0.1,
+        maxOutputTokens: 8192,
+      },
+    });
+    const parsed = parseGeminiJsonResponse(response.text ?? "") as Record<string, any>;
+    const rawVerdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
+    return rawVerdicts.map((v: any): RungVerdict => ({
+      reviewId: String(v.reviewId),
+      kind: v.kind,
+      index: Number(v.index),
+      firmness: normalizeRung(v.firmness) as RungVerdict["firmness"],
+      centrality: normalizeRung(v.centrality) as RungVerdict["centrality"],
+      validityLevel: normalizeRung(v.validityLevel),
+      hardToVaryLevel: normalizeRung(v.hardToVaryLevel),
+      reason: typeof v.reason === "string" ? v.reason : "",
+    })).filter((v: RungVerdict) => v.reviewId && v.kind && Number.isFinite(v.index));
+  };
+
+  // Semantic grouping via Gemini embeddings (best-effort; the engine
+  // falls back to lexical grouping if this throws or returns nothing).
+  const embed = async (texts: string[]): Promise<number[][]> => {
+    const response = await (geminiAI.models.embedContent as any)({
+      model: GEMINI_EMBEDDING_MODEL,
+      contents: texts.map((text) => ({ role: "user", parts: [{ text }] })),
+    });
+    const vectors = (response?.embeddings ?? []).map((e: any) => e?.values ?? e?.value ?? []);
+    return vectors;
+  };
+
+  const { results, dominanceViolations, groupingMethod } = await runConsistencyCalibration(subjects, {
+    judge,
+    embed,
+    groupThreshold: opts.groupThreshold,
+    embedThreshold: opts.embedThreshold,
+  });
+
+  let updatedReviews = 0;
+  if (apply) {
+    for (const result of results) {
+      const review = reviews.find((r) => r.id === result.reviewId);
+      if (!review) continue;
+      const ledger = parseJsonObject(review.coverageLedgerJson);
+      if (!ledger) continue;
+      const updatedLedger = {
+        ...ledger,
+        consistencyCalibration: {
+          calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
+          adjudicatorTotal: result.adjudicatorTotal,
+          finalTotal: result.finalTotal,
+          calibrationAdjustment: result.calibrationAdjustment,
+          subscores: result.subscores,
+          changeLog: result.changeLog,
+          calibratedAt: new Date().toISOString(),
+        },
+      };
+      await db.update(reviewsTable)
+        .set({ coverageLedgerJson: JSON.stringify(updatedLedger) })
+        .where(eq(reviewsTable.id, review.id));
+      updatedReviews += 1;
+    }
+  }
+
+  return {
+    calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
+    dryRun: !apply,
+    groupingMethod,
+    papers: results.length,
+    updatedReviews,
+    dominanceViolations,
+    results: results.map((r) => ({
+      reviewId: r.reviewId,
+      paperId: r.paperId,
+      adjudicatorTotal: r.adjudicatorTotal,
+      finalTotal: r.finalTotal,
+      calibrationAdjustment: r.calibrationAdjustment,
+      changes: r.changeLog.length,
+    })),
+    changeLog: results.flatMap((r) => r.changeLog),
+    note: apply
+      ? "Applied: consistencyCalibration written to each review ledger; legacy anchored fields untouched."
+      : "Dry run: nothing written. Pass { apply: true } to persist.",
+  };
+}
+
 router.post("/papers/consistency-calibration", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   if (req.body?.calibrationVersion !== CONSISTENCY_CALIBRATION_VERSION) {
@@ -4296,128 +4593,28 @@ router.post("/papers/consistency-calibration", async (req, res) => {
   }
   try {
     const apply = req.body?.apply === true; // default: dry run, no writes
-    const papersRows = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
-    const reviews = await db.select().from(reviewsTable);
-    const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
-    const subjects: { reviewId: string; paperId: string; ledger: Record<string, any> | null; adjudicatorTotal: number }[] = [];
-    for (const paper of papersRows) {
-      const review = reviewByPaper.get(paper.id);
-      if (!review) continue;
-      const ledger = parseJsonObject(review.coverageLedgerJson);
-      if (!ledger || !isCalibrationCompatibleReviewObject(ledger)) continue;
-      subjects.push({
-        reviewId: review.id,
-        paperId: paper.id,
-        ledger,
-        adjudicatorTotal: Math.round(Number(ledger.computedScore ?? ledger.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? 0)),
-      });
-    }
+    const groupThreshold = typeof req.body?.groupThreshold === "number" ? req.body.groupThreshold : undefined;
+    const embedThreshold = typeof req.body?.embedThreshold === "number" ? req.body.embedThreshold : undefined;
 
-    const judge: ConsistencyJudge = async (group: ElementGroup) => {
-      const response = await (geminiAI.models.generateContent as any)({
-        model: GEMINI_META_MODEL,
-        contents: [{
-          role: "user",
-          parts: [{
-            text: JSON.stringify({
-              auditNote: "Audit whether these comparable elements apply the rubric's rungs consistently; re-adjudicate each misplaced element against the rung definitions (never toward the group).",
-              kind: group.kind,
-              elements: group.elements.map((el) => ({
-                reviewId: el.reviewId, kind: el.kind, index: el.index, text: el.text,
-                firmness: el.firmness ?? null, centrality: el.centrality ?? null,
-                validityLevel: el.validityLevel ?? null, hardToVaryLevel: el.hardToVaryLevel ?? null,
-              })),
-            }, null, 2),
-          }],
-        }],
-        config: {
-          systemInstruction: CONSISTENCY_CALIBRATION_V1_PROMPT,
-          responseMimeType: "application/json",
-          responseJsonSchema: consistencyVerdictJsonSchema,
-          temperature: 0.1,
-          maxOutputTokens: 8192,
-        },
-      });
-      const parsed = parseGeminiJsonResponse(response.text ?? "") as Record<string, any>;
-      const rawVerdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-      return rawVerdicts.map((v: any): RungVerdict => ({
-        reviewId: String(v.reviewId),
-        kind: v.kind,
-        index: Number(v.index),
-        firmness: normalizeRung(v.firmness) as RungVerdict["firmness"],
-        centrality: normalizeRung(v.centrality) as RungVerdict["centrality"],
-        validityLevel: normalizeRung(v.validityLevel),
-        hardToVaryLevel: normalizeRung(v.hardToVaryLevel),
-        reason: typeof v.reason === "string" ? v.reason : "",
-      })).filter((v: RungVerdict) => v.reviewId && v.kind && Number.isFinite(v.index));
-    };
-
-    // Semantic grouping via Gemini embeddings (best-effort; the engine
-    // falls back to lexical grouping if this throws or returns nothing).
-    const embed = async (texts: string[]): Promise<number[][]> => {
-      const response = await (geminiAI.models.embedContent as any)({
-        model: GEMINI_EMBEDDING_MODEL,
-        contents: texts.map((text) => ({ role: "user", parts: [{ text }] })),
-      });
-      const vectors = (response?.embeddings ?? []).map((e: any) => e?.values ?? e?.value ?? []);
-      return vectors;
-    };
-
-    const { results, dominanceViolations, groupingMethod } = await runConsistencyCalibration(subjects, {
-      judge,
-      embed,
-      groupThreshold: typeof req.body?.groupThreshold === "number" ? req.body.groupThreshold : undefined,
-      embedThreshold: typeof req.body?.embedThreshold === "number" ? req.body.embedThreshold : undefined,
-    });
-
-    let updatedReviews = 0;
-    if (apply) {
-      for (const result of results) {
-        const review = reviews.find((r) => r.id === result.reviewId);
-        if (!review) continue;
-        const ledger = parseJsonObject(review.coverageLedgerJson);
-        if (!ledger) continue;
-        const updatedLedger = {
-          ...ledger,
-          consistencyCalibration: {
-            calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
-            adjudicatorTotal: result.adjudicatorTotal,
-            finalTotal: result.finalTotal,
-            calibrationAdjustment: result.calibrationAdjustment,
-            subscores: result.subscores,
-            changeLog: result.changeLog,
-            calibratedAt: new Date().toISOString(),
-          },
-        };
-        await db.update(reviewsTable)
-          .set({ coverageLedgerJson: JSON.stringify(updatedLedger) })
-          .where(eq(reviewsTable.id, review.id));
-        updatedReviews += 1;
-      }
-    }
-
-    res.json({
+    // The corpus run (embeddings + per-group Gemini adjudication over the
+    // whole set) takes minutes and 502s if held open as one synchronous web
+    // request. Run it as a durable background job instead: enqueue here,
+    // let the worker process it, and return 202 + a jobId to poll.
+    const existing = await findInflightConsistencyCalibrationJob();
+    const job = existing ?? await createConsistencyCalibrationJob(req.user, { apply, groupThreshold, embedThreshold });
+    res.status(202).json({
       calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
       dryRun: !apply,
-      groupingMethod,
-      papers: results.length,
-      updatedReviews,
-      dominanceViolations,
-      results: results.map((r) => ({
-        reviewId: r.reviewId,
-        paperId: r.paperId,
-        adjudicatorTotal: r.adjudicatorTotal,
-        finalTotal: r.finalTotal,
-        calibrationAdjustment: r.calibrationAdjustment,
-        changes: r.changeLog.length,
-      })),
-      changeLog: results.flatMap((r) => r.changeLog),
-      note: apply
-        ? "Applied: consistencyCalibration written to each review ledger; legacy anchored fields untouched."
-        : "Dry run: nothing written. Pass { apply: true } to persist.",
+      jobId: job.attemptId,
+      status: job.reviewStatus,
+      statusUrl: `/api/review-jobs/${job.attemptId}`,
+      reused: Boolean(existing),
+      note: existing
+        ? "A consistency calibration job is already in flight; returning it. Poll statusUrl until reviewStatus is 'completed'; the result is in attempt.debugPayload.consistencyCalibrationResult."
+        : "Consistency calibration enqueued as a background job. Poll statusUrl until reviewStatus is 'completed'; the result is in attempt.debugPayload.consistencyCalibrationResult.",
     });
   } catch (err: any) {
-    logger.error({ err }, "Consistency calibration failed");
+    logger.error({ err }, "Failed to enqueue consistency calibration");
     res.status(500).json({ error: err.message });
   }
 });

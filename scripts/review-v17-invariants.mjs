@@ -1640,6 +1640,37 @@ assert.match(consistencyPromptSource, /Do NOT output any 0-100 score/);
 assert.match(routesSource, /\/papers\/consistency-calibration/);
 assert.match(routesSource, /req\.body\?\.calibrationVersion !== CONSISTENCY_CALIBRATION_VERSION/);
 assert.match(routesSource, /const apply = req\.body\?\.apply === true/);
+
+// The corpus run is backgrounded: the route must ENQUEUE a durable job and
+// return 202 + a jobId to poll — never run the engine inline (that 502s at
+// the edge timeout). The heavy runConsistencyCalibration() call lives in
+// executeConsistencyCalibration, invoked only from the worker job runner.
+const consistencyRouteBody = routesSource.slice(
+  routesSource.indexOf('router.post("/papers/consistency-calibration"'),
+  routesSource.indexOf("// GET /api/admin/calibration/holds"),
+);
+assert.ok(consistencyRouteBody.length > 0, "could not locate consistency-calibration route body");
+assert.ok(
+  !/runConsistencyCalibration\(/.test(consistencyRouteBody),
+  "consistency-calibration route must enqueue a job, not run the engine synchronously",
+);
+assert.match(consistencyRouteBody, /createConsistencyCalibrationJob/);
+assert.match(consistencyRouteBody, /findInflightConsistencyCalibrationJob/);
+assert.match(consistencyRouteBody, /res\.status\(202\)/);
+assert.match(consistencyRouteBody, /statusUrl/);
+// Engine moved into the reusable worker-invoked function.
+assert.match(routesSource, /async function executeConsistencyCalibration/);
+assert.match(routesSource, /async function runConsistencyCalibrationJob/);
+assert.match(routesSource, /async function createConsistencyCalibrationJob/);
+// Worker dispatches calibration jobs (no source/user snapshot) to their own
+// path; the recovery gate lets them resume despite lacking a source snapshot.
+assert.match(routesSource, /if \(isConsistencyCalibrationJob\(record\)\) \{\s*\n\s*await runConsistencyCalibrationJob\(record\);/);
+assert.match(routesSource, /!isConsistencyCalibrationJob\(record\) && !sourceSnapshotFromAttempt\(record\)/);
+// Result is persisted onto the attempt for polling; survives the debug
+// sanitizer (which only redacts sourceSnapshot/source/data).
+assert.match(routesSource, /consistencyCalibrationResult: result/);
+assert.match(routesSource, /jobKind: "consistency-calibration"/);
+
 // Legacy anchored pairwise path remains the active engine (untouched).
 assert.match(pairwiseEngineSource, /PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2"/);
 
