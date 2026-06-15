@@ -81,6 +81,7 @@ import {
   type RungVerdict,
 } from "../lib/consistencyCalibration";
 import { CONSISTENCY_CALIBRATION_V1_PROMPT } from "../lib/prompts/consistencyCalibrationV1";
+import { withModelRetry } from "../lib/modelRetry";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
@@ -2189,28 +2190,98 @@ async function runReviewJob(attemptId: string) {
   }
 }
 
-// Worker-side execution of a durable consistency-calibration job: lease +
-// heartbeat (the corpus run can take minutes), run the calibration engine,
-// then persist the full result onto the attempt's debugPayload so the
-// operator can poll GET /api/review-jobs/:id for it.
+// How many per-group judgment calls run concurrently (small pool: fast
+// enough to finish the corpus in ~1-2 min, low enough to stay under rate
+// limits). And how many times a job may re-queue itself to resume from its
+// checkpoint after a mid-run failure before giving up terminally.
+const CONSISTENCY_JUDGE_CONCURRENCY = Math.max(1, Number(process.env.CONSISTENCY_JUDGE_CONCURRENCY ?? 6) || 6);
+const CONSISTENCY_JOB_MAX_ATTEMPTS = Math.max(1, Number(process.env.CONSISTENCY_JOB_MAX_ATTEMPTS ?? 4) || 4);
+
+function consistencyCheckpointVerdicts(payload: Record<string, unknown>): Record<string, RungVerdict[]> {
+  const checkpoint = payload.consistencyCalibrationCheckpoint;
+  const saved = checkpoint && typeof checkpoint === "object" ? (checkpoint as any).verdictsByGroup : null;
+  const out: Record<string, RungVerdict[]> = {};
+  if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+    for (const [key, value] of Object.entries(saved)) {
+      if (Array.isArray(value)) out[key] = value as RungVerdict[];
+    }
+  }
+  return out;
+}
+
+// Worker-side execution of a durable consistency-calibration job. The corpus
+// run takes minutes and makes dozens of model calls, so this layer makes it
+// resilient (execution only — the calibration logic is untouched):
+//   - bounded-concurrency + per-call retry happen inside the engine/judge,
+//   - progress is checkpointed (per group) onto the attempt continuously,
+//   - a mid-run failure RESUMES from the checkpoint (bounded re-queue)
+//     instead of restarting the whole corpus.
+// The final result lands on debugPayload.consistencyCalibrationResult for
+// the operator to poll via GET /api/review-jobs/:id.
 async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
   const runningRecord = await markReviewJobRunning(record, "worker_start");
   const attemptId = runningRecord.attemptId;
-  const heartbeat = setInterval(() => {
-    void touchReviewJobHeartbeat(attemptId).catch((err) => {
-      logger.warn({ err, attemptId }, "Failed to update consistency calibration job heartbeat");
-    });
-  }, REVIEW_JOB_HEARTBEAT_MS);
+  const runPayload = debugPayloadObject(runningRecord.debugPayload);
+  const jobAttempt = Math.max(1, Number(runPayload.consistencyJobAttempt ?? 1) || 1);
+
+  // Resume from any checkpoint a prior (interrupted) run left behind.
+  const checkpoint: Record<string, RungVerdict[]> = consistencyCheckpointVerdicts(runPayload);
+  const onGroupJudged = (key: string, verdicts: RungVerdict[]) => { checkpoint[key] = verdicts; };
+
+  // Single serialized writer for this row's debugPayload so the periodic
+  // heartbeat/checkpoint flush and the terminal write never race on the
+  // read-modify-write. `finished` makes late flushes no-ops.
+  let finished = false;
+  let writeChain: Promise<void> = Promise.resolve();
+  const enqueueWrite = (build: (latest: ReviewAttemptRecord) => ReviewAttemptRecord | null) => {
+    writeChain = writeChain.then(async () => {
+      const latest = await reviewAttemptById(attemptId);
+      if (!latest) return;
+      const next = build(latest);
+      if (next) await persistReviewAttemptRecord(next);
+    }, () => { /* swallow; a failed flush must not break the chain */ });
+    return writeChain;
+  };
+  const checkpointPayload = () => ({
+    verdictsByGroup: checkpoint,
+    groupsDone: Object.keys(checkpoint).length,
+    updatedAt: new Date().toISOString(),
+  });
+  const flush = () => enqueueWrite((latest) => {
+    if (finished || isCompletedAttempt(latest)) return null;
+    const payload = debugPayloadObject(latest.debugPayload);
+    if (payload.workerId && payload.workerId !== REVIEW_JOB_WORKER_ID) return null; // lost the lease
+    const now = Date.now();
+    return {
+      ...latest,
+      debugPayload: {
+        ...payload,
+        jobStatus: "running",
+        workerId: REVIEW_JOB_WORKER_ID,
+        workerHeartbeatAt: new Date(now).toISOString(),
+        leaseExpiresAt: reviewJobLeaseExpiresAt(now),
+        consistencyCalibrationCheckpoint: checkpointPayload(),
+        apiRuntimeAtHeartbeat: reviewRuntimeInfo(),
+      },
+    };
+  });
+  const heartbeat = setInterval(() => { void flush(); }, REVIEW_JOB_HEARTBEAT_MS);
   heartbeat.unref?.();
+
   try {
     const params = consistencyCalibrationJobParams(runningRecord);
     const result = await executeConsistencyCalibration({
       apply: params.apply === true,
       groupThreshold: typeof params.groupThreshold === "number" ? params.groupThreshold : undefined,
       embedThreshold: typeof params.embedThreshold === "number" ? params.embedThreshold : undefined,
+      judgeConcurrency: CONSISTENCY_JUDGE_CONCURRENCY,
+      precomputedVerdicts: checkpoint,
+      onGroupJudged,
     });
-    const latest = (await reviewAttemptById(attemptId)) ?? runningRecord;
-    await persistReviewAttemptRecord({
+    finished = true;
+    clearInterval(heartbeat);
+    await writeChain; // drain any in-flight flush before the terminal write
+    await enqueueWrite((latest) => ({
       ...latest,
       stageName: "save_review",
       stageType: "storage",
@@ -2223,32 +2294,62 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
         ...debugPayloadObject(latest.debugPayload),
         jobStatus: "completed",
         completedAt: new Date().toISOString(),
+        consistencyJobAttempt: jobAttempt,
         consistencyCalibrationResult: result,
         apiRuntimeAtConsistencyComplete: reviewRuntimeInfo(),
       },
-    });
+    }));
   } catch (err: any) {
-    logger.error({ err, attemptId }, "Consistency calibration job failed");
-    const latest = (await reviewAttemptById(attemptId)) ?? runningRecord;
-    const message = err?.message ? String(err.message) : "consistency calibration failed";
-    await persistReviewAttemptRecord({
-      ...latest,
-      stageName: "review_validation",
-      stageType: "validation",
-      reviewStatus: "failed",
-      failureStatus: "failed",
-      errorMessage: message,
-      retryable: true,
-      debugPayload: {
-        ...debugPayloadObject(latest.debugPayload),
-        jobStatus: "failed",
-        failedAt: new Date().toISOString(),
-        consistencyCalibrationError: message,
-        apiRuntimeAtConsistencyFailure: reviewRuntimeInfo(),
-      },
-    });
-  } finally {
+    finished = true;
     clearInterval(heartbeat);
+    await writeChain;
+    const message = err?.message ? String(err.message) : "consistency calibration failed";
+    const resumable = jobAttempt < CONSISTENCY_JOB_MAX_ATTEMPTS;
+    logger.error({ err, attemptId, jobAttempt, maxAttempts: CONSISTENCY_JOB_MAX_ATTEMPTS, resumable }, "Consistency calibration job errored");
+    await enqueueWrite((latest) => {
+      const payload = debugPayloadObject(latest.debugPayload);
+      if (resumable) {
+        // Re-queue so the worker recovery loop resumes this job from its
+        // checkpoint instead of restarting the corpus. Bounded by attempts.
+        return {
+          ...latest,
+          stageName: "upload_received",
+          stageType: "queue",
+          reviewStatus: "queued",
+          failureStatus: null,
+          errorMessage: "",
+          rawErrorCode: null,
+          retryable: true,
+          debugPayload: {
+            ...payload,
+            jobStatus: "queued",
+            consistencyJobAttempt: jobAttempt + 1,
+            consistencyCalibrationCheckpoint: checkpointPayload(),
+            lastConsistencyError: message,
+            lastConsistencyErrorAt: new Date().toISOString(),
+            requeuedForResumeAt: new Date().toISOString(),
+          },
+        };
+      }
+      return {
+        ...latest,
+        stageName: "review_validation",
+        stageType: "validation",
+        reviewStatus: "failed",
+        failureStatus: "failed",
+        errorMessage: message,
+        retryable: false,
+        debugPayload: {
+          ...payload,
+          jobStatus: "failed",
+          failedAt: new Date().toISOString(),
+          consistencyJobAttempt: jobAttempt,
+          consistencyCalibrationError: message,
+          consistencyCalibrationCheckpoint: checkpointPayload(),
+          apiRuntimeAtConsistencyFailure: reviewRuntimeInfo(),
+        },
+      };
+    });
   }
 }
 
@@ -4459,6 +4560,9 @@ async function executeConsistencyCalibration(opts: {
   apply: boolean;
   groupThreshold?: number;
   embedThreshold?: number;
+  judgeConcurrency?: number;
+  precomputedVerdicts?: Record<string, RungVerdict[]>;
+  onGroupJudged?: (groupKey: string, verdicts: RungVerdict[]) => void | Promise<void>;
 }) {
   const { apply } = opts;
   const papersRows = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
@@ -4479,30 +4583,39 @@ async function executeConsistencyCalibration(opts: {
   }
 
   const judge: ConsistencyJudge = async (group: ElementGroup) => {
-    const response = await (geminiAI.models.generateContent as any)({
-      model: GEMINI_META_MODEL,
-      contents: [{
-        role: "user",
-        parts: [{
-          text: JSON.stringify({
-            auditNote: "Audit whether these comparable elements apply the rubric's rungs consistently; re-adjudicate each misplaced element against the rung definitions (never toward the group).",
-            kind: group.kind,
-            elements: group.elements.map((el) => ({
-              reviewId: el.reviewId, kind: el.kind, index: el.index, text: el.text,
-              firmness: el.firmness ?? null, centrality: el.centrality ?? null,
-              validityLevel: el.validityLevel ?? null, hardToVaryLevel: el.hardToVaryLevel ?? null,
-            })),
-          }, null, 2),
+    // Each group is one model call; retry transient blips (503/429/timeout)
+    // with backoff so a single bad call doesn't sink the multi-minute run.
+    const response = await withModelRetry<any>(
+      () => (geminiAI.models.generateContent as any)({
+        model: GEMINI_META_MODEL,
+        contents: [{
+          role: "user",
+          parts: [{
+            text: JSON.stringify({
+              auditNote: "Audit whether these comparable elements apply the rubric's rungs consistently; re-adjudicate each misplaced element against the rung definitions (never toward the group).",
+              kind: group.kind,
+              elements: group.elements.map((el) => ({
+                reviewId: el.reviewId, kind: el.kind, index: el.index, text: el.text,
+                firmness: el.firmness ?? null, centrality: el.centrality ?? null,
+                validityLevel: el.validityLevel ?? null, hardToVaryLevel: el.hardToVaryLevel ?? null,
+              })),
+            }, null, 2),
+          }],
         }],
-      }],
-      config: {
-        systemInstruction: CONSISTENCY_CALIBRATION_V1_PROMPT,
-        responseMimeType: "application/json",
-        responseJsonSchema: consistencyVerdictJsonSchema,
-        temperature: 0.1,
-        maxOutputTokens: 8192,
+        config: {
+          systemInstruction: CONSISTENCY_CALIBRATION_V1_PROMPT,
+          responseMimeType: "application/json",
+          responseJsonSchema: consistencyVerdictJsonSchema,
+          temperature: 0.1,
+          maxOutputTokens: 8192,
+        },
+      }),
+      {
+        label: "consistency-judge",
+        onRetry: ({ attempt, maxAttempts, delayMs, error }) =>
+          logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error judging consistency group; retrying after backoff"),
       },
-    });
+    );
     const parsed = parseGeminiJsonResponse(response.text ?? "") as Record<string, any>;
     const rawVerdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
     return rawVerdicts.map((v: any): RungVerdict => ({
@@ -4517,13 +4630,21 @@ async function executeConsistencyCalibration(opts: {
     })).filter((v: RungVerdict) => v.reviewId && v.kind && Number.isFinite(v.index));
   };
 
-  // Semantic grouping via Gemini embeddings (best-effort; the engine
-  // falls back to lexical grouping if this throws or returns nothing).
+  // Semantic grouping via Gemini embeddings (best-effort; the engine falls
+  // back to lexical grouping if this throws or returns nothing). Retry
+  // transient blips first so a momentary 503 doesn't force the fallback.
   const embed = async (texts: string[]): Promise<number[][]> => {
-    const response = await (geminiAI.models.embedContent as any)({
-      model: GEMINI_EMBEDDING_MODEL,
-      contents: texts.map((text) => ({ role: "user", parts: [{ text }] })),
-    });
+    const response = await withModelRetry<any>(
+      () => (geminiAI.models.embedContent as any)({
+        model: GEMINI_EMBEDDING_MODEL,
+        contents: texts.map((text) => ({ role: "user", parts: [{ text }] })),
+      }),
+      {
+        label: "consistency-embed",
+        onRetry: ({ attempt, maxAttempts, delayMs, error }) =>
+          logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error embedding for consistency grouping; retrying after backoff"),
+      },
+    );
     const vectors = (response?.embeddings ?? []).map((e: any) => e?.values ?? e?.value ?? []);
     return vectors;
   };
@@ -4533,6 +4654,9 @@ async function executeConsistencyCalibration(opts: {
     embed,
     groupThreshold: opts.groupThreshold,
     embedThreshold: opts.embedThreshold,
+    judgeConcurrency: opts.judgeConcurrency,
+    precomputedVerdicts: opts.precomputedVerdicts,
+    onGroupJudged: opts.onGroupJudged,
   });
 
   let updatedReviews = 0;

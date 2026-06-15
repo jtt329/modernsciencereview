@@ -1671,6 +1671,100 @@ assert.match(routesSource, /!isConsistencyCalibrationJob\(record\) && !sourceSna
 assert.match(routesSource, /consistencyCalibrationResult: result/);
 assert.match(routesSource, /jobKind: "consistency-calibration"/);
 
+// Resilience to transient model errors (execution only — engine logic
+// unchanged): per-call retry/backoff, bounded concurrency, checkpoint+resume.
+const modelRetrySource = readFileSync(join(root, "artifacts/api-server/src/lib/modelRetry.ts"), "utf8");
+assert.match(modelRetrySource, /export function isTransientModelError/);
+assert.match(modelRetrySource, /export async function withModelRetry/);
+// Judge AND embed calls go through the retry wrapper.
+assert.match(routesSource, /withModelRetry(<any>)?\(/);
+assert.match(routesSource, /label: "consistency-judge"/);
+assert.match(routesSource, /label: "consistency-embed"/);
+// Bounded concurrency + checkpoint are threaded into the engine.
+assert.match(routesSource, /judgeConcurrency: CONSISTENCY_JUDGE_CONCURRENCY/);
+assert.match(routesSource, /precomputedVerdicts: checkpoint/);
+assert.match(routesSource, /onGroupJudged/);
+assert.match(routesSource, /consistencyCalibrationCheckpoint/);
+// A mid-run failure re-queues to resume from the checkpoint, bounded by
+// CONSISTENCY_JOB_MAX_ATTEMPTS, instead of restarting the corpus.
+assert.match(routesSource, /jobAttempt < CONSISTENCY_JOB_MAX_ATTEMPTS/);
+assert.match(routesSource, /consistencyJobAttempt: jobAttempt \+ 1/);
+// Engine exposes the execution knobs (concurrency / checkpoint hooks).
+assert.match(consistencySource, /export function groupKey/);
+assert.match(consistencySource, /judgeConcurrency\?: number/);
+assert.match(consistencySource, /precomputedVerdicts\?: Record<string, RungVerdict\[\]>/);
+assert.match(consistencySource, /onGroupJudged\?:/);
+
+// Functional: retry retries transient errors then succeeds, fails fast on
+// deterministic ones, and gives up after the cap; the engine runs groups
+// concurrently and resumes from a checkpoint without re-judging.
+async function assertConsistencyResilience() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-resilience-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import { withModelRetry, isTransientModelError } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/modelRetry.ts"))};
+    import { runConsistencyCalibration } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
+    globalThis.__resilience = (async () => {
+      const noSleep = async () => {};
+
+      // (1) Transient 503 retried, then succeeds — does NOT surface to caller.
+      let calls = 0;
+      const val = await withModelRetry(async () => {
+        calls += 1;
+        if (calls < 3) { const e = new Error("503 UNAVAILABLE: high demand, try again later"); e.status = 503; throw e; }
+        return "ok";
+      }, { sleep: noSleep, baseDelayMs: 0 });
+      if (val !== "ok" || calls !== 3) throw new Error("transient retry did not recover after blips");
+
+      // (2) Deterministic 400 fails fast (one attempt, no retries).
+      let badCalls = 0;
+      let threw = false;
+      try {
+        await withModelRetry(async () => { badCalls += 1; const e = new Error("INVALID_ARGUMENT"); e.status = 400; throw e; }, { sleep: noSleep });
+      } catch { threw = true; }
+      if (!threw || badCalls !== 1) throw new Error("deterministic error was retried instead of failing fast");
+      if (isTransientModelError({ status: 400 })) throw new Error("400 misclassified as transient");
+      if (!isTransientModelError({ status: 503 }) || !isTransientModelError(new Error("rate limit exceeded (429)"))) {
+        throw new Error("transient classifier missed a transient signal");
+      }
+
+      // (3) Persistent transient error gives up after the attempt cap.
+      let persistent = 0;
+      let gaveUp = false;
+      try {
+        await withModelRetry(async () => { persistent += 1; const e = new Error("503 unavailable"); e.status = 503; throw e; }, { sleep: noSleep, baseDelayMs: 0, maxAttempts: 3 });
+      } catch { gaveUp = true; }
+      if (!gaveUp || persistent !== 3) throw new Error("retry did not honor the attempt cap");
+
+      // (4) Engine: two papers with the SAME output text form one comparable
+      // group. Concurrent judging produces a result; a second run seeded with
+      // the captured verdicts (checkpoint) does NOT re-judge and is identical.
+      const subj = (id) => ({ reviewId: id, paperId: id, ledger: { inputConstructionOutputAssessment: { output: { outputs: [{ output: "shared horizon entropy result", validityLevel: "valid", centrality: "high" }] } }, computedScore: 60 } });
+      const subjects = [subj("G1"), subj("G2")];
+      let judgeCalls = 0;
+      const seen = {};
+      const countingJudge = async (group) => {
+        judgeCalls += 1;
+        return group.elements.map((e) => ({ reviewId: e.reviewId, kind: e.kind, index: e.index, firmness: "F2", reason: "x" }));
+      };
+      const run1 = await runConsistencyCalibration(subjects, { judge: countingJudge, judgeConcurrency: 4, onGroupJudged: (k, v) => { seen[k] = v; } });
+      if (judgeCalls < 1) throw new Error("comparable group was not judged");
+      if (Object.keys(seen).length < 1) throw new Error("onGroupJudged did not report a checkpoint entry");
+      const callsAfterRun1 = judgeCalls;
+      const run2 = await runConsistencyCalibration(subjects, { judge: countingJudge, judgeConcurrency: 4, precomputedVerdicts: seen });
+      if (judgeCalls !== callsAfterRun1) throw new Error("checkpointed group was re-judged instead of resumed");
+      if (JSON.stringify(run1.results) !== JSON.stringify(run2.results)) throw new Error("checkpoint resume changed the calibration result");
+    })();
+  `);
+  await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
+  await import(pathToFileURL(out).href);
+  await globalThis.__resilience;
+}
+await assertConsistencyResilience();
+
 // Legacy anchored pairwise path remains the active engine (untouched).
 assert.match(pairwiseEngineSource, /PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2"/);
 

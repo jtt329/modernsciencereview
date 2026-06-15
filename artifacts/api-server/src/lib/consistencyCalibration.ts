@@ -359,6 +359,17 @@ export function applyCorrections(
 // --- Orchestrator (judgment path injected; never called in tests) ------
 export type ConsistencyJudge = (group: ElementGroup) => Promise<RungVerdict[]>;
 
+// Stable, content-addressed key for a group: identifies the same SET of
+// elements regardless of the order grouping discovered them, so a resumed
+// run can match the verdicts a previous (interrupted) run already computed
+// for that group and skip re-calling the model (checkpointing).
+export function groupKey(group: ElementGroup): string {
+  return `${group.kind}|${group.elements
+    .map((e) => `${e.reviewId}:${e.kind}:${e.index}`)
+    .sort()
+    .join(",")}`;
+}
+
 export type ConsistencyPaperResult = {
   reviewId: string;
   paperId: string;
@@ -371,7 +382,19 @@ export type ConsistencyPaperResult = {
 
 export async function runConsistencyCalibration(
   papers: Array<{ reviewId: string; paperId: string; ledger: Record<string, any> | null; adjudicatorTotal: number }>,
-  deps: { judge: ConsistencyJudge; groupThreshold?: number; embed?: Embedder; embedThreshold?: number },
+  deps: {
+    judge: ConsistencyJudge;
+    groupThreshold?: number;
+    embed?: Embedder;
+    embedThreshold?: number;
+    // Execution-only knobs (do not change the computed corrections):
+    // run several independent groups concurrently (bounded worker pool),
+    // reuse verdicts a prior run already produced, and report each freshly
+    // judged group so the caller can checkpoint progress.
+    judgeConcurrency?: number;
+    precomputedVerdicts?: Record<string, RungVerdict[]>;
+    onGroupJudged?: (groupKey: string, verdicts: RungVerdict[]) => void | Promise<void>;
+  },
 ): Promise<{ results: ConsistencyPaperResult[]; dominanceViolations: DominanceViolation[]; groupingMethod: string }> {
   const allElements = papers.flatMap((p) => extractIcoElements(p));
 
@@ -388,10 +411,33 @@ export async function runConsistencyCalibration(
   const groups = deps.embed
     ? await groupComparableElementsByEmbedding(allElements, deps.embed, { threshold: deps.embedThreshold, lexicalThreshold: deps.groupThreshold })
     : groupComparableElements(allElements, { threshold: deps.groupThreshold });
-  const verdicts: RungVerdict[] = [];
-  for (const group of groups) {
-    verdicts.push(...await deps.judge(group));
-  }
+
+  // Bounded worker pool over the groups. Groups are independent and the
+  // verdicts are keyed by element identity (not arrival order), so running
+  // several judgments concurrently — and reusing any already computed in a
+  // prior run — yields the same corrections, just faster and resumable.
+  const concurrency = Math.max(1, deps.judgeConcurrency ?? 1);
+  const precomputed = deps.precomputedVerdicts ?? {};
+  const perGroupVerdicts: RungVerdict[][] = new Array(groups.length);
+  let nextGroup = 0;
+  const judgeWorker = async () => {
+    for (;;) {
+      const i = nextGroup;
+      nextGroup += 1; // synchronous claim; no two workers take the same index
+      if (i >= groups.length) return;
+      const group = groups[i];
+      const key = groupKey(group);
+      const cached = precomputed[key];
+      if (cached) { perGroupVerdicts[i] = cached; continue; }
+      const judged = await deps.judge(group);
+      perGroupVerdicts[i] = judged;
+      if (deps.onGroupJudged) await deps.onGroupJudged(key, judged);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, Math.max(1, groups.length)) }, () => judgeWorker()),
+  );
+  const verdicts: RungVerdict[] = perGroupVerdicts.flat();
   const { corrected, changeLog } = applyCorrections(allElements, verdicts);
 
   const results: ConsistencyPaperResult[] = papers.map((p) => {
