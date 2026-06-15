@@ -1562,6 +1562,13 @@ assert.match(routesSource, /readableCharCount < AUTO_PDF_VISIBLE_MIN_CHARS/);
 const calPlanSource = readFileSync(join(root, "scripts/calibration-plan.mjs"), "utf8");
 assert.match(calPlanSource, /READ-ONLY/);
 assert.doesNotMatch(calPlanSource, /method:\s*["']POST["']/);
+// The export must expose the review row id so a paper can be mapped to its
+// pin target (:reviewId for calibration-flags).
+const exportCanonicalStart = routesSource.indexOf("const canonicalReview: Record<string, any> = {");
+assert.notEqual(exportCanonicalStart, -1, "canonical export block missing");
+const exportCanonicalBlock = routesSource.slice(exportCanonicalStart, exportCanonicalStart + 600);
+assert.match(exportCanonicalBlock, /id: r\.id/);
+assert.match(exportCanonicalBlock, /reviewId: r\.id/);
 
 // Functional: cleanDisplayTitle rejects the PDF-visible placeholder.
 async function assertPlaceholderTitleRejected() {

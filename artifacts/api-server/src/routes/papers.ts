@@ -4522,6 +4522,11 @@ router.get("/papers/export", async (req, res) => {
           coverageLedger.comparatorCalibrationStatus === "applied" ||
           coverageLedger.comparatorCalibrationStatus === "weak";
         const canonicalReview: Record<string, any> = {
+          // Review row id — the :reviewId for POST /admin/reviews/:id/
+          // calibration-flags. Needed to map a paper to its anchor/bridge
+          // pin target during a calibration run.
+          id: r.id,
+          reviewId: r.id,
           reviewObjectVersion: coverageLedger.reviewObjectVersion,
           calibrationCompatibilityFamily: coverageLedger.calibrationCompatibilityFamily ?? null,
           diagnosticScaleVersion: coverageLedger.diagnosticScaleVersion ?? null,
