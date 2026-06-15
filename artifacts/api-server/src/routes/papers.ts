@@ -82,6 +82,15 @@ import {
 } from "../lib/consistencyCalibration";
 import { CONSISTENCY_CALIBRATION_V1_PROMPT } from "../lib/prompts/consistencyCalibrationV1";
 import { withModelRetry } from "../lib/modelRetry";
+import {
+  SCORE_REDUCTION_PASS_VERSION,
+  SCORE_REDUCTION_SYSTEM_PROMPT,
+  scoreReductionJsonSchema,
+  scoreReductionDimensions,
+  parseScoreReductionReasons,
+  type ScoreReductionReasons,
+  type ScoreReductionDimension,
+} from "../lib/scoreReduction";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
@@ -1938,12 +1947,27 @@ async function reviewAttemptById(attemptId: string) {
 // rubric-consistency engine over the whole corpus instead of reviewing one
 // paper. It rides the same reviewAttempts/worker machinery but carries no
 // source/user snapshot — the work is identified by jobKind in debugPayload.
-function isConsistencyCalibrationJob(record: ReviewAttemptRecord) {
-  return debugPayloadObject(record.debugPayload).jobKind === "consistency-calibration";
-}
+const CONSISTENCY_JOB_KIND = "consistency-calibration";
+const SCORE_REDUCTION_JOB_KIND = "score-reduction-reasons";
 
-function consistencyCalibrationJobParams(record: ReviewAttemptRecord): Record<string, any> {
-  const params = debugPayloadObject(record.debugPayload).consistencyCalibrationJob;
+function jobKindOf(record: ReviewAttemptRecord): string | null {
+  const kind = debugPayloadObject(record.debugPayload).jobKind;
+  return typeof kind === "string" ? kind : null;
+}
+function isConsistencyCalibrationJob(record: ReviewAttemptRecord) {
+  return jobKindOf(record) === CONSISTENCY_JOB_KIND;
+}
+function isScoreReductionReasonsJob(record: ReviewAttemptRecord) {
+  return jobKindOf(record) === SCORE_REDUCTION_JOB_KIND;
+}
+// Background corpus passes (consistency calibration, score-reduction reasons)
+// ride the worker machinery but carry no source/user snapshot — the work is
+// identified by jobKind in debugPayload.
+function isBackgroundCorpusJob(record: ReviewAttemptRecord) {
+  return isConsistencyCalibrationJob(record) || isScoreReductionReasonsJob(record);
+}
+function corpusJobParams(record: ReviewAttemptRecord): Record<string, any> {
+  const params = debugPayloadObject(record.debugPayload).jobParams;
   return params && typeof params === "object" && !Array.isArray(params)
     ? params as Record<string, any>
     : {};
@@ -1951,9 +1975,9 @@ function consistencyCalibrationJobParams(record: ReviewAttemptRecord): Record<st
 
 function shouldResumeReviewJob(record: ReviewAttemptRecord, now = Date.now()) {
   const payload = debugPayloadObject(record.debugPayload);
-  // Calibration jobs have no source snapshot; everything else below (queued
+  // Corpus jobs have no source snapshot; everything else below (queued
   // status, lease expiry, restart interruption) applies to them unchanged.
-  if (!isConsistencyCalibrationJob(record) && !sourceSnapshotFromAttempt(record)) return false;
+  if (!isBackgroundCorpusJob(record) && !sourceSnapshotFromAttempt(record)) return false;
   if (isCompletedAttempt(record)) return false;
   if (isClientAttempt(record)) return false;
   if (payload.jobStatus === "auto_recovery_exceeded") return false;
@@ -2133,11 +2157,15 @@ async function runReviewJob(attemptId: string) {
   if (!record) return;
   if (isCompletedAttempt(record)) return;
 
-  // Consistency-calibration jobs run the corpus calibration, not a paper
-  // review. They share the queue/lease/heartbeat plumbing but their own
-  // execution path (no source/user snapshot, no processPaperSubmission).
+  // Background corpus passes run over the whole corpus, not one paper. They
+  // share the queue/lease/heartbeat plumbing but have their own execution
+  // path (no source/user snapshot, no processPaperSubmission).
   if (isConsistencyCalibrationJob(record)) {
     await runConsistencyCalibrationJob(record);
+    return;
+  }
+  if (isScoreReductionReasonsJob(record)) {
+    await runScoreReductionReasonsJob(record);
     return;
   }
 
@@ -2190,43 +2218,58 @@ async function runReviewJob(attemptId: string) {
   }
 }
 
-// How many per-group judgment calls run concurrently (small pool: fast
-// enough to finish the corpus in ~1-2 min, low enough to stay under rate
-// limits). And how many times a job may re-queue itself to resume from its
+// Per-group judgment concurrency for the calibration corpus pass (small pool:
+// fast enough to finish in ~1-2 min, low enough to stay under rate limits),
+// and how many times a corpus job may re-queue itself to resume from its
 // checkpoint after a mid-run failure before giving up terminally.
 const CONSISTENCY_JUDGE_CONCURRENCY = Math.max(1, Number(process.env.CONSISTENCY_JUDGE_CONCURRENCY ?? 6) || 6);
 const CONSISTENCY_JOB_MAX_ATTEMPTS = Math.max(1, Number(process.env.CONSISTENCY_JOB_MAX_ATTEMPTS ?? 4) || 4);
 
-function consistencyCheckpointVerdicts(payload: Record<string, unknown>): Record<string, RungVerdict[]> {
-  const checkpoint = payload.consistencyCalibrationCheckpoint;
-  const saved = checkpoint && typeof checkpoint === "object" ? (checkpoint as any).verdictsByGroup : null;
-  const out: Record<string, RungVerdict[]> = {};
-  if (saved && typeof saved === "object" && !Array.isArray(saved)) {
-    for (const [key, value] of Object.entries(saved)) {
-      if (Array.isArray(value)) out[key] = value as RungVerdict[];
-    }
-  }
-  return out;
-}
+type CorpusJobSpec = {
+  label: string;
+  checkpointField: string; // debugPayload key holding the checkpoint object
+  itemsKey: string;        // sub-key: map of done items (key -> value)
+  doneKey: string;         // sub-key: count of done items
+  resultField: string;     // debugPayload key for the final result
+  errorField: string;      // debugPayload key for a terminal error message
+  maxAttempts: number;
+  execute: (args: {
+    params: Record<string, any>;
+    checkpoint: Record<string, any>;
+    recordProgress: (key: string, value: any) => void;
+  }) => Promise<any>;
+};
 
-// Worker-side execution of a durable consistency-calibration job. The corpus
-// run takes minutes and makes dozens of model calls, so this layer makes it
-// resilient (execution only — the calibration logic is untouched):
-//   - bounded-concurrency + per-call retry happen inside the engine/judge,
-//   - progress is checkpointed (per group) onto the attempt continuously,
-//   - a mid-run failure RESUMES from the checkpoint (bounded re-queue)
-//     instead of restarting the whole corpus.
-// The final result lands on debugPayload.consistencyCalibrationResult for
-// the operator to poll via GET /api/review-jobs/:id.
-async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
+// Shared worker-side lifecycle for durable background CORPUS passes. The run
+// takes minutes and makes many model calls, so this layer makes it resilient
+// (execution only — the underlying logic is untouched):
+//   - keeps the lease alive and CHECKPOINTS progress continuously, via a
+//     single serialized writer so the heartbeat and terminal write never race;
+//   - resumes from the checkpoint on (re)entry instead of redoing work;
+//   - on a mid-run failure RE-QUEUES (bounded by maxAttempts) so the worker
+//     recovery loop resumes from the checkpoint rather than restarting.
+// The final result lands on debugPayload[resultField] for the operator to
+// poll via GET /api/review-jobs/:id.
+async function runDurableCorpusJob(record: ReviewAttemptRecord, spec: CorpusJobSpec) {
   const runningRecord = await markReviewJobRunning(record, "worker_start");
   const attemptId = runningRecord.attemptId;
   const runPayload = debugPayloadObject(runningRecord.debugPayload);
-  const jobAttempt = Math.max(1, Number(runPayload.consistencyJobAttempt ?? 1) || 1);
+  const jobAttempt = Math.max(1, Number(runPayload.jobAttempt ?? 1) || 1);
+  const params = corpusJobParams(runningRecord);
 
   // Resume from any checkpoint a prior (interrupted) run left behind.
-  const checkpoint: Record<string, RungVerdict[]> = consistencyCheckpointVerdicts(runPayload);
-  const onGroupJudged = (key: string, verdicts: RungVerdict[]) => { checkpoint[key] = verdicts; };
+  const checkpoint: Record<string, any> = {};
+  const savedCp = runPayload[spec.checkpointField];
+  const savedItems = savedCp && typeof savedCp === "object" ? (savedCp as any)[spec.itemsKey] : null;
+  if (savedItems && typeof savedItems === "object" && !Array.isArray(savedItems)) {
+    for (const [key, value] of Object.entries(savedItems)) checkpoint[key] = value;
+  }
+  const recordProgress = (key: string, value: any) => { checkpoint[key] = value; };
+  const checkpointPayload = () => ({
+    [spec.itemsKey]: checkpoint,
+    [spec.doneKey]: Object.keys(checkpoint).length,
+    updatedAt: new Date().toISOString(),
+  });
 
   // Single serialized writer for this row's debugPayload so the periodic
   // heartbeat/checkpoint flush and the terminal write never race on the
@@ -2242,11 +2285,6 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
     }, () => { /* swallow; a failed flush must not break the chain */ });
     return writeChain;
   };
-  const checkpointPayload = () => ({
-    verdictsByGroup: checkpoint,
-    groupsDone: Object.keys(checkpoint).length,
-    updatedAt: new Date().toISOString(),
-  });
   const flush = () => enqueueWrite((latest) => {
     if (finished || isCompletedAttempt(latest)) return null;
     const payload = debugPayloadObject(latest.debugPayload);
@@ -2260,7 +2298,7 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
         workerId: REVIEW_JOB_WORKER_ID,
         workerHeartbeatAt: new Date(now).toISOString(),
         leaseExpiresAt: reviewJobLeaseExpiresAt(now),
-        consistencyCalibrationCheckpoint: checkpointPayload(),
+        [spec.checkpointField]: checkpointPayload(),
         apiRuntimeAtHeartbeat: reviewRuntimeInfo(),
       },
     };
@@ -2269,15 +2307,7 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
   heartbeat.unref?.();
 
   try {
-    const params = consistencyCalibrationJobParams(runningRecord);
-    const result = await executeConsistencyCalibration({
-      apply: params.apply === true,
-      groupThreshold: typeof params.groupThreshold === "number" ? params.groupThreshold : undefined,
-      embedThreshold: typeof params.embedThreshold === "number" ? params.embedThreshold : undefined,
-      judgeConcurrency: CONSISTENCY_JUDGE_CONCURRENCY,
-      precomputedVerdicts: checkpoint,
-      onGroupJudged,
-    });
+    const result = await spec.execute({ params, checkpoint, recordProgress });
     finished = true;
     clearInterval(heartbeat);
     await writeChain; // drain any in-flight flush before the terminal write
@@ -2294,18 +2324,18 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
         ...debugPayloadObject(latest.debugPayload),
         jobStatus: "completed",
         completedAt: new Date().toISOString(),
-        consistencyJobAttempt: jobAttempt,
-        consistencyCalibrationResult: result,
-        apiRuntimeAtConsistencyComplete: reviewRuntimeInfo(),
+        jobAttempt,
+        [spec.resultField]: result,
+        apiRuntimeAtCorpusComplete: reviewRuntimeInfo(),
       },
     }));
   } catch (err: any) {
     finished = true;
     clearInterval(heartbeat);
     await writeChain;
-    const message = err?.message ? String(err.message) : "consistency calibration failed";
-    const resumable = jobAttempt < CONSISTENCY_JOB_MAX_ATTEMPTS;
-    logger.error({ err, attemptId, jobAttempt, maxAttempts: CONSISTENCY_JOB_MAX_ATTEMPTS, resumable }, "Consistency calibration job errored");
+    const message = err?.message ? String(err.message) : `${spec.label} failed`;
+    const resumable = jobAttempt < spec.maxAttempts;
+    logger.error({ err, attemptId, label: spec.label, jobAttempt, maxAttempts: spec.maxAttempts, resumable }, "Durable corpus job errored");
     await enqueueWrite((latest) => {
       const payload = debugPayloadObject(latest.debugPayload);
       if (resumable) {
@@ -2323,10 +2353,10 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
           debugPayload: {
             ...payload,
             jobStatus: "queued",
-            consistencyJobAttempt: jobAttempt + 1,
-            consistencyCalibrationCheckpoint: checkpointPayload(),
-            lastConsistencyError: message,
-            lastConsistencyErrorAt: new Date().toISOString(),
+            jobAttempt: jobAttempt + 1,
+            [spec.checkpointField]: checkpointPayload(),
+            lastCorpusError: message,
+            lastCorpusErrorAt: new Date().toISOString(),
             requeuedForResumeAt: new Date().toISOString(),
           },
         };
@@ -2343,26 +2373,61 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
           ...payload,
           jobStatus: "failed",
           failedAt: new Date().toISOString(),
-          consistencyJobAttempt: jobAttempt,
-          consistencyCalibrationError: message,
-          consistencyCalibrationCheckpoint: checkpointPayload(),
-          apiRuntimeAtConsistencyFailure: reviewRuntimeInfo(),
+          jobAttempt,
+          [spec.errorField]: message,
+          [spec.checkpointField]: checkpointPayload(),
+          apiRuntimeAtCorpusFailure: reviewRuntimeInfo(),
         },
       };
     });
   }
 }
 
-// Persist a queued consistency-calibration job. enqueueReviewJob is a no-op
-// on the web role, so the worker picks the queued row up via its recovery
-// loop — the same cross-process handoff the paper-review jobs use.
-async function createConsistencyCalibrationJob(
-  user: any,
-  params: { apply: boolean; groupThreshold?: number; embedThreshold?: number },
-) {
+async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
+  await runDurableCorpusJob(record, {
+    label: "consistency calibration",
+    checkpointField: "consistencyCalibrationCheckpoint",
+    itemsKey: "verdictsByGroup",
+    doneKey: "groupsDone",
+    resultField: "consistencyCalibrationResult",
+    errorField: "consistencyCalibrationError",
+    maxAttempts: CONSISTENCY_JOB_MAX_ATTEMPTS,
+    execute: ({ params, checkpoint, recordProgress }) => executeConsistencyCalibration({
+      apply: params.apply === true,
+      groupThreshold: typeof params.groupThreshold === "number" ? params.groupThreshold : undefined,
+      embedThreshold: typeof params.embedThreshold === "number" ? params.embedThreshold : undefined,
+      judgeConcurrency: CONSISTENCY_JUDGE_CONCURRENCY,
+      precomputedVerdicts: checkpoint as Record<string, RungVerdict[]>,
+      onGroupJudged: recordProgress,
+    }),
+  });
+}
+
+async function runScoreReductionReasonsJob(record: ReviewAttemptRecord) {
+  await runDurableCorpusJob(record, {
+    label: "score-reduction reasons",
+    checkpointField: "scoreReductionCheckpoint",
+    itemsKey: "reasonsByReview",
+    doneKey: "reviewsDone",
+    resultField: "scoreReductionResult",
+    errorField: "scoreReductionError",
+    maxAttempts: SCORE_REDUCTION_JOB_MAX_ATTEMPTS,
+    execute: ({ params, checkpoint, recordProgress }) => executeScoreReductionReasons({
+      apply: params.apply === true,
+      concurrency: SCORE_REDUCTION_CONCURRENCY,
+      precomputedReasons: checkpoint as Record<string, ScoreReductionReasons>,
+      onReviewDone: recordProgress,
+    }),
+  });
+}
+
+// Persist a queued corpus-pass job. enqueueReviewJob is a no-op on the web
+// role, so the worker picks the queued row up via its recovery loop — the
+// same cross-process handoff the paper-review jobs use.
+async function createCorpusJob(user: any, kind: string, params: Record<string, any>) {
   const now = new Date().toISOString();
   const attemptId = createHash("sha256")
-    .update(`consistency-calibration\0${user?.id ?? ""}\0${Date.now()}\0${Math.random()}`)
+    .update(`${kind}\0${user?.id ?? ""}\0${Date.now()}\0${Math.random()}`)
     .digest("hex")
     .slice(0, 32);
   const requestId = attemptId.slice(0, 16);
@@ -2379,7 +2444,7 @@ async function createConsistencyCalibrationJob(
     stageName: "upload_received",
     stageType: "queue",
     model: GEMINI_META_MODEL,
-    promptVersion: CONSISTENCY_CALIBRATION_VERSION,
+    promptVersion: kind,
     promptHash: null,
     requestId,
     retryCount: 0,
@@ -2392,13 +2457,8 @@ async function createConsistencyCalibrationJob(
     reviewStatus: "queued",
     scientificScoringAttempted: false,
     debugPayload: {
-      jobKind: "consistency-calibration",
-      consistencyCalibrationJob: {
-        calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
-        apply: params.apply === true,
-        groupThreshold: params.groupThreshold ?? null,
-        embedThreshold: params.embedThreshold ?? null,
-      },
+      jobKind: kind,
+      jobParams: { ...params },
       jobStatus: "queued",
       durableJob: true,
       queuedAt: now,
@@ -2411,16 +2471,16 @@ async function createConsistencyCalibrationJob(
   return record;
 }
 
-// If a calibration job is already queued or running, return it instead of
-// spawning a second full corpus run (e.g. operator double-submits).
-async function findInflightConsistencyCalibrationJob(): Promise<ReviewAttemptRecord | null> {
+// If a corpus job of this kind is already queued or running, return it instead
+// of spawning a second full pass (e.g. operator double-submits).
+async function findInflightCorpusJob(kind: string): Promise<ReviewAttemptRecord | null> {
   const rows = await db.select()
     .from(reviewAttemptsTable)
     .orderBy(desc(reviewAttemptsTable.createdAt))
     .limit(REVIEW_JOB_RECOVERY_LIMIT);
   for (const row of rows) {
     const record = withRuntimeAttemptStatus(reviewAttemptRecordFromRow(row));
-    if (!isConsistencyCalibrationJob(record)) continue;
+    if (jobKindOf(record) !== kind) continue;
     if (isCompletedAttempt(record)) continue;
     if (record.errorMessage.trim() || record.failureStatus === "failed") continue;
     const status = record.reviewStatus;
@@ -4724,8 +4784,13 @@ router.post("/papers/consistency-calibration", async (req, res) => {
     // whole set) takes minutes and 502s if held open as one synchronous web
     // request. Run it as a durable background job instead: enqueue here,
     // let the worker process it, and return 202 + a jobId to poll.
-    const existing = await findInflightConsistencyCalibrationJob();
-    const job = existing ?? await createConsistencyCalibrationJob(req.user, { apply, groupThreshold, embedThreshold });
+    const existing = await findInflightCorpusJob(CONSISTENCY_JOB_KIND);
+    const job = existing ?? await createCorpusJob(req.user, CONSISTENCY_JOB_KIND, {
+      calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
+      apply,
+      groupThreshold: groupThreshold ?? null,
+      embedThreshold: embedThreshold ?? null,
+    });
     res.status(202).json({
       calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
       dryRun: !apply,
@@ -4739,6 +4804,162 @@ router.post("/papers/consistency-calibration", async (req, res) => {
     });
   } catch (err: any) {
     logger.error({ err }, "Failed to enqueue consistency calibration");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// --- Score-reduction reasons (score-reduction-v1) — gated DISPLAY pass -----
+// For each existing review, read the stored I/C/O subscore + rationale and
+// emit one short "held at N because …" sentence per dimension below 10. One
+// model call per review (reads existing text only). Gated behind a flag and
+// dry-run by default. Never changes a score, rung, or the review prompt hash
+// — so it does not re-open the benchmark.
+const SCORE_REDUCTION_REASONS_ENABLED = process.env.ENABLE_SCORE_REDUCTION_REASONS === "true";
+const SCORE_REDUCTION_CONCURRENCY = Math.max(1, Number(process.env.SCORE_REDUCTION_CONCURRENCY ?? 6) || 6);
+const SCORE_REDUCTION_JOB_MAX_ATTEMPTS = Math.max(1, Number(process.env.SCORE_REDUCTION_JOB_MAX_ATTEMPTS ?? 4) || 4);
+
+// One model call: explain why each below-10 dimension is held where it is,
+// grounded ONLY in the stored rationale. Retry transient blips.
+async function explainScoreReductions(dims: ScoreReductionDimension[]): Promise<ScoreReductionReasons> {
+  const response = await withModelRetry<any>(
+    () => (geminiAI.models.generateContent as any)({
+      model: GEMINI_META_MODEL,
+      contents: [{
+        role: "user",
+        parts: [{
+          text: JSON.stringify({
+            task: "For each dimension, write ONE plain-language sentence explaining why it is held at its score rather than at the top (10), grounded ONLY in the stored rationale. Phrase as 'held at N because …', never 'points deducted'. Do not introduce new numbers or re-judge.",
+            dimensions: dims.map((d) => ({ dimension: d.key, score: d.score, storedRationale: d.rationale })),
+          }, null, 2),
+        }],
+      }],
+      config: {
+        systemInstruction: SCORE_REDUCTION_SYSTEM_PROMPT,
+        responseMimeType: "application/json",
+        responseJsonSchema: scoreReductionJsonSchema,
+        temperature: 0.2,
+        maxOutputTokens: 1024,
+      },
+    }),
+    {
+      label: "score-reduction",
+      onRetry: ({ attempt, maxAttempts, delayMs, error }) =>
+        logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error explaining score reductions; retrying after backoff"),
+    },
+  );
+  return parseScoreReductionReasons(parseGeminiJsonResponse(response.text ?? ""), dims);
+}
+
+// Corpus pass: one model call per review that has any below-10 dimension.
+// Reads stored ledger text only; writes the scoreReductionReasons DISPLAY
+// field when apply=true (scores/rungs/prompt hash untouched). Bounded
+// concurrency + per-review checkpoint via the durable corpus job.
+async function executeScoreReductionReasons(opts: {
+  apply: boolean;
+  concurrency: number;
+  precomputedReasons: Record<string, ScoreReductionReasons>;
+  onReviewDone: (reviewId: string, reasons: ScoreReductionReasons) => void | Promise<void>;
+}) {
+  const { apply } = opts;
+  const papersRows = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+  const reviews = await db.select().from(reviewsTable);
+  const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
+
+  type ReasonJob = { reviewId: string; paperId: string; ledger: Record<string, any>; dims: ScoreReductionDimension[] };
+  const jobs: ReasonJob[] = [];
+  for (const paper of papersRows) {
+    const review = reviewByPaper.get(paper.id);
+    if (!review) continue;
+    const ledger = parseJsonObject(review.coverageLedgerJson);
+    if (!ledger) continue;
+    const dims = scoreReductionDimensions(ledger, review);
+    if (dims.length === 0) continue; // all scored dimensions at 10 (or none scored)
+    jobs.push({ reviewId: review.id, paperId: paper.id, ledger, dims });
+  }
+
+  const results: Array<{ reviewId: string; paperId: string; dimensions: string[]; reasons: ScoreReductionReasons }> = [];
+  let modelCalls = 0;
+  let reusedFromCheckpoint = 0;
+  let updatedReviews = 0;
+
+  const concurrency = Math.max(1, opts.concurrency);
+  let nextJob = 0;
+  const worker = async () => {
+    for (;;) {
+      const i = nextJob;
+      nextJob += 1; // synchronous claim; no two workers take the same index
+      if (i >= jobs.length) return;
+      const job = jobs[i];
+      let reasons = opts.precomputedReasons[job.reviewId];
+      if (reasons) {
+        reusedFromCheckpoint += 1;
+      } else {
+        reasons = await explainScoreReductions(job.dims); // one model call (retry-wrapped)
+        modelCalls += 1;
+        await opts.onReviewDone(job.reviewId, reasons);
+      }
+      results.push({ reviewId: job.reviewId, paperId: job.paperId, dimensions: job.dims.map((d) => d.key), reasons });
+      if (apply) {
+        // Display field only — scores, rungs, subscoreRationale, and the
+        // prompt hash on the ledger are left exactly as they were.
+        const updatedLedger = {
+          ...job.ledger,
+          scoreReductionReasons: {
+            ...reasons,
+            pass: SCORE_REDUCTION_PASS_VERSION,
+            generatedAt: new Date().toISOString(),
+          },
+        };
+        await db.update(reviewsTable)
+          .set({ coverageLedgerJson: JSON.stringify(updatedLedger) })
+          .where(eq(reviewsTable.id, job.reviewId));
+        updatedReviews += 1;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, jobs.length)) }, () => worker()));
+
+  return {
+    pass: SCORE_REDUCTION_PASS_VERSION,
+    dryRun: !apply,
+    reviewsConsidered: jobs.length,
+    modelCalls,
+    reusedFromCheckpoint,
+    updatedReviews,
+    results,
+    note: apply
+      ? "Applied: scoreReductionReasons (display only) written to each review ledger; scores, rungs, and the prompt hash are untouched."
+      : "Dry run: nothing written. Pass { apply: true } to persist the display field.",
+  };
+}
+
+// POST /api/papers/score-reduction-reasons — gated, dry-run-by-default
+// background pass. Surfaces the "why not 10" reason that already exists in
+// each review's stored rationale, as a display field. Does NOT re-review or
+// change any score/rung/prompt-hash, so it never re-opens the benchmark.
+router.post("/papers/score-reduction-reasons", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  if (!SCORE_REDUCTION_REASONS_ENABLED) {
+    res.status(409).json({
+      error: "score-reduction reasons pass is gated; set ENABLE_SCORE_REDUCTION_REASONS=true to run it. It reads stored rationale only and never changes a score, rung, or the prompt hash.",
+    });
+    return;
+  }
+  try {
+    const apply = req.body?.apply === true; // default: dry run, no writes
+    const existing = await findInflightCorpusJob(SCORE_REDUCTION_JOB_KIND);
+    const job = existing ?? await createCorpusJob(req.user, SCORE_REDUCTION_JOB_KIND, { pass: SCORE_REDUCTION_PASS_VERSION, apply });
+    res.status(202).json({
+      pass: SCORE_REDUCTION_PASS_VERSION,
+      dryRun: !apply,
+      jobId: job.attemptId,
+      status: job.reviewStatus,
+      statusUrl: `/api/review-jobs/${job.attemptId}`,
+      reused: Boolean(existing),
+      note: "Score-reduction reasons enqueued as a background job (reads stored rationale only; scores/rungs/prompt hash untouched). Poll statusUrl until reviewStatus is 'completed'; the result is in attempt.debugPayload.scoreReductionResult.",
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Failed to enqueue score-reduction reasons");
     res.status(500).json({ error: err.message });
   }
 });

@@ -1654,22 +1654,24 @@ assert.ok(
   !/runConsistencyCalibration\(/.test(consistencyRouteBody),
   "consistency-calibration route must enqueue a job, not run the engine synchronously",
 );
-assert.match(consistencyRouteBody, /createConsistencyCalibrationJob/);
-assert.match(consistencyRouteBody, /findInflightConsistencyCalibrationJob/);
+assert.match(consistencyRouteBody, /createCorpusJob/);
+assert.match(consistencyRouteBody, /findInflightCorpusJob/);
 assert.match(consistencyRouteBody, /res\.status\(202\)/);
 assert.match(consistencyRouteBody, /statusUrl/);
-// Engine moved into the reusable worker-invoked function.
+// Engine moved into the reusable worker-invoked function; corpus jobs share a
+// generic durable-lifecycle runner.
 assert.match(routesSource, /async function executeConsistencyCalibration/);
 assert.match(routesSource, /async function runConsistencyCalibrationJob/);
-assert.match(routesSource, /async function createConsistencyCalibrationJob/);
-// Worker dispatches calibration jobs (no source/user snapshot) to their own
-// path; the recovery gate lets them resume despite lacking a source snapshot.
+assert.match(routesSource, /async function runDurableCorpusJob/);
+assert.match(routesSource, /async function createCorpusJob/);
+// Worker dispatches corpus jobs (no source/user snapshot) to their own path;
+// the recovery gate lets them resume despite lacking a source snapshot.
 assert.match(routesSource, /if \(isConsistencyCalibrationJob\(record\)\) \{\s*\n\s*await runConsistencyCalibrationJob\(record\);/);
-assert.match(routesSource, /!isConsistencyCalibrationJob\(record\) && !sourceSnapshotFromAttempt\(record\)/);
+assert.match(routesSource, /!isBackgroundCorpusJob\(record\) && !sourceSnapshotFromAttempt\(record\)/);
 // Result is persisted onto the attempt for polling; survives the debug
 // sanitizer (which only redacts sourceSnapshot/source/data).
-assert.match(routesSource, /consistencyCalibrationResult: result/);
-assert.match(routesSource, /jobKind: "consistency-calibration"/);
+assert.match(routesSource, /resultField: "consistencyCalibrationResult"/);
+assert.match(routesSource, /CONSISTENCY_JOB_KIND = "consistency-calibration"/);
 
 // Resilience to transient model errors (execution only — engine logic
 // unchanged): per-call retry/backoff, bounded concurrency, checkpoint+resume.
@@ -1686,9 +1688,10 @@ assert.match(routesSource, /precomputedVerdicts: checkpoint/);
 assert.match(routesSource, /onGroupJudged/);
 assert.match(routesSource, /consistencyCalibrationCheckpoint/);
 // A mid-run failure re-queues to resume from the checkpoint, bounded by
-// CONSISTENCY_JOB_MAX_ATTEMPTS, instead of restarting the corpus.
-assert.match(routesSource, /jobAttempt < CONSISTENCY_JOB_MAX_ATTEMPTS/);
-assert.match(routesSource, /consistencyJobAttempt: jobAttempt \+ 1/);
+// maxAttempts, instead of restarting the corpus.
+assert.match(routesSource, /jobAttempt < spec\.maxAttempts/);
+assert.match(routesSource, /maxAttempts: CONSISTENCY_JOB_MAX_ATTEMPTS/);
+assert.match(routesSource, /jobAttempt: jobAttempt \+ 1/);
 // Engine exposes the execution knobs (concurrency / checkpoint hooks).
 assert.match(consistencySource, /export function groupKey/);
 assert.match(consistencySource, /judgeConcurrency\?: number/);
@@ -1764,6 +1767,91 @@ async function assertConsistencyResilience() {
   await globalThis.__resilience;
 }
 await assertConsistencyResilience();
+
+// Score-reduction reasons (score-reduction-v1) — gated DISPLAY pass. Reads
+// stored I/C/O rationale + subscore, emits a "held at N because …" line per
+// below-10 dimension. NEVER changes a score, rung, or the prompt hash.
+const scoreReductionSource = readFileSync(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"), "utf8");
+assert.match(scoreReductionSource, /SCORE_REDUCTION_PASS_VERSION = "score-reduction-v1"/);
+assert.match(scoreReductionSource, /export function scoreReductionDimensions/);
+assert.match(scoreReductionSource, /export function parseScoreReductionReasons/);
+// Rung-based phrasing ("held at N because …"), explicitly NOT subtractive.
+assert.match(scoreReductionSource, /held at <score> because/);
+assert.match(scoreReductionSource, /NEVER say/);
+assert.match(scoreReductionSource, /rung-based, not subtractive/);
+// Route: gated behind a flag, dry-run by default, backgrounded (202 + poll),
+// reuses the generic corpus-job machinery.
+const scoreReductionRouteBody = routesSource.slice(
+  routesSource.indexOf('router.post("/papers/score-reduction-reasons"'),
+  routesSource.indexOf("// GET /api/admin/calibration/holds"),
+);
+assert.ok(scoreReductionRouteBody.length > 0, "could not locate score-reduction-reasons route body");
+assert.match(routesSource, /SCORE_REDUCTION_REASONS_ENABLED = process\.env\.ENABLE_SCORE_REDUCTION_REASONS === "true"/);
+assert.match(scoreReductionRouteBody, /!SCORE_REDUCTION_REASONS_ENABLED/);
+assert.match(scoreReductionRouteBody, /res\.status\(202\)/);
+assert.match(scoreReductionRouteBody, /createCorpusJob\(req\.user, SCORE_REDUCTION_JOB_KIND/);
+assert.match(routesSource, /SCORE_REDUCTION_JOB_KIND = "score-reduction-reasons"/);
+// Worker dispatch + per-call retry, and the ONLY ledger write is the display
+// field — scores/rungs/subscoreRationale are untouched.
+assert.match(routesSource, /if \(isScoreReductionReasonsJob\(record\)\) \{\s*\n\s*await runScoreReductionReasonsJob\(record\);/);
+assert.match(routesSource, /label: "score-reduction"/);
+assert.match(routesSource, /scoreReductionReasons: \{/);
+const scoreReductionExec = routesSource.slice(
+  routesSource.indexOf("async function executeScoreReductionReasons"),
+  routesSource.indexOf('router.post("/papers/score-reduction-reasons"'),
+);
+assert.ok(
+  !/\.set\(\{ (?!coverageLedgerJson)/.test(scoreReductionExec) && !/inputStrengthScore\s*[:=]/.test(scoreReductionExec),
+  "score-reduction pass must not write scores/subscores — only the display field on coverageLedgerJson",
+);
+// UI surfaces the reason under each dimension's score.
+assert.match(reviewCardSource, /scoreReductionReasons/);
+assert.match(reviewCardSource, /reductionReason/);
+
+// Functional: dimension selection skips top-scored dimensions and response
+// parsing maps only the asked-about dimensions.
+async function assertScoreReduction() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-scorereduction-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import { scoreReductionDimensions, parseScoreReductionReasons } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"))};
+    globalThis.__scoreReduction = (async () => {
+      // input 9, construction 10 (top -> skipped), output 7. Only input+output
+      // need a "why not 10" reason.
+      const ledger = {
+        inputStrengthScore: 9, constructionStrengthScore: 10, outputStrengthScore: 7,
+        subscoreRationale: { inputStrengthScore: "rests on a controlled semiclassical approximation", outputStrengthScore: "an output not yet experimentally confirmed" },
+      };
+      const dims = scoreReductionDimensions(ledger, {});
+      const keys = dims.map((d) => d.key).sort();
+      if (keys.length !== 2 || keys[0] !== "input" || keys[1] !== "output") throw new Error("dimension selection did not skip the top-scored dimension");
+      if (!dims.find((d) => d.key === "input").rationale.includes("semiclassical")) throw new Error("stored rationale was not gathered for the dimension");
+
+      // Parsing keeps only non-empty reasons for the asked-about dimensions.
+      const parsed = { reasons: [
+        { dimension: "input", reason: "held at 9 because it rests on a controlled approximation" },
+        { dimension: "output", reason: "  " },
+        { dimension: "construction", reason: "should be ignored (not requested)" },
+      ] };
+      const reasons = parseScoreReductionReasons(parsed, dims);
+      if (reasons.input !== "held at 9 because it rests on a controlled approximation") throw new Error("input reason not mapped");
+      if ("output" in reasons) throw new Error("blank reason should be dropped");
+      if ("construction" in reasons) throw new Error("reason for an un-asked dimension leaked in");
+
+      // A review with all dimensions at 10 yields no work.
+      if (scoreReductionDimensions({ inputStrengthScore: 10, constructionStrengthScore: 10, outputStrengthScore: 10 }, {}).length !== 0) {
+        throw new Error("a fully top-scored review should produce no reduction dimensions");
+      }
+    })();
+  `);
+  await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
+  await import(pathToFileURL(out).href);
+  await globalThis.__scoreReduction;
+}
+await assertScoreReduction();
 
 // Legacy anchored pairwise path remains the active engine (untouched).
 assert.match(pairwiseEngineSource, /PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2"/);
