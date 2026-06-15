@@ -49,7 +49,7 @@ import {
 import { BENCHMARK_PROFILE_CLUSTERING_V9_PROMPT } from "../lib/prompts/benchmarkCalibratedV9";
 import { REALIZED_YIELD_V1_PROMPT } from "../lib/prompts/realizedYieldV1";
 import { ANCHOR_SENSITIVITY_V1 } from "../lib/anchorSensitivityV1";
-import { stripPdfIdentifyingMetadataSafe } from "../lib/pdfBlinding";
+import { shouldAutoPdfVisible, stripPdfIdentifyingMetadataSafe } from "../lib/pdfBlinding";
 import {
   PAIRWISE_CALIBRATION_PROMPT_HASH,
   PAIRWISE_CALIBRATION_VERSION,
@@ -72,6 +72,14 @@ import {
   type CalibrationPairOutcome,
   type CohortFitResult,
 } from "../lib/calibrationFit";
+import {
+  CONSISTENCY_CALIBRATION_VERSION,
+  runConsistencyCalibration,
+  type ConsistencyJudge,
+  type ElementGroup,
+  type RungVerdict,
+} from "../lib/consistencyCalibration";
+import { CONSISTENCY_CALIBRATION_V1_PROMPT } from "../lib/prompts/consistencyCalibrationV1";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
@@ -4217,6 +4225,162 @@ router.get("/papers/:id/realized-yield", async (req, res) => {
   }
 });
 
+const consistencyVerdictJsonSchema = {
+  type: "object",
+  required: ["verdicts"],
+  additionalProperties: false,
+  properties: {
+    verdicts: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["reviewId", "kind", "index", "reason"],
+        additionalProperties: true,
+        properties: {
+          reviewId: { type: "string" },
+          kind: { type: "string", enum: ["input", "construction", "output"] },
+          index: { type: "number" },
+          firmness: { type: "string" },
+          centrality: { type: "string" },
+          validityLevel: { type: "string" },
+          hardToVaryLevel: { type: "string" },
+          reason: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+const normalizeRung = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim() && value.trim().toLowerCase() !== "null" ? value.trim() : undefined;
+
+// POST /api/papers/consistency-calibration — rubric-consistency calibration
+// (consistency-v1). Gated: requires { calibrationVersion: "consistency-v1" }
+// and defaults to a DRY RUN (compute + return, no write). The legacy
+// anchored pairwise path is untouched and remains the active engine until
+// this is validated; this never runs in prod by default.
+router.post("/papers/consistency-calibration", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  if (req.body?.calibrationVersion !== CONSISTENCY_CALIBRATION_VERSION) {
+    res.status(409).json({
+      error: `consistency calibration is gated; pass { "calibrationVersion": "${CONSISTENCY_CALIBRATION_VERSION}" } to run it. The legacy anchored path remains active.`,
+    });
+    return;
+  }
+  try {
+    const apply = req.body?.apply === true; // default: dry run, no writes
+    const papersRows = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
+    const reviews = await db.select().from(reviewsTable);
+    const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
+    const subjects: { reviewId: string; paperId: string; ledger: Record<string, any> | null; adjudicatorTotal: number }[] = [];
+    for (const paper of papersRows) {
+      const review = reviewByPaper.get(paper.id);
+      if (!review) continue;
+      const ledger = parseJsonObject(review.coverageLedgerJson);
+      if (!ledger || !isCalibrationCompatibleReviewObject(ledger)) continue;
+      subjects.push({
+        reviewId: review.id,
+        paperId: paper.id,
+        ledger,
+        adjudicatorTotal: Math.round(Number(ledger.computedScore ?? ledger.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? 0)),
+      });
+    }
+
+    const judge: ConsistencyJudge = async (group: ElementGroup) => {
+      const response = await (geminiAI.models.generateContent as any)({
+        model: GEMINI_META_MODEL,
+        contents: [{
+          role: "user",
+          parts: [{
+            text: JSON.stringify({
+              auditNote: "Audit whether these comparable elements apply the rubric's rungs consistently; re-adjudicate each misplaced element against the rung definitions (never toward the group).",
+              kind: group.kind,
+              elements: group.elements.map((el) => ({
+                reviewId: el.reviewId, kind: el.kind, index: el.index, text: el.text,
+                firmness: el.firmness ?? null, centrality: el.centrality ?? null,
+                validityLevel: el.validityLevel ?? null, hardToVaryLevel: el.hardToVaryLevel ?? null,
+              })),
+            }, null, 2),
+          }],
+        }],
+        config: {
+          systemInstruction: CONSISTENCY_CALIBRATION_V1_PROMPT,
+          responseMimeType: "application/json",
+          responseJsonSchema: consistencyVerdictJsonSchema,
+          temperature: 0.1,
+          maxOutputTokens: 8192,
+        },
+      });
+      const parsed = parseGeminiJsonResponse(response.text ?? "") as Record<string, any>;
+      const rawVerdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
+      return rawVerdicts.map((v: any): RungVerdict => ({
+        reviewId: String(v.reviewId),
+        kind: v.kind,
+        index: Number(v.index),
+        firmness: normalizeRung(v.firmness) as RungVerdict["firmness"],
+        centrality: normalizeRung(v.centrality) as RungVerdict["centrality"],
+        validityLevel: normalizeRung(v.validityLevel),
+        hardToVaryLevel: normalizeRung(v.hardToVaryLevel),
+        reason: typeof v.reason === "string" ? v.reason : "",
+      })).filter((v: RungVerdict) => v.reviewId && v.kind && Number.isFinite(v.index));
+    };
+
+    const { results, dominanceViolations } = await runConsistencyCalibration(subjects, {
+      judge,
+      groupThreshold: typeof req.body?.groupThreshold === "number" ? req.body.groupThreshold : undefined,
+    });
+
+    let updatedReviews = 0;
+    if (apply) {
+      for (const result of results) {
+        const review = reviews.find((r) => r.id === result.reviewId);
+        if (!review) continue;
+        const ledger = parseJsonObject(review.coverageLedgerJson);
+        if (!ledger) continue;
+        const updatedLedger = {
+          ...ledger,
+          consistencyCalibration: {
+            calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
+            adjudicatorTotal: result.adjudicatorTotal,
+            finalTotal: result.finalTotal,
+            calibrationAdjustment: result.calibrationAdjustment,
+            subscores: result.subscores,
+            changeLog: result.changeLog,
+            calibratedAt: new Date().toISOString(),
+          },
+        };
+        await db.update(reviewsTable)
+          .set({ coverageLedgerJson: JSON.stringify(updatedLedger) })
+          .where(eq(reviewsTable.id, review.id));
+        updatedReviews += 1;
+      }
+    }
+
+    res.json({
+      calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
+      dryRun: !apply,
+      papers: results.length,
+      updatedReviews,
+      dominanceViolations,
+      results: results.map((r) => ({
+        reviewId: r.reviewId,
+        paperId: r.paperId,
+        adjudicatorTotal: r.adjudicatorTotal,
+        finalTotal: r.finalTotal,
+        calibrationAdjustment: r.calibrationAdjustment,
+        changes: r.changeLog.length,
+      })),
+      changeLog: results.flatMap((r) => r.changeLog),
+      note: apply
+        ? "Applied: consistencyCalibration written to each review ledger; legacy anchored fields untouched."
+        : "Dry run: nothing written. Pass { apply: true } to persist.",
+    });
+  } catch (err: any) {
+    logger.error({ err }, "Consistency calibration failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /api/admin/calibration/holds — reviews whose calibrated score is
 // held by the publish-safety tripwire (intrinsic score shown publicly).
 router.get("/admin/calibration/holds", async (req, res) => {
@@ -5450,11 +5614,13 @@ updateAttemptInputDebugPayload(attemptContext, paperContent, extractionCompleten
 // manual retry. Memory is bounded (pdf-lib is size-gated; the model reads
 // the attached PDF), so this is safe and removes operator toil.
 const readableCharCount = (metadataExtractionText || paperContent || "").replace(/\s+/g, "").length;
-const autoPdfVisible =
-  !pdfVisibleLastResortRequested &&
-  Boolean(metadataHints.pdfBase64) &&
-  readableCharCount < AUTO_PDF_VISIBLE_MIN_CHARS &&
-  isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus);
+const autoPdfVisible = shouldAutoPdfVisible({
+  readableCharCount,
+  hasPdfBase64: Boolean(metadataHints.pdfBase64),
+  pdfVisibleLastResortRequested,
+  extractionBlocking: isExtractionBlockingStatus(extractionCompleteness.extractionCompletenessStatus),
+  minChars: AUTO_PDF_VISIBLE_MIN_CHARS,
+});
 if (autoPdfVisible) {
   attemptContext.pdfVisibleFallbackUsed = true;
   // Replace the near-empty extraction with the fallback instruction text so

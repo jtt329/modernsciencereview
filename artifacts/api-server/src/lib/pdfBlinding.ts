@@ -31,6 +31,25 @@ export async function stripPdfIdentifyingMetadata(pdfBytes: Buffer): Promise<Buf
 // scans; override with PDF_STRIP_MAX_BYTES.
 const PDF_STRIP_MAX_BYTES = Number(process.env.PDF_STRIP_MAX_BYTES) || 4 * 1024 * 1024;
 
+// B2 decision: a PDF whose text layer is effectively empty (a pure scan)
+// should auto-route to PDF-visible review rather than fail with a 422 that
+// needs a manual retry. Pure predicate so the routing rule is unit-tested.
+export function shouldAutoPdfVisible(opts: {
+  readableCharCount: number;
+  hasPdfBase64: boolean;
+  pdfVisibleLastResortRequested: boolean;
+  extractionBlocking: boolean;
+  minChars?: number;
+}): boolean {
+  const minChars = opts.minChars ?? 100;
+  return (
+    !opts.pdfVisibleLastResortRequested &&
+    opts.hasPdfBase64 &&
+    opts.readableCharCount < minChars &&
+    opts.extractionBlocking
+  );
+}
+
 // Upload paths must keep working even for malformed or very large PDFs that
 // pdf-lib cannot parse / would balloon memory on; in those cases the
 // original bytes flow on and the blind prompt's ignore-identity rules

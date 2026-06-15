@@ -1506,8 +1506,17 @@ async function assertPdfStripSizeGate() {
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
     import { PDFDocument } from "pdf-lib";
-    import { stripPdfIdentifyingMetadataSafe } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pdfBlinding.ts"))};
+    import { stripPdfIdentifyingMetadataSafe, shouldAutoPdfVisible } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/pdfBlinding.ts"))};
     globalThis.__pdfGate = (async () => {
+      // B2 — auto PDF-visible decision: a pure scan (few readable chars +
+      // blocking extraction + PDF bytes, not already requested) routes to
+      // PDF-visible; a healthy text layer does not.
+      if (!shouldAutoPdfVisible({ readableCharCount: 12, hasPdfBase64: true, pdfVisibleLastResortRequested: false, extractionBlocking: true }))
+        throw new Error("B2: scanned PDF was not auto-routed to PDF-visible");
+      if (shouldAutoPdfVisible({ readableCharCount: 5000, hasPdfBase64: true, pdfVisibleLastResortRequested: false, extractionBlocking: false }))
+        throw new Error("B2: healthy text layer was wrongly auto-routed");
+      if (shouldAutoPdfVisible({ readableCharCount: 12, hasPdfBase64: false, pdfVisibleLastResortRequested: false, extractionBlocking: true }))
+        throw new Error("B2: auto-route fired without PDF bytes");
       // Above the 4 MB gate: must return the SAME buffer (pdf-lib skipped).
       const big = Buffer.alloc(5 * 1024 * 1024, 1);
       const bigOut = await stripPdfIdentifyingMetadataSafe(big);
@@ -1554,9 +1563,10 @@ assert.match(routesSource, /benchmarkOverride\?\.title/);
 
 // B2 — auto PDF-visible for scanned PDFs.
 assert.match(routesSource, /AUTO_PDF_VISIBLE_MIN_CHARS/);
-assert.match(routesSource, /const autoPdfVisible =/);
+assert.match(routesSource, /const autoPdfVisible = shouldAutoPdfVisible\(/);
 assert.match(routesSource, /pdfVisibleLastResortRequested \|\| autoPdfVisible/);
-assert.match(routesSource, /readableCharCount < AUTO_PDF_VISIBLE_MIN_CHARS/);
+assert.match(pdfBlindingSource, /export function shouldAutoPdfVisible/);
+assert.match(pdfBlindingSource, /readableCharCount < minChars/);
 
 // Calibration plan inspector is read-only (no mutating endpoint calls).
 const calPlanSource = readFileSync(join(root, "scripts/calibration-plan.mjs"), "utf8");
@@ -1614,4 +1624,99 @@ async function assertPlaceholderTitleRejected() {
 }
 await assertPlaceholderTitleRejected();
 
-console.log("v19.0.2 review, pairwise-calibration, and submission-hardening invariants passed");
+// Rubric-consistency calibration (consistency-v1) — gated, legacy intact.
+const consistencySource = readFileSync(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"), "utf8");
+const consistencyPromptSource = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/consistencyCalibrationV1.ts"), "utf8");
+assert.match(consistencySource, /CONSISTENCY_CALIBRATION_VERSION = "consistency-v1"/);
+assert.match(consistencySource, /export function supersetDominanceViolations/);
+assert.match(consistencySource, /export function applyCorrections/);
+assert.match(consistencyPromptSource, /never averaging toward the\s+group|never toward the group|Do NOT move an element toward the group/);
+assert.match(consistencyPromptSource, /Do NOT output any 0-100 score/);
+// Route is gated and defaults to dry run; legacy pairwise path untouched.
+assert.match(routesSource, /\/papers\/consistency-calibration/);
+assert.match(routesSource, /req\.body\?\.calibrationVersion !== CONSISTENCY_CALIBRATION_VERSION/);
+assert.match(routesSource, /const apply = req\.body\?\.apply === true/);
+// Legacy anchored pairwise path remains the active engine (untouched).
+assert.match(pairwiseEngineSource, /PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2"/);
+
+// The four committed acceptance tests run offline against the pure core.
+async function assertConsistencyCalibration() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-consistency-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import {
+      supersetDominanceViolations, applyCorrections, aggregateFromElements,
+      elementContribution, runConsistencyCalibration,
+    } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
+    globalThis.__consistency = (async () => {
+      const out = (reviewId, index, firmness, centrality) => ({ reviewId, paperId: reviewId, kind: "output", index, text: "horizon entropy result " + index, firmness, centrality });
+
+      // (1) Superset monotonicity: Y's outputs ⊃ X's at equal rungs; if the
+      // adjudicator total of Y is below X, the FAST PATH flags it — no model.
+      const xOuts = [out("X",0,"F2","C2"), out("X",1,"F2","C2")];
+      const yOuts = [out("Y",0,"F2","C2"), out("Y",1,"F2","C2"), out("Y",2,"F2","C2")];
+      const violations = supersetDominanceViolations([
+        { reviewId: "Y", outputs: yOuts, total: 70 },
+        { reviewId: "X", outputs: xOuts, total: 80 },
+      ]);
+      if (!violations.some((v) => v.supersetReviewId === "Y" && v.subsetReviewId === "X")) {
+        throw new Error("superset monotonicity violation was not flagged by the fast path");
+      }
+      // No violation when totals already respect dominance.
+      const ok = supersetDominanceViolations([
+        { reviewId: "Y", outputs: yOuts, total: 85 },
+        { reviewId: "X", outputs: xOuts, total: 80 },
+      ]);
+      if (ok.length !== 0) throw new Error("fast path flagged a non-violation");
+
+      // (2) Rung consistency: equivalent outputs on different rungs converge
+      // to the definition-prescribed rung (here F2), via per-element verdicts.
+      const elements = [out("A",0,"F2","C2"), out("B",0,"F4","C2")];
+      const { corrected, changeLog } = applyCorrections(elements, [
+        { reviewId: "B", kind: "output", index: 0, firmness: "F2", reason: "same measured-regime referent as A → F2" },
+      ]);
+      if (corrected.find((e) => e.reviewId === "B").firmness !== "F2") throw new Error("rung did not converge to the prescribed F2");
+      if (!changeLog.some((c) => c.from === "F4" && c.to === "F2")) throw new Error("rung change not logged");
+
+      // (3) No-drift: 3-element group, majority on the WRONG rung (F4), the
+      // correct minority (F2) must NOT be dragged to the majority. The judge
+      // returns each element's definition-prescribed rung independently.
+      const group3 = [out("P",0,"F4","C2"), out("Q",0,"F4","C2"), out("R",0,"F2","C2")];
+      const verdicts3 = [
+        { reviewId: "P", kind: "output", index: 0, firmness: "F2", reason: "measured regime → F2" },
+        { reviewId: "Q", kind: "output", index: 0, firmness: "F2", reason: "measured regime → F2" },
+        { reviewId: "R", kind: "output", index: 0, firmness: "F2", reason: "already correct → F2" },
+      ];
+      const drift = applyCorrections(group3, verdicts3);
+      const r = drift.corrected.find((e) => e.reviewId === "R");
+      if (r.firmness !== "F2") throw new Error("the correct minority element was dragged off its rung");
+
+      // (4) Anti-anchoring: corrections are rung/class changes that feed the
+      // computed-ICO aggregation; no raw 0-100 is introduced by a correction.
+      const before = aggregateFromElements([out("Z",0,"F4","C4")]);
+      const after = aggregateFromElements([out("Z",0,"F1","C1")]);
+      if (!(after.total > before.total)) throw new Error("rung upgrade did not raise the computed-ICO total");
+      if (after.total < 0 || after.total > 100) throw new Error("computed total left the 0-100 scale");
+      if (elementContribution(out("Z",0,"F1","C1")) <= elementContribution(out("Z",0,"F4","C4"))) {
+        throw new Error("element contribution is not monotonic in rung quality");
+      }
+
+      // Orchestrator wiring with an injected deterministic judge (no model).
+      const orchestrated = await runConsistencyCalibration(
+        [{ reviewId: "B", paperId: "B", ledger: { inputConstructionOutputAssessment: { output: { outputs: [{ output: "horizon entropy result 0 (F4)", validityLevel: "valid", centrality: "high" }] } }, computedScore: 60 } }],
+        { judge: async () => [{ reviewId: "B", kind: "output", index: 0, firmness: "F2", reason: "x" }] },
+      );
+      if (!Array.isArray(orchestrated.results) || orchestrated.results.length !== 1) throw new Error("orchestrator did not return a per-paper result");
+      if (typeof orchestrated.results[0].calibrationAdjustment !== "number") throw new Error("calibrationAdjustment missing");
+    })();
+  `);
+  await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
+  await import(pathToFileURL(out).href);
+  await globalThis.__consistency;
+}
+await assertConsistencyCalibration();
+
+console.log("v19.0.2 review, pairwise-calibration, submission-hardening, and consistency-v1 invariants passed");

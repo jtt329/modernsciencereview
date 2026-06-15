@@ -1071,6 +1071,20 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     aggregateClassification ?? review.bestClassification,
   );
   const finalScore = combinedBand.median;
+  // The full provenance chain, surfaced together: BR1 → BR2 → adjudicator →
+  // calibration adjustment → final. Previously the adjudicated/final number
+  // was buried while the blind passes showed prominently.
+  const adjudicatorScore = Math.round(Number(
+    parsedCoverage?.computedScore ?? parsedCoverage?.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? finalScore,
+  ));
+  const scoreChain: { label: string; value: string; emphasis?: boolean }[] = [];
+  blindPassScores.forEach((s: number, i: number) => scoreChain.push({ label: `BR${i + 1}`, value: String(Math.round(s)) }));
+  scoreChain.push({ label: 'Adjudicator', value: String(adjudicatorScore) });
+  if (finalScore !== adjudicatorScore) {
+    const delta = finalScore - adjudicatorScore;
+    scoreChain.push({ label: 'Calibration', value: `${delta > 0 ? '+' : ''}${delta}` });
+  }
+  scoreChain.push({ label: 'Final', value: String(finalScore), emphasis: true });
   const selectedPassScore = selectedPass
     ? Math.round(Number(selectedPass.intrinsicScore ?? selectedPass.score ?? selectedPass.scoreBand?.median ?? finalScore))
     : finalScore;
@@ -1568,6 +1582,23 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </div>
               )}
             </div>
+
+            {!selectedPass && (
+              <div className="border-t border-white/10 pt-4">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Score chain</p>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                  {scoreChain.map((step, i) => (
+                    <React.Fragment key={step.label}>
+                      {i > 0 && <span className="text-slate-500">→</span>}
+                      <span className="inline-flex items-baseline gap-1">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{step.label}</span>
+                        <span className={`font-black ${step.emphasis ? 'text-emerald-200 text-base' : 'text-slate-200'}`}>{step.value}</span>
+                      </span>
+                    </React.Fragment>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="border-t border-white/10 pt-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
