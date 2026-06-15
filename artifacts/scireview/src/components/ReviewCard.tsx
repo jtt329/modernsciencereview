@@ -346,6 +346,10 @@ type PrimitiveInputDetail = {
   frameworkDependenceLevel: string;
   frameworkDependence: string;
   assessment: string;
+  foundationLabel: string;
+  confirmednessNote: string;
+  firmnessRung: string;
+  linkedPaperId: string;
 };
 
 type IntroducedConstructionDetail = {
@@ -376,7 +380,7 @@ const asPrimitiveInputDetails = (ledger: any): PrimitiveInputDetail[] => {
     .map((item) => {
       if (typeof item === 'string') {
         const input = item.trim();
-        return input ? { input, role: '', groundingQuality: '', grounding: '', fundamentalityLevel: '', fundamentality: '', frameworkDependenceLevel: '', frameworkDependence: '', assessment: '' } : null;
+        return input ? { input, role: '', groundingQuality: '', grounding: '', fundamentalityLevel: '', fundamentality: '', frameworkDependenceLevel: '', frameworkDependence: '', assessment: '', foundationLabel: '', confirmednessNote: '', firmnessRung: '', linkedPaperId: '' } : null;
       }
       if (!item || typeof item !== 'object') return null;
       const input = firstText(item.input, item.name, item.description, item.primitiveInput);
@@ -391,6 +395,10 @@ const asPrimitiveInputDetails = (ledger: any): PrimitiveInputDetail[] => {
         frameworkDependenceLevel: firstText(item.frameworkDependenceLevel),
         frameworkDependence: firstText(item.frameworkDependence, item.frameworkConditionality),
         assessment: firstText(item.assessment, item.notes),
+        foundationLabel: firstText(item.foundationLabel, item.foundation),
+        confirmednessNote: firstText(item.confirmednessNote, item.confirmedness, item.epochAssessment),
+        firmnessRung: firstText(item.firmnessRung, item.firmness),
+        linkedPaperId: firstText(item.linkedPaperId),
       };
     })
     .filter(Boolean) as PrimitiveInputDetail[];
@@ -1811,6 +1819,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                 {(item.fundamentalityLevel || item.fundamentality) && qualityLine('Fundamentality', item.fundamentalityLevel || item.fundamentality, levelTone(item.fundamentalityLevel || item.fundamentality))}
                                 {(item.frameworkDependenceLevel || item.frameworkDependence) && qualityLine('Framework Dependence', item.frameworkDependenceLevel || item.frameworkDependence, levelTone(item.frameworkDependenceLevel || item.frameworkDependence, true))}
                               </div>
+                              {(item.foundationLabel || item.confirmednessNote) && (
+                                <div className="border-t border-white/10 pt-3">
+                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Rests on</p>
+                                  <p className="text-sm text-slate-200">
+                                    {item.linkedPaperId ? (
+                                      <a href={`/papers/${encodeURIComponent(item.linkedPaperId)}`} className="font-bold text-indigo-300 hover:underline">
+                                        {item.foundationLabel}
+                                      </a>
+                                    ) : (
+                                      <span className="font-bold text-slate-100">{item.foundationLabel}</span>
+                                    )}
+                                    {item.firmnessRung && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-slate-400">{item.firmnessRung}</span>}
+                                  </p>
+                                  {item.confirmednessNote && <p className="text-xs text-slate-400 mt-1">{item.confirmednessNote}</p>}
+                                </div>
+                              )}
                               {item.assessment && (
                                 <div className="border-t border-white/10 pt-3">
                                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>

@@ -136,6 +136,15 @@ type PrimitiveInputItem = {
   frameworkDependenceLevel: FrameworkLevel | "";
   frameworkDependence: string;
   assessment: string;
+  // Linked-input justification (v19.0.3, gated). foundationLabel names the
+  // result/framework the input rests on; confirmednessNote is the
+  // epoch-relative confirmation status; firmnessRung is the F-rung that
+  // follows. linkedPaperId is resolved app-side by strong identity match,
+  // never by the model — it stays empty unless a confident link exists.
+  foundationLabel: string;
+  confirmednessNote: string;
+  firmnessRung: string;
+  linkedPaperId: string;
 };
 
 type IntroducedConstructionItem = {
@@ -766,7 +775,37 @@ type ReviewRunAuditEntry = {
 
 
 
-export const REVIEW_PROMPT_VERSION = "v19.0.2-computed-ico-halfpoint";
+// Linked-input justification (v19.0.3) is a prompt delta and so a new
+// prompt hash — which re-opens the benchmark. It is GATED behind
+// ENABLE_LINKED_INPUT_JUSTIFICATION so deploying the code does NOT change
+// the active prompt/hash; the operator flips the flag to ship it (with or
+// after the calibration work). When off, the active prompt is exactly
+// v19.0.2 and the hash is unchanged.
+const LINKED_INPUT_JUSTIFICATION_ENABLED = process.env.ENABLE_LINKED_INPUT_JUSTIFICATION === "true";
+const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
+--------------------------
+
+For each primitive input, in addition to its firmness, state in plain
+words: (a) foundationLabel — the specific foundational result, theory, or
+framework the input rests on, named explicitly (e.g. "general relativity",
+"string theory / AdS-CFT"); (b) confirmednessNote — an epoch-relative
+assessment of how empirically confirmed that foundation was at the
+manuscript's time; and (c) firmnessRung — the F-rung that follows from
+that confirmation status. The firmness rung remains a judgment on the
+F-ladder; this clause adds the justification, it does not derive the rung
+from any other paper's score. Put foundationLabel, confirmednessNote, and
+firmnessRung on each primitiveInputs item. Do not output a 0-100 score.`;
+
+const ACTIVE_BLIND_REVIEW_PROMPT = LINKED_INPUT_JUSTIFICATION_ENABLED
+  ? `${BLIND_REVIEW_PASS_V19_PROMPT}\n\n${LINKED_INPUT_JUSTIFICATION_DELTA}`
+  : BLIND_REVIEW_PASS_V19_PROMPT;
+const ACTIVE_FULL_PROMPT = LINKED_INPUT_JUSTIFICATION_ENABLED
+  ? `${BENCHMARK_CALIBRATED_V19_FULL_PROMPT}\n\n${LINKED_INPUT_JUSTIFICATION_DELTA}`
+  : BENCHMARK_CALIBRATED_V19_FULL_PROMPT;
+
+export const REVIEW_PROMPT_VERSION = LINKED_INPUT_JUSTIFICATION_ENABLED
+  ? "v19.0.3-computed-ico-halfpoint"
+  : "v19.0.2-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -786,11 +825,13 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 
 
-export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(BLIND_REVIEW_PASS_V19_PROMPT);
-export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = "v19.0.2 computed ICO half-point";
+export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(ACTIVE_BLIND_REVIEW_PROMPT);
+export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
+export const REVIEW_PROMPT_NAME = LINKED_INPUT_JUSTIFICATION_ENABLED
+  ? "v19.0.3 computed ICO half-point"
+  : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = "2026-06-12";
+export const REVIEW_PROMPT_DATE = LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -1020,6 +1061,12 @@ const primitiveInputItemJsonSchema = {
     frameworkDependenceLevel: jsonString,
     frameworkDependence: jsonString,
     assessment: jsonString,
+    // Linked-input justification (optional; requested by the v19.0.3 prompt
+    // delta when ENABLE_LINKED_INPUT_JUSTIFICATION is on). Optional so the
+    // active v19.0.2 prompt is unaffected.
+    foundationLabel: jsonString,
+    confirmednessNote: jsonString,
+    firmnessRung: jsonString,
   },
 };
 const introducedConstructionItemJsonSchema = {
@@ -1997,6 +2044,10 @@ function normalizePrimitiveInputs(values: unknown[], fallback: PrimitiveInputIte
             frameworkDependenceLevel: "",
             frameworkDependence: "",
             assessment: "",
+            foundationLabel: "",
+            confirmednessNote: "",
+            firmnessRung: "",
+            linkedPaperId: "",
           } satisfies PrimitiveInputItem;
         }
         const source = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
@@ -2012,6 +2063,10 @@ function normalizePrimitiveInputs(values: unknown[], fallback: PrimitiveInputIte
           frameworkDependenceLevel: normalizeOptionalFrameworkLevel(source.frameworkDependenceLevel),
           frameworkDependence: firstString([source.frameworkDependence, source.frameworkConditionality]),
           assessment: firstString([source.assessment, source.notes]),
+          foundationLabel: firstString([source.foundationLabel, source.foundation]),
+          confirmednessNote: firstString([source.confirmednessNote, source.confirmedness, source.epochAssessment]),
+          firmnessRung: firstString([source.firmnessRung, source.firmness]),
+          linkedPaperId: firstString([source.linkedPaperId]),
         } satisfies PrimitiveInputItem;
       })
       .filter(Boolean) as PrimitiveInputItem[];
@@ -4223,6 +4278,33 @@ function titleSimilarity(left?: string, right?: string) {
     if (rightTokens.has(token)) overlap += 1;
   }
   return overlap / Math.max(leftTokens.size, rightTokens.size);
+}
+
+// Resolves an input's foundationLabel to an existing paper's id by STRONG
+// identity only — an arXiv id / DOI present in the label that matches a
+// candidate, or a near-exact canonical-title match (>= 0.85). No confident
+// match returns "" (the UI renders plain text). Never fuzzy-links, and
+// never propagates the foundation's score (this is justification + link
+// only). Pure and unit-tested.
+export function resolveFoundationLink(
+  foundationLabel: string,
+  candidates: Array<{ paperId: string; title?: string; arxivId?: string; doi?: string }>,
+): string {
+  const label = (foundationLabel || "").trim();
+  if (label.length < 6) return "";
+  const labelArxiv = normalizeArxivId(firstArxivIdFromText(label));
+  const labelDoi = normalizeDoi(doiIdsFromText(label)[0] || "");
+  for (const c of candidates) {
+    if (labelArxiv && normalizeArxivId(c.arxivId) && normalizeArxivId(c.arxivId) === labelArxiv) return c.paperId;
+    if (labelDoi && normalizeDoi(c.doi) && normalizeDoi(c.doi) === labelDoi) return c.paperId;
+  }
+  let best = "";
+  let bestSim = 0;
+  for (const c of candidates) {
+    const sim = titleSimilarity(label, c.title);
+    if (sim > bestSim) { bestSim = sim; best = c.paperId; }
+  }
+  return bestSim >= 0.85 ? best : "";
 }
 
 function datePartsToIsoMonth(value: unknown) {

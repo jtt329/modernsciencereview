@@ -27,6 +27,7 @@ import {
   extractManuscriptTextFromPdfForReview,
   benchmarkMetadataOverrideForText,
   detectReviewerDirectedText,
+  resolveFoundationLink,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
   isExtractionBlockingStatus,
@@ -1412,6 +1413,29 @@ async function existingMetadataIdentitySubmission(
   return null;
 }
 
+// Resolves each primitive input's foundationLabel to an existing paper id
+// (strong identity match only) and writes linkedPaperId into the stored
+// ledger. No-op unless the v19.0.3 linked-input justification is on (no
+// foundationLabel present), so it costs nothing under the active prompt.
+async function resolveLinkedInputFoundations(reviewValues: Record<string, any>) {
+  const ledger = parseJsonObject(reviewValues.coverageLedgerJson ?? null);
+  const inputs = ledger?.inputConstructionOutputAssessment?.input?.primitiveInputs;
+  if (!Array.isArray(inputs) || !inputs.some((it: any) => typeof it?.foundationLabel === "string" && it.foundationLabel.trim())) {
+    return;
+  }
+  const allPapers = dedupePapers(await db.select().from(papersTable));
+  const candidates = allPapers.map((paper) => {
+    const metadata = paper.dateMetadata as Record<string, string> | null;
+    return { paperId: paper.id, title: paper.title, arxivId: metadata?.arxivId, doi: metadata?.doi };
+  });
+  for (const item of inputs) {
+    if (item && typeof item === "object" && typeof item.foundationLabel === "string" && item.foundationLabel.trim()) {
+      item.linkedPaperId = resolveFoundationLink(item.foundationLabel, candidates);
+    }
+  }
+  reviewValues.coverageLedgerJson = JSON.stringify(ledger);
+}
+
 function addSubmissionCostControls(reviewValues: Record<string, any>, sourceHash: string | null, reviewMode: ReviewPipelineMode) {
   const ledger = parseJsonObject(reviewValues.coverageLedgerJson ?? null) ?? {};
   reviewValues.coverageLedgerJson = JSON.stringify({
@@ -1651,6 +1675,9 @@ const REVIEW_WALL_CLOCK_MS = Number(process.env.REVIEW_WALL_CLOCK_MS) || 20 * 60
 // A PDF whose extracted text layer has fewer than this many non-whitespace
 // characters is treated as a pure scan and auto-routed to PDF-visible review.
 const AUTO_PDF_VISIBLE_MIN_CHARS = Number(process.env.AUTO_PDF_VISIBLE_MIN_CHARS) || 100;
+
+// Embedding model for semantic grouping in consistency-v1 calibration.
+const GEMINI_EMBEDDING_MODEL = process.env.SCIREVIEW_GEMINI_EMBEDDING_MODEL?.trim() || "gemini-embedding-001";
 
 function withReviewWallClock<T>(work: Promise<T>, budgetMs = REVIEW_WALL_CLOCK_MS): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -4325,9 +4352,22 @@ router.post("/papers/consistency-calibration", async (req, res) => {
       })).filter((v: RungVerdict) => v.reviewId && v.kind && Number.isFinite(v.index));
     };
 
-    const { results, dominanceViolations } = await runConsistencyCalibration(subjects, {
+    // Semantic grouping via Gemini embeddings (best-effort; the engine
+    // falls back to lexical grouping if this throws or returns nothing).
+    const embed = async (texts: string[]): Promise<number[][]> => {
+      const response = await (geminiAI.models.embedContent as any)({
+        model: GEMINI_EMBEDDING_MODEL,
+        contents: texts.map((text) => ({ role: "user", parts: [{ text }] })),
+      });
+      const vectors = (response?.embeddings ?? []).map((e: any) => e?.values ?? e?.value ?? []);
+      return vectors;
+    };
+
+    const { results, dominanceViolations, groupingMethod } = await runConsistencyCalibration(subjects, {
       judge,
+      embed,
       groupThreshold: typeof req.body?.groupThreshold === "number" ? req.body.groupThreshold : undefined,
+      embedThreshold: typeof req.body?.embedThreshold === "number" ? req.body.embedThreshold : undefined,
     });
 
     let updatedReviews = 0;
@@ -4359,6 +4399,7 @@ router.post("/papers/consistency-calibration", async (req, res) => {
     res.json({
       calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
       dryRun: !apply,
+      groupingMethod,
       papers: results.length,
       updatedReviews,
       dominanceViolations,
@@ -5865,6 +5906,7 @@ const { reviewValues, metadata: reviewMetadata } = await withReviewWallClock(
   ),
 );
 addSubmissionCostControls(reviewValues, sourceHash, reviewMode);
+await resolveLinkedInputFoundations(reviewValues);
 setAttemptStage(attemptContext, "review_validation", "validation", null);
 await updateReviewAttemptProgress(attemptContext, { reviewStatus: "review_validation" });
 if (reviewMode === "benchmark-ingestion") {

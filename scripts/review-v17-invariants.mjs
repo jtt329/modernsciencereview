@@ -76,11 +76,15 @@ assert.match(promptSource, /v17\.1\.5 computed ICO half-point/i);
 // v19.0.2 is the active prompt (activated 2026-06-12); the v18 module
 // stays on disk for stored-review compatibility.
 assert.match(promptV18Source, /v18\.1\.1 computed ICO half-point/i);
-assert.match(engineSource, /REVIEW_PROMPT_VERSION = "v19\.0\.2-computed-ico-halfpoint"/);
-assert.match(engineSource, /REVIEW_PROMPT_NAME = "v19\.0\.2 computed ICO half-point"/);
+// Active prompt defaults to v19.0.2 (the linked-input delta is gated off);
+// both version strings live in the conditional.
+assert.match(engineSource, /\? "v19\.0\.3-computed-ico-halfpoint"\s*\n?\s*: "v19\.0\.2-computed-ico-halfpoint"/);
+assert.match(engineSource, /: "v19\.0\.2 computed ICO half-point"/);
 assert.match(engineSource, /from "\.\/prompts\/diagnosticOnlyV19"/);
-assert.match(engineSource, /REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting\(BLIND_REVIEW_PASS_V19_PROMPT\)/);
-assert.match(engineSource, /REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting\(BENCHMARK_CALIBRATED_V19_FULL_PROMPT\)/);
+assert.match(engineSource, /REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting\(ACTIVE_BLIND_REVIEW_PROMPT\)/);
+assert.match(engineSource, /REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting\(ACTIVE_FULL_PROMPT\)/);
+// The gated active prompt resolves to the v19 blind prompt when the flag is off.
+assert.match(engineSource, /ACTIVE_BLIND_REVIEW_PROMPT = LINKED_INPUT_JUSTIFICATION_ENABLED[\s\S]{0,160}: BLIND_REVIEW_PASS_V19_PROMPT/);
 assert.match(engineSource, /BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting\(INTRINSIC_ADJUDICATOR_V19_PROMPT\)/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
@@ -1015,7 +1019,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = "2026-06-12"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = LINKED_INPUT_JUSTIFICATION_ENABLED \? "2026-06-14" : "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -1719,4 +1723,82 @@ async function assertConsistencyCalibration() {
 }
 await assertConsistencyCalibration();
 
-console.log("v19.0.2 review, pairwise-calibration, submission-hardening, and consistency-v1 invariants passed");
+// Linked-input justification is GATED: with the flag off the active prompt
+// stays v19.0.2 (hash unchanged); the delta + v19.0.3 only apply when
+// ENABLE_LINKED_INPUT_JUSTIFICATION is set.
+assert.match(engineSource, /LINKED_INPUT_JUSTIFICATION_ENABLED = process\.env\.ENABLE_LINKED_INPUT_JUSTIFICATION === "true"/);
+assert.match(engineSource, /Linked-input justification/);
+assert.match(engineSource, /v19\.0\.3-computed-ico-halfpoint/);
+assert.match(engineSource, /v19\.0\.2-computed-ico-halfpoint/);
+assert.match(engineSource, /export function resolveFoundationLink/);
+assert.match(engineSource, /bestSim >= 0\.85/);
+assert.match(routesSource, /resolveLinkedInputFoundations/);
+assert.match(reviewCardSource, /foundationLabel/);
+assert.match(reviewCardSource, /Rests on/);
+
+// Embedding-based consistency grouping (with lexical fallback).
+assert.match(consistencySource, /export async function groupComparableElementsByEmbedding/);
+assert.match(consistencySource, /function cosine/);
+assert.match(routesSource, /embedContent/);
+assert.match(routesSource, /groupingMethod/);
+
+// Functional: gated delta active only with the flag; resolveFoundationLink
+// links on strong identity and stays empty otherwise; embedding grouping
+// clusters by injected vectors and falls back to lexical on failure.
+async function assertLinkedInputsAndEmbedding() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-linked-embed-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import { resolveFoundationLink } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
+    import { groupComparableElementsByEmbedding } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
+    globalThis.__linkedEmbed = (async () => {
+      const candidates = [
+        { paperId: "gr-paper", title: "The Einstein Equation of State: Thermodynamics of Spacetime", arxivId: "gr-qc/9504004" },
+        { paperId: "other", title: "Holographic Derivation of Entanglement Entropy" },
+      ];
+      // Strong title match links.
+      if (resolveFoundationLink("Thermodynamics of Spacetime: The Einstein Equation of State", candidates) !== "gr-paper")
+        throw new Error("strong title match did not link");
+      // arXiv id in the label links.
+      if (resolveFoundationLink("general relativity (gr-qc/9504004)", candidates) !== "gr-paper")
+        throw new Error("arXiv-id match did not link");
+      // A framework name with no matching paper stays unlinked (text only).
+      if (resolveFoundationLink("string theory / AdS-CFT", candidates) !== "")
+        throw new Error("non-matching foundation was wrongly linked");
+
+      const els = [
+        { reviewId: "A", paperId: "A", kind: "output", index: 0, text: "alpha" },
+        { reviewId: "B", paperId: "B", kind: "output", index: 0, text: "beta" },
+        { reviewId: "C", paperId: "C", kind: "output", index: 0, text: "gamma" },
+      ];
+      // A and B near-identical vectors, C orthogonal → {A,B} group.
+      const vecs = { alpha: [1, 0], beta: [0.99, 0.01], gamma: [0, 1] };
+      const groups = await groupComparableElementsByEmbedding(els, async (texts) => texts.map((t) => vecs[t]), { threshold: 0.9 });
+      if (groups.length !== 1 || groups[0].elements.length !== 2) throw new Error("embedding grouping did not cluster A+B");
+      // Embedder failure falls back to lexical (no throw).
+      const fallback = await groupComparableElementsByEmbedding(els, async () => { throw new Error("embed down"); });
+      if (!Array.isArray(fallback)) throw new Error("embedding failure did not fall back to lexical grouping");
+    })();
+  `);
+  await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
+  const previousNodeEnv = process.env.NODE_ENV;
+  const prevUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  const prevKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  process.env.NODE_ENV = "production";
+  process.env.AI_INTEGRATIONS_GEMINI_BASE_URL = prevUrl || "https://example.invalid";
+  process.env.AI_INTEGRATIONS_GEMINI_API_KEY = prevKey || "test-key";
+  try {
+    await import(pathToFileURL(out).href);
+    await globalThis.__linkedEmbed;
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previousNodeEnv;
+    if (prevUrl === undefined) delete process.env.AI_INTEGRATIONS_GEMINI_BASE_URL; else process.env.AI_INTEGRATIONS_GEMINI_BASE_URL = prevUrl;
+    if (prevKey === undefined) delete process.env.AI_INTEGRATIONS_GEMINI_API_KEY; else process.env.AI_INTEGRATIONS_GEMINI_API_KEY = prevKey;
+  }
+}
+await assertLinkedInputsAndEmbedding();
+
+console.log("v19.0.2 review, pairwise-calibration, submission-hardening, consistency-v1, and linked-input invariants passed");

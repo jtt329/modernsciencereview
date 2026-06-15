@@ -233,35 +233,72 @@ function jaccard(a: Set<string>, b: Set<string>) {
 
 export type ElementGroup = { kind: IcoElementKind; elements: IcoElement[] };
 
-// Groups comparable elements (same kind, substantively similar claim) as
-// audit batches with NO scale meaning. Deterministic token-overlap default;
-// pass `embed` to upgrade to embedding similarity. Threshold is the
-// grouping granularity knob (default 0.5).
-export function groupComparableElements(
+// Greedy single-pass clustering over a similarity function (>= threshold
+// joins). Shared by the lexical and embedding groupers so they batch
+// identically; only the similarity metric differs.
+function greedyGroups(
   elements: IcoElement[],
-  opts: { threshold?: number } = {},
+  similar: (a: number, b: number) => boolean,
 ): ElementGroup[] {
-  const threshold = opts.threshold ?? 0.5;
   const groups: ElementGroup[] = [];
   for (const kind of ["input", "construction", "output"] as IcoElementKind[]) {
-    const pool = elements.filter((e) => e.kind === kind);
+    const idx = elements.map((e, i) => [e, i] as const).filter(([e]) => e.kind === kind);
     const used = new Set<number>();
-    pool.forEach((el, i) => {
+    idx.forEach(([el, i]) => {
       if (used.has(i)) return;
-      const tokensI = groupTokens(el.text);
       const members = [el];
       used.add(i);
-      pool.forEach((other, j) => {
+      idx.forEach(([other, j]) => {
         if (j <= i || used.has(j)) return;
-        if (jaccard(tokensI, groupTokens(other.text)) >= threshold) {
-          members.push(other);
-          used.add(j);
-        }
+        if (similar(i, j)) { members.push(other); used.add(j); }
       });
       if (members.length >= 2) groups.push({ kind, elements: members });
     });
   }
   return groups;
+}
+
+// Lexical (token-overlap) grouping. Deterministic, no model. Default
+// threshold 0.5. Retained as the offline default and embedding fallback.
+export function groupComparableElements(
+  elements: IcoElement[],
+  opts: { threshold?: number } = {},
+): ElementGroup[] {
+  const threshold = opts.threshold ?? 0.5;
+  const tokens = elements.map((e) => groupTokens(e.text));
+  return greedyGroups(elements, (a, b) => jaccard(tokens[a], tokens[b]) >= threshold);
+}
+
+function cosine(a: number[], b: number[]) {
+  let dot = 0, na = 0, nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i += 1) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+
+export type Embedder = (texts: string[]) => Promise<number[][]>;
+
+// Semantic (embedding) grouping — the preferred path: two elements making
+// substantively the same claim cluster even with different wording, which
+// lexical overlap misses. Embeds each element's text via the injected
+// `embed`, groups by cosine >= threshold (default 0.82). Falls back to
+// lexical grouping if embedding fails or returns nothing, so a transient
+// embedding error never aborts a calibration run.
+export async function groupComparableElementsByEmbedding(
+  elements: IcoElement[],
+  embed: Embedder,
+  opts: { threshold?: number; lexicalThreshold?: number } = {},
+): Promise<ElementGroup[]> {
+  const threshold = opts.threshold ?? 0.82;
+  try {
+    const vectors = await embed(elements.map((e) => e.text));
+    if (!Array.isArray(vectors) || vectors.length !== elements.length || vectors.some((v) => !Array.isArray(v) || v.length === 0)) {
+      return groupComparableElements(elements, { threshold: opts.lexicalThreshold });
+    }
+    return greedyGroups(elements, (a, b) => cosine(vectors[a], vectors[b]) >= threshold);
+  } catch {
+    return groupComparableElements(elements, { threshold: opts.lexicalThreshold });
+  }
 }
 
 // --- Corrections (Resolution Rule: per-element, never averaged) --------
@@ -334,8 +371,8 @@ export type ConsistencyPaperResult = {
 
 export async function runConsistencyCalibration(
   papers: Array<{ reviewId: string; paperId: string; ledger: Record<string, any> | null; adjudicatorTotal: number }>,
-  deps: { judge: ConsistencyJudge; groupThreshold?: number },
-): Promise<{ results: ConsistencyPaperResult[]; dominanceViolations: DominanceViolation[] }> {
+  deps: { judge: ConsistencyJudge; groupThreshold?: number; embed?: Embedder; embedThreshold?: number },
+): Promise<{ results: ConsistencyPaperResult[]; dominanceViolations: DominanceViolation[]; groupingMethod: string }> {
   const allElements = papers.flatMap((p) => extractIcoElements(p));
 
   // Fast path first — purely deterministic dominance detection.
@@ -346,8 +383,11 @@ export async function runConsistencyCalibration(
   })));
 
   // Judgment path — re-adjudicate only flagged groups (anti-drift; minimal
-  // churn). Unflagged elements keep their adjudicator rung.
-  const groups = groupComparableElements(allElements, { threshold: deps.groupThreshold });
+  // churn). Unflagged elements keep their adjudicator rung. Semantic
+  // (embedding) grouping when an embedder is supplied; lexical otherwise.
+  const groups = deps.embed
+    ? await groupComparableElementsByEmbedding(allElements, deps.embed, { threshold: deps.embedThreshold, lexicalThreshold: deps.groupThreshold })
+    : groupComparableElements(allElements, { threshold: deps.groupThreshold });
   const verdicts: RungVerdict[] = [];
   for (const group of groups) {
     verdicts.push(...await deps.judge(group));
@@ -366,5 +406,5 @@ export async function runConsistencyCalibration(
       changeLog: changeLog.filter((c) => c.reviewId === p.reviewId),
     };
   });
-  return { results, dominanceViolations };
+  return { results, dominanceViolations, groupingMethod: deps.embed ? "embedding" : "lexical" };
 }
