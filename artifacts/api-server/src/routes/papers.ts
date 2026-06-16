@@ -28,6 +28,7 @@ import {
   benchmarkMetadataOverrideForText,
   detectReviewerDirectedText,
   resolveFoundationLink,
+  GEMINI_REVIEW_MODEL,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
   isExtractionBlockingStatus,
@@ -88,7 +89,7 @@ import {
   scoreReductionJsonSchema,
   scoreReductionDimensions,
   dimensionSubscore,
-  parseScoreReductionTags,
+  tagsFromResponseText,
   reasonsFromTags,
   computeWithinFrameworkScore,
   type ScoreReductionTags,
@@ -4818,8 +4819,16 @@ router.post("/papers/consistency-calibration", async (req, res) => {
 // dry-run by default. Never changes a score, rung, or the review prompt hash
 // — so it does not re-open the benchmark.
 const SCORE_REDUCTION_REASONS_ENABLED = process.env.ENABLE_SCORE_REDUCTION_REASONS === "true";
-const SCORE_REDUCTION_CONCURRENCY = Math.max(1, Number(process.env.SCORE_REDUCTION_CONCURRENCY ?? 6) || 6);
+// This is a lightweight extraction/tagging task over already-written text, so
+// it defaults to the faster flash model (the slow pro model is what made the
+// run take ~39 min). Override with SCIREVIEW_SCORE_REDUCTION_MODEL (e.g. the
+// pro model) if you want maximum tagging fidelity over speed.
+const SCORE_REDUCTION_MODEL = process.env.SCIREVIEW_SCORE_REDUCTION_MODEL?.trim() || GEMINI_REVIEW_MODEL;
+const SCORE_REDUCTION_CONCURRENCY = Math.max(1, Number(process.env.SCORE_REDUCTION_CONCURRENCY ?? 12) || 12);
 const SCORE_REDUCTION_JOB_MAX_ATTEMPTS = Math.max(1, Number(process.env.SCORE_REDUCTION_JOB_MAX_ATTEMPTS ?? 4) || 4);
+// Per-item tolerance for malformed JSON: re-call this one review a couple
+// times with a strict "valid JSON only" nudge before giving up on it.
+const SCORE_REDUCTION_PARSE_ATTEMPTS = Math.max(1, Number(process.env.SCORE_REDUCTION_PARSE_ATTEMPTS ?? 3) || 3);
 
 // One model call: for each below-10 dimension, explain why it is held where it
 // is and TAG the deduction (cause / frameworkDependent / frameworkName /
@@ -4827,33 +4836,45 @@ const SCORE_REDUCTION_JOB_MAX_ATTEMPTS = Math.max(1, Number(process.env.SCORE_RE
 // blips. The model emits NO numbers — the within-framework score is recomputed
 // by code from these tags.
 async function explainScoreReductions(dims: ScoreReductionDimension[]): Promise<ScoreReductionTags> {
-  const response = await withModelRetry<any>(
-    () => (geminiAI.models.generateContent as any)({
-      model: GEMINI_META_MODEL,
-      contents: [{
-        role: "user",
-        parts: [{
-          text: JSON.stringify({
-            task: "For each dimension, write the 'held at N because …' reason AND tag the deduction: is it held down (even partly) because the work rests on an unproven theoretical framework (frameworkDependent + frameworkName), and is there also a non-framework cause limiting it (independentlyCapped)? Use ONLY the stored rationale; do not introduce new numbers or re-judge.",
-            dimensions: dims.map((d) => ({ dimension: d.key, score: d.score, storedRationale: d.rationale })),
-          }, null, 2),
+  for (let attempt = 1; attempt <= SCORE_REDUCTION_PARSE_ATTEMPTS; attempt += 1) {
+    const strict = attempt > 1; // after a parse miss, nudge for valid JSON only
+    // withModelRetry covers transient blips (503/429/timeout); the surrounding
+    // loop covers DETERMINISTIC malformed-JSON responses, which retry/backoff
+    // does not, by re-asking this one item with a strict nudge.
+    const response = await withModelRetry<any>(
+      () => (geminiAI.models.generateContent as any)({
+        model: SCORE_REDUCTION_MODEL,
+        contents: [{
+          role: "user",
+          parts: [{
+            text: JSON.stringify({
+              task: "For each dimension, write the 'held at N because …' reason AND tag the deduction: is it held down (even partly) because the work rests on an unproven theoretical framework (frameworkDependent + frameworkName), and is there also a non-framework cause limiting it (independentlyCapped)? Use ONLY the stored rationale; do not introduce new numbers or re-judge.",
+              ...(strict ? { responseRequirement: "Return ONLY valid minified JSON matching the schema — no prose, no markdown, no code fences." } : {}),
+              dimensions: dims.map((d) => ({ dimension: d.key, score: d.score, storedRationale: d.rationale })),
+            }, null, 2),
+          }],
         }],
-      }],
-      config: {
-        systemInstruction: SCORE_REDUCTION_SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseJsonSchema: scoreReductionJsonSchema,
-        temperature: 0.2,
-        maxOutputTokens: 1536,
+        config: {
+          systemInstruction: SCORE_REDUCTION_SYSTEM_PROMPT,
+          responseMimeType: "application/json",
+          responseJsonSchema: scoreReductionJsonSchema,
+          temperature: strict ? 0 : 0.2,
+          maxOutputTokens: 768,
+        },
+      }),
+      {
+        label: "score-reduction",
+        onRetry: ({ attempt: a, maxAttempts, delayMs, error }) =>
+          logger.warn({ attempt: a, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error tagging score reductions; retrying after backoff"),
       },
-    }),
-    {
-      label: "score-reduction",
-      onRetry: ({ attempt, maxAttempts, delayMs, error }) =>
-        logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error tagging score reductions; retrying after backoff"),
-    },
-  );
-  return parseScoreReductionTags(parseGeminiJsonResponse(response.text ?? ""), dims);
+    );
+    // tagsFromResponseText returns null ONLY when the JSON could not be parsed
+    // at all (so we retry this item); a parsed-but-empty {} is a valid result.
+    const tags = tagsFromResponseText(response?.text ?? "", dims);
+    if (tags) return tags;
+    logger.warn({ attempt, attempts: SCORE_REDUCTION_PARSE_ATTEMPTS }, "Score-reduction response was not valid JSON; retrying this item with a strict JSON nudge");
+  }
+  throw new Error("Could not parse score-reduction response as JSON after retries");
 }
 
 // Stored "in physics" score for a review (the current absolute score).
@@ -4906,6 +4927,7 @@ async function executeScoreReductionReasons(opts: {
     reasons: Record<string, string>;
     withinFramework: ReturnType<typeof computeWithinFrameworkScore>;
   }> = [];
+  const skipped: Array<{ reviewId: string; paperId: string; reason: string }> = [];
   let modelCalls = 0;
   let reusedFromCheckpoint = 0;
   let updatedReviews = 0;
@@ -4923,7 +4945,18 @@ async function executeScoreReductionReasons(opts: {
       if (tags) {
         reusedFromCheckpoint += 1;
       } else {
-        tags = await explainScoreReductions(job.dims); // one model call (retry-wrapped)
+        // Per-item isolation: a malformed response (or exhausted transient
+        // retries) for ONE review is skipped and logged — it never fails the
+        // whole corpus. The review is left out of the checkpoint, so a later
+        // run will retry it.
+        try {
+          tags = await explainScoreReductions(job.dims); // one model call (retry-wrapped)
+        } catch (err: any) {
+          const reason = err?.message ? String(err.message) : "tagging failed";
+          skipped.push({ reviewId: job.reviewId, paperId: job.paperId, reason });
+          logger.warn({ err, reviewId: job.reviewId, paperId: job.paperId }, "Skipping review: score-reduction tagging failed after retries");
+          continue;
+        }
         modelCalls += 1;
         await opts.onReviewDone(job.reviewId, tags);
       }
@@ -4965,6 +4998,8 @@ async function executeScoreReductionReasons(opts: {
     modelCalls,
     reusedFromCheckpoint,
     updatedReviews,
+    skippedCount: skipped.length,
+    skipped,
     results,
     note: apply
       ? "Applied: scoreReductionReasons + withinFrameworkScore (display only) written to each review ledger; scores, rungs, and the prompt hash are untouched."

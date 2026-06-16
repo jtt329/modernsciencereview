@@ -147,6 +147,50 @@ export function parseScoreReductionTags(
   return out;
 }
 
+// Lenient JSON extraction for model responses: tolerates code fences, leading
+// or trailing prose, and trailing commas. Returns null (not throw) when the
+// text cannot be parsed, so the caller can retry that one item instead of
+// failing the whole corpus.
+export function tolerantJsonParse(text: string): any | null {
+  if (typeof text !== "string") return null;
+  const raw = text.trim();
+  if (!raw) return null;
+  const tryParse = (s: string): any | null => {
+    try {
+      const v = JSON.parse(s);
+      return v != null && typeof v === "object" ? v : null;
+    } catch {
+      return null;
+    }
+  };
+  const stripTrailingCommas = (s: string) => s.replace(/,(\s*[}\]])/g, "$1");
+  const candidates: string[] = [raw];
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence?.[1]) candidates.push(fence[1].trim());
+  const noFence = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  if (noFence !== raw) candidates.push(noFence);
+  const first = raw.indexOf("{");
+  const last = raw.lastIndexOf("}");
+  if (first >= 0 && last > first) candidates.push(raw.slice(first, last + 1));
+  for (const candidate of candidates) {
+    const parsed = tryParse(candidate) ?? tryParse(stripTrailingCommas(candidate));
+    if (parsed != null) return parsed;
+  }
+  return null;
+}
+
+// Parse a model response into tags, tolerantly. Returns null ONLY when the JSON
+// itself could not be parsed (caller should retry that item); a parsed-but-
+// empty result returns {} (a legitimate "no framework deductions" outcome).
+export function tagsFromResponseText(
+  text: string,
+  dims: ScoreReductionDimension[],
+): ScoreReductionTags | null {
+  const parsed = tolerantJsonParse(text);
+  if (parsed == null) return null;
+  return parseScoreReductionTags(parsed, dims);
+}
+
 // The display strings ("held at N because …"), for the per-dimension UI line.
 export function reasonsFromTags(tags: ScoreReductionTags): ScoreReductionReasons {
   const out: ScoreReductionReasons = {};

@@ -1779,6 +1779,10 @@ assert.match(scoreReductionSource, /export function scoreReductionDimensions/);
 assert.match(scoreReductionSource, /export function parseScoreReductionTags/);
 assert.match(scoreReductionSource, /export function reasonsFromTags/);
 assert.match(scoreReductionSource, /export function computeWithinFrameworkScore/);
+// Per-item malformed-JSON tolerance: lenient parse that returns null (not
+// throws) so one bad response can be retried/skipped, not fatal.
+assert.match(scoreReductionSource, /export function tolerantJsonParse/);
+assert.match(scoreReductionSource, /export function tagsFromResponseText/);
 // Rung-based phrasing ("held at N because …"), explicitly NOT subtractive.
 assert.match(scoreReductionSource, /held at <score> because/);
 assert.match(scoreReductionSource, /NEVER say/);
@@ -1805,6 +1809,15 @@ assert.match(routesSource, /if \(isScoreReductionReasonsJob\(record\)\) \{\s*\n\
 assert.match(routesSource, /label: "score-reduction"/);
 assert.match(routesSource, /scoreReductionReasons: \{/);
 assert.match(routesSource, /withinFrameworkScore: \{/);
+// Per-item resilience + speed: a parse-retry loop with a strict-JSON nudge,
+// per-review skip-and-continue (partial results), a faster default model, and
+// raised concurrency so the dry-run finishes quickly.
+assert.match(routesSource, /SCORE_REDUCTION_PARSE_ATTEMPTS/);
+assert.match(routesSource, /tagsFromResponseText\(response\?\.text/);
+assert.match(routesSource, /skipped\.push\(/);
+assert.match(routesSource, /skipped,/);
+assert.match(routesSource, /SCORE_REDUCTION_MODEL = process\.env\.SCIREVIEW_SCORE_REDUCTION_MODEL\?\.trim\(\) \|\| GEMINI_REVIEW_MODEL/);
+assert.match(routesSource, /SCORE_REDUCTION_CONCURRENCY = Math\.max\(1, Number\(process\.env\.SCORE_REDUCTION_CONCURRENCY \?\? 12\)/);
 const scoreReductionExec = routesSource.slice(
   routesSource.indexOf("async function executeScoreReductionReasons"),
   routesSource.indexOf('router.post("/papers/score-reduction-reasons"'),
@@ -1829,8 +1842,21 @@ async function assertScoreReduction() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { scoreReductionDimensions, parseScoreReductionTags, computeWithinFrameworkScore } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"))};
+    import { scoreReductionDimensions, parseScoreReductionTags, computeWithinFrameworkScore, tolerantJsonParse, tagsFromResponseText } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"))};
     globalThis.__scoreReduction = (async () => {
+      // Malformed-JSON tolerance: fences, surrounding prose, and trailing
+      // commas all parse; true garbage returns null (so the caller retries).
+      if (tolerantJsonParse('\`\`\`json\\n{"reasons":[]}\\n\`\`\`') == null) throw new Error("fenced JSON should parse");
+      if (tolerantJsonParse('here is the result: {"reasons":[]} done') == null) throw new Error("prose-wrapped JSON should parse");
+      if (tolerantJsonParse('{"reasons":[{"dimension":"input","reason":"x",},],}') == null) throw new Error("trailing-comma JSON should parse");
+      if (tolerantJsonParse('not json at all') !== null) throw new Error("garbage must return null, not throw");
+      if (tolerantJsonParse('') !== null) throw new Error("empty must return null");
+      // tagsFromResponseText: null only on unparseable; {} on parsed-but-empty.
+      const oneDim = [{ key: "input", score: 8, rationale: "" }];
+      if (tagsFromResponseText("totally broken", oneDim) !== null) throw new Error("unparseable response should yield null (retry signal)");
+      const empty = tagsFromResponseText('{"reasons":[]}', oneDim);
+      if (empty == null || Object.keys(empty).length !== 0) throw new Error("parsed-but-empty should be {} (a valid result, not a retry)");
+
       // input 9, construction 10 (top -> skipped), output 7.
       const ledger = {
         inputStrengthScore: 9, constructionStrengthScore: 10, outputStrengthScore: 7,
