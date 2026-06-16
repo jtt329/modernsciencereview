@@ -1809,15 +1809,28 @@ assert.match(routesSource, /if \(isScoreReductionReasonsJob\(record\)\) \{\s*\n\
 assert.match(routesSource, /label: "score-reduction"/);
 assert.match(routesSource, /scoreReductionReasons: \{/);
 assert.match(routesSource, /withinFrameworkScore: \{/);
-// Per-item resilience + speed: a parse-retry loop with a strict-JSON nudge,
-// per-review skip-and-continue (partial results), a faster default model, and
-// raised concurrency so the dry-run finishes quickly.
+// Per-item resilience: a parse-retry loop with a strict-JSON nudge and
+// per-review skip-and-continue (partial results).
 assert.match(routesSource, /SCORE_REDUCTION_PARSE_ATTEMPTS/);
 assert.match(routesSource, /tagsFromResponseText\(response\?\.text/);
 assert.match(routesSource, /skipped\.push\(/);
 assert.match(routesSource, /skipped,/);
-assert.match(routesSource, /SCORE_REDUCTION_MODEL = process\.env\.SCIREVIEW_SCORE_REDUCTION_MODEL\?\.trim\(\) \|\| GEMINI_REVIEW_MODEL/);
+// Reliability: pro is the default model (flash could not produce the tags),
+// overridable via env. Per-call cost fixed by lean input + LOW thinking, so
+// even pro is fast.
+assert.match(routesSource, /SCORE_REDUCTION_MODEL = process\.env\.SCIREVIEW_SCORE_REDUCTION_MODEL\?\.trim\(\) \|\| GEMINI_META_MODEL/);
+assert.match(routesSource, /thinkingConfig: \{ thinkingLevel: "LOW" \}/);
 assert.match(routesSource, /SCORE_REDUCTION_CONCURRENCY = Math\.max\(1, Number\(process\.env\.SCORE_REDUCTION_CONCURRENCY \?\? 12\)/);
+// The tagging payload draws only on the lean subscore rationale (no element
+// dump): dimensionRationaleText returns the subscore rationale text.
+assert.match(scoreReductionSource, /subRat\?\.\[`\$\{dim\}StrengthScore`\]/);
+assert.ok(
+  !/primitiveInputs|introducedConstructions/.test(scoreReductionSource.slice(
+    scoreReductionSource.indexOf("export function dimensionRationaleText"),
+    scoreReductionSource.indexOf("export function scoreReductionDimensions"),
+  )),
+  "dimensionRationaleText must send only the lean subscore rationale, not the full element dump",
+);
 const scoreReductionExec = routesSource.slice(
   routesSource.indexOf("async function executeScoreReductionReasons"),
   routesSource.indexOf('router.post("/papers/score-reduction-reasons"'),

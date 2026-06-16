@@ -28,7 +28,6 @@ import {
   benchmarkMetadataOverrideForText,
   detectReviewerDirectedText,
   resolveFoundationLink,
-  GEMINI_REVIEW_MODEL,
   extractMetadata as extractLatestMetadata,
   generateCompatReview,
   isExtractionBlockingStatus,
@@ -4819,11 +4818,12 @@ router.post("/papers/consistency-calibration", async (req, res) => {
 // dry-run by default. Never changes a score, rung, or the review prompt hash
 // — so it does not re-open the benchmark.
 const SCORE_REDUCTION_REASONS_ENABLED = process.env.ENABLE_SCORE_REDUCTION_REASONS === "true";
-// This is a lightweight extraction/tagging task over already-written text, so
-// it defaults to the faster flash model (the slow pro model is what made the
-// run take ~39 min). Override with SCIREVIEW_SCORE_REDUCTION_MODEL (e.g. the
-// pro model) if you want maximum tagging fidelity over speed.
-const SCORE_REDUCTION_MODEL = process.env.SCIREVIEW_SCORE_REDUCTION_MODEL?.trim() || GEMINI_REVIEW_MODEL;
+// Defaults to the PRO model: flash could not reliably produce the structured
+// tags (it skipped ~90% of reviews on invalid JSON). Pro answers reliably; the
+// per-call cost is fixed by sending only the lean subscore rationale, capping
+// output, and running LOW thinking (see explainScoreReductions) — so even pro
+// is fast. Override with SCIREVIEW_SCORE_REDUCTION_MODEL if needed.
+const SCORE_REDUCTION_MODEL = process.env.SCIREVIEW_SCORE_REDUCTION_MODEL?.trim() || GEMINI_META_MODEL;
 const SCORE_REDUCTION_CONCURRENCY = Math.max(1, Number(process.env.SCORE_REDUCTION_CONCURRENCY ?? 12) || 12);
 const SCORE_REDUCTION_JOB_MAX_ATTEMPTS = Math.max(1, Number(process.env.SCORE_REDUCTION_JOB_MAX_ATTEMPTS ?? 4) || 4);
 // Per-item tolerance for malformed JSON: re-call this one review a couple
@@ -4860,6 +4860,11 @@ async function explainScoreReductions(dims: ScoreReductionDimension[]): Promise<
           responseJsonSchema: scoreReductionJsonSchema,
           temperature: strict ? 0 : 0.2,
           maxOutputTokens: 768,
+          // This is a small "read the rationale, emit the tags" extraction —
+          // not a reasoning task. LOW thinking keeps even the pro model to
+          // seconds per call instead of minutes (the default thinking level on
+          // a thinking model is what made each call take ~4 min).
+          thinkingConfig: { thinkingLevel: "LOW" },
         },
       }),
       {

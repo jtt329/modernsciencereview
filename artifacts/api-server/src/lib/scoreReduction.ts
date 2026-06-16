@@ -74,36 +74,26 @@ export function dimensionSubscore(
   return num(ledger?.[key]) ?? num(ledger?.aggregate?.[key]) ?? num(review?.[key]);
 }
 
-// Compact rationale text already stored for a dimension: the diagnostic
-// subscore rationale plus the dimension's element assessments. This is the
-// ONLY material the explanation/tagging is allowed to draw on — no re-judging.
+// The stored rationale the tagging call draws on — and ONLY this. The
+// diagnostic subscore rationale is the model's own stated cause for the
+// dimension's score (e.g. "the referents are F4, constructs internal to
+// untested frameworks → capped at 8.5"), which is exactly what we tag. We keep
+// the payload lean (subscore rationale + dimension/score) so a thinking model
+// can answer a small extraction task in seconds, not minutes — NOT the whole
+// paper/element dump. Falls back to the dimension's single assessment line only
+// when the subscore rationale is absent. No re-judging.
 export function dimensionRationaleText(
   ledger: Record<string, any> | null | undefined,
   dim: ScoreReductionDimensionKey,
 ): string {
-  const ico = ledger?.inputConstructionOutputAssessment ?? ledger?.inputConstructionOutputLedger ?? {};
   const subRat = ledger?.subscoreRationale ?? ledger?.aggregate?.subscoreRationale ?? {};
-  const parts: unknown[] = [subRat?.[`${dim}StrengthScore`]];
-  if (dim === "input") {
-    parts.push(ico?.input?.assessment, ico?.input?.grounding, ico?.input?.fundamentality);
-    for (const it of asArray(ico?.input?.primitiveInputs ?? ledger?.primitiveInputs)) {
-      parts.push(it?.input, it?.assessment);
-    }
-  } else if (dim === "construction") {
-    parts.push(ico?.construction?.assessment);
-    for (const it of asArray(ico?.construction?.introducedConstructions ?? ledger?.introducedConstructions)) {
-      parts.push(it?.construction, it?.assessment);
-    }
-  } else {
-    parts.push(ico?.output?.whyOutputsMatter, ico?.output?.assessment);
-    for (const it of asArray(ico?.output?.outputs ?? ledger?.outputs)) {
-      parts.push(it?.output, it?.assessment);
-    }
+  const primary = subRat?.[`${dim}StrengthScore`];
+  if (typeof primary === "string" && primary.trim().length > 0) {
+    return primary.trim().slice(0, 2000);
   }
-  return parts
-    .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
-    .join("\n")
-    .slice(0, 6000);
+  const ico = ledger?.inputConstructionOutputAssessment ?? ledger?.inputConstructionOutputLedger ?? {};
+  const fallback = ico?.[dim]?.assessment;
+  return typeof fallback === "string" ? fallback.trim().slice(0, 2000) : "";
 }
 
 // Dimensions scored BELOW 10 — those that need a "why not top" reason and are
