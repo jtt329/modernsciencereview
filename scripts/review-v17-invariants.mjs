@@ -1768,17 +1768,25 @@ async function assertConsistencyResilience() {
 }
 await assertConsistencyResilience();
 
-// Score-reduction reasons (score-reduction-v1) — gated DISPLAY pass. Reads
-// stored I/C/O rationale + subscore, emits a "held at N because …" line per
-// below-10 dimension. NEVER changes a score, rung, or the prompt hash.
+// Score-reduction reasons + within-framework score (score-reduction-v2) —
+// gated DISPLAY/DERIVATION pass. Reads stored I/C/O rationale + subscore,
+// emits a "held at N because …" line per below-10 dimension AND derives a
+// second "within its framework" score by lifting only the framework-dependent
+// dimensions. NEVER changes a score, rung, or the prompt hash.
 const scoreReductionSource = readFileSync(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"), "utf8");
-assert.match(scoreReductionSource, /SCORE_REDUCTION_PASS_VERSION = "score-reduction-v1"/);
+assert.match(scoreReductionSource, /SCORE_REDUCTION_PASS_VERSION = "score-reduction-v2"/);
 assert.match(scoreReductionSource, /export function scoreReductionDimensions/);
-assert.match(scoreReductionSource, /export function parseScoreReductionReasons/);
+assert.match(scoreReductionSource, /export function parseScoreReductionTags/);
+assert.match(scoreReductionSource, /export function reasonsFromTags/);
+assert.match(scoreReductionSource, /export function computeWithinFrameworkScore/);
 // Rung-based phrasing ("held at N because …"), explicitly NOT subtractive.
 assert.match(scoreReductionSource, /held at <score> because/);
 assert.match(scoreReductionSource, /NEVER say/);
 assert.match(scoreReductionSource, /rung-based, not subtractive/);
+// Deduction tags drive the framework lift (extraction, not new numbers).
+assert.match(scoreReductionSource, /frameworkDependent/);
+assert.match(scoreReductionSource, /frameworkName/);
+assert.match(scoreReductionSource, /independentlyCapped/);
 // Route: gated behind a flag, dry-run by default, backgrounded (202 + poll),
 // reuses the generic corpus-job machinery.
 const scoreReductionRouteBody = routesSource.slice(
@@ -1791,25 +1799,29 @@ assert.match(scoreReductionRouteBody, /!SCORE_REDUCTION_REASONS_ENABLED/);
 assert.match(scoreReductionRouteBody, /res\.status\(202\)/);
 assert.match(scoreReductionRouteBody, /createCorpusJob\(req\.user, SCORE_REDUCTION_JOB_KIND/);
 assert.match(routesSource, /SCORE_REDUCTION_JOB_KIND = "score-reduction-reasons"/);
-// Worker dispatch + per-call retry, and the ONLY ledger write is the display
-// field — scores/rungs/subscoreRationale are untouched.
+// Worker dispatch + per-call retry; the ONLY ledger writes are the display
+// fields (reasons + within-framework) — scores/rungs/subscoreRationale untouched.
 assert.match(routesSource, /if \(isScoreReductionReasonsJob\(record\)\) \{\s*\n\s*await runScoreReductionReasonsJob\(record\);/);
 assert.match(routesSource, /label: "score-reduction"/);
 assert.match(routesSource, /scoreReductionReasons: \{/);
+assert.match(routesSource, /withinFrameworkScore: \{/);
 const scoreReductionExec = routesSource.slice(
   routesSource.indexOf("async function executeScoreReductionReasons"),
   routesSource.indexOf('router.post("/papers/score-reduction-reasons"'),
 );
 assert.ok(
   !/\.set\(\{ (?!coverageLedgerJson)/.test(scoreReductionExec) && !/inputStrengthScore\s*[:=]/.test(scoreReductionExec),
-  "score-reduction pass must not write scores/subscores — only the display field on coverageLedgerJson",
+  "score-reduction pass must not write scores/subscores — only the display fields on coverageLedgerJson",
 );
-// UI surfaces the reason under each dimension's score.
+// UI surfaces the per-dimension reason and the second "within framework" score.
 assert.match(reviewCardSource, /scoreReductionReasons/);
 assert.match(reviewCardSource, /reductionReason/);
+assert.match(reviewCardSource, /withinFrameworkScore/);
+assert.match(reviewCardSource, /Within \{withinFrameworkScore\.frameworkName\}/);
 
-// Functional: dimension selection skips top-scored dimensions and response
-// parsing maps only the asked-about dimensions.
+// Functional: dimension selection, tag parsing (with framework fields), and
+// the within-framework recompute (lift only framework-dependent dimensions;
+// keep independently-capped ones; no second score without a framework dock).
 async function assertScoreReduction() {
   const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
   const { build } = await import(esbuildUrl);
@@ -1817,10 +1829,9 @@ async function assertScoreReduction() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { scoreReductionDimensions, parseScoreReductionReasons } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"))};
+    import { scoreReductionDimensions, parseScoreReductionTags, computeWithinFrameworkScore } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"))};
     globalThis.__scoreReduction = (async () => {
-      // input 9, construction 10 (top -> skipped), output 7. Only input+output
-      // need a "why not 10" reason.
+      // input 9, construction 10 (top -> skipped), output 7.
       const ledger = {
         inputStrengthScore: 9, constructionStrengthScore: 10, outputStrengthScore: 7,
         subscoreRationale: { inputStrengthScore: "rests on a controlled semiclassical approximation", outputStrengthScore: "an output not yet experimentally confirmed" },
@@ -1830,16 +1841,55 @@ async function assertScoreReduction() {
       if (keys.length !== 2 || keys[0] !== "input" || keys[1] !== "output") throw new Error("dimension selection did not skip the top-scored dimension");
       if (!dims.find((d) => d.key === "input").rationale.includes("semiclassical")) throw new Error("stored rationale was not gathered for the dimension");
 
-      // Parsing keeps only non-empty reasons for the asked-about dimensions.
-      const parsed = { reasons: [
-        { dimension: "input", reason: "held at 9 because it rests on a controlled approximation" },
-        { dimension: "output", reason: "  " },
-        { dimension: "construction", reason: "should be ignored (not requested)" },
-      ] };
-      const reasons = parseScoreReductionReasons(parsed, dims);
-      if (reasons.input !== "held at 9 because it rests on a controlled approximation") throw new Error("input reason not mapped");
-      if ("output" in reasons) throw new Error("blank reason should be dropped");
-      if ("construction" in reasons) throw new Error("reason for an un-asked dimension leaked in");
+      // Tag parsing keeps reason + framework fields; blanks/un-asked dropped.
+      const tags = parseScoreReductionTags({ reasons: [
+        { dimension: "input", reason: "held at 9 because it rests on string theory", frameworkDependent: true, frameworkName: "string theory", independentlyCapped: false },
+        { dimension: "output", reason: "held at 7 because it is a conjecture", frameworkDependent: false },
+        { dimension: "construction", reason: "should be ignored (not requested)", frameworkDependent: false },
+      ] }, dims);
+      if (!tags.input || tags.input.frameworkDependent !== true || tags.input.frameworkName !== "string theory") throw new Error("framework tag not parsed");
+      if ("construction" in tags) throw new Error("reason for an un-asked dimension leaked into tags");
+
+      // Within-framework (Maldacena-like): pure-framework input lifts to 10;
+      // framework+independently-capped output stays; non-framework construction
+      // stays. 87 -> 93, never 100.
+      const mald = computeWithinFrameworkScore({
+        inPhysicsScore: 87,
+        subscores: { input: 8, construction: 9.5, output: 8.5 },
+        tags: {
+          input: { reason: "", frameworkDependent: true, frameworkName: "string theory", independentlyCapped: false },
+          output: { reason: "", frameworkDependent: true, frameworkName: "string theory", independentlyCapped: true },
+        },
+      });
+      if (!mald.applicable) throw new Error("framework lift should apply for a framework-dependent paper");
+      if (mald.frameworkName !== "string theory") throw new Error("framework name not surfaced");
+      if (mald.withinFrameworkScore !== 93) throw new Error("within-framework should be 93, got " + mald.withinFrameworkScore);
+      if (mald.withinFrameworkScore >= 100) throw new Error("within-framework must not reach 100 (output cap retained)");
+      if (!mald.lifted.some((l) => l.dimension === "input" && l.to === 10)) throw new Error("input should lift to 10");
+      if (mald.lifted.some((l) => l.dimension === "output")) throw new Error("independently-capped output must not lift");
+
+      // Page-like: a below-10 dock that is an APPROXIMATION, not a framework ->
+      // no second score; within-framework equals in-physics.
+      const page = computeWithinFrameworkScore({
+        inPhysicsScore: 80,
+        subscores: { input: 9, construction: 9, output: 8 },
+        tags: { output: { reason: "", frameworkDependent: false, frameworkName: "", independentlyCapped: true } },
+      });
+      if (page.applicable) throw new Error("a non-framework (approximation) dock must not produce a second score");
+      if (page.withinFrameworkScore !== 80) throw new Error("non-applicable within-framework should equal in-physics");
+
+      // Pure-GR-like: no framework tags at all -> no second score.
+      const gr = computeWithinFrameworkScore({ inPhysicsScore: 90, subscores: { input: 9, construction: 9, output: 9 }, tags: {} });
+      if (gr.applicable) throw new Error("a paper with no framework dock must not get a second score");
+
+      // LQG-like: framework name carried through.
+      const lqg = computeWithinFrameworkScore({
+        inPhysicsScore: 70,
+        subscores: { input: 6, construction: 8, output: 8 },
+        tags: { input: { reason: "", frameworkDependent: true, frameworkName: "loop quantum gravity", independentlyCapped: false } },
+      });
+      if (!lqg.applicable || lqg.frameworkName !== "loop quantum gravity") throw new Error("LQG framework lift/name not surfaced");
+      if (!(lqg.withinFrameworkScore > 70)) throw new Error("LQG within-framework should exceed the in-physics score");
 
       // A review with all dimensions at 10 yields no work.
       if (scoreReductionDimensions({ inputStrengthScore: 10, constructionStrengthScore: 10, outputStrengthScore: 10 }, {}).length !== 0) {

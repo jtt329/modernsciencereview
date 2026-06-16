@@ -1340,6 +1340,19 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     parsedCoverage?.scoreReductionReasons ??
     storedAggregate?.scoreReductionReasons ??
     null;
+  // "Within its framework" — a second, derived score from the same pass: if you
+  // accept the unproven framework the paper rests on, what would it score?
+  // Shown only when the paper has ≥1 framework-dependent deduction. Display
+  // only; the absolute "in physics" score is unchanged.
+  const withinFrameworkScore =
+    parsedCoverage?.withinFrameworkScore ??
+    storedAggregate?.withinFrameworkScore ??
+    null;
+  const showWithinFramework =
+    !selectedPass &&
+    withinFrameworkScore?.applicable === true &&
+    typeof withinFrameworkScore?.withinFrameworkScore === 'number' &&
+    Boolean(withinFrameworkScore?.frameworkName);
   const subscoreIsValid = (key: string, legacyKey: string) =>
     (selectedSubscoreValidity as any)?.[key] ?? (selectedSubscoreValidity as any)?.[legacyKey] ?? true;
   const currentInputStrengthScore = validSubscore(
@@ -1535,6 +1548,26 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     </span>
                   </div>
                 </div>
+                {showWithinFramework && (
+                  <div className="pt-3 mt-1 border-t border-white/10">
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <p className="text-[10px] font-black text-sky-300/90 uppercase tracking-widest">
+                        Within {withinFrameworkScore.frameworkName}
+                      </p>
+                      <span className="text-xs text-slate-500 max-w-xl">
+                        if you accept the unproven framework this paper rests on — the absolute "in physics" score above is unchanged
+                      </span>
+                      <p className="text-2xl font-black text-sky-200 leading-none ml-auto">
+                        ~{Math.round(withinFrameworkScore.withinFrameworkScore)}
+                      </p>
+                    </div>
+                    {Array.isArray(withinFrameworkScore.lifted) && withinFrameworkScore.lifted.length > 0 && (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        lifted: {withinFrameworkScore.lifted.map((l: any) => `${l.dimension} ${l.from}→${l.to}`).join(' · ')}
+                      </p>
+                    )}
+                  </div>
+                )}
                 {pairwiseCalibrated && !selectedPass && (
                   <div className="pt-3 mt-1 border-t border-white/10">
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">

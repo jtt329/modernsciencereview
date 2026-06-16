@@ -87,8 +87,11 @@ import {
   SCORE_REDUCTION_SYSTEM_PROMPT,
   scoreReductionJsonSchema,
   scoreReductionDimensions,
-  parseScoreReductionReasons,
-  type ScoreReductionReasons,
+  dimensionSubscore,
+  parseScoreReductionTags,
+  reasonsFromTags,
+  computeWithinFrameworkScore,
+  type ScoreReductionTags,
   type ScoreReductionDimension,
 } from "../lib/scoreReduction";
 
@@ -2415,7 +2418,7 @@ async function runScoreReductionReasonsJob(record: ReviewAttemptRecord) {
     execute: ({ params, checkpoint, recordProgress }) => executeScoreReductionReasons({
       apply: params.apply === true,
       concurrency: SCORE_REDUCTION_CONCURRENCY,
-      precomputedReasons: checkpoint as Record<string, ScoreReductionReasons>,
+      precomputedTags: checkpoint as Record<string, ScoreReductionTags>,
       onReviewDone: recordProgress,
     }),
   });
@@ -4818,9 +4821,12 @@ const SCORE_REDUCTION_REASONS_ENABLED = process.env.ENABLE_SCORE_REDUCTION_REASO
 const SCORE_REDUCTION_CONCURRENCY = Math.max(1, Number(process.env.SCORE_REDUCTION_CONCURRENCY ?? 6) || 6);
 const SCORE_REDUCTION_JOB_MAX_ATTEMPTS = Math.max(1, Number(process.env.SCORE_REDUCTION_JOB_MAX_ATTEMPTS ?? 4) || 4);
 
-// One model call: explain why each below-10 dimension is held where it is,
-// grounded ONLY in the stored rationale. Retry transient blips.
-async function explainScoreReductions(dims: ScoreReductionDimension[]): Promise<ScoreReductionReasons> {
+// One model call: for each below-10 dimension, explain why it is held where it
+// is and TAG the deduction (cause / frameworkDependent / frameworkName /
+// independentlyCapped), grounded ONLY in the stored rationale. Retry transient
+// blips. The model emits NO numbers — the within-framework score is recomputed
+// by code from these tags.
+async function explainScoreReductions(dims: ScoreReductionDimension[]): Promise<ScoreReductionTags> {
   const response = await withModelRetry<any>(
     () => (geminiAI.models.generateContent as any)({
       model: GEMINI_META_MODEL,
@@ -4828,7 +4834,7 @@ async function explainScoreReductions(dims: ScoreReductionDimension[]): Promise<
         role: "user",
         parts: [{
           text: JSON.stringify({
-            task: "For each dimension, write ONE plain-language sentence explaining why it is held at its score rather than at the top (10), grounded ONLY in the stored rationale. Phrase as 'held at N because …', never 'points deducted'. Do not introduce new numbers or re-judge.",
+            task: "For each dimension, write the 'held at N because …' reason AND tag the deduction: is it held down (even partly) because the work rests on an unproven theoretical framework (frameworkDependent + frameworkName), and is there also a non-framework cause limiting it (independentlyCapped)? Use ONLY the stored rationale; do not introduce new numbers or re-judge.",
             dimensions: dims.map((d) => ({ dimension: d.key, score: d.score, storedRationale: d.rationale })),
           }, null, 2),
         }],
@@ -4838,34 +4844,50 @@ async function explainScoreReductions(dims: ScoreReductionDimension[]): Promise<
         responseMimeType: "application/json",
         responseJsonSchema: scoreReductionJsonSchema,
         temperature: 0.2,
-        maxOutputTokens: 1024,
+        maxOutputTokens: 1536,
       },
     }),
     {
       label: "score-reduction",
       onRetry: ({ attempt, maxAttempts, delayMs, error }) =>
-        logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error explaining score reductions; retrying after backoff"),
+        logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error tagging score reductions; retrying after backoff"),
     },
   );
-  return parseScoreReductionReasons(parseGeminiJsonResponse(response.text ?? ""), dims);
+  return parseScoreReductionTags(parseGeminiJsonResponse(response.text ?? ""), dims);
+}
+
+// Stored "in physics" score for a review (the current absolute score).
+function inPhysicsScoreOf(ledger: Record<string, any>, review: Record<string, any>): number | null {
+  const raw = ledger?.computedScore ?? ledger?.intrinsicScore ?? review?.overallIntrinsicScore ?? review?.score;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
 }
 
 // Corpus pass: one model call per review that has any below-10 dimension.
-// Reads stored ledger text only; writes the scoreReductionReasons DISPLAY
-// field when apply=true (scores/rungs/prompt hash untouched). Bounded
-// concurrency + per-review checkpoint via the durable corpus job.
+// Reads stored ledger text only; tags each deduction and DERIVES the
+// within-framework score by lifting only the framework-dependent dimensions
+// (anti-anchoring: all numbers computed here, none from the model). Writes the
+// scoreReductionReasons + withinFrameworkScore DISPLAY fields when apply=true
+// (scores/rungs/prompt hash untouched). Bounded concurrency + per-review
+// checkpoint via the durable corpus job.
 async function executeScoreReductionReasons(opts: {
   apply: boolean;
   concurrency: number;
-  precomputedReasons: Record<string, ScoreReductionReasons>;
-  onReviewDone: (reviewId: string, reasons: ScoreReductionReasons) => void | Promise<void>;
+  precomputedTags: Record<string, ScoreReductionTags>;
+  onReviewDone: (reviewId: string, tags: ScoreReductionTags) => void | Promise<void>;
 }) {
   const { apply } = opts;
   const papersRows = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
   const reviews = await db.select().from(reviewsTable);
   const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
 
-  type ReasonJob = { reviewId: string; paperId: string; ledger: Record<string, any>; dims: ScoreReductionDimension[] };
+  type ReasonJob = {
+    reviewId: string;
+    paperId: string;
+    ledger: Record<string, any>;
+    review: Record<string, any>;
+    dims: ScoreReductionDimension[];
+  };
   const jobs: ReasonJob[] = [];
   for (const paper of papersRows) {
     const review = reviewByPaper.get(paper.id);
@@ -4874,13 +4896,20 @@ async function executeScoreReductionReasons(opts: {
     if (!ledger) continue;
     const dims = scoreReductionDimensions(ledger, review);
     if (dims.length === 0) continue; // all scored dimensions at 10 (or none scored)
-    jobs.push({ reviewId: review.id, paperId: paper.id, ledger, dims });
+    jobs.push({ reviewId: review.id, paperId: paper.id, ledger, review, dims });
   }
 
-  const results: Array<{ reviewId: string; paperId: string; dimensions: string[]; reasons: ScoreReductionReasons }> = [];
+  const results: Array<{
+    reviewId: string;
+    paperId: string;
+    dimensions: string[];
+    reasons: Record<string, string>;
+    withinFramework: ReturnType<typeof computeWithinFrameworkScore>;
+  }> = [];
   let modelCalls = 0;
   let reusedFromCheckpoint = 0;
   let updatedReviews = 0;
+  let withinFrameworkCount = 0;
 
   const concurrency = Math.max(1, opts.concurrency);
   let nextJob = 0;
@@ -4890,25 +4919,34 @@ async function executeScoreReductionReasons(opts: {
       nextJob += 1; // synchronous claim; no two workers take the same index
       if (i >= jobs.length) return;
       const job = jobs[i];
-      let reasons = opts.precomputedReasons[job.reviewId];
-      if (reasons) {
+      let tags = opts.precomputedTags[job.reviewId];
+      if (tags) {
         reusedFromCheckpoint += 1;
       } else {
-        reasons = await explainScoreReductions(job.dims); // one model call (retry-wrapped)
+        tags = await explainScoreReductions(job.dims); // one model call (retry-wrapped)
         modelCalls += 1;
-        await opts.onReviewDone(job.reviewId, reasons);
+        await opts.onReviewDone(job.reviewId, tags);
       }
-      results.push({ reviewId: job.reviewId, paperId: job.paperId, dimensions: job.dims.map((d) => d.key), reasons });
+      const reasons = reasonsFromTags(tags);
+      const withinFramework = computeWithinFrameworkScore({
+        inPhysicsScore: inPhysicsScoreOf(job.ledger, job.review),
+        subscores: {
+          input: dimensionSubscore(job.ledger, job.review, "input"),
+          construction: dimensionSubscore(job.ledger, job.review, "construction"),
+          output: dimensionSubscore(job.ledger, job.review, "output"),
+        },
+        tags,
+      });
+      if (withinFramework.applicable) withinFrameworkCount += 1;
+      results.push({ reviewId: job.reviewId, paperId: job.paperId, dimensions: job.dims.map((d) => d.key), reasons, withinFramework });
       if (apply) {
-        // Display field only — scores, rungs, subscoreRationale, and the
+        // Display fields only — scores, rungs, subscoreRationale, and the
         // prompt hash on the ledger are left exactly as they were.
+        const generatedAt = new Date().toISOString();
         const updatedLedger = {
           ...job.ledger,
-          scoreReductionReasons: {
-            ...reasons,
-            pass: SCORE_REDUCTION_PASS_VERSION,
-            generatedAt: new Date().toISOString(),
-          },
+          scoreReductionReasons: { ...reasons, pass: SCORE_REDUCTION_PASS_VERSION, generatedAt },
+          withinFrameworkScore: { ...withinFramework, pass: SCORE_REDUCTION_PASS_VERSION, generatedAt },
         };
         await db.update(reviewsTable)
           .set({ coverageLedgerJson: JSON.stringify(updatedLedger) })
@@ -4923,13 +4961,14 @@ async function executeScoreReductionReasons(opts: {
     pass: SCORE_REDUCTION_PASS_VERSION,
     dryRun: !apply,
     reviewsConsidered: jobs.length,
+    withinFrameworkCount,
     modelCalls,
     reusedFromCheckpoint,
     updatedReviews,
     results,
     note: apply
-      ? "Applied: scoreReductionReasons (display only) written to each review ledger; scores, rungs, and the prompt hash are untouched."
-      : "Dry run: nothing written. Pass { apply: true } to persist the display field.",
+      ? "Applied: scoreReductionReasons + withinFrameworkScore (display only) written to each review ledger; scores, rungs, and the prompt hash are untouched."
+      : "Dry run: nothing written. Pass { apply: true } to persist the display fields.",
   };
 }
 

@@ -1,18 +1,24 @@
-// Score-reduction reasons (score-reduction-v1) — pure core.
+// Score-reduction reasons + within-framework score (score-reduction-v2) — pure core.
 //
-// A DISPLAY pass, not a scoring pass. For each existing review it reads the
-// already-stored I/C/O subscore + rationale and emits one short plain-language
-// sentence per dimension that is below the top (10), explaining why it is
-// HELD at its score rather than at 10. It never re-judges, never changes a
-// score/rung, and never touches the review prompt or its hash — so it does
-// not re-open the benchmark. The reason already exists in the stored
-// rationale; this makes it explicit.
+// A DISPLAY/DERIVATION pass, not a scoring pass. For each existing review it
+// reads the already-stored I/C/O subscore + rationale and:
+//   (1) emits one short "held at N because …" sentence per dimension below 10
+//       (the reason already exists in the rationale — extraction, not re-judging);
+//   (2) TAGS each below-10 deduction { cause, frameworkDependent, frameworkName,
+//       independentlyCapped } — again extraction from the stated cause;
+//   (3) derives a second "within its framework" score: if you accept the
+//       unproven framework the paper rests on, what would it score? Computed by
+//       LIFTING only the framework-dependent dimensions and recomputing the
+//       total — never a raw number from the model (anti-anchoring preserved).
 //
-// This module is pure (no db, no network): the ledger-reading, dimension
-// selection, and response-parsing are offline-testable; the single model
-// call and the durable-job wiring live in the route layer.
+// It never re-judges, never changes a stored score/rung, and never touches the
+// review prompt or its hash — so it does not re-open the benchmark.
+//
+// Pure (no db, no network): ledger reading, dimension selection, response
+// parsing, and the within-framework recompute are offline-testable; the single
+// model call and durable-job wiring live in the route layer.
 
-export const SCORE_REDUCTION_PASS_VERSION = "score-reduction-v1";
+export const SCORE_REDUCTION_PASS_VERSION = "score-reduction-v2";
 
 export type ScoreReductionDimensionKey = "input" | "construction" | "output";
 export type ScoreReductionReasons = Partial<Record<ScoreReductionDimensionKey, string>>;
@@ -20,6 +26,29 @@ export type ScoreReductionDimension = {
   key: ScoreReductionDimensionKey;
   score: number;
   rationale: string;
+};
+
+// Per-dimension deduction tag, extracted from the stated cause.
+export type ScoreReductionTag = {
+  reason: string;            // "held at N because …"
+  frameworkDependent: boolean; // docked (even partly) for resting on an unproven framework
+  frameworkName: string;     // e.g. "string theory" / "loop quantum gravity" ("" if none)
+  independentlyCapped: boolean; // a NON-framework cause also limits this dimension
+};
+export type ScoreReductionTags = Partial<Record<ScoreReductionDimensionKey, ScoreReductionTag>>;
+
+export type WithinFrameworkLift = {
+  dimension: ScoreReductionDimensionKey;
+  frameworkName: string;
+  from: number;
+  to: number;
+};
+export type WithinFrameworkResult = {
+  applicable: boolean;          // ≥1 framework-dependent deduction was lifted
+  frameworkName: string;        // named framework(s), e.g. "string theory"
+  inPhysicsScore: number | null;
+  withinFrameworkScore: number | null;
+  lifted: WithinFrameworkLift[];
 };
 
 const DIMENSIONS: ScoreReductionDimensionKey[] = ["input", "construction", "output"];
@@ -47,7 +76,7 @@ export function dimensionSubscore(
 
 // Compact rationale text already stored for a dimension: the diagnostic
 // subscore rationale plus the dimension's element assessments. This is the
-// ONLY material the explanation is allowed to draw on — no re-judging.
+// ONLY material the explanation/tagging is allowed to draw on — no re-judging.
 export function dimensionRationaleText(
   ledger: Record<string, any> | null | undefined,
   dim: ScoreReductionDimensionKey,
@@ -77,8 +106,9 @@ export function dimensionRationaleText(
     .slice(0, 6000);
 }
 
-// Dimensions scored BELOW 10 — those that need a "why not top" reason. A
-// dimension already at 10 (or with no usable stored subscore) is skipped.
+// Dimensions scored BELOW 10 — those that need a "why not top" reason and are
+// candidates for a framework lift. A dimension already at 10 (or with no usable
+// stored subscore) is skipped.
 export function scoreReductionDimensions(
   ledger: Record<string, any> | null | undefined,
   review: Record<string, any> | null | undefined,
@@ -93,42 +123,123 @@ export function scoreReductionDimensions(
 }
 
 // Map a model JSON response onto only the dimensions we asked about, keeping
-// just the non-empty reasons.
-export function parseScoreReductionReasons(
+// the reason + framework tags. Drops entries that carry neither a reason nor a
+// framework tag.
+export function parseScoreReductionTags(
   parsed: unknown,
   dims: ScoreReductionDimension[],
-): ScoreReductionReasons {
-  const reasons = asArray((parsed as any)?.reasons);
-  const out: ScoreReductionReasons = {};
+): ScoreReductionTags {
+  const arr = asArray((parsed as any)?.reasons);
+  const out: ScoreReductionTags = {};
   for (const dim of dims) {
-    const match = reasons.find((r) => r?.dimension === dim.key);
-    const reason = typeof match?.reason === "string" ? match.reason.trim() : "";
-    if (reason) out[dim.key] = reason;
+    const match = arr.find((r) => r?.dimension === dim.key);
+    if (!match) continue;
+    const reason = typeof match.reason === "string" ? match.reason.trim() : "";
+    const frameworkDependent = match.frameworkDependent === true;
+    if (!reason && !frameworkDependent) continue;
+    out[dim.key] = {
+      reason,
+      frameworkDependent,
+      frameworkName: typeof match.frameworkName === "string" ? match.frameworkName.trim() : "",
+      independentlyCapped: match.independentlyCapped === true,
+    };
   }
   return out;
 }
 
-// System prompt for the one-call-per-review explanation. Reads existing text
-// only; rung-based ("held at N because …"), never subtractive.
+// The display strings ("held at N because …"), for the per-dimension UI line.
+export function reasonsFromTags(tags: ScoreReductionTags): ScoreReductionReasons {
+  const out: ScoreReductionReasons = {};
+  for (const key of DIMENSIONS) {
+    const reason = tags[key]?.reason;
+    if (reason) out[key] = reason;
+  }
+  return out;
+}
+
+function formulaTotal(subscores: Record<ScoreReductionDimensionKey, number | null>): number | null {
+  const vals = DIMENSIONS.map((k) => subscores[k]).filter((v): v is number => typeof v === "number");
+  if (vals.length === 0) return null;
+  return Math.round(10 * (vals.reduce((a, b) => a + b, 0) / vals.length));
+}
+
+// The "within its framework" score: lift only the framework-dependent
+// dimensions and recompute the total. A purely framework-dependent dimension
+// lifts to firm (10); a dimension that is ALSO independently capped (conjecture
+// / approximation / scope) keeps its current value, because that independent
+// cause is the binding ceiling even within the framework. The overall number
+// is the recompute delta applied to the stored "in physics" score — never a raw
+// number from the model.
+export function computeWithinFrameworkScore(args: {
+  inPhysicsScore: number | null;
+  subscores: Partial<Record<ScoreReductionDimensionKey, number | null>>;
+  tags: ScoreReductionTags;
+}): WithinFrameworkResult {
+  const cur: Record<ScoreReductionDimensionKey, number | null> = {
+    input: num(args.subscores.input),
+    construction: num(args.subscores.construction),
+    output: num(args.subscores.output),
+  };
+  const adj: Record<ScoreReductionDimensionKey, number | null> = { ...cur };
+  const lifted: WithinFrameworkLift[] = [];
+  for (const key of DIMENSIONS) {
+    const tag = args.tags[key];
+    const score = cur[key];
+    if (!tag || !tag.frameworkDependent || score == null || score >= 10) continue;
+    const to = tag.independentlyCapped ? score : 10;
+    if (to > score) {
+      adj[key] = to;
+      lifted.push({ dimension: key, frameworkName: tag.frameworkName, from: score, to });
+    }
+  }
+  const applicable = lifted.length > 0;
+  const curTotal = formulaTotal(cur);
+  const adjTotal = formulaTotal(adj);
+  const delta = curTotal != null && adjTotal != null ? adjTotal - curTotal : 0;
+  const within = args.inPhysicsScore != null
+    ? Math.min(100, Math.max(args.inPhysicsScore, args.inPhysicsScore + delta))
+    : adjTotal;
+  const names = [...new Set(lifted.map((l) => l.frameworkName).filter((n) => n.length > 0))];
+  return {
+    applicable,
+    frameworkName: names.join(" + "),
+    inPhysicsScore: args.inPhysicsScore,
+    withinFrameworkScore: applicable ? within : args.inPhysicsScore,
+    lifted,
+  };
+}
+
+// System prompt for the one-call-per-review pass. Reads existing text only;
+// rung-based ("held at N because …"), never subtractive; and TAGS each
+// deduction so the within-framework score can be derived by code.
 export const SCORE_REDUCTION_SYSTEM_PROMPT = [
-  "You explain, in ONE short sentence per scored dimension, WHY that dimension",
-  "is held at its score rather than at the maximum (10), for a scientific-merit",
-  "review that uses a rung-based (not subtractive) scale.",
+  "You annotate, for one scientific-merit review, WHY each scored dimension is",
+  "held below the maximum (10), using a rung-based (not subtractive) scale. You",
+  "are surfacing reasons that ALREADY EXIST in the provided rationale — not",
+  "re-reviewing, not re-scoring, and never inventing facts or numbers.",
   "",
-  "Rules:",
-  "- Use ONLY the provided storedRationale for each dimension. Do not introduce",
-  "  new facts, numbers, or judgments, and do not re-score. You are surfacing the",
-  "  reason that already exists in the review, not re-reviewing it.",
-  "- Phrase as \"held at <score> because …\" and name the ceiling-limiting factor",
-  "  (e.g. a controlled approximation, a conditional construction, an output not",
-  "  yet experimentally confirmed). NEVER say \"points deducted\", \"docked\", or",
-  "  \"minus N\" — scoring is rung-based, not subtractive.",
-  "- One sentence, plain language, at most ~40 words, no markdown.",
-  "- If the stored rationale names no specific ceiling-limiting factor, say so",
-  "  briefly and honestly rather than inventing one.",
+  "For each dimension you are given, return:",
+  "- reason: ONE plain sentence, \"held at <score> because …\", naming the",
+  "  ceiling-limiting factor. At most ~40 words, no markdown. NEVER say \"points",
+  "  deducted\", \"docked\", or \"minus N\" — scoring is rung-based, not subtractive.",
+  "- frameworkDependent: true ONLY if the dimension is held down (even partly)",
+  "  because the work RESTS ON AN UNPROVEN/UNTESTED THEORETICAL FRAMEWORK whose",
+  "  validity is not established — e.g. string theory, loop quantum gravity,",
+  "  emergent/entropic gravity, asymptotic safety, causal set theory. It is",
+  "  NOT framework-dependent if the cause is merely that a result is a",
+  "  conjecture, a leading-order/semiclassical APPROXIMATION, limited in scope,",
+  "  or an ordinary modeling assumption — those stand regardless of any",
+  "  framework. When unsure, answer false.",
+  "- frameworkName: the named framework (e.g. \"string theory\", \"loop quantum",
+  "  gravity\") when frameworkDependent is true; otherwise \"\".",
+  "- independentlyCapped: true if a NON-framework cause ALSO limits this",
+  "  dimension (it is also a conjecture, also an approximation, also",
+  "  scope-limited). This marks deductions that would NOT fully lift even if the",
+  "  framework were accepted.",
   "",
   "Return JSON: { \"reasons\": [ { \"dimension\": \"input|construction|output\",",
-  "\"reason\": \"held at N because …\" } ] }.",
+  "\"reason\": \"…\", \"frameworkDependent\": bool, \"frameworkName\": \"…\",",
+  "\"independentlyCapped\": bool } ] }.",
 ].join("\n");
 
 export const scoreReductionJsonSchema = {
@@ -140,11 +251,14 @@ export const scoreReductionJsonSchema = {
       type: "array",
       items: {
         type: "object",
-        required: ["dimension", "reason"],
+        required: ["dimension", "reason", "frameworkDependent"],
         additionalProperties: false,
         properties: {
           dimension: { type: "string", enum: ["input", "construction", "output"] },
           reason: { type: "string" },
+          frameworkDependent: { type: "boolean" },
+          frameworkName: { type: "string" },
+          independentlyCapped: { type: "boolean" },
         },
       },
     },
