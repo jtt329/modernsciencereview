@@ -1809,13 +1809,17 @@ assert.match(engineSource, /assumptionConditionals: computeAssumptionConditional
 assert.match(engineSource, /blindAssumptionConditionals/);
 assert.match(engineSource, /adjudicatorAssumptionConditionals \?\? blindAssumptionConditionals/);
 assert.match(engineSource, /assumption-conditionals: raw tag capture/);
-// The prompt requires the field as structured JSON (not prose), even empty.
-assert.match(engineSource, /You MUST emit assumptionConditionals as a top-level field/);
-// The blind-pass schema makes assumptionConditionals REQUIRED when the delta is
-// on (the prompt alone wasn't enough), and a present per-dimension entry must
-// be fully populated — while {} stays valid when nothing qualifies.
-assert.match(engineSource, /\.\.\.\(ASSUMPTION_CONDITIONALS_ENABLED \? \["assumptionConditionals"\] : \[\]\)/);
-assert.match(engineSource, /required: \["assumptionName", "assumptionStatus", "conditionalLiftScore"\]/);
+// The tags are DERIVED from the subscoreRationale prose (the model would not
+// emit them structurally across 4 attempts); the structured field stays as an
+// optional fast-path only.
+assert.match(assumptionConditionalsSource, /export function deriveAssumptionConditionalsRawFromRationale/);
+assert.match(engineSource, /deriveAssumptionConditionalsRawFromRationale\(aggregate\.subscoreRationale/);
+// Conservative classifier: "wrong"/"ruled out" prose never lifts; only clear
+// open-assumption prose (named framework / conjecture / untested) does.
+assert.match(assumptionConditionalsSource, /const PROSE_ERROR/);
+assert.match(assumptionConditionalsSource, /const PROSE_RULED_OUT/);
+assert.match(assumptionConditionalsSource, /const PROSE_OPEN/);
+assert.match(assumptionConditionalsSource, /NAMED_ASSUMPTION_PATTERNS/);
 // The separate tagging pass is gone: no lib, no route, no job kind.
 assert.ok(
   !existsSync(join(root, "artifacts/api-server/src/lib/scoreReduction.ts")),
@@ -1837,8 +1841,59 @@ async function assertAssumptionConditionals() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { computeAssumptionConditionals } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"))};
+    import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromRationale } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"))};
     globalThis.__assumptionCond = (async () => {
+      // PROSE DERIVATION (the working source) — classify the subscoreRationale
+      // prose, then compute. Real acceptance cases from the set:
+      const deriveChain = (rationale, subscores, inPhysicsScore) =>
+        computeAssumptionConditionals({ inPhysicsScore, subscores, raw: deriveAssumptionConditionalsRawFromRationale(rationale, subscores) });
+
+      // Strominger–Vafa / Maldacena: input rationale names string theory / AdS-CFT
+      // as an UNTESTED framework -> open -> conditional applies.
+      const proseSV = deriveChain(
+        { inputStrengthScore: "rests on the untested string-theory / D-brane input identifications, not experimentally confirmed", outputStrengthScore: "the AdS/CFT duality remains a conjecture" },
+        { input: 8, construction: 9, output: 8 },
+        82,
+      );
+      if (!proseSV.applicable) throw new Error("string-theory/AdS-CFT prose should yield an open conditional");
+      if (!proseSV.contingentOn.some((a) => /string theory|ads\\/cft/i.test(a))) throw new Error("derived assumption should be named from the prose");
+      if (!(proseSV.conditionals[proseSV.conditionals.length - 1].score > 82)) throw new Error("granting the open assumptions should raise the score");
+
+      // Charged Rotating Black Hole: construction docked for an INVALID,
+      // unphysical construction -> error -> NO conditional.
+      const proseCharged = deriveChain(
+        { constructionStrengthScore: "the central construction is invalid and physically unphysical" },
+        { input: 7, construction: 2, output: 6 },
+        7,
+      );
+      if (proseCharged.applicable) throw new Error("an invalid/unphysical construction (error) must not yield a conditional");
+      if (!proseCharged.excluded.some((e) => e.status === "error")) throw new Error("the invalid construction should be recorded as an error");
+
+      // Backreaction of Hawking Radiation: fatal ALGEBRAIC errors + INAPPROPRIATE
+      // vacuum choice -> error -> NO conditional.
+      const proseBackreaction = deriveChain(
+        { constructionStrengthScore: "an inappropriate vacuum choice", outputStrengthScore: "the derivation contains a fatal algebraic error" },
+        { input: 6, construction: 1, output: 2 },
+        10,
+      );
+      if (proseBackreaction.applicable) throw new Error("algebraic errors / inappropriate modeling must not yield a conditional");
+
+      // Ryu–Takayanagi: holographic / AdS-CFT framework, unproven -> open.
+      const proseRT = deriveChain(
+        { inputStrengthScore: "depends on the holographic principle and AdS/CFT, which remain unproven" },
+        { input: 8, construction: 9, output: 9 },
+        92,
+      );
+      if (!proseRT.applicable || !proseRT.contingentOn.some((a) => /holograph|ads\\/cft/i.test(a))) throw new Error("holographic/AdS-CFT prose should yield an open conditional");
+
+      // A purely scope-limited dock (no assumption language) -> no conditional.
+      const proseScope = deriveChain(
+        { outputStrengthScore: "the result is correct but narrow in scope and limited in breadth" },
+        { input: 9, construction: 9, output: 7 },
+        85,
+      );
+      if (proseScope.applicable) throw new Error("a scope/breadth dock with no assumption language must not yield a conditional");
+
       // Maldacena-like: input rests on "the string-theory inputs" (OPEN, lifts
       // 8->10), output on "the AdS/CFT duality conjecture" (OPEN, lifts 8.5->10),
       // construction (9.5) names no grantable assumption. Cumulative chain:

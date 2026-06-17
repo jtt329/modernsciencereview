@@ -1,19 +1,22 @@
 // Named-assumption conditionals — pure core.
 //
 // The second score(s) a paper would reach IF the specific unproven assumptions
-// its sub-10 dimensions rest on were granted. The review itself now emits, per
-// I/C/O dimension scored below 10, { assumptionName, conditionalLiftScore } —
-// the EXACT named assumption (e.g. "the AdS/CFT duality conjecture", not a
-// framework bucket) and the 0-10 dimension subscore that dimension would reach
-// if it were granted. This module turns those tags into a cumulative chain of
-// conditionals, keyed on the named assumptions:
+// its sub-10 dimensions rest on were granted, presented as a cumulative chain
+// keyed on the named assumptions:
 //
 //   "If [A] holds → X" ; "If [A] and [B] hold → Y" ; contingent on [A] + [B]
 //
-// Anti-anchoring: the model emits the named assumption + the per-dimension rung
-// it lifts to (a 0-10 subscore, like the base subscores it already emits) —
-// never a 0-100 number. Every conditional TOTAL here is computed, anchored to
-// the stored "in physics" score so it lines up with the displayed number.
+// Source of the per-dimension tags: the model would not reliably emit them as a
+// structured field (4 attempts), but the review DOES reliably state the
+// assumption in its subscoreRationale prose ("untested framework", "conjecture",
+// invalid/refuted, etc.). So the tags are DERIVED from that prose
+// (deriveAssumptionConditionalsRawFromRationale) — no dependency on structured
+// emission, and it works on existing reviews. computeAssumptionConditionals then
+// applies the same status gate (only "open" lifts; "error"/"ruled_out"/
+// "confirmed" never do) and builds the chain.
+//
+// Anti-anchoring: the lift is a 0-10 dimension rung; every 0-100 conditional
+// TOTAL is computed here, anchored to the stored "in physics" score.
 //
 // Pure (no db, no network), offline-testable.
 
@@ -161,4 +164,73 @@ export function computeAssumptionConditionals(args: {
   }
 
   return { applicable: true, inPhysicsScore: args.inPhysicsScore, conditionals, contingentOn: distinct, excluded };
+}
+
+// --- Prose derivation (the working source) -----------------------------------
+//
+// The review's subscoreRationale reliably names the cause of each deduction in
+// words. We classify that prose per below-10 dimension into the same shape the
+// model was supposed to emit { assumptionName, assumptionStatus,
+// conditionalLiftScore }, which then feeds computeAssumptionConditionals. This
+// is deterministic and conservative: a "wrong" (error) or "ruled_out" cause is
+// NEVER lifted, and a dimension only yields an OPEN conditional when the prose
+// clearly indicates an unproven-but-viable assumption (named framework /
+// conjecture / untested). Anything else yields no entry.
+
+// Curated named assumptions for the physics corpus: lowercase test -> display
+// name. Extend as the corpus needs.
+const NAMED_ASSUMPTION_PATTERNS: Array<[RegExp, string]> = [
+  [/ads[\/\-\s]?cft|anti[-\s]?de[-\s]?sitter/, "the AdS/CFT correspondence"],
+  [/\bstring[-\s]?theor/, "string theory"],
+  [/\bm[-\s]?theory\b/, "M-theory"],
+  [/\bholograph/, "the holographic principle"],
+  [/\bloop[-\s]?quantum/, "loop quantum gravity"],
+  [/\bsupergravit/, "supergravity"],
+  [/\bsupersymmetr|\bsusy\b/, "supersymmetry"],
+  [/\bd[-\s]?brane/, "the D-brane construction"],
+  [/\bswampland/, "the swampland conjecture"],
+  [/\beft\b|effective[-\s]field[-\s]theory/, "the effective-field-theory assumption"],
+  [/\basymptotic[-\s]safety/, "asymptotic safety"],
+  [/\bcausal[-\s]set/, "causal set theory"],
+  [/\bentropic[-\s]gravity|emergent[-\s]gravity/, "emergent/entropic gravity"],
+];
+
+// "The work is wrong" — never a conditional. Checked first (dominates).
+const PROSE_ERROR = /\b(invalid|unphysical|nonphysical|non-physical|algebraic error|algebra is|logical(?:ly)? (?:error|flaw|inconsistent)|refut|contradict|incorrect|erroneous|\bflaw|inconsisten|inappropriate (?:vacuum|choice|assumption)|unsound|fatal (?:error|flaw)|mathematically wrong|does not hold|ill-defined|nonsensical|sign error)\b/;
+// A premise falsified / ruled out by current evidence.
+const PROSE_RULED_OUT = /\b(ruled[-\s]?out|falsified|disproven|disproved|experimentally excluded|excluded by (?:experiment|data|observation)|debunked|overturned|known to be false|now known false)\b/;
+// Genuine, viable uncertainty — the only case that lifts.
+const PROSE_OPEN = /\b(untested|unproven|unconfirmed|not (?:yet )?(?:been )?(?:experimentally )?(?:confirmed|verified|established|tested)|no experimental (?:confirmation|evidence|support)|conjectur|speculativ|hypothe(?:tical|sis)|provisional|unverified|tentative|awaits? (?:experimental )?(?:confirmation|verification)|lacks experimental)\b/;
+
+function namedAssumptionFrom(text: string): string | null {
+  for (const [pattern, name] of NAMED_ASSUMPTION_PATTERNS) if (pattern.test(text)) return name;
+  return null;
+}
+
+export function deriveAssumptionConditionalsRawFromRationale(
+  rationale: Record<string, any> | null | undefined,
+  subscores: Partial<Record<ScoreDimensionKey, number | null>>,
+): Record<string, { assumptionName: string; assumptionStatus: AssumptionStatus; conditionalLiftScore: number }> {
+  const out: Record<string, { assumptionName: string; assumptionStatus: AssumptionStatus; conditionalLiftScore: number }> = {};
+  const rat = rationale && typeof rationale === "object" ? rationale : {};
+  for (const dim of DIMENSIONS) {
+    const cur = num((subscores as any)[dim]);
+    if (cur == null || cur >= 10) continue; // already top / no usable subscore
+    const proseRaw = rat[DIM_TO_SUBSCORE_KEY[dim]];
+    const prose = typeof proseRaw === "string" ? proseRaw : "";
+    if (!prose.trim()) continue;
+    const text = prose.toLowerCase();
+    const named = namedAssumptionFrom(text);
+    let status: AssumptionStatus;
+    if (PROSE_ERROR.test(text)) status = "error";              // wrong dominates
+    else if (PROSE_RULED_OUT.test(text)) status = "ruled_out";
+    else if (PROSE_OPEN.test(text) || named) status = "open";
+    else continue; // dock isn't a grantable assumption (scope/breadth/etc.)
+    out[DIM_TO_SUBSCORE_KEY[dim]] = {
+      assumptionName: named ?? (status === "open" ? "the unproven assumption it rests on" : "the limiting factor"),
+      assumptionStatus: status,
+      conditionalLiftScore: status === "open" ? 10 : cur, // open lifts to firm; others don't lift
+    };
+  }
+  return out;
 }

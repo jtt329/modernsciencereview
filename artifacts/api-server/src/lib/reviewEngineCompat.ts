@@ -10,7 +10,7 @@ import {
   BLIND_REVIEW_PASS_V19_PROMPT,
 } from "./prompts/diagnosticOnlyV19";
 import { logger } from "./logger";
-import { computeAssumptionConditionals } from "./assumptionConditionals";
+import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromRationale } from "./assumptionConditionals";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -1073,15 +1073,14 @@ const jsonString = { type: "string" };
 const jsonNumber = { type: "number" };
 const jsonBoolean = { type: "boolean" };
 const jsonStringArray = { type: "array", items: jsonString };
-// One per-dimension named-assumption conditional (assumption-conditionals delta).
-// assumptionStatus gates eligibility: only "open" earns a conditional lift.
-// All fields required + no extras, so a dimension that IS present is fully
-// populated (no half-emitted items); the dimension keys themselves stay
-// optional, so assumptionConditionals can be {} when nothing qualifies.
+// One per-dimension named-assumption conditional. Kept optional/permissive: the
+// model proved unwilling to populate these structured fields reliably, so the
+// conditional is DERIVED from the subscoreRationale prose instead (see
+// deriveAssumptionConditionalsRawFromRationale). This stays as a fast-path in
+// case the model ever does emit it.
 const assumptionConditionalItemJsonSchema = {
   type: "object",
-  required: ["assumptionName", "assumptionStatus", "conditionalLiftScore"],
-  additionalProperties: false,
+  additionalProperties: true,
   properties: {
     assumptionName: jsonString,
     assumptionStatus: { type: "string", enum: ["open", "ruled_out", "error", "confirmed"] },
@@ -1255,10 +1254,6 @@ const individualReviewJsonSchema = {
     "hindsightAssessment",
     "diagnosticAssessmentConfidence",
     "adjudicationRationale",
-    // Require assumptionConditionals ONLY with the delta on, so the model must
-    // emit it (the prompt + optional field weren't enough). Empty {} is valid
-    // when nothing qualifies. Gated so flag-off generation is unchanged.
-    ...(ASSUMPTION_CONDITIONALS_ENABLED ? ["assumptionConditionals"] : []),
   ],
   additionalProperties: false,
   properties: {
@@ -6071,9 +6066,11 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
     outputStrengthScore: aggregate.outputStrengthScore,
     subscoreRationale: aggregate.subscoreRationale,
     // Named-assumption conditionals — the cumulative "if you grant X" score(s),
-    // computed (anti-anchoring) from the review's own per-dimension assumption
-    // tags + the FINAL subscores. Inert ({ applicable: false }) until the
-    // assumption-conditionals delta is on and the review emits the tags.
+    // computed (anti-anchoring) from the FINAL subscores. The per-dimension tags
+    // are DERIVED from the subscoreRationale prose (the model would not emit
+    // them structurally); the model's structured field is used as a fast-path
+    // only if it ever appears. Gated by the flag; inert ({ applicable: false })
+    // when off or when no dimension names a grantable open assumption.
     assumptionConditionals: computeAssumptionConditionals({
       inPhysicsScore: aggregate.finalScoreBand.median,
       subscores: {
@@ -6081,7 +6078,15 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
         construction: aggregate.constructionStrengthScore,
         output: aggregate.outputStrengthScore,
       },
-      raw: aggregate.assumptionConditionalsRaw,
+      raw: !ASSUMPTION_CONDITIONALS_ENABLED
+        ? aggregate.assumptionConditionalsRaw
+        : (aggregate.assumptionConditionalsRaw && Object.keys(aggregate.assumptionConditionalsRaw).length > 0)
+          ? aggregate.assumptionConditionalsRaw
+          : deriveAssumptionConditionalsRawFromRationale(aggregate.subscoreRationale, {
+              input: aggregate.inputStrengthScore,
+              construction: aggregate.constructionStrengthScore,
+              output: aggregate.outputStrengthScore,
+            }),
     }),
     inputConstructionOutputAssessment: v16IcoAssessmentOnly(aggregate.inputConstructionOutputLedger),
     technicalAssessment: v16TechnicalAssessmentFromAggregate(aggregate),
