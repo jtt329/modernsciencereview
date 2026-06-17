@@ -1,4 +1,4 @@
-import { readFileSync, mkdtempSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, mkdtempSync, writeFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,9 +83,13 @@ assert.match(engineSource, /: "v19\.0\.2 computed ICO half-point"/);
 assert.match(engineSource, /from "\.\/prompts\/diagnosticOnlyV19"/);
 assert.match(engineSource, /REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting\(ACTIVE_BLIND_REVIEW_PROMPT\)/);
 assert.match(engineSource, /REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting\(ACTIVE_FULL_PROMPT\)/);
-// The gated active prompt resolves to the v19 blind prompt when the flag is off.
-assert.match(engineSource, /ACTIVE_BLIND_REVIEW_PROMPT = LINKED_INPUT_JUSTIFICATION_ENABLED[\s\S]{0,160}: BLIND_REVIEW_PASS_V19_PROMPT/);
-assert.match(engineSource, /BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting\(INTRINSIC_ADJUDICATOR_V19_PROMPT\)/);
+// The gated active prompt resolves to the v19 blind prompt with no deltas
+// appended when both gating flags are off.
+assert.match(engineSource, /ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas\(BLIND_REVIEW_PASS_V19_PROMPT\)/);
+assert.match(engineSource, /ACTIVE_FULL_PROMPT = withActiveDeltas\(BENCHMARK_CALIBRATED_V19_FULL_PROMPT\)/);
+assert.match(engineSource, /ACTIVE_PROMPT_DELTAS\.length \? `\$\{base\}\\n\\n\$\{ACTIVE_PROMPT_DELTAS\.join\("\\n\\n"\)\}` : base/);
+assert.match(engineSource, /BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting\(\s*\n?\s*ASSUMPTION_CONDITIONALS_ENABLED/);
+assert.match(engineSource, /: INTRINSIC_ADJUDICATOR_V19_PROMPT,/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
 assert.match(engineSource, /REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1"/);
@@ -1019,7 +1023,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = LINKED_INPUT_JUSTIFICATION_ENABLED \? "2026-06-14" : "2026-06-12"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = ASSUMPTION_CONDITIONALS_ENABLED[\s\S]{0,120}"2026-06-14" : "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -1768,179 +1772,92 @@ async function assertConsistencyResilience() {
 }
 await assertConsistencyResilience();
 
-// Score-reduction reasons + within-framework score (score-reduction-v2) —
-// gated DISPLAY/DERIVATION pass. Reads stored I/C/O rationale + subscore,
-// emits a "held at N because …" line per below-10 dimension AND derives a
-// second "within its framework" score by lifting only the framework-dependent
-// dimensions. NEVER changes a score, rung, or the prompt hash.
-const scoreReductionSource = readFileSync(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"), "utf8");
-assert.match(scoreReductionSource, /SCORE_REDUCTION_PASS_VERSION = "score-reduction-v2"/);
-assert.match(scoreReductionSource, /export function scoreReductionDimensions/);
-assert.match(scoreReductionSource, /export function parseScoreReductionTags/);
-assert.match(scoreReductionSource, /export function reasonsFromTags/);
-assert.match(scoreReductionSource, /export function computeWithinFrameworkScore/);
-// Per-item malformed-JSON tolerance: lenient parse that returns null (not
-// throws) so one bad response can be retried/skipped, not fatal.
-assert.match(scoreReductionSource, /export function tolerantJsonParse/);
-assert.match(scoreReductionSource, /export function tagsFromResponseText/);
-// Rung-based phrasing ("held at N because …"), explicitly NOT subtractive.
-assert.match(scoreReductionSource, /held at <score> because/);
-assert.match(scoreReductionSource, /NEVER say/);
-assert.match(scoreReductionSource, /rung-based, not subtractive/);
-// Deduction tags drive the framework lift (extraction, not new numbers).
-assert.match(scoreReductionSource, /frameworkDependent/);
-assert.match(scoreReductionSource, /frameworkName/);
-assert.match(scoreReductionSource, /independentlyCapped/);
-// Route: gated behind a flag, dry-run by default, backgrounded (202 + poll),
-// reuses the generic corpus-job machinery.
-const scoreReductionRouteBody = routesSource.slice(
-  routesSource.indexOf('router.post("/papers/score-reduction-reasons"'),
-  routesSource.indexOf("// GET /api/admin/calibration/holds"),
-);
-assert.ok(scoreReductionRouteBody.length > 0, "could not locate score-reduction-reasons route body");
-assert.match(routesSource, /SCORE_REDUCTION_REASONS_ENABLED = process\.env\.ENABLE_SCORE_REDUCTION_REASONS === "true"/);
-assert.match(scoreReductionRouteBody, /!SCORE_REDUCTION_REASONS_ENABLED/);
-assert.match(scoreReductionRouteBody, /res\.status\(202\)/);
-assert.match(scoreReductionRouteBody, /createCorpusJob\(req\.user, SCORE_REDUCTION_JOB_KIND/);
-assert.match(routesSource, /SCORE_REDUCTION_JOB_KIND = "score-reduction-reasons"/);
-// Worker dispatch + per-call retry; the ONLY ledger writes are the display
-// fields (reasons + within-framework) — scores/rungs/subscoreRationale untouched.
-assert.match(routesSource, /if \(isScoreReductionReasonsJob\(record\)\) \{\s*\n\s*await runScoreReductionReasonsJob\(record\);/);
-assert.match(routesSource, /label: "score-reduction"/);
-assert.match(routesSource, /scoreReductionReasons: \{/);
-assert.match(routesSource, /withinFrameworkScore: \{/);
-// Per-item resilience: a parse-retry loop with a strict-JSON nudge and
-// per-review skip-and-continue (partial results).
-assert.match(routesSource, /SCORE_REDUCTION_PARSE_ATTEMPTS/);
-assert.match(routesSource, /tagsFromResponseText\(response\?\.text/);
-assert.match(routesSource, /skipped\.push\(/);
-assert.match(routesSource, /skipped,/);
-// Reliability: pro is the default model (flash could not produce the tags),
-// overridable via env. Per-call cost fixed by lean input + LOW thinking, so
-// even pro is fast.
-assert.match(routesSource, /SCORE_REDUCTION_MODEL = process\.env\.SCIREVIEW_SCORE_REDUCTION_MODEL\?\.trim\(\) \|\| GEMINI_META_MODEL/);
-assert.match(routesSource, /thinkingConfig: \{ thinkingLevel: "LOW" \}/);
-assert.match(routesSource, /SCORE_REDUCTION_CONCURRENCY = Math\.max\(1, Number\(process\.env\.SCORE_REDUCTION_CONCURRENCY \?\? 12\)/);
-// The tagging payload draws only on the lean subscore rationale (no element
-// dump): dimensionRationaleText returns the subscore rationale text.
-assert.match(scoreReductionSource, /subRat\?\.\[`\$\{dim\}StrengthScore`\]/);
+// Named-assumption conditionals (gated v19.0.4) — the review EMITS, per below-10
+// dimension, { assumptionName, conditionalLiftScore }; the second "if you grant
+// X" score(s) are computed from those. The separate score-reduction pass is
+// RETIRED (it failed/was slow).
+const assumptionConditionalsSource = readFileSync(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"), "utf8");
+assert.match(assumptionConditionalsSource, /export function computeAssumptionConditionals/);
+// Gated prompt delta in the review engine: deploying with the flag off keeps
+// the active prompt/hash unchanged; flipping it bumps to v19.0.4 (one re-run).
+assert.match(engineSource, /ASSUMPTION_CONDITIONALS_ENABLED = process\.env\.ENABLE_ASSUMPTION_CONDITIONALS === "true"/);
+assert.match(engineSource, /Named-assumption conditionals/);
+assert.match(engineSource, /v19\.0\.4-computed-ico-halfpoint/);
+assert.match(engineSource, /v19\.0\.2-computed-ico-halfpoint/); // base hash unchanged when off
+assert.match(engineSource, /assumptionConditionalItemJsonSchema/); // optional response-schema field
+// The conditional chain is computed (anti-anchoring) from the FINAL subscores +
+// the raw tags carried through the aggregate — not emitted by the model.
+assert.match(engineSource, /assumptionConditionalsRaw/);
+assert.match(engineSource, /assumptionConditionals: computeAssumptionConditionals\(\{/);
+// The separate tagging pass is gone: no lib, no route, no job kind.
 assert.ok(
-  !/primitiveInputs|introducedConstructions/.test(scoreReductionSource.slice(
-    scoreReductionSource.indexOf("export function dimensionRationaleText"),
-    scoreReductionSource.indexOf("export function scoreReductionDimensions"),
-  )),
-  "dimensionRationaleText must send only the lean subscore rationale, not the full element dump",
+  !existsSync(join(root, "artifacts/api-server/src/lib/scoreReduction.ts")),
+  "the separate score-reduction lib must be retired (deleted)",
 );
-const scoreReductionExec = routesSource.slice(
-  routesSource.indexOf("async function executeScoreReductionReasons"),
-  routesSource.indexOf('router.post("/papers/score-reduction-reasons"'),
-);
-assert.ok(
-  !/\.set\(\{ (?!coverageLedgerJson)/.test(scoreReductionExec) && !/inputStrengthScore\s*[:=]/.test(scoreReductionExec),
-  "score-reduction pass must not write scores/subscores — only the display fields on coverageLedgerJson",
-);
-// UI surfaces the per-dimension reason and the second "within framework" score.
-assert.match(reviewCardSource, /scoreReductionReasons/);
-assert.match(reviewCardSource, /reductionReason/);
-assert.match(reviewCardSource, /withinFrameworkScore/);
-assert.match(reviewCardSource, /Within \{withinFrameworkScore\.frameworkName\}/);
+assert.doesNotMatch(routesSource, /score-reduction-reasons/);
+assert.doesNotMatch(routesSource, /SCORE_REDUCTION_/);
+assert.doesNotMatch(routesSource, /executeScoreReductionReasons|explainScoreReductions/);
+// UI lists the named conditionals under the headline score.
+assert.match(reviewCardSource, /assumptionConditionals/);
+assert.match(reviewCardSource, /Conditional on its assumptions/);
+assert.match(reviewCardSource, /Contingent on:/);
 
-// Functional: dimension selection, tag parsing (with framework fields), and
-// the within-framework recompute (lift only framework-dependent dimensions;
-// keep independently-capped ones; no second score without a framework dock).
-async function assertScoreReduction() {
+// Functional: the cumulative conditional chain from emitted per-dimension tags.
+async function assertAssumptionConditionals() {
   const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
   const { build } = await import(esbuildUrl);
-  const dir = mkdtempSync(join(tmpdir(), "msr-scorereduction-"));
+  const dir = mkdtempSync(join(tmpdir(), "msr-assumption-cond-"));
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { scoreReductionDimensions, parseScoreReductionTags, computeWithinFrameworkScore, tolerantJsonParse, tagsFromResponseText } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/scoreReduction.ts"))};
-    globalThis.__scoreReduction = (async () => {
-      // Malformed-JSON tolerance: fences, surrounding prose, and trailing
-      // commas all parse; true garbage returns null (so the caller retries).
-      if (tolerantJsonParse('\`\`\`json\\n{"reasons":[]}\\n\`\`\`') == null) throw new Error("fenced JSON should parse");
-      if (tolerantJsonParse('here is the result: {"reasons":[]} done') == null) throw new Error("prose-wrapped JSON should parse");
-      if (tolerantJsonParse('{"reasons":[{"dimension":"input","reason":"x",},],}') == null) throw new Error("trailing-comma JSON should parse");
-      if (tolerantJsonParse('not json at all') !== null) throw new Error("garbage must return null, not throw");
-      if (tolerantJsonParse('') !== null) throw new Error("empty must return null");
-      // tagsFromResponseText: null only on unparseable; {} on parsed-but-empty.
-      const oneDim = [{ key: "input", score: 8, rationale: "" }];
-      if (tagsFromResponseText("totally broken", oneDim) !== null) throw new Error("unparseable response should yield null (retry signal)");
-      const empty = tagsFromResponseText('{"reasons":[]}', oneDim);
-      if (empty == null || Object.keys(empty).length !== 0) throw new Error("parsed-but-empty should be {} (a valid result, not a retry)");
-
-      // input 9, construction 10 (top -> skipped), output 7.
-      const ledger = {
-        inputStrengthScore: 9, constructionStrengthScore: 10, outputStrengthScore: 7,
-        subscoreRationale: { inputStrengthScore: "rests on a controlled semiclassical approximation", outputStrengthScore: "an output not yet experimentally confirmed" },
-      };
-      const dims = scoreReductionDimensions(ledger, {});
-      const keys = dims.map((d) => d.key).sort();
-      if (keys.length !== 2 || keys[0] !== "input" || keys[1] !== "output") throw new Error("dimension selection did not skip the top-scored dimension");
-      if (!dims.find((d) => d.key === "input").rationale.includes("semiclassical")) throw new Error("stored rationale was not gathered for the dimension");
-
-      // Tag parsing keeps reason + framework fields; blanks/un-asked dropped.
-      const tags = parseScoreReductionTags({ reasons: [
-        { dimension: "input", reason: "held at 9 because it rests on string theory", frameworkDependent: true, frameworkName: "string theory", independentlyCapped: false },
-        { dimension: "output", reason: "held at 7 because it is a conjecture", frameworkDependent: false },
-        { dimension: "construction", reason: "should be ignored (not requested)", frameworkDependent: false },
-      ] }, dims);
-      if (!tags.input || tags.input.frameworkDependent !== true || tags.input.frameworkName !== "string theory") throw new Error("framework tag not parsed");
-      if ("construction" in tags) throw new Error("reason for an un-asked dimension leaked into tags");
-
-      // Within-framework (Maldacena-like): pure-framework input lifts to 10;
-      // framework+independently-capped output stays; non-framework construction
-      // stays. 87 -> 93, never 100.
-      const mald = computeWithinFrameworkScore({
+    import { computeAssumptionConditionals } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"))};
+    globalThis.__assumptionCond = (async () => {
+      // Maldacena-like: input rests on "the string-theory inputs" (lifts 8->10),
+      // output on "the AdS/CFT duality conjecture" (lifts 8.5->10), construction
+      // (9.5) names no grantable assumption. Cumulative chain: grant inputs ->
+      // 93; grant both -> higher (never above 100).
+      const mald = computeAssumptionConditionals({
         inPhysicsScore: 87,
         subscores: { input: 8, construction: 9.5, output: 8.5 },
-        tags: {
-          input: { reason: "", frameworkDependent: true, frameworkName: "string theory", independentlyCapped: false },
-          output: { reason: "", frameworkDependent: true, frameworkName: "string theory", independentlyCapped: true },
+        raw: {
+          inputStrengthScore: { assumptionName: "the string-theory inputs", conditionalLiftScore: 10 },
+          outputStrengthScore: { assumptionName: "the AdS/CFT duality conjecture", conditionalLiftScore: 10 },
         },
       });
-      if (!mald.applicable) throw new Error("framework lift should apply for a framework-dependent paper");
-      if (mald.frameworkName !== "string theory") throw new Error("framework name not surfaced");
-      if (mald.withinFrameworkScore !== 93) throw new Error("within-framework should be 93, got " + mald.withinFrameworkScore);
-      if (mald.withinFrameworkScore >= 100) throw new Error("within-framework must not reach 100 (output cap retained)");
-      if (!mald.lifted.some((l) => l.dimension === "input" && l.to === 10)) throw new Error("input should lift to 10");
-      if (mald.lifted.some((l) => l.dimension === "output")) throw new Error("independently-capped output must not lift");
+      if (!mald.applicable) throw new Error("a paper with grantable assumptions should be applicable");
+      if (mald.conditionals.length !== 2) throw new Error("expected a 2-step cumulative chain, got " + mald.conditionals.length);
+      if (mald.conditionals[0].assumptions.length !== 1 || mald.conditionals[0].assumptions[0] !== "the string-theory inputs") throw new Error("first conditional should grant only the input assumption");
+      if (mald.conditionals[0].score !== 93) throw new Error("granting the string-theory inputs should give 93, got " + mald.conditionals[0].score);
+      if (!(mald.conditionals[1].score > mald.conditionals[0].score)) throw new Error("granting both should raise the score further");
+      if (mald.conditionals[1].score > 100) throw new Error("a conditional must never exceed 100");
+      if (mald.conditionals[1].assumptions.length !== 2) throw new Error("second conditional should grant both assumptions cumulatively");
+      if (JSON.stringify(mald.contingentOn) !== JSON.stringify(["the string-theory inputs", "the AdS/CFT duality conjecture"])) throw new Error("contingentOn should list both named assumptions in order");
 
-      // Page-like: a below-10 dock that is an APPROXIMATION, not a framework ->
-      // no second score; within-framework equals in-physics.
-      const page = computeWithinFrameworkScore({
-        inPhysicsScore: 80,
-        subscores: { input: 9, construction: 9, output: 8 },
-        tags: { output: { reason: "", frameworkDependent: false, frameworkName: "", independentlyCapped: true } },
+      // All sub-10 dimensions liftable -> the final cumulative conditional reaches 100.
+      const top = computeAssumptionConditionals({
+        inPhysicsScore: 88,
+        subscores: { input: 8, construction: 10, output: 8.5 },
+        raw: {
+          inputStrengthScore: { assumptionName: "A", conditionalLiftScore: 10 },
+          outputStrengthScore: { assumptionName: "B", conditionalLiftScore: 10 },
+        },
       });
-      if (page.applicable) throw new Error("a non-framework (approximation) dock must not produce a second score");
-      if (page.withinFrameworkScore !== 80) throw new Error("non-applicable within-framework should equal in-physics");
+      if (top.conditionals[top.conditionals.length - 1].score !== 100) throw new Error("granting every sub-10 dimension's assumption should reach 100, got " + top.conditionals[top.conditionals.length - 1].score);
 
-      // Pure-GR-like: no framework tags at all -> no second score.
-      const gr = computeWithinFrameworkScore({ inPhysicsScore: 90, subscores: { input: 9, construction: 9, output: 9 }, tags: {} });
-      if (gr.applicable) throw new Error("a paper with no framework dock must not get a second score");
+      // No grantable assumption (approximation/scope) -> no second score.
+      const none = computeAssumptionConditionals({ inPhysicsScore: 80, subscores: { input: 9, construction: 9, output: 8 }, raw: {} });
+      if (none.applicable || none.conditionals.length !== 0) throw new Error("a paper with no named assumptions must get no conditional");
 
-      // LQG-like: framework name carried through.
-      const lqg = computeWithinFrameworkScore({
-        inPhysicsScore: 70,
-        subscores: { input: 6, construction: 8, output: 8 },
-        tags: { input: { reason: "", frameworkDependent: true, frameworkName: "loop quantum gravity", independentlyCapped: false } },
-      });
-      if (!lqg.applicable || lqg.frameworkName !== "loop quantum gravity") throw new Error("LQG framework lift/name not surfaced");
-      if (!(lqg.withinFrameworkScore > 70)) throw new Error("LQG within-framework should exceed the in-physics score");
-
-      // A review with all dimensions at 10 yields no work.
-      if (scoreReductionDimensions({ inputStrengthScore: 10, constructionStrengthScore: 10, outputStrengthScore: 10 }, {}).length !== 0) {
-        throw new Error("a fully top-scored review should produce no reduction dimensions");
-      }
+      // A named assumption that does not raise the score is ignored.
+      const flat = computeAssumptionConditionals({ inPhysicsScore: 80, subscores: { input: 8, construction: 9, output: 9 }, raw: { inputStrengthScore: { assumptionName: "X", conditionalLiftScore: 8 } } });
+      if (flat.applicable) throw new Error("an assumption whose lift score does not exceed the current subscore must not apply");
     })();
   `);
   await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
   await import(pathToFileURL(out).href);
-  await globalThis.__scoreReduction;
+  await globalThis.__assumptionCond;
 }
-await assertScoreReduction();
+await assertAssumptionConditionals();
 
 // Legacy anchored pairwise path remains the active engine (untouched).
 assert.match(pairwiseEngineSource, /PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2"/);

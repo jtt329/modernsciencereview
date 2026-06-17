@@ -10,6 +10,7 @@ import {
   BLIND_REVIEW_PASS_V19_PROMPT,
 } from "./prompts/diagnosticOnlyV19";
 import { logger } from "./logger";
+import { computeAssumptionConditionals } from "./assumptionConditionals";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -592,6 +593,9 @@ type IndividualReview = {
   outputReachScore: number;
   generalizationBreadthScore: number;
   subscoreRationale: DiagnosticSubscoreRationale;
+  // Raw per-dimension named-assumption tags (assumption-conditionals delta);
+  // null unless the review emitted them.
+  assumptionConditionalsRaw?: Record<string, any> | null;
   intrinsicTechnicalScore: number;
   explanatoryTargetBreadthScore: number;
   theorySpaceBreadthScore: number;
@@ -691,6 +695,9 @@ type AggregateReview = {
   outputReachScore: number;
   generalizationBreadthScore: number;
   subscoreRationale: DiagnosticSubscoreRationale;
+  // Raw per-dimension named-assumption tags (assumption-conditionals delta);
+  // null unless the review emitted them.
+  assumptionConditionalsRaw?: Record<string, any> | null;
   intrinsicTechnicalScore: number;
   explanatoryTargetBreadthScore: number;
   theorySpaceBreadthScore: number;
@@ -782,6 +789,13 @@ type ReviewRunAuditEntry = {
 // after the calibration work). When off, the active prompt is exactly
 // v19.0.2 and the hash is unchanged.
 const LINKED_INPUT_JUSTIFICATION_ENABLED = process.env.ENABLE_LINKED_INPUT_JUSTIFICATION === "true";
+// Named-assumption conditionals are gated behind ENABLE_ASSUMPTION_CONDITIONALS
+// so deploying the code does NOT change the active prompt/hash. Flipping it
+// re-opens the benchmark (one re-run): the review then emits, per below-10
+// dimension, the exact named assumption + the subscore it lifts to, so the
+// second "if you grant X" score(s) come from the review itself — no separate
+// tagging pass.
+const ASSUMPTION_CONDITIONALS_ENABLED = process.env.ENABLE_ASSUMPTION_CONDITIONALS === "true";
 const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
 --------------------------
 
@@ -796,16 +810,45 @@ F-ladder; this clause adds the justification, it does not derive the rung
 from any other paper's score. Put foundationLabel, confirmednessNote, and
 firmnessRung on each primitiveInputs item. Do not output a 0-100 score.`;
 
-const ACTIVE_BLIND_REVIEW_PROMPT = LINKED_INPUT_JUSTIFICATION_ENABLED
-  ? `${BLIND_REVIEW_PASS_V19_PROMPT}\n\n${LINKED_INPUT_JUSTIFICATION_DELTA}`
-  : BLIND_REVIEW_PASS_V19_PROMPT;
-const ACTIVE_FULL_PROMPT = LINKED_INPUT_JUSTIFICATION_ENABLED
-  ? `${BENCHMARK_CALIBRATED_V19_FULL_PROMPT}\n\n${LINKED_INPUT_JUSTIFICATION_DELTA}`
-  : BENCHMARK_CALIBRATED_V19_FULL_PROMPT;
+const ASSUMPTION_CONDITIONALS_DELTA = String.raw`Named-assumption conditionals
+-----------------------------
 
-export const REVIEW_PROMPT_VERSION = LINKED_INPUT_JUSTIFICATION_ENABLED
-  ? "v19.0.3-computed-ico-halfpoint"
-  : "v19.0.2-computed-ico-halfpoint";
+For each I/C/O dimension you score below 10, identify the single most
+specific named assumption the deduction rests on — the exact result,
+conjecture, or premise as the manuscript frames it (e.g. "the supergravity /
+D-brane input identifications", "the AdS/CFT duality conjecture", "the
+loop-quantum-gravity area spectrum"), NOT a broad field or framework label
+("string theory", "holography", "quantum gravity" are too coarse). Then
+state the 0-10 dimension subscore that dimension would reach IF that
+assumption were granted as firm. Put these on assumptionConditionals, keyed
+by the dimension's subscore field:
+assumptionConditionals: {
+  inputStrengthScore: { assumptionName, conditionalLiftScore },
+  constructionStrengthScore: { assumptionName, conditionalLiftScore },
+  outputStrengthScore: { assumptionName, conditionalLiftScore }
+}
+Include a dimension ONLY when its deduction genuinely rests on a grantable
+assumption that, if true, would raise that subscore; omit dimensions limited
+by intrinsic scope, breadth, or robustness, which no assumption would lift.
+conditionalLiftScore is a 0-10 dimension subscore (the rung the dimension
+reaches if the assumption holds), never a 0-100 number — the conditional
+total is computed from it.`;
+
+const ACTIVE_PROMPT_DELTAS = [
+  LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
+  ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
+].filter((delta): delta is string => Boolean(delta));
+const withActiveDeltas = (base: string) =>
+  ACTIVE_PROMPT_DELTAS.length ? `${base}\n\n${ACTIVE_PROMPT_DELTAS.join("\n\n")}` : base;
+
+const ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas(BLIND_REVIEW_PASS_V19_PROMPT);
+const ACTIVE_FULL_PROMPT = withActiveDeltas(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
+
+export const REVIEW_PROMPT_VERSION = ASSUMPTION_CONDITIONALS_ENABLED
+  ? "v19.0.4-computed-ico-halfpoint"
+  : LINKED_INPUT_JUSTIFICATION_ENABLED
+    ? "v19.0.3-computed-ico-halfpoint"
+    : "v19.0.2-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -827,11 +870,15 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(ACTIVE_BLIND_REVIEW_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = LINKED_INPUT_JUSTIFICATION_ENABLED
-  ? "v19.0.3 computed ICO half-point"
-  : "v19.0.2 computed ICO half-point";
+export const REVIEW_PROMPT_NAME = ASSUMPTION_CONDITIONALS_ENABLED
+  ? "v19.0.4 computed ICO half-point"
+  : LINKED_INPUT_JUSTIFICATION_ENABLED
+    ? "v19.0.3 computed ICO half-point"
+    : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
+export const REVIEW_PROMPT_DATE = ASSUMPTION_CONDITIONALS_ENABLED
+  ? "2026-06-16"
+  : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -864,7 +911,15 @@ export function isCalibrationCompatibleReviewObject(value: unknown) {
 
   return hasCanonicalDiagnostics && hasComputedScore && (explicitCompatible || v17DiagnosticFamily);
 }
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(INTRINSIC_ADJUDICATOR_V19_PROMPT);
+// The adjudicator produces the FINAL subscores the aggregate uses, so it also
+// carries the assumption-conditionals delta when enabled (it emits the per-
+// dimension named-assumption tags). The adjudicator prompt is not part of
+// REVIEW_PROMPT_HASH; the hash is gated by the blind prompt's delta.
+const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(
+  ASSUMPTION_CONDITIONALS_ENABLED
+    ? `${INTRINSIC_ADJUDICATOR_V19_PROMPT}\n\n${ASSUMPTION_CONDITIONALS_DELTA}`
+    : INTRINSIC_ADJUDICATOR_V19_PROMPT,
+);
 const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(`
 You are the separate post-intrinsic comparator calibrator for Modern Science Review.
 
@@ -997,6 +1052,15 @@ const jsonString = { type: "string" };
 const jsonNumber = { type: "number" };
 const jsonBoolean = { type: "boolean" };
 const jsonStringArray = { type: "array", items: jsonString };
+// One per-dimension named-assumption conditional (assumption-conditionals delta).
+const assumptionConditionalItemJsonSchema = {
+  type: "object",
+  additionalProperties: true,
+  properties: {
+    assumptionName: jsonString,
+    conditionalLiftScore: jsonNumber,
+  },
+};
 const titlePageMetadataJsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -1238,6 +1302,20 @@ const individualReviewJsonSchema = {
         inputStrengthScore: jsonString,
         constructionStrengthScore: jsonString,
         outputStrengthScore: jsonString,
+      },
+    },
+    // Optional (emitted only when ENABLE_ASSUMPTION_CONDITIONALS adds the
+    // delta). Per below-10 dimension: the exact named assumption the deduction
+    // rests on + the 0-10 subscore it lifts to if granted. Not in `required`,
+    // and not part of the prompt hash, so its presence here is inert when the
+    // delta is off.
+    assumptionConditionals: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        inputStrengthScore: assumptionConditionalItemJsonSchema,
+        constructionStrengthScore: assumptionConditionalItemJsonSchema,
+        outputStrengthScore: assumptionConditionalItemJsonSchema,
       },
     },
     recognitionAssessment: {
@@ -5658,6 +5736,15 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     unifyingPower: asString(source.unifyingPower, fallbackReview.unifyingPower),
     ...aggregateSubscores,
     subscoreRationale: aggregateSubscoreRationale,
+    // Raw per-dimension named-assumption tags from the adjudicator (only with
+    // the assumption-conditionals delta on); the conditional chain is computed
+    // from the FINAL subscores at the canonical ledger.
+    assumptionConditionalsRaw:
+      (source.assumptionConditionals && typeof source.assumptionConditionals === "object" && !Array.isArray(source.assumptionConditionals))
+        ? source.assumptionConditionals
+        : (root?.assumptionConditionals && typeof root.assumptionConditionals === "object" && !Array.isArray(root.assumptionConditionals))
+          ? root.assumptionConditionals
+          : null,
     ...aggregateLegacySubscores,
     subscoreValidity: aggregateSubscoreValidity,
     subscoreConsistencyWarning,
@@ -5930,6 +6017,19 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
     constructionStrengthScore: aggregate.constructionStrengthScore,
     outputStrengthScore: aggregate.outputStrengthScore,
     subscoreRationale: aggregate.subscoreRationale,
+    // Named-assumption conditionals — the cumulative "if you grant X" score(s),
+    // computed (anti-anchoring) from the review's own per-dimension assumption
+    // tags + the FINAL subscores. Inert ({ applicable: false }) until the
+    // assumption-conditionals delta is on and the review emits the tags.
+    assumptionConditionals: computeAssumptionConditionals({
+      inPhysicsScore: aggregate.finalScoreBand.median,
+      subscores: {
+        input: aggregate.inputStrengthScore,
+        construction: aggregate.constructionStrengthScore,
+        output: aggregate.outputStrengthScore,
+      },
+      raw: aggregate.assumptionConditionalsRaw,
+    }),
     inputConstructionOutputAssessment: v16IcoAssessmentOnly(aggregate.inputConstructionOutputLedger),
     technicalAssessment: v16TechnicalAssessmentFromAggregate(aggregate),
     failureAnalysis: v16FailureAnalysisFromAggregate(aggregate),

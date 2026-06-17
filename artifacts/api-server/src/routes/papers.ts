@@ -82,18 +82,6 @@ import {
 } from "../lib/consistencyCalibration";
 import { CONSISTENCY_CALIBRATION_V1_PROMPT } from "../lib/prompts/consistencyCalibrationV1";
 import { withModelRetry } from "../lib/modelRetry";
-import {
-  SCORE_REDUCTION_PASS_VERSION,
-  SCORE_REDUCTION_SYSTEM_PROMPT,
-  scoreReductionJsonSchema,
-  scoreReductionDimensions,
-  dimensionSubscore,
-  tagsFromResponseText,
-  reasonsFromTags,
-  computeWithinFrameworkScore,
-  type ScoreReductionTags,
-  type ScoreReductionDimension,
-} from "../lib/scoreReduction";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
@@ -1951,7 +1939,6 @@ async function reviewAttemptById(attemptId: string) {
 // paper. It rides the same reviewAttempts/worker machinery but carries no
 // source/user snapshot — the work is identified by jobKind in debugPayload.
 const CONSISTENCY_JOB_KIND = "consistency-calibration";
-const SCORE_REDUCTION_JOB_KIND = "score-reduction-reasons";
 
 function jobKindOf(record: ReviewAttemptRecord): string | null {
   const kind = debugPayloadObject(record.debugPayload).jobKind;
@@ -1960,14 +1947,10 @@ function jobKindOf(record: ReviewAttemptRecord): string | null {
 function isConsistencyCalibrationJob(record: ReviewAttemptRecord) {
   return jobKindOf(record) === CONSISTENCY_JOB_KIND;
 }
-function isScoreReductionReasonsJob(record: ReviewAttemptRecord) {
-  return jobKindOf(record) === SCORE_REDUCTION_JOB_KIND;
-}
-// Background corpus passes (consistency calibration, score-reduction reasons)
-// ride the worker machinery but carry no source/user snapshot — the work is
-// identified by jobKind in debugPayload.
+// Background corpus passes ride the worker machinery but carry no source/user
+// snapshot — the work is identified by jobKind in debugPayload.
 function isBackgroundCorpusJob(record: ReviewAttemptRecord) {
-  return isConsistencyCalibrationJob(record) || isScoreReductionReasonsJob(record);
+  return isConsistencyCalibrationJob(record);
 }
 function corpusJobParams(record: ReviewAttemptRecord): Record<string, any> {
   const params = debugPayloadObject(record.debugPayload).jobParams;
@@ -2165,10 +2148,6 @@ async function runReviewJob(attemptId: string) {
   // path (no source/user snapshot, no processPaperSubmission).
   if (isConsistencyCalibrationJob(record)) {
     await runConsistencyCalibrationJob(record);
-    return;
-  }
-  if (isScoreReductionReasonsJob(record)) {
-    await runScoreReductionReasonsJob(record);
     return;
   }
 
@@ -2402,24 +2381,6 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
       judgeConcurrency: CONSISTENCY_JUDGE_CONCURRENCY,
       precomputedVerdicts: checkpoint as Record<string, RungVerdict[]>,
       onGroupJudged: recordProgress,
-    }),
-  });
-}
-
-async function runScoreReductionReasonsJob(record: ReviewAttemptRecord) {
-  await runDurableCorpusJob(record, {
-    label: "score-reduction reasons",
-    checkpointField: "scoreReductionCheckpoint",
-    itemsKey: "reasonsByReview",
-    doneKey: "reviewsDone",
-    resultField: "scoreReductionResult",
-    errorField: "scoreReductionError",
-    maxAttempts: SCORE_REDUCTION_JOB_MAX_ATTEMPTS,
-    execute: ({ params, checkpoint, recordProgress }) => executeScoreReductionReasons({
-      apply: params.apply === true,
-      concurrency: SCORE_REDUCTION_CONCURRENCY,
-      precomputedTags: checkpoint as Record<string, ScoreReductionTags>,
-      onReviewDone: recordProgress,
     }),
   });
 }
@@ -4807,238 +4768,6 @@ router.post("/papers/consistency-calibration", async (req, res) => {
     });
   } catch (err: any) {
     logger.error({ err }, "Failed to enqueue consistency calibration");
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// --- Score-reduction reasons (score-reduction-v1) — gated DISPLAY pass -----
-// For each existing review, read the stored I/C/O subscore + rationale and
-// emit one short "held at N because …" sentence per dimension below 10. One
-// model call per review (reads existing text only). Gated behind a flag and
-// dry-run by default. Never changes a score, rung, or the review prompt hash
-// — so it does not re-open the benchmark.
-const SCORE_REDUCTION_REASONS_ENABLED = process.env.ENABLE_SCORE_REDUCTION_REASONS === "true";
-// Defaults to the PRO model: flash could not reliably produce the structured
-// tags (it skipped ~90% of reviews on invalid JSON). Pro answers reliably; the
-// per-call cost is fixed by sending only the lean subscore rationale, capping
-// output, and running LOW thinking (see explainScoreReductions) — so even pro
-// is fast. Override with SCIREVIEW_SCORE_REDUCTION_MODEL if needed.
-const SCORE_REDUCTION_MODEL = process.env.SCIREVIEW_SCORE_REDUCTION_MODEL?.trim() || GEMINI_META_MODEL;
-const SCORE_REDUCTION_CONCURRENCY = Math.max(1, Number(process.env.SCORE_REDUCTION_CONCURRENCY ?? 12) || 12);
-const SCORE_REDUCTION_JOB_MAX_ATTEMPTS = Math.max(1, Number(process.env.SCORE_REDUCTION_JOB_MAX_ATTEMPTS ?? 4) || 4);
-// Per-item tolerance for malformed JSON: re-call this one review a couple
-// times with a strict "valid JSON only" nudge before giving up on it.
-const SCORE_REDUCTION_PARSE_ATTEMPTS = Math.max(1, Number(process.env.SCORE_REDUCTION_PARSE_ATTEMPTS ?? 3) || 3);
-
-// One model call: for each below-10 dimension, explain why it is held where it
-// is and TAG the deduction (cause / frameworkDependent / frameworkName /
-// independentlyCapped), grounded ONLY in the stored rationale. Retry transient
-// blips. The model emits NO numbers — the within-framework score is recomputed
-// by code from these tags.
-async function explainScoreReductions(dims: ScoreReductionDimension[]): Promise<ScoreReductionTags> {
-  for (let attempt = 1; attempt <= SCORE_REDUCTION_PARSE_ATTEMPTS; attempt += 1) {
-    const strict = attempt > 1; // after a parse miss, nudge for valid JSON only
-    // withModelRetry covers transient blips (503/429/timeout); the surrounding
-    // loop covers DETERMINISTIC malformed-JSON responses, which retry/backoff
-    // does not, by re-asking this one item with a strict nudge.
-    const response = await withModelRetry<any>(
-      () => (geminiAI.models.generateContent as any)({
-        model: SCORE_REDUCTION_MODEL,
-        contents: [{
-          role: "user",
-          parts: [{
-            text: JSON.stringify({
-              task: "For each dimension, write the 'held at N because …' reason AND tag the deduction: is it held down (even partly) because the work rests on an unproven theoretical framework (frameworkDependent + frameworkName), and is there also a non-framework cause limiting it (independentlyCapped)? Use ONLY the stored rationale; do not introduce new numbers or re-judge.",
-              ...(strict ? { responseRequirement: "Return ONLY valid minified JSON matching the schema — no prose, no markdown, no code fences." } : {}),
-              dimensions: dims.map((d) => ({ dimension: d.key, score: d.score, storedRationale: d.rationale })),
-            }, null, 2),
-          }],
-        }],
-        config: {
-          systemInstruction: SCORE_REDUCTION_SYSTEM_PROMPT,
-          responseMimeType: "application/json",
-          responseJsonSchema: scoreReductionJsonSchema,
-          temperature: strict ? 0 : 0.2,
-          maxOutputTokens: 768,
-          // This is a small "read the rationale, emit the tags" extraction —
-          // not a reasoning task. LOW thinking keeps even the pro model to
-          // seconds per call instead of minutes (the default thinking level on
-          // a thinking model is what made each call take ~4 min).
-          thinkingConfig: { thinkingLevel: "LOW" },
-        },
-      }),
-      {
-        label: "score-reduction",
-        onRetry: ({ attempt: a, maxAttempts, delayMs, error }) =>
-          logger.warn({ attempt: a, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error tagging score reductions; retrying after backoff"),
-      },
-    );
-    // tagsFromResponseText returns null ONLY when the JSON could not be parsed
-    // at all (so we retry this item); a parsed-but-empty {} is a valid result.
-    const tags = tagsFromResponseText(response?.text ?? "", dims);
-    if (tags) return tags;
-    logger.warn({ attempt, attempts: SCORE_REDUCTION_PARSE_ATTEMPTS }, "Score-reduction response was not valid JSON; retrying this item with a strict JSON nudge");
-  }
-  throw new Error("Could not parse score-reduction response as JSON after retries");
-}
-
-// Stored "in physics" score for a review (the current absolute score).
-function inPhysicsScoreOf(ledger: Record<string, any>, review: Record<string, any>): number | null {
-  const raw = ledger?.computedScore ?? ledger?.intrinsicScore ?? review?.overallIntrinsicScore ?? review?.score;
-  const n = Number(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
-// Corpus pass: one model call per review that has any below-10 dimension.
-// Reads stored ledger text only; tags each deduction and DERIVES the
-// within-framework score by lifting only the framework-dependent dimensions
-// (anti-anchoring: all numbers computed here, none from the model). Writes the
-// scoreReductionReasons + withinFrameworkScore DISPLAY fields when apply=true
-// (scores/rungs/prompt hash untouched). Bounded concurrency + per-review
-// checkpoint via the durable corpus job.
-async function executeScoreReductionReasons(opts: {
-  apply: boolean;
-  concurrency: number;
-  precomputedTags: Record<string, ScoreReductionTags>;
-  onReviewDone: (reviewId: string, tags: ScoreReductionTags) => void | Promise<void>;
-}) {
-  const { apply } = opts;
-  const papersRows = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
-  const reviews = await db.select().from(reviewsTable);
-  const reviewByPaper = new Map(reviews.map((review) => [review.paperId, review]));
-
-  type ReasonJob = {
-    reviewId: string;
-    paperId: string;
-    ledger: Record<string, any>;
-    review: Record<string, any>;
-    dims: ScoreReductionDimension[];
-  };
-  const jobs: ReasonJob[] = [];
-  for (const paper of papersRows) {
-    const review = reviewByPaper.get(paper.id);
-    if (!review) continue;
-    const ledger = parseJsonObject(review.coverageLedgerJson);
-    if (!ledger) continue;
-    const dims = scoreReductionDimensions(ledger, review);
-    if (dims.length === 0) continue; // all scored dimensions at 10 (or none scored)
-    jobs.push({ reviewId: review.id, paperId: paper.id, ledger, review, dims });
-  }
-
-  const results: Array<{
-    reviewId: string;
-    paperId: string;
-    dimensions: string[];
-    reasons: Record<string, string>;
-    withinFramework: ReturnType<typeof computeWithinFrameworkScore>;
-  }> = [];
-  const skipped: Array<{ reviewId: string; paperId: string; reason: string }> = [];
-  let modelCalls = 0;
-  let reusedFromCheckpoint = 0;
-  let updatedReviews = 0;
-  let withinFrameworkCount = 0;
-
-  const concurrency = Math.max(1, opts.concurrency);
-  let nextJob = 0;
-  const worker = async () => {
-    for (;;) {
-      const i = nextJob;
-      nextJob += 1; // synchronous claim; no two workers take the same index
-      if (i >= jobs.length) return;
-      const job = jobs[i];
-      let tags = opts.precomputedTags[job.reviewId];
-      if (tags) {
-        reusedFromCheckpoint += 1;
-      } else {
-        // Per-item isolation: a malformed response (or exhausted transient
-        // retries) for ONE review is skipped and logged — it never fails the
-        // whole corpus. The review is left out of the checkpoint, so a later
-        // run will retry it.
-        try {
-          tags = await explainScoreReductions(job.dims); // one model call (retry-wrapped)
-        } catch (err: any) {
-          const reason = err?.message ? String(err.message) : "tagging failed";
-          skipped.push({ reviewId: job.reviewId, paperId: job.paperId, reason });
-          logger.warn({ err, reviewId: job.reviewId, paperId: job.paperId }, "Skipping review: score-reduction tagging failed after retries");
-          continue;
-        }
-        modelCalls += 1;
-        await opts.onReviewDone(job.reviewId, tags);
-      }
-      const reasons = reasonsFromTags(tags);
-      const withinFramework = computeWithinFrameworkScore({
-        inPhysicsScore: inPhysicsScoreOf(job.ledger, job.review),
-        subscores: {
-          input: dimensionSubscore(job.ledger, job.review, "input"),
-          construction: dimensionSubscore(job.ledger, job.review, "construction"),
-          output: dimensionSubscore(job.ledger, job.review, "output"),
-        },
-        tags,
-      });
-      if (withinFramework.applicable) withinFrameworkCount += 1;
-      results.push({ reviewId: job.reviewId, paperId: job.paperId, dimensions: job.dims.map((d) => d.key), reasons, withinFramework });
-      if (apply) {
-        // Display fields only — scores, rungs, subscoreRationale, and the
-        // prompt hash on the ledger are left exactly as they were.
-        const generatedAt = new Date().toISOString();
-        const updatedLedger = {
-          ...job.ledger,
-          scoreReductionReasons: { ...reasons, pass: SCORE_REDUCTION_PASS_VERSION, generatedAt },
-          withinFrameworkScore: { ...withinFramework, pass: SCORE_REDUCTION_PASS_VERSION, generatedAt },
-        };
-        await db.update(reviewsTable)
-          .set({ coverageLedgerJson: JSON.stringify(updatedLedger) })
-          .where(eq(reviewsTable.id, job.reviewId));
-        updatedReviews += 1;
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, jobs.length)) }, () => worker()));
-
-  return {
-    pass: SCORE_REDUCTION_PASS_VERSION,
-    dryRun: !apply,
-    reviewsConsidered: jobs.length,
-    withinFrameworkCount,
-    modelCalls,
-    reusedFromCheckpoint,
-    updatedReviews,
-    skippedCount: skipped.length,
-    skipped,
-    results,
-    note: apply
-      ? "Applied: scoreReductionReasons + withinFrameworkScore (display only) written to each review ledger; scores, rungs, and the prompt hash are untouched."
-      : "Dry run: nothing written. Pass { apply: true } to persist the display fields.",
-  };
-}
-
-// POST /api/papers/score-reduction-reasons — gated, dry-run-by-default
-// background pass. Surfaces the "why not 10" reason that already exists in
-// each review's stored rationale, as a display field. Does NOT re-review or
-// change any score/rung/prompt-hash, so it never re-opens the benchmark.
-router.post("/papers/score-reduction-reasons", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  if (!SCORE_REDUCTION_REASONS_ENABLED) {
-    res.status(409).json({
-      error: "score-reduction reasons pass is gated; set ENABLE_SCORE_REDUCTION_REASONS=true to run it. It reads stored rationale only and never changes a score, rung, or the prompt hash.",
-    });
-    return;
-  }
-  try {
-    const apply = req.body?.apply === true; // default: dry run, no writes
-    const existing = await findInflightCorpusJob(SCORE_REDUCTION_JOB_KIND);
-    const job = existing ?? await createCorpusJob(req.user, SCORE_REDUCTION_JOB_KIND, { pass: SCORE_REDUCTION_PASS_VERSION, apply });
-    res.status(202).json({
-      pass: SCORE_REDUCTION_PASS_VERSION,
-      dryRun: !apply,
-      jobId: job.attemptId,
-      status: job.reviewStatus,
-      statusUrl: `/api/review-jobs/${job.attemptId}`,
-      reused: Boolean(existing),
-      note: "Score-reduction reasons enqueued as a background job (reads stored rationale only; scores/rungs/prompt hash untouched). Poll statusUrl until reviewStatus is 'completed'; the result is in attempt.debugPayload.scoreReductionResult.",
-    });
-  } catch (err: any) {
-    logger.error({ err }, "Failed to enqueue score-reduction reasons");
     res.status(500).json({ error: err.message });
   }
 });
