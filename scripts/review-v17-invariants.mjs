@@ -1778,6 +1778,16 @@ await assertConsistencyResilience();
 // RETIRED (it failed/was slow).
 const assumptionConditionalsSource = readFileSync(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"), "utf8");
 assert.match(assumptionConditionalsSource, /export function computeAssumptionConditionals/);
+// Only OPEN assumptions earn a conditional — ruled-out / confirmed never get a
+// "what if it were true" score. The status gate + classifier must be present.
+assert.match(assumptionConditionalsSource, /export function normalizeAssumptionStatus/);
+assert.match(assumptionConditionalsSource, /if \(status !== "open"\)/);
+assert.match(assumptionConditionalsSource, /ruled_out/);
+// Schema + prompt carry the epistemic status; the prompt forbids lifting a
+// ruled-out premise (judged with current knowledge).
+assert.match(engineSource, /assumptionStatus: \{ type: "string", enum: \["open", "ruled_out", "confirmed"\] \}/);
+assert.match(engineSource, /ruled_out/);
+assert.match(engineSource, /falsified or contradicted by evidence as of today/);
 // Gated prompt delta in the review engine: deploying with the flag off keeps
 // the active prompt/hash unchanged; flipping it bumps to v19.0.4 (one re-run).
 assert.match(engineSource, /ASSUMPTION_CONDITIONALS_ENABLED = process\.env\.ENABLE_ASSUMPTION_CONDITIONALS === "true"/);
@@ -1812,19 +1822,19 @@ async function assertAssumptionConditionals() {
   writeFileSync(entry, `
     import { computeAssumptionConditionals } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"))};
     globalThis.__assumptionCond = (async () => {
-      // Maldacena-like: input rests on "the string-theory inputs" (lifts 8->10),
-      // output on "the AdS/CFT duality conjecture" (lifts 8.5->10), construction
-      // (9.5) names no grantable assumption. Cumulative chain: grant inputs ->
-      // 93; grant both -> higher (never above 100).
+      // Maldacena-like: input rests on "the string-theory inputs" (OPEN, lifts
+      // 8->10), output on "the AdS/CFT duality conjecture" (OPEN, lifts 8.5->10),
+      // construction (9.5) names no grantable assumption. Cumulative chain:
+      // grant inputs -> 93; grant both -> higher (never above 100).
       const mald = computeAssumptionConditionals({
         inPhysicsScore: 87,
         subscores: { input: 8, construction: 9.5, output: 8.5 },
         raw: {
-          inputStrengthScore: { assumptionName: "the string-theory inputs", conditionalLiftScore: 10 },
-          outputStrengthScore: { assumptionName: "the AdS/CFT duality conjecture", conditionalLiftScore: 10 },
+          inputStrengthScore: { assumptionName: "the string-theory inputs", assumptionStatus: "open", conditionalLiftScore: 10 },
+          outputStrengthScore: { assumptionName: "the AdS/CFT duality conjecture", assumptionStatus: "open", conditionalLiftScore: 10 },
         },
       });
-      if (!mald.applicable) throw new Error("a paper with grantable assumptions should be applicable");
+      if (!mald.applicable) throw new Error("a paper with grantable OPEN assumptions should be applicable");
       if (mald.conditionals.length !== 2) throw new Error("expected a 2-step cumulative chain, got " + mald.conditionals.length);
       if (mald.conditionals[0].assumptions.length !== 1 || mald.conditionals[0].assumptions[0] !== "the string-theory inputs") throw new Error("first conditional should grant only the input assumption");
       if (mald.conditionals[0].score !== 93) throw new Error("granting the string-theory inputs should give 93, got " + mald.conditionals[0].score);
@@ -1833,23 +1843,52 @@ async function assertAssumptionConditionals() {
       if (mald.conditionals[1].assumptions.length !== 2) throw new Error("second conditional should grant both assumptions cumulatively");
       if (JSON.stringify(mald.contingentOn) !== JSON.stringify(["the string-theory inputs", "the AdS/CFT duality conjecture"])) throw new Error("contingentOn should list both named assumptions in order");
 
-      // All sub-10 dimensions liftable -> the final cumulative conditional reaches 100.
+      // All sub-10 dimensions liftable (OPEN) -> the final cumulative conditional reaches 100.
       const top = computeAssumptionConditionals({
         inPhysicsScore: 88,
         subscores: { input: 8, construction: 10, output: 8.5 },
         raw: {
-          inputStrengthScore: { assumptionName: "A", conditionalLiftScore: 10 },
-          outputStrengthScore: { assumptionName: "B", conditionalLiftScore: 10 },
+          inputStrengthScore: { assumptionName: "A", assumptionStatus: "open", conditionalLiftScore: 10 },
+          outputStrengthScore: { assumptionName: "B", assumptionStatus: "open", conditionalLiftScore: 10 },
         },
       });
-      if (top.conditionals[top.conditionals.length - 1].score !== 100) throw new Error("granting every sub-10 dimension's assumption should reach 100, got " + top.conditionals[top.conditionals.length - 1].score);
+      if (top.conditionals[top.conditionals.length - 1].score !== 100) throw new Error("granting every sub-10 dimension's OPEN assumption should reach 100, got " + top.conditionals[top.conditionals.length - 1].score);
+
+      // RULED-OUT assumption must NOT get a conditional, even with a lift score.
+      const ruledOut = computeAssumptionConditionals({
+        inPhysicsScore: 70,
+        subscores: { input: 6, construction: 9, output: 9 },
+        raw: { inputStrengthScore: { assumptionName: "a now-falsified premise", assumptionStatus: "ruled_out", conditionalLiftScore: 10 } },
+      });
+      if (ruledOut.applicable || ruledOut.conditionals.length !== 0) throw new Error("a ruled-out assumption must NOT produce a conditional");
+      if (!ruledOut.excluded.some((e) => e.status === "ruled_out" && e.assumptionName === "a now-falsified premise")) throw new Error("the ruled-out assumption should be recorded in excluded");
+
+      // CONFIRMED / UNKNOWN are likewise not lifted; a missing status defaults to ineligible.
+      const confirmed = computeAssumptionConditionals({ inPhysicsScore: 90, subscores: { input: 9, construction: 9, output: 9 }, raw: { inputStrengthScore: { assumptionName: "general relativity", assumptionStatus: "confirmed", conditionalLiftScore: 10 } } });
+      if (confirmed.applicable) throw new Error("a confirmed assumption must not produce a conditional");
+      const missing = computeAssumptionConditionals({ inPhysicsScore: 90, subscores: { input: 9, construction: 9, output: 9 }, raw: { inputStrengthScore: { assumptionName: "unspecified", conditionalLiftScore: 10 } } });
+      if (missing.applicable) throw new Error("a missing status must default to ineligible (no conditional)");
+
+      // MIXED: only the OPEN dimension lifts; the ruled-out one is excluded.
+      const mixed = computeAssumptionConditionals({
+        inPhysicsScore: 80,
+        subscores: { input: 8, construction: 9, output: 8 },
+        raw: {
+          inputStrengthScore: { assumptionName: "open premise", assumptionStatus: "open", conditionalLiftScore: 10 },
+          outputStrengthScore: { assumptionName: "dead premise", assumptionStatus: "falsified", conditionalLiftScore: 10 },
+        },
+      });
+      if (!mixed.applicable) throw new Error("a paper with one OPEN assumption should still be applicable");
+      if (JSON.stringify(mixed.contingentOn) !== JSON.stringify(["open premise"])) throw new Error("only the OPEN assumption should be contingent");
+      if (mixed.conditionals.length !== 1) throw new Error("the ruled-out dimension must not add a conditional step");
+      if (!mixed.excluded.some((e) => e.assumptionName === "dead premise" && e.status === "ruled_out")) throw new Error("the falsified premise should be excluded (normalized to ruled_out)");
 
       // No grantable assumption (approximation/scope) -> no second score.
       const none = computeAssumptionConditionals({ inPhysicsScore: 80, subscores: { input: 9, construction: 9, output: 8 }, raw: {} });
       if (none.applicable || none.conditionals.length !== 0) throw new Error("a paper with no named assumptions must get no conditional");
 
-      // A named assumption that does not raise the score is ignored.
-      const flat = computeAssumptionConditionals({ inPhysicsScore: 80, subscores: { input: 8, construction: 9, output: 9 }, raw: { inputStrengthScore: { assumptionName: "X", conditionalLiftScore: 8 } } });
+      // An OPEN assumption whose lift score does not raise the score is ignored.
+      const flat = computeAssumptionConditionals({ inPhysicsScore: 80, subscores: { input: 8, construction: 9, output: 9 }, raw: { inputStrengthScore: { assumptionName: "X", assumptionStatus: "open", conditionalLiftScore: 8 } } });
       if (flat.applicable) throw new Error("an assumption whose lift score does not exceed the current subscore must not apply");
     })();
   `);

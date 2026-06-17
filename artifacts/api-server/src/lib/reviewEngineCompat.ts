@@ -818,21 +818,30 @@ specific named assumption the deduction rests on — the exact result,
 conjecture, or premise as the manuscript frames it (e.g. "the supergravity /
 D-brane input identifications", "the AdS/CFT duality conjecture", "the
 loop-quantum-gravity area spectrum"), NOT a broad field or framework label
-("string theory", "holography", "quantum gravity" are too coarse). Then
-state the 0-10 dimension subscore that dimension would reach IF that
-assumption were granted as firm. Put these on assumptionConditionals, keyed
-by the dimension's subscore field:
+("string theory", "holography", "quantum gravity" are too coarse).
+
+Classify that assumption's epistemic status using CURRENT knowledge
+(assumptionStatus):
+- "open" — unconfirmed but not contradicted (speculative / conjectural /
+  untested). ONLY these get a conditional lift.
+- "ruled_out" — falsified or contradicted by evidence as of today, EVEN IF it
+  was reasonable at the manuscript's publication. Do NOT lift these — a "what
+  if it were true" score for a known-false premise would be misleading.
+- "confirmed" — established/firm today (then it would not be a deduction).
+Then, for "open" assumptions only, state the 0-10 dimension subscore that
+dimension would reach IF the assumption were granted as firm.
+
+Put these on assumptionConditionals, keyed by the dimension's subscore field:
 assumptionConditionals: {
-  inputStrengthScore: { assumptionName, conditionalLiftScore },
-  constructionStrengthScore: { assumptionName, conditionalLiftScore },
-  outputStrengthScore: { assumptionName, conditionalLiftScore }
+  inputStrengthScore: { assumptionName, assumptionStatus, conditionalLiftScore },
+  constructionStrengthScore: { assumptionName, assumptionStatus, conditionalLiftScore },
+  outputStrengthScore: { assumptionName, assumptionStatus, conditionalLiftScore }
 }
-Include a dimension ONLY when its deduction genuinely rests on a grantable
-assumption that, if true, would raise that subscore; omit dimensions limited
-by intrinsic scope, breadth, or robustness, which no assumption would lift.
-conditionalLiftScore is a 0-10 dimension subscore (the rung the dimension
-reaches if the assumption holds), never a 0-100 number — the conditional
-total is computed from it.`;
+Include a dimension ONLY when its deduction genuinely rests on a named
+assumption; omit dimensions limited by intrinsic scope, breadth, or
+robustness, which no assumption would lift. conditionalLiftScore is a 0-10
+dimension subscore (the rung the dimension reaches if an OPEN assumption
+holds), never a 0-100 number — the conditional total is computed from it.`;
 
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
@@ -1053,11 +1062,13 @@ const jsonNumber = { type: "number" };
 const jsonBoolean = { type: "boolean" };
 const jsonStringArray = { type: "array", items: jsonString };
 // One per-dimension named-assumption conditional (assumption-conditionals delta).
+// assumptionStatus gates eligibility: only "open" earns a conditional lift.
 const assumptionConditionalItemJsonSchema = {
   type: "object",
   additionalProperties: true,
   properties: {
     assumptionName: jsonString,
+    assumptionStatus: { type: "string", enum: ["open", "ruled_out", "confirmed"] },
     conditionalLiftScore: jsonNumber,
   },
 };
