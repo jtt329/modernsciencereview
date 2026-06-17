@@ -847,7 +847,11 @@ Include a dimension ONLY when its deduction genuinely rests on a named
 assumption; omit dimensions limited by intrinsic scope, breadth, or
 robustness, which no assumption would lift. conditionalLiftScore is a 0-10
 dimension subscore (the rung the dimension reaches if an OPEN assumption
-holds), never a 0-100 number — the conditional total is computed from it.`;
+holds), never a 0-100 number — the conditional total is computed from it.
+
+You MUST emit assumptionConditionals as a top-level field of your JSON output
+object (a sibling of inputStrengthScore and subscoreRationale), as structured
+JSON — not prose. If no dimension qualifies, emit an empty object: "assumptionConditionals": {}.`;
 
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
@@ -3422,6 +3426,13 @@ function normalizeIndividualReview(input: unknown): IndividualReview {
     outputReachScore,
     generalizationBreadthScore,
     subscoreRationale: normalizeSubscoreRationale(source.subscoreRationale),
+    // Carry the raw per-dimension named-assumption tags through (blind passes
+    // emit them under a JSON schema, so they're the most reliable source). The
+    // aggregate prefers the adjudicator's but falls back to these.
+    assumptionConditionalsRaw:
+      (source.assumptionConditionals && typeof source.assumptionConditionals === "object" && !Array.isArray(source.assumptionConditionals))
+        ? source.assumptionConditionals as Record<string, any>
+        : null,
     intrinsicTechnicalScore: normalizeDiagnosticSubscore(source.intrinsicTechnicalScore, inputStrengthScore),
     explanatoryTargetBreadthScore: normalizeDiagnosticSubscore(source.explanatoryTargetBreadthScore, constructionStrengthScore),
     theorySpaceBreadthScore: normalizeDiagnosticSubscore(source.theorySpaceBreadthScore, outputReachScore),
@@ -5236,6 +5247,26 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     : root.adjudication && typeof root.adjudication === "object"
       ? (root.adjudication as Record<string, unknown>)
       : root;
+  // Capture the raw per-dimension named-assumption tags. Prefer the
+  // adjudicator's own emission (top-level or under finalIntrinsicReview); fall
+  // back to the representative blind review, which emits them under a JSON
+  // schema and is therefore the more reliable source (the adjudicator runs
+  // without a response schema). When the delta is on, log where they came from
+  // so a live run shows whether the model actually emits them.
+  const objOrNull = (v: unknown): Record<string, any> | null =>
+    v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, any>) : null;
+  const adjudicatorAssumptionConditionals = objOrNull(source.assumptionConditionals) ?? objOrNull(root.assumptionConditionals);
+  const blindAssumptionConditionals = objOrNull((fallbackReview as any)?.assumptionConditionalsRaw);
+  const aggregateAssumptionConditionalsRaw = adjudicatorAssumptionConditionals ?? blindAssumptionConditionals;
+  if (ASSUMPTION_CONDITIONALS_ENABLED) {
+    logger.info({
+      adjudicatorEmitted: Boolean(adjudicatorAssumptionConditionals),
+      blindFallbackUsed: !adjudicatorAssumptionConditionals && Boolean(blindAssumptionConditionals),
+      captured: Boolean(aggregateAssumptionConditionalsRaw),
+      dimensions: aggregateAssumptionConditionalsRaw ? Object.keys(aggregateAssumptionConditionalsRaw) : [],
+      rawTags: aggregateAssumptionConditionalsRaw ?? null,
+    }, "assumption-conditionals: raw tag capture in normalizeAggregateReview");
+  }
   const comparatorProfileSource = root.comparatorProfile && typeof root.comparatorProfile === "object"
     ? (root.comparatorProfile as Record<string, unknown>)
     : source.comparatorProfile && typeof source.comparatorProfile === "object"
@@ -5753,15 +5784,10 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
     unifyingPower: asString(source.unifyingPower, fallbackReview.unifyingPower),
     ...aggregateSubscores,
     subscoreRationale: aggregateSubscoreRationale,
-    // Raw per-dimension named-assumption tags from the adjudicator (only with
-    // the assumption-conditionals delta on); the conditional chain is computed
-    // from the FINAL subscores at the canonical ledger.
-    assumptionConditionalsRaw:
-      (source.assumptionConditionals && typeof source.assumptionConditionals === "object" && !Array.isArray(source.assumptionConditionals))
-        ? source.assumptionConditionals
-        : (root?.assumptionConditionals && typeof root.assumptionConditionals === "object" && !Array.isArray(root.assumptionConditionals))
-          ? root.assumptionConditionals
-          : null,
+    // Raw per-dimension named-assumption tags (adjudicator preferred, blind
+    // fallback). The conditional chain is computed from the FINAL subscores at
+    // the canonical ledger.
+    assumptionConditionalsRaw: aggregateAssumptionConditionalsRaw,
     ...aggregateLegacySubscores,
     subscoreValidity: aggregateSubscoreValidity,
     subscoreConsistencyWarning,

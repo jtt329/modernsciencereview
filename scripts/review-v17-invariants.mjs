@@ -1802,6 +1802,15 @@ assert.match(engineSource, /assumptionConditionalItemJsonSchema/); // optional r
 // the raw tags carried through the aggregate — not emitted by the model.
 assert.match(engineSource, /assumptionConditionalsRaw/);
 assert.match(engineSource, /assumptionConditionals: computeAssumptionConditionals\(\{/);
+// Robust capture: the adjudicator runs WITHOUT a response schema, so the raw
+// tags are taken from the adjudicator when present, else the schema-driven
+// blind passes (carried through normalizeIndividualReview). A gated log records
+// where they were captured so a live run shows whether the model emits them.
+assert.match(engineSource, /blindAssumptionConditionals/);
+assert.match(engineSource, /adjudicatorAssumptionConditionals \?\? blindAssumptionConditionals/);
+assert.match(engineSource, /assumption-conditionals: raw tag capture/);
+// The prompt requires the field as structured JSON (not prose), even empty.
+assert.match(engineSource, /You MUST emit assumptionConditionals as a top-level field/);
 // The separate tagging pass is gone: no lib, no route, no job kind.
 assert.ok(
   !existsSync(join(root, "artifacts/api-server/src/lib/scoreReduction.ts")),
