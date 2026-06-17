@@ -35,17 +35,23 @@ export type AssumptionConditional = {
 };
 
 // Epistemic status of a docked cause, judged with CURRENT knowledge. ONLY
-// "open" earns a conditional — genuine uncertainty (viable-but-unproven). The
-// others never lift, because there is no honest "what if it were true":
+// "open" earns a conditional — an unresolved question about NATURE (an
+// unconfirmed physical framework or a genuine open conjecture). The others
+// never lift:
+//   "approximation" — a deliberate, known-to-be-approximate modeling choice
+//                  (semiclassical, leading-order, random-pure-state idealization,
+//                  mean-field, probe limit, neglecting backreaction, ...). Not an
+//                  open question about nature — there is no "what if it were
+//                  exactly true" that changes the science.
 //   "ruled_out"  — a premise falsified / ruled out (even if reasonable at
 //                  publication).
 //   "error"      — the work itself is WRONG: invalid/unphysical construction,
 //                  algebraic or logical error, refuted/contradicted output, or
-//                  an inappropriate/incorrect modeling choice. "wrong" is not
-//                  "uncertain" — there is nothing to grant.
+//                  an inappropriate/incorrect modeling choice. There is nothing
+//                  to grant.
 //   "confirmed"  — established/firm today (not a deduction at all).
 //   "unknown"    — unclassified; treated as ineligible (conservative).
-export type AssumptionStatus = "open" | "ruled_out" | "error" | "confirmed" | "unknown";
+export type AssumptionStatus = "open" | "approximation" | "ruled_out" | "error" | "confirmed" | "unknown";
 
 export type ExcludedAssumption = {
   dimension: ScoreDimensionKey;
@@ -79,6 +85,8 @@ export function normalizeAssumptionStatus(value: unknown): AssumptionStatus {
   if (/(error|invalid|unphysical|nonphysical|algebra|logic|refuted|contradict|incorrect|wrong|flaw|erroneous|mistaken|fallac|inconsistent|nonsensical|unsound|incoherent|inappropriate)/.test(s)) return "error";
   // A premise falsified / ruled out by current evidence.
   if (/(ruled_out|ruledout|falsified|disproven|disproved|excluded|overturned|known_false|debunked)/.test(s)) return "ruled_out";
+  // A deliberate modeling approximation — never a conditional.
+  if (/(approximat|semiclassical|leading_order|perturbativ|mean_field|idealiz|probe_limit|test_particle|random_pure_state|haar|quasi_static|adiabatic|backreaction|saddle)/.test(s)) return "approximation";
   if (/(confirmed|established|firm|proven|proved|verified|settled|accepted)/.test(s)) return "confirmed";
   if (/(open|speculative|unconfirmed|conjectur|plausible|tentative|untested|provisional|hypothes|unproven|unsettled|viable)/.test(s)) return "open";
   return "unknown";
@@ -178,33 +186,63 @@ export function computeAssumptionConditionals(args: {
 // conjecture / untested). Anything else yields no entry.
 
 // Curated named assumptions for the physics corpus: lowercase test -> display
-// name. Extend as the corpus needs.
+// name. These are unconfirmed physical FRAMEWORKS and named OPEN CONJECTURES —
+// unresolved questions about nature whose resolution would change the science.
+// A match here is a framework/open-conjecture cue (status "open"). Extend as
+// the corpus needs.
 const NAMED_ASSUMPTION_PATTERNS: Array<[RegExp, string]> = [
   [/ads[\/\-\s]?cft|anti[-\s]?de[-\s]?sitter/, "the AdS/CFT correspondence"],
   [/\bstring[-\s]?theor/, "string theory"],
   [/\bm[-\s]?theory\b/, "M-theory"],
   [/\bholograph/, "the holographic principle"],
-  [/\bloop[-\s]?quantum/, "loop quantum gravity"],
+  [/\bloop[-\s]?quantum|\bspin[-\s]?network|\bspin[-\s]?foam|\barea[-\s]?spectrum/, "loop quantum gravity"],
   [/\bsupergravit/, "supergravity"],
   [/\bsupersymmetr|\bsusy\b/, "supersymmetry"],
+  [/\bextra[-\s]dimension/, "extra dimensions"],
   [/\bd[-\s]?brane/, "the D-brane construction"],
   [/\bswampland/, "the swampland conjecture"],
-  [/\beft\b|effective[-\s]field[-\s]theory/, "the effective-field-theory assumption"],
   [/\basymptotic[-\s]safety/, "asymptotic safety"],
   [/\bcausal[-\s]set/, "causal set theory"],
   [/\bentropic[-\s]gravity|emergent[-\s]gravity/, "emergent/entropic gravity"],
+  // Named open conjectures (questions about nature, not modeling choices).
+  [/\bcosmic[-\s]censorship/, "cosmic censorship"],
+  [/\basymptotic[-\s]predictability/, "asymptotic predictability"],
 ];
 
 // "The work is wrong" — never a conditional. Checked first (dominates).
-const PROSE_ERROR = /\b(invalid|unphysical|nonphysical|non-physical|algebraic error|algebra is|logical(?:ly)? (?:error|flaw|inconsistent)|refut|contradict|incorrect|erroneous|\bflaw|inconsisten|inappropriate (?:vacuum|choice|assumption)|unsound|fatal (?:error|flaw)|mathematically wrong|does not hold|ill-defined|nonsensical|sign error)\b/;
+const PROSE_ERROR = /\b(invalid|unphysical|nonphysical|non-physical|algebraic error|algebra is|logical(?:ly)? (?:error|flaw|inconsistent)|refut|contradict|incorrect|erroneous|\bflaw|inconsisten|inappropriate (?:vacuum|choice|assumption|modeling)|unsound|fatal (?:error|flaw)|mathematically wrong|does not hold|ill-defined|nonsensical|sign error)\b/;
 // A premise falsified / ruled out by current evidence.
 const PROSE_RULED_OUT = /\b(ruled[-\s]?out|falsified|disproven|disproved|experimentally excluded|excluded by (?:experiment|data|observation)|debunked|overturned|known to be false|now known false)\b/;
-// Genuine, viable uncertainty — the only case that lifts.
-const PROSE_OPEN = /\b(untested|unproven|unconfirmed|not (?:yet )?(?:been )?(?:experimentally )?(?:confirmed|verified|established|tested)|no experimental (?:confirmation|evidence|support)|conjectur|speculativ|hypothe(?:tical|sis)|provisional|unverified|tentative|awaits? (?:experimental )?(?:confirmation|verification)|lacks experimental)\b/;
+// A generic open conjecture cue (no specific framework named, but the result
+// is explicitly contingent on something conjectured/unproven-but-mathematical).
+const PROSE_OPEN_CONJECTURE = /\b(conjectur|unproven (?:duality|correspondence|conjecture)|unproven mathematical|contingent on the (?:conjecture|hypothesis))\b/;
+// A deliberate, known-to-be-approximate MODELING choice — NOT an open question
+// about nature. Never lifts (recorded as "approximation").
+const PROSE_APPROXIMATION = /\b(approximat|semiclassical|semi-classical|leading[-\s]order|next[-\s]to[-\s]leading|perturbativ|to first order|first[-\s]order|one[-\s]loop|tree[-\s]level|saddle[-\s]point|large[-\s]?n\b|mean[-\s]field|probe (?:limit|approximation)|test[-\s]particle|test particle|random pure state|haar[-\s]?random|thermal[-\s]equilibrium|near[-\s]horizon (?:expansion|approximation)|asymptotic expansion|quasi[-\s]?static|adiabatic|neglect(?:s|ing)? (?:the )?backreaction|without backreaction|no backreaction|modell?ed as|treated as|idealiz)\b/;
+// Generic, viable uncertainty (open question) with no framework named — lifts,
+// but ONLY after approximation has been ruled out.
+const PROSE_OPEN_GENERIC = /\b(untested|unproven|unconfirmed|not (?:yet )?(?:been )?(?:experimentally )?(?:confirmed|verified|established|tested)|no experimental (?:confirmation|evidence|support)|speculativ|hypothe(?:tical|sis)|provisional|unverified|tentative|awaits? (?:experimental )?(?:confirmation|verification)|lacks experimental)\b/;
 
 function namedAssumptionFrom(text: string): string | null {
   for (const [pattern, name] of NAMED_ASSUMPTION_PATTERNS) if (pattern.test(text)) return name;
   return null;
+}
+
+// Classify one dimension's rationale prose. Precedence:
+//   error -> ruled_out -> framework/open-conjecture (LIFT) -> approximation ->
+//   generic-open (LIFT) -> none.
+// A framework/conjecture cue beats an approximation cue (a genuine framework
+// lift is never suppressed by an approximation phrase in the same prose); but
+// an approximation cue beats generic-open language, so a deliberate
+// idealization (random pure state, semiclassical, ...) does NOT lift.
+function classifyProseCause(text: string): { status: AssumptionStatus; named: string | null } | null {
+  if (PROSE_ERROR.test(text)) return { status: "error", named: null };
+  if (PROSE_RULED_OUT.test(text)) return { status: "ruled_out", named: null };
+  const named = namedAssumptionFrom(text);
+  if (named || PROSE_OPEN_CONJECTURE.test(text)) return { status: "open", named };
+  if (PROSE_APPROXIMATION.test(text)) return { status: "approximation", named: null };
+  if (PROSE_OPEN_GENERIC.test(text)) return { status: "open", named: null };
+  return null; // scope / breadth / no recognized cue
 }
 
 export function deriveAssumptionConditionalsRawFromRationale(
@@ -219,17 +257,12 @@ export function deriveAssumptionConditionalsRawFromRationale(
     const proseRaw = rat[DIM_TO_SUBSCORE_KEY[dim]];
     const prose = typeof proseRaw === "string" ? proseRaw : "";
     if (!prose.trim()) continue;
-    const text = prose.toLowerCase();
-    const named = namedAssumptionFrom(text);
-    let status: AssumptionStatus;
-    if (PROSE_ERROR.test(text)) status = "error";              // wrong dominates
-    else if (PROSE_RULED_OUT.test(text)) status = "ruled_out";
-    else if (PROSE_OPEN.test(text) || named) status = "open";
-    else continue; // dock isn't a grantable assumption (scope/breadth/etc.)
+    const cause = classifyProseCause(prose.toLowerCase());
+    if (!cause) continue; // dock isn't a grantable assumption (scope/breadth/etc.)
     out[DIM_TO_SUBSCORE_KEY[dim]] = {
-      assumptionName: named ?? (status === "open" ? "the unproven assumption it rests on" : "the limiting factor"),
-      assumptionStatus: status,
-      conditionalLiftScore: status === "open" ? 10 : cur, // open lifts to firm; others don't lift
+      assumptionName: cause.named ?? (cause.status === "open" ? "the unproven assumption it rests on" : "the limiting factor"),
+      assumptionStatus: cause.status,
+      conditionalLiftScore: cause.status === "open" ? 10 : cur, // only "open" lifts to firm
     };
   }
   return out;

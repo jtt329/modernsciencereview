@@ -1815,11 +1815,18 @@ assert.match(engineSource, /assumption-conditionals: raw tag capture/);
 assert.match(assumptionConditionalsSource, /export function deriveAssumptionConditionalsRawFromRationale/);
 assert.match(engineSource, /deriveAssumptionConditionalsRawFromRationale\(aggregate\.subscoreRationale/);
 // Conservative classifier: "wrong"/"ruled out" prose never lifts; only clear
-// open-assumption prose (named framework / conjecture / untested) does.
+// open-assumption prose (named framework / conjecture / untested) does. A
+// deliberate modeling APPROXIMATION (semiclassical, random-pure-state, ...) is
+// its own status and never lifts.
 assert.match(assumptionConditionalsSource, /const PROSE_ERROR/);
 assert.match(assumptionConditionalsSource, /const PROSE_RULED_OUT/);
-assert.match(assumptionConditionalsSource, /const PROSE_OPEN/);
+assert.match(assumptionConditionalsSource, /const PROSE_APPROXIMATION/);
+assert.match(assumptionConditionalsSource, /const PROSE_OPEN_GENERIC/);
 assert.match(assumptionConditionalsSource, /NAMED_ASSUMPTION_PATTERNS/);
+assert.match(assumptionConditionalsSource, /"approximation"/);
+// Framework/conjecture is checked BEFORE approximation (beats it); approximation
+// is checked BEFORE generic-open (suppresses a bare-uncertainty lift).
+assert.match(assumptionConditionalsSource, /if \(named \|\| PROSE_OPEN_CONJECTURE\.test\(text\)\) return \{ status: "open"[\s\S]{0,80}if \(PROSE_APPROXIMATION\.test\(text\)\) return \{ status: "approximation"[\s\S]{0,120}if \(PROSE_OPEN_GENERIC\.test\(text\)\) return \{ status: "open"/);
 // The separate tagging pass is gone: no lib, no route, no job kind.
 assert.ok(
   !existsSync(join(root, "artifacts/api-server/src/lib/scoreReduction.ts")),
@@ -1893,6 +1900,51 @@ async function assertAssumptionConditionals() {
         85,
       );
       if (proseScope.applicable) throw new Error("a scope/breadth dock with no assumption language must not yield a conditional");
+
+      // APPROXIMATION bucket (the regression). Page — Information in BH Radiation:
+      // "the joint state is a random pure state" is a deliberate idealization,
+      // NOT an open question about nature -> status approximation -> NO conditional.
+      const prosePage = deriveChain(
+        { outputStrengthScore: "the bound assumes the joint state is a random pure state, an idealization that is unproven in a realistic setting" },
+        { input: 10, construction: 10, output: 9 },
+        93,
+      );
+      if (prosePage.applicable) throw new Error("a random-pure-state idealization (approximation) must not yield a conditional, even though the prose says 'unproven'");
+      if (!prosePage.excluded.some((e) => e.status === "approximation")) throw new Error("the approximation should be recorded in excluded with status approximation");
+
+      // Other approximation idealizations also do not lift.
+      for (const phrase of ["computed only to leading order in perturbation theory", "in the semiclassical limit", "a mean-field treatment", "neglecting the backreaction", "in the probe limit"]) {
+        const r = deriveChain({ inputStrengthScore: phrase }, { input: 8, construction: 10, output: 10 }, 90);
+        if (r.applicable) throw new Error("approximation phrase must not lift: " + phrase);
+      }
+
+      // Hawking — Four Laws: rests on "asymptotic predictability", an OPEN GR
+      // conjecture (a question about nature) -> status open -> KEEPS its lift,
+      // even though "asymptotic" also appears in approximation vocabulary.
+      const proseHawking4 = deriveChain(
+        { outputStrengthScore: "the proof assumes asymptotic predictability (cosmic censorship), which remains an open conjecture" },
+        { input: 10, construction: 10, output: 9 },
+        98,
+      );
+      if (!proseHawking4.applicable) throw new Error("asymptotic predictability is an open conjecture and must keep its lift");
+      if (!proseHawking4.contingentOn.some((a) => /asymptotic predictability|cosmic censorship/i.test(a))) throw new Error("the open conjecture should be named");
+
+      // A framework cue beats a co-occurring approximation cue (framework lift wins).
+      const proseBoth = deriveChain(
+        { inputStrengthScore: "rests on string theory, evaluated here in the leading-order / semiclassical approximation" },
+        { input: 8, construction: 10, output: 10 },
+        90,
+      );
+      if (!proseBoth.applicable) throw new Error("a framework cue must still lift even when an approximation phrase co-occurs");
+      if (!proseBoth.contingentOn.some((a) => /string theory/i.test(a))) throw new Error("the framework should be named when it co-occurs with an approximation");
+
+      // Rovelli LQG: loop-quantum-gravity area spectrum -> open framework lift.
+      const proseRovelli = deriveChain(
+        { inputStrengthScore: "rests on the loop quantum gravity area spectrum, an unconfirmed framework" },
+        { input: 6, construction: 8, output: 8 },
+        68,
+      );
+      if (!proseRovelli.applicable || !proseRovelli.contingentOn.some((a) => /loop quantum gravity/i.test(a))) throw new Error("LQG area spectrum should yield an open framework conditional");
 
       // Maldacena-like: input rests on "the string-theory inputs" (OPEN, lifts
       // 8->10), output on "the AdS/CFT duality conjecture" (OPEN, lifts 8.5->10),
