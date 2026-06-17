@@ -1811,6 +1811,11 @@ assert.match(engineSource, /adjudicatorAssumptionConditionals \?\? blindAssumpti
 assert.match(engineSource, /assumption-conditionals: raw tag capture/);
 // The prompt requires the field as structured JSON (not prose), even empty.
 assert.match(engineSource, /You MUST emit assumptionConditionals as a top-level field/);
+// The blind-pass schema makes assumptionConditionals REQUIRED when the delta is
+// on (the prompt alone wasn't enough), and a present per-dimension entry must
+// be fully populated — while {} stays valid when nothing qualifies.
+assert.match(engineSource, /\.\.\.\(ASSUMPTION_CONDITIONALS_ENABLED \? \["assumptionConditionals"\] : \[\]\)/);
+assert.match(engineSource, /required: \["assumptionName", "assumptionStatus", "conditionalLiftScore"\]/);
 // The separate tagging pass is gone: no lib, no route, no job kind.
 assert.ok(
   !existsSync(join(root, "artifacts/api-server/src/lib/scoreReduction.ts")),

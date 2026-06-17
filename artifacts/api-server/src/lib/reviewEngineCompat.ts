@@ -833,9 +833,11 @@ A conditional is valid ONLY for genuine uncertainty — "wrong" is NOT
   today, EVEN IF it was reasonable at the manuscript's publication. No
   conditional.
 - "confirmed" — established/firm today (then it would not be a deduction).
-Then, for "open" assumptions ONLY, state the 0-10 dimension subscore that
-dimension would reach IF the assumption were granted as firm. For "error",
-"ruled_out", and "confirmed" there is nothing to grant — do not lift them.
+For each entry give conditionalLiftScore as a 0-10 dimension subscore: for an
+"open" assumption, the subscore the dimension would reach IF the assumption
+were granted as firm; for "error", "ruled_out", or "confirmed" there is
+nothing to grant, so set conditionalLiftScore equal to the dimension's current
+subscore (no lift). Only "open" ever raises the score.
 
 Put these on assumptionConditionals, keyed by the dimension's subscore field:
 assumptionConditionals: {
@@ -1073,9 +1075,13 @@ const jsonBoolean = { type: "boolean" };
 const jsonStringArray = { type: "array", items: jsonString };
 // One per-dimension named-assumption conditional (assumption-conditionals delta).
 // assumptionStatus gates eligibility: only "open" earns a conditional lift.
+// All fields required + no extras, so a dimension that IS present is fully
+// populated (no half-emitted items); the dimension keys themselves stay
+// optional, so assumptionConditionals can be {} when nothing qualifies.
 const assumptionConditionalItemJsonSchema = {
   type: "object",
-  additionalProperties: true,
+  required: ["assumptionName", "assumptionStatus", "conditionalLiftScore"],
+  additionalProperties: false,
   properties: {
     assumptionName: jsonString,
     assumptionStatus: { type: "string", enum: ["open", "ruled_out", "error", "confirmed"] },
@@ -1249,6 +1255,10 @@ const individualReviewJsonSchema = {
     "hindsightAssessment",
     "diagnosticAssessmentConfidence",
     "adjudicationRationale",
+    // Require assumptionConditionals ONLY with the delta on, so the model must
+    // emit it (the prompt + optional field weren't enough). Empty {} is valid
+    // when nothing qualifies. Gated so flag-off generation is unchanged.
+    ...(ASSUMPTION_CONDITIONALS_ENABLED ? ["assumptionConditionals"] : []),
   ],
   additionalProperties: false,
   properties: {
