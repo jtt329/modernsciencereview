@@ -820,16 +820,22 @@ D-brane input identifications", "the AdS/CFT duality conjecture", "the
 loop-quantum-gravity area spectrum"), NOT a broad field or framework label
 ("string theory", "holography", "quantum gravity" are too coarse).
 
-Classify that assumption's epistemic status using CURRENT knowledge
-(assumptionStatus):
-- "open" — unconfirmed but not contradicted (speculative / conjectural /
-  untested). ONLY these get a conditional lift.
-- "ruled_out" — falsified or contradicted by evidence as of today, EVEN IF it
-  was reasonable at the manuscript's publication. Do NOT lift these — a "what
-  if it were true" score for a known-false premise would be misleading.
+Classify the deduction's cause using CURRENT knowledge (assumptionStatus).
+A conditional is valid ONLY for genuine uncertainty — "wrong" is NOT
+"uncertain", and gets no "what if it were true":
+- "open" — the dimension rests on an unconfirmed-but-viable assumption,
+  not contradicted by evidence (speculative / conjectural / untested, e.g.
+  string-theory or loop-quantum-gravity premises). ONLY these get a lift.
+- "error" — the work itself is WRONG: an invalid or physically unphysical
+  construction, an algebraic or logical error, a refuted or contradicted
+  output, or an inappropriate / incorrect modeling choice. No conditional.
+- "ruled_out" — the premise has been falsified / ruled out by evidence as of
+  today, EVEN IF it was reasonable at the manuscript's publication. No
+  conditional.
 - "confirmed" — established/firm today (then it would not be a deduction).
-Then, for "open" assumptions only, state the 0-10 dimension subscore that
-dimension would reach IF the assumption were granted as firm.
+Then, for "open" assumptions ONLY, state the 0-10 dimension subscore that
+dimension would reach IF the assumption were granted as firm. For "error",
+"ruled_out", and "confirmed" there is nothing to grant — do not lift them.
 
 Put these on assumptionConditionals, keyed by the dimension's subscore field:
 assumptionConditionals: {
@@ -1068,7 +1074,7 @@ const assumptionConditionalItemJsonSchema = {
   additionalProperties: true,
   properties: {
     assumptionName: jsonString,
-    assumptionStatus: { type: "string", enum: ["open", "ruled_out", "confirmed"] },
+    assumptionStatus: { type: "string", enum: ["open", "ruled_out", "error", "confirmed"] },
     conditionalLiftScore: jsonNumber,
   },
 };

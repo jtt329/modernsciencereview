@@ -31,11 +31,18 @@ export type AssumptionConditional = {
   score: number;         // the recomputed total if those assumptions hold
 };
 
-// Epistemic status of a docked assumption, judged with CURRENT knowledge. Only
-// "open" earns a conditional: a "ruled_out" premise (falsified/contradicted —
-// even if reasonable at publication) must not get a "what if it were true"
-// score, and a "confirmed" one isn't a deduction at all.
-export type AssumptionStatus = "open" | "ruled_out" | "confirmed" | "unknown";
+// Epistemic status of a docked cause, judged with CURRENT knowledge. ONLY
+// "open" earns a conditional — genuine uncertainty (viable-but-unproven). The
+// others never lift, because there is no honest "what if it were true":
+//   "ruled_out"  — a premise falsified / ruled out (even if reasonable at
+//                  publication).
+//   "error"      — the work itself is WRONG: invalid/unphysical construction,
+//                  algebraic or logical error, refuted/contradicted output, or
+//                  an inappropriate/incorrect modeling choice. "wrong" is not
+//                  "uncertain" — there is nothing to grant.
+//   "confirmed"  — established/firm today (not a deduction at all).
+//   "unknown"    — unclassified; treated as ineligible (conservative).
+export type AssumptionStatus = "open" | "ruled_out" | "error" | "confirmed" | "unknown";
 
 export type ExcludedAssumption = {
   dimension: ScoreDimensionKey;
@@ -57,14 +64,20 @@ function num(value: unknown): number | null {
 }
 
 // Normalize the model's status string. Defaults to "unknown" (NOT eligible) so
-// a missing/ambiguous status never produces a conditional — the dangerous case
-// (lifting a ruled-out assumption) requires an explicit "open".
+// a missing/ambiguous status never produces a conditional — earning a lift
+// requires an explicit "open". "wrong" causes (errors, invalidity, refutation,
+// incorrect modeling) map to "error"; falsified premises to "ruled_out"; both
+// are ineligible. Order matters: the ineligible buckets are checked first so a
+// word like "unproven" never lets an error/refuted cause slip into "open".
 export function normalizeAssumptionStatus(value: unknown): AssumptionStatus {
   const s = typeof value === "string" ? value.trim().toLowerCase().replace(/[\s-]+/g, "_") : "";
   if (!s) return "unknown";
-  if (/(ruled_out|ruledout|falsified|contradicted|disproven|disproved|refuted|excluded|overturned|incorrect|known_false)/.test(s)) return "ruled_out";
+  // "The work is wrong" — never a conditional.
+  if (/(error|invalid|unphysical|nonphysical|algebra|logic|refuted|contradict|incorrect|wrong|flaw|erroneous|mistaken|fallac|inconsistent|nonsensical|unsound|incoherent|inappropriate)/.test(s)) return "error";
+  // A premise falsified / ruled out by current evidence.
+  if (/(ruled_out|ruledout|falsified|disproven|disproved|excluded|overturned|known_false|debunked)/.test(s)) return "ruled_out";
   if (/(confirmed|established|firm|proven|proved|verified|settled|accepted)/.test(s)) return "confirmed";
-  if (/(open|speculative|unconfirmed|conjectur|plausible|tentative|untested|provisional|hypothes|unproven|unsettled)/.test(s)) return "open";
+  if (/(open|speculative|unconfirmed|conjectur|plausible|tentative|untested|provisional|hypothes|unproven|unsettled|viable)/.test(s)) return "open";
   return "unknown";
 }
 

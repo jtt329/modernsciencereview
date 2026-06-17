@@ -1783,11 +1783,14 @@ assert.match(assumptionConditionalsSource, /export function computeAssumptionCon
 assert.match(assumptionConditionalsSource, /export function normalizeAssumptionStatus/);
 assert.match(assumptionConditionalsSource, /if \(status !== "open"\)/);
 assert.match(assumptionConditionalsSource, /ruled_out/);
-// Schema + prompt carry the epistemic status; the prompt forbids lifting a
-// ruled-out premise (judged with current knowledge).
-assert.match(engineSource, /assumptionStatus: \{ type: "string", enum: \["open", "ruled_out", "confirmed"\] \}/);
-assert.match(engineSource, /ruled_out/);
-assert.match(engineSource, /falsified or contradicted by evidence as of today/);
+// "Wrong" causes get their own ineligible status — never a conditional.
+assert.match(assumptionConditionalsSource, /"error"/);
+// Schema + prompt carry the epistemic status; only "open" lifts. The prompt
+// must forbid lifting both a ruled-out premise AND a "wrong" (error) cause.
+assert.match(engineSource, /assumptionStatus: \{ type: "string", enum: \["open", "ruled_out", "error", "confirmed"\] \}/);
+assert.match(engineSource, /the work itself is WRONG/);
+assert.match(engineSource, /invalid or physically unphysical/);
+assert.match(engineSource, /algebraic or logical error/);
 // Gated prompt delta in the review engine: deploying with the flag off keeps
 // the active prompt/hash unchanged; flipping it bumps to v19.0.4 (one re-run).
 assert.match(engineSource, /ASSUMPTION_CONDITIONALS_ENABLED = process\.env\.ENABLE_ASSUMPTION_CONDITIONALS === "true"/);
@@ -1862,6 +1865,33 @@ async function assertAssumptionConditionals() {
       });
       if (ruledOut.applicable || ruledOut.conditionals.length !== 0) throw new Error("a ruled-out assumption must NOT produce a conditional");
       if (!ruledOut.excluded.some((e) => e.status === "ruled_out" && e.assumptionName === "a now-falsified premise")) throw new Error("the ruled-out assumption should be recorded in excluded");
+
+      // "WRONG" causes (error/invalidity/refutation/incorrect modeling) get no
+      // conditional — "wrong" is not "uncertain". Real cases from the set:
+      // Charged Rotating Black Hole (low in-physics) docked for an INVALID
+      // construction -> no conditional.
+      const chargedRotating = computeAssumptionConditionals({
+        inPhysicsScore: 7,
+        subscores: { input: 7, construction: 2, output: 6 },
+        raw: { constructionStrengthScore: { assumptionName: "an invalid, physically unphysical construction", assumptionStatus: "invalid", conditionalLiftScore: 10 } },
+      });
+      if (chargedRotating.applicable) throw new Error("an invalid construction must not produce a conditional");
+      if (!chargedRotating.excluded.some((e) => e.status === "error")) throw new Error("the invalid construction should be excluded as an error");
+      // Backreaction of Hawking Radiation docked for fatal ALGEBRAIC errors +
+      // inappropriate vacuum choice -> no conditional.
+      const backreaction = computeAssumptionConditionals({
+        inPhysicsScore: 10,
+        subscores: { input: 6, construction: 1, output: 2 },
+        raw: {
+          constructionStrengthScore: { assumptionName: "an inappropriate vacuum / modeling choice", assumptionStatus: "incorrect modeling", conditionalLiftScore: 10 },
+          outputStrengthScore: { assumptionName: "an output with fatal algebraic errors", assumptionStatus: "algebraic error", conditionalLiftScore: 10 },
+        },
+      });
+      if (backreaction.applicable) throw new Error("fatal algebraic errors / incorrect modeling must not produce a conditional");
+      if (backreaction.excluded.filter((e) => e.status === "error").length !== 2) throw new Error("both wrong causes should be excluded as errors");
+      // A refuted/contradicted output is a "wrong" cause too.
+      const refuted = computeAssumptionConditionals({ inPhysicsScore: 40, subscores: { input: 8, construction: 8, output: 3 }, raw: { outputStrengthScore: { assumptionName: "a contradicted result", assumptionStatus: "refuted", conditionalLiftScore: 9 } } });
+      if (refuted.applicable) throw new Error("a refuted output must not produce a conditional");
 
       // CONFIRMED / UNKNOWN are likewise not lifted; a missing status defaults to ineligible.
       const confirmed = computeAssumptionConditionals({ inPhysicsScore: 90, subscores: { input: 9, construction: 9, output: 9 }, raw: { inputStrengthScore: { assumptionName: "general relativity", assumptionStatus: "confirmed", conditionalLiftScore: 10 } } });
