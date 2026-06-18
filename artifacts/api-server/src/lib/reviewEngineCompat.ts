@@ -10,7 +10,7 @@ import {
   BLIND_REVIEW_PASS_V19_PROMPT,
 } from "./prompts/diagnosticOnlyV19";
 import { logger } from "./logger";
-import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromRationale } from "./assumptionConditionals";
+import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromRationale, computePointDeductions } from "./assumptionConditionals";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -796,6 +796,11 @@ const LINKED_INPUT_JUSTIFICATION_ENABLED = process.env.ENABLE_LINKED_INPUT_JUSTI
 // second "if you grant X" score(s) come from the review itself — no separate
 // tagging pass.
 const ASSUMPTION_CONDITIONALS_ENABLED = process.env.ENABLE_ASSUMPTION_CONDITIONALS === "true";
+// Centrality scaled by transferability to physically-realizable nature
+// (v19.0.5). A prompt delta -> new hash -> re-opens the benchmark; gated behind
+// ENABLE_CENTRALITY_TRANSFERABILITY so deploying does not change the active
+// prompt until the operator flips it.
+const CENTRALITY_TRANSFERABILITY_ENABLED = process.env.ENABLE_CENTRALITY_TRANSFERABILITY === "true";
 const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
 --------------------------
 
@@ -855,9 +860,36 @@ You MUST emit assumptionConditionals as a top-level field of your JSON output
 object (a sibling of inputStrengthScore and subscoreRationale), as structured
 JSON — not prose. If no dimension qualifies, emit an empty object: "assumptionConditionals": {}.`;
 
+const CENTRALITY_TRANSFERABILITY_DELTA = String.raw`Centrality and physical realizability
+-------------------------------------
+
+This refines the output centrality assessment. It complements the existing
+rule that the strength of a background theory must not transfer to the
+introduced object: here it is the realizability of the output's referent
+that is at stake.
+
+When an output's referent is not a physically realizable system (an
+idealized, toy, lower-dimensional, or purely mathematical setting), its
+centrality is scaled by how much of its explanatory structure transfers to
+testable, physically-realizable nature — full credit for structure that
+transfers, a deduction proportional to the structural distance from a
+nature-applicable result.
+
+Judge transferability QUALITATIVELY in the rationale: (a) name whether the
+referent is physically realizable; and (b) state how much of the structure
+transfers to real, testable physics (e.g. "the AdS/CFT structure genuinely
+informs real strongly-coupled physics -> high transfer" vs. "specific to AdS
+boundary conditions with Λ<0, which nature does not realize -> low transfer").
+Then assign the output centrality class/rung accordingly — a lower class when
+transfer is low. Do not compute or output any number; emit the centrality
+class/rung only. This is a deduction to the in-physics score (a "if the
+universe were [that idealized setting]" counterfactual is false, so it does
+NOT generate any "if true" lifting conditional).`;
+
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
   ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
+  CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 const withActiveDeltas = (base: string) =>
   ACTIVE_PROMPT_DELTAS.length ? `${base}\n\n${ACTIVE_PROMPT_DELTAS.join("\n\n")}` : base;
@@ -865,11 +897,13 @@ const withActiveDeltas = (base: string) =>
 const ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas(BLIND_REVIEW_PASS_V19_PROMPT);
 const ACTIVE_FULL_PROMPT = withActiveDeltas(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
 
-export const REVIEW_PROMPT_VERSION = ASSUMPTION_CONDITIONALS_ENABLED
-  ? "v19.0.4-computed-ico-halfpoint"
-  : LINKED_INPUT_JUSTIFICATION_ENABLED
-    ? "v19.0.3-computed-ico-halfpoint"
-    : "v19.0.2-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = CENTRALITY_TRANSFERABILITY_ENABLED
+  ? "v19.0.5-computed-ico-halfpoint"
+  : ASSUMPTION_CONDITIONALS_ENABLED
+    ? "v19.0.4-computed-ico-halfpoint"
+    : LINKED_INPUT_JUSTIFICATION_ENABLED
+      ? "v19.0.3-computed-ico-halfpoint"
+      : "v19.0.2-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -891,15 +925,19 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(ACTIVE_BLIND_REVIEW_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = ASSUMPTION_CONDITIONALS_ENABLED
-  ? "v19.0.4 computed ICO half-point"
-  : LINKED_INPUT_JUSTIFICATION_ENABLED
-    ? "v19.0.3 computed ICO half-point"
-    : "v19.0.2 computed ICO half-point";
+export const REVIEW_PROMPT_NAME = CENTRALITY_TRANSFERABILITY_ENABLED
+  ? "v19.0.5 computed ICO half-point"
+  : ASSUMPTION_CONDITIONALS_ENABLED
+    ? "v19.0.4 computed ICO half-point"
+    : LINKED_INPUT_JUSTIFICATION_ENABLED
+      ? "v19.0.3 computed ICO half-point"
+      : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = ASSUMPTION_CONDITIONALS_ENABLED
-  ? "2026-06-16"
-  : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
+export const REVIEW_PROMPT_DATE = CENTRALITY_TRANSFERABILITY_ENABLED
+  ? "2026-06-17"
+  : ASSUMPTION_CONDITIONALS_ENABLED
+    ? "2026-06-16"
+    : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -936,9 +974,17 @@ export function isCalibrationCompatibleReviewObject(value: unknown) {
 // carries the assumption-conditionals delta when enabled (it emits the per-
 // dimension named-assumption tags). The adjudicator prompt is not part of
 // REVIEW_PROMPT_HASH; the hash is gated by the blind prompt's delta.
+// The adjudicator produces the FINAL subscores, so it carries the deltas that
+// shape final scoring/output (assumption conditionals + centrality
+// transferability) when enabled. The adjudicator prompt is not part of
+// REVIEW_PROMPT_HASH; the hash is gated by the blind prompt's deltas.
+const ADJUDICATOR_PROMPT_DELTAS = [
+  ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
+  CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
+].filter((delta): delta is string => Boolean(delta));
 const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(
-  ASSUMPTION_CONDITIONALS_ENABLED
-    ? `${INTRINSIC_ADJUDICATOR_V19_PROMPT}\n\n${ASSUMPTION_CONDITIONALS_DELTA}`
+  ADJUDICATOR_PROMPT_DELTAS.length
+    ? `${INTRINSIC_ADJUDICATOR_V19_PROMPT}\n\n${ADJUDICATOR_PROMPT_DELTAS.join("\n\n")}`
     : INTRINSIC_ADJUDICATOR_V19_PROMPT,
 );
 const DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT = withLatexMarkdownFormatting(`
@@ -6088,6 +6134,17 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
               output: aggregate.outputStrengthScore,
             }),
     }),
+    // Public point-deduction breakdown: "−X pts: [cause]" per below-10
+    // dimension, X = 10 − subscore (the rung→points gap), cause = the stored
+    // rationale. Pure display; the model emits rungs only.
+    pointDeductions: computePointDeductions(
+      {
+        input: aggregate.inputStrengthScore,
+        construction: aggregate.constructionStrengthScore,
+        output: aggregate.outputStrengthScore,
+      },
+      aggregate.subscoreRationale,
+    ),
     inputConstructionOutputAssessment: v16IcoAssessmentOnly(aggregate.inputConstructionOutputLedger),
     technicalAssessment: v16TechnicalAssessmentFromAggregate(aggregate),
     failureAnalysis: v16FailureAnalysisFromAggregate(aggregate),

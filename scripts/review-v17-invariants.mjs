@@ -88,7 +88,7 @@ assert.match(engineSource, /REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatt
 assert.match(engineSource, /ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas\(BLIND_REVIEW_PASS_V19_PROMPT\)/);
 assert.match(engineSource, /ACTIVE_FULL_PROMPT = withActiveDeltas\(BENCHMARK_CALIBRATED_V19_FULL_PROMPT\)/);
 assert.match(engineSource, /ACTIVE_PROMPT_DELTAS\.length \? `\$\{base\}\\n\\n\$\{ACTIVE_PROMPT_DELTAS\.join\("\\n\\n"\)\}` : base/);
-assert.match(engineSource, /BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting\(\s*\n?\s*ASSUMPTION_CONDITIONALS_ENABLED/);
+assert.match(engineSource, /BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting\(\s*\n?\s*ADJUDICATOR_PROMPT_DELTAS\.length/);
 assert.match(engineSource, /: INTRINSIC_ADJUDICATOR_V19_PROMPT,/);
 assert.match(engineSource, /v17\.1-diagnostic-only-halfpoint/);
 assert.match(engineSource, /REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint"/);
@@ -1023,7 +1023,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = ASSUMPTION_CONDITIONALS_ENABLED[\s\S]{0,120}"2026-06-14" : "2026-06-12"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = CENTRALITY_TRANSFERABILITY_ENABLED[\s\S]{0,200}"2026-06-14" : "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -2048,6 +2048,92 @@ async function assertAssumptionConditionals() {
   await globalThis.__assumptionCond;
 }
 await assertAssumptionConditionals();
+
+// --- v19.0.4 audit refinements -----------------------------------------------
+// #1 Centrality scaled by transferability to physically-realizable nature is a
+// GATED prompt delta (v19.0.5); off by default so the hash is unchanged.
+assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED = process\.env\.ENABLE_CENTRALITY_TRANSFERABILITY === "true"/);
+assert.match(engineSource, /Centrality and physical realizability/);
+assert.match(engineSource, /physically realizable system/);
+assert.match(engineSource, /v19\.0\.5-computed-ico-halfpoint/);
+assert.match(engineSource, /v19\.0\.2-computed-ico-halfpoint/); // base hash unchanged when off
+// The delta rides the blind+full deltas AND the adjudicator (final subscores).
+assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED \? CENTRALITY_TRANSFERABILITY_DELTA : null/);
+assert.match(engineSource, /const ADJUDICATOR_PROMPT_DELTAS = \[/);
+
+// #2 Calibration enforces existing rules cross-paper (no prompt/hash change):
+// conjecture-ceiling + shared-input reconciliation, flagged then re-adjudicated
+// against the ladder (never averaged). Surfaced in the gated dry-run route.
+assert.match(consistencySource, /export function conjectureCeilingViolations/);
+assert.match(consistencySource, /export function paperEpistemicStatus/);
+assert.match(consistencySource, /export function sharedInputInconsistencies/);
+assert.match(consistencySource, /never average/);
+assert.match(routesSource, /conjectureCeilingViolations/);
+assert.match(routesSource, /sharedInputInconsistencies/);
+
+// #3 Point-deduction display: derived in code (10 − subscore), model emits
+// rungs only; surfaced in the ledger + under the score.
+assert.match(assumptionConditionalsSource, /export function computePointDeductions/);
+assert.match(engineSource, /pointDeductions: computePointDeductions\(/);
+assert.match(reviewCardSource, /pointDeductions/);
+assert.match(reviewCardSource, /Why not 100/);
+
+// Functional: the detectors + point-deduction math, offline.
+async function assertAuditRefinements() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-audit-refine-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import { conjectureCeilingViolations, paperEpistemicStatus, sharedInputInconsistencies } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
+    import { computePointDeductions } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"))};
+    globalThis.__auditRefine = (async () => {
+      const out = (reviewId, text) => ({ reviewId, paperId: reviewId, kind: "output", index: 0, text });
+
+      // 2a conjecture-ceiling: Bousso (conjecture) at 100 alongside Wald/Hawking
+      // (derived) -> flagged. Firewalls (derives a constraint FROM established
+      // foundations -> "other") is left alone.
+      const bousso = { reviewId: "bousso", outputs: [out("bousso", "the covariant entropy conjecture, a near-maximum explanatory update")], total: 100 };
+      const wald = { reviewId: "wald", outputs: [out("wald", "a rigorous derivation; the first law is proven as a theorem")], total: 100 };
+      const hawking = { reviewId: "hawking", outputs: [out("hawking", "derived particle creation; an exact result")], total: 98 };
+      if (paperEpistemicStatus(bousso.outputs) !== "conjecture") throw new Error("Bousso should classify as conjecture");
+      if (paperEpistemicStatus(wald.outputs) !== "derived") throw new Error("Wald should classify as derived");
+      const cflags = conjectureCeilingViolations([bousso, wald, hawking]);
+      if (!cflags.some((f) => f.reviewId === "bousso")) throw new Error("Bousso conjecture at the ceiling should be flagged");
+      // Firewalls-like mixed (both derives and conjectures) -> "other", not flagged.
+      const firewalls = { reviewId: "fw", outputs: [out("fw", "rigorously derives a constraint from unitarity and the equivalence principle; the firewall conjecture follows")], total: 100 };
+      if (paperEpistemicStatus(firewalls.outputs) !== "other") throw new Error("Firewalls (derives + conjectures) should be 'other', left alone");
+      if (conjectureCeilingViolations([firewalls, wald]).some((f) => f.reviewId === "fw")) throw new Error("Firewalls must not be flagged as a bare conjecture");
+
+      // 2b shared-input: the same input (entropy ∝ area) with DIFFERENT firmness
+      // across two reviews -> flagged; re-adjudicate, never average.
+      const inp = (reviewId, firmness) => ({ reviewId, paperId: reviewId, kind: "input", index: 0, text: "the assumption that entropy is proportional to horizon area", firmness });
+      const sflags = sharedInputInconsistencies([inp("A", "F1"), inp("B", "F3")]);
+      if (sflags.length !== 1) throw new Error("a shared input with differing firmness should be flagged once");
+      if (sflags[0].distinctFirmness.length < 2) throw new Error("the flag should record the differing firmness rungs");
+      // Same input, SAME firmness -> not flagged.
+      if (sharedInputInconsistencies([inp("A", "F2"), inp("B", "F2")]).length !== 0) throw new Error("a consistently-scored shared input must not be flagged");
+
+      // #3 point deductions: 10 − subscore, only below-10 dims, cause carried.
+      const pd = computePointDeductions(
+        { input: 8, construction: 10, output: 8.5 },
+        { inputStrengthScore: "rests on string theory", outputStrengthScore: "conjecture cap" },
+      );
+      if (pd.length !== 2) throw new Error("only below-10 dimensions should produce a deduction");
+      const inputPd = pd.find((d) => d.dimension === "input");
+      if (!inputPd || inputPd.points !== 2) throw new Error("input 8 -> −2 pts");
+      const outputPd = pd.find((d) => d.dimension === "output");
+      if (!outputPd || outputPd.points !== 1.5) throw new Error("output 8.5 -> −1.5 pts");
+      if (outputPd.cause !== "conjecture cap") throw new Error("the deduction should carry the stored cause");
+      if (pd.some((d) => d.dimension === "construction")) throw new Error("a dimension at 10 must not produce a deduction");
+    })();
+  `);
+  await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
+  await import(pathToFileURL(out).href);
+  await globalThis.__auditRefine;
+}
+await assertAuditRefinements();
 
 // Legacy anchored pairwise path remains the active engine (untouched).
 assert.match(pairwiseEngineSource, /PAIRWISE_CALIBRATION_VERSION = "pairwise-bt-v2"/);

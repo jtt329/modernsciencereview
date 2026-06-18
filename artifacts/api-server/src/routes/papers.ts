@@ -4673,7 +4673,7 @@ async function executeConsistencyCalibration(opts: {
     return vectors;
   };
 
-  const { results, dominanceViolations, groupingMethod } = await runConsistencyCalibration(subjects, {
+  const { results, dominanceViolations, conjectureCeilingViolations, sharedInputInconsistencies, groupingMethod } = await runConsistencyCalibration(subjects, {
     judge,
     embed,
     groupThreshold: opts.groupThreshold,
@@ -4716,6 +4716,8 @@ async function executeConsistencyCalibration(opts: {
     papers: results.length,
     updatedReviews,
     dominanceViolations,
+    conjectureCeilingViolations,
+    sharedInputInconsistencies,
     results: results.map((r) => ({
       reviewId: r.reviewId,
       paperId: r.paperId,

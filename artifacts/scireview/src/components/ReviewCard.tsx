@@ -1339,6 +1339,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     : [];
   const showAssumptionConditionals =
     !selectedPass && assumptionConditionals?.applicable === true && conditionalSteps.length > 0;
+  // Public point-deduction breakdown ("−X pts: [cause]") per below-10
+  // dimension, derived in code from the rung→points gap. Display only.
+  const pointDeductions = Array.isArray(parsedCoverage?.pointDeductions)
+    ? parsedCoverage.pointDeductions
+    : Array.isArray(storedAggregate?.pointDeductions)
+      ? storedAggregate.pointDeductions
+      : [];
+  const showPointDeductions = !selectedPass && pointDeductions.some((d: any) => typeof d?.points === 'number' && d.points > 0);
   const subscoreIsValid = (key: string, legacyKey: string) =>
     (selectedSubscoreValidity as any)?.[key] ?? (selectedSubscoreValidity as any)?.[legacyKey] ?? true;
   const currentInputStrengthScore = validSubscore(
@@ -1584,6 +1592,22 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     )}
                   </span>
                 </div>
+                {showPointDeductions && (
+                  <div className="pt-3 mt-1 border-t border-white/10">
+                    <p className="text-[10px] font-black text-rose-300/90 uppercase tracking-widest">Why not 100</p>
+                    <ul className="mt-2 space-y-1">
+                      {pointDeductions
+                        .filter((d: any) => typeof d?.points === 'number' && d.points > 0)
+                        .map((d: any, index: number) => (
+                          <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-sm text-slate-300">
+                            <span className="font-black text-rose-200 whitespace-nowrap">−{d.points} pts</span>
+                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{String(d.dimension)}</span>
+                            {d.cause && <span className="text-slate-400">{d.cause}</span>}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                )}
                 {showAssumptionConditionals && (
                   <div className="pt-3 mt-1 border-t border-white/10">
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">

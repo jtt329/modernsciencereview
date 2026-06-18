@@ -209,6 +209,37 @@ const NAMED_ASSUMPTION_PATTERNS: Array<[RegExp, string]> = [
   [/\basymptotic[-\s]predictability/, "asymptotic predictability"],
 ];
 
+// --- Point-deduction display (anti-anchoring-safe) ---------------------------
+// For each I/C/O dimension below 10, the public "−X pts: [cause]" line. The
+// dimension subscore IS the rung→points contribution (0-10), so the deduction
+// is simply 10 − subscore — read from the same table, no model number. cause is
+// the stored rationale (the same text the conditional classifier reads). Same
+// rung always yields the same deduction (consistent by construction).
+export type PointDeduction = {
+  dimension: ScoreDimensionKey;
+  points: number;
+  cause: string;
+};
+
+export function computePointDeductions(
+  subscores: Partial<Record<ScoreDimensionKey, number | null>>,
+  rationale: Record<string, any> | null | undefined,
+): PointDeduction[] {
+  const rat = rationale && typeof rationale === "object" ? rationale : {};
+  const out: PointDeduction[] = [];
+  for (const dim of DIMENSIONS) {
+    const cur = num((subscores as any)[dim]);
+    if (cur == null || cur >= 10) continue;
+    const causeRaw = rat[DIM_TO_SUBSCORE_KEY[dim]];
+    out.push({
+      dimension: dim,
+      points: Math.round((10 - cur) * 10) / 10, // top (10) − assigned, one decimal
+      cause: typeof causeRaw === "string" ? causeRaw.trim() : "",
+    });
+  }
+  return out;
+}
+
 // "The work is wrong" — never a conditional. Checked first (dominates).
 const PROSE_ERROR = /\b(invalid|unphysical|nonphysical|non-physical|algebraic error|algebra is|logical(?:ly)? (?:error|flaw|inconsistent)|refut|contradict|incorrect|erroneous|\bflaw|inconsisten|inappropriate (?:vacuum|choice|assumption|modeling)|unsound|fatal (?:error|flaw)|mathematically wrong|does not hold|ill-defined|nonsensical|sign error)\b/;
 // A premise falsified / ruled out by current evidence.

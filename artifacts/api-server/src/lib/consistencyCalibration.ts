@@ -356,6 +356,106 @@ export function applyCorrections(
   return { corrected, changeLog };
 }
 
+// --- Conjecture-ceiling rule (2a) --------------------------------------
+// The prompt places a CONJECTURED central output below derived/proven results.
+// Flag any paper whose central output is conjectured yet scores at or above the
+// strongest derived/proven peer (Bousso's Covariant Entropy Conjecture at 100,
+// level with Wald/Hawking, is the live case). Deterministic detection only; the
+// re-adjudication is done against the F-ladder by the judge, never by averaging.
+export type ConjectureCeilingViolation = {
+  reviewId: string;
+  total: number;
+  topDerivedPeerReviewId: string;
+  topDerivedPeerTotal: number;
+  note: string;
+};
+
+// Prefix stems, no trailing \b (so "derives", "rigorously", "derivation" all
+// match). A trailing \b here would (wrongly) fail to match those inflections.
+const CONJECTURE_PROSE = /\bconjectur/i;
+const DERIVED_PROSE = /\b(?:deriv|proven|proved|proof|rigorous|theorem|first[-\s]principle|exact(?:ly)?\s+(?:deriv|comput|solv|result))/i;
+
+// Classify a paper's central result epistemically from its output prose. A
+// "mixed" paper that BOTH conjectures and derives — e.g. Firewalls, which
+// rigorously derives a constraint FROM established foundations — is "other" and
+// left alone (not a bare conjecture).
+export function paperEpistemicStatus(outputs: IcoElement[]): "conjecture" | "derived" | "other" {
+  const text = outputs.map((o) => o.text).join(" \n ");
+  const conjecture = CONJECTURE_PROSE.test(text);
+  const derived = DERIVED_PROSE.test(text);
+  if (conjecture && !derived) return "conjecture";
+  if (derived && !conjecture) return "derived";
+  return "other";
+}
+
+export function conjectureCeilingViolations(
+  papers: Array<{ reviewId: string; outputs: IcoElement[]; total: number }>,
+): ConjectureCeilingViolation[] {
+  const derivedPeers = papers.filter((p) => paperEpistemicStatus(p.outputs) === "derived");
+  if (derivedPeers.length === 0) return [];
+  const topDerived = derivedPeers.reduce((a, b) => (b.total > a.total ? b : a));
+  const violations: ConjectureCeilingViolation[] = [];
+  for (const p of papers) {
+    if (paperEpistemicStatus(p.outputs) !== "conjecture") continue;
+    if (p.total >= topDerived.total) {
+      violations.push({
+        reviewId: p.reviewId,
+        total: p.total,
+        topDerivedPeerReviewId: topDerived.reviewId,
+        topDerivedPeerTotal: topDerived.total,
+        note: "Conjectured central output scores at/above the strongest derived/proven peer — re-adjudicate Output Strength below derived results (conjecture rule); never average.",
+      });
+    }
+  }
+  return violations;
+}
+
+// --- Shared-input reconciliation (2b) ----------------------------------
+// The same input assumption (entropy ∝ area for horizons; AdS/CFT duality; the
+// LQG area spectrum) should not carry different firmness across neighboring
+// papers just because each review decided independently. Group inputs by STRONG
+// identity (high lexical overlap — a local comparison, NOT a global registry)
+// and flag groups spanning ≥2 reviews whose firmness disagrees. The fix is to
+// re-adjudicate each flagged element against the F-ladder (the judge path),
+// NEVER to average toward the group (averaging is what compressed the scale).
+export type SharedInputInconsistency = {
+  representativeText: string;
+  members: Array<{ reviewId: string; index: number; firmness?: string }>;
+  distinctFirmness: string[];
+  note: string;
+};
+
+export function sharedInputInconsistencies(
+  elements: IcoElement[],
+  opts: { strongThreshold?: number } = {},
+): SharedInputInconsistency[] {
+  const threshold = opts.strongThreshold ?? 0.8;
+  const inputs = elements.filter((e) => e.kind === "input");
+  const tokens = inputs.map((e) => groupTokens(e.text));
+  const used = new Set<number>();
+  const out: SharedInputInconsistency[] = [];
+  inputs.forEach((el, i) => {
+    if (used.has(i)) return;
+    const members = [el];
+    used.add(i);
+    inputs.forEach((other, j) => {
+      if (j <= i || used.has(j)) return;
+      if (jaccard(tokens[i], tokens[j]) >= threshold) { members.push(other); used.add(j); }
+    });
+    const distinctReviews = new Set(members.map((m) => m.reviewId));
+    const distinctFirmness = [...new Set(members.map((m) => m.firmness ?? "unspecified"))];
+    if (distinctReviews.size >= 2 && distinctFirmness.length >= 2) {
+      out.push({
+        representativeText: el.text,
+        members: members.map((m) => ({ reviewId: m.reviewId, index: m.index, firmness: m.firmness })),
+        distinctFirmness,
+        note: "Same input assumption assigned different firmness across neighbors — re-adjudicate each against the F-ladder (never average toward the group).",
+      });
+    }
+  });
+  return out;
+}
+
 // --- Orchestrator (judgment path injected; never called in tests) ------
 export type ConsistencyJudge = (group: ElementGroup) => Promise<RungVerdict[]>;
 
@@ -395,15 +495,29 @@ export async function runConsistencyCalibration(
     precomputedVerdicts?: Record<string, RungVerdict[]>;
     onGroupJudged?: (groupKey: string, verdicts: RungVerdict[]) => void | Promise<void>;
   },
-): Promise<{ results: ConsistencyPaperResult[]; dominanceViolations: DominanceViolation[]; groupingMethod: string }> {
+): Promise<{
+  results: ConsistencyPaperResult[];
+  dominanceViolations: DominanceViolation[];
+  conjectureCeilingViolations: ConjectureCeilingViolation[];
+  sharedInputInconsistencies: SharedInputInconsistency[];
+  groupingMethod: string;
+}> {
   const allElements = papers.flatMap((p) => extractIcoElements(p));
 
-  // Fast path first — purely deterministic dominance detection.
-  const dominanceViolations = supersetDominanceViolations(papers.map((p) => ({
+  // Fast path — purely deterministic cross-paper flags (no model). These are
+  // surfaced in the dry-run preview; the re-adjudication itself is the judge
+  // path below (re-adjudicate against the ladder, never average).
+  const dominanceFlags = supersetDominanceViolations(papers.map((p) => ({
     reviewId: p.reviewId,
     outputs: allElements.filter((e) => e.reviewId === p.reviewId && e.kind === "output"),
     total: p.adjudicatorTotal,
   })));
+  const conjectureFlags = conjectureCeilingViolations(papers.map((p) => ({
+    reviewId: p.reviewId,
+    outputs: allElements.filter((e) => e.reviewId === p.reviewId && e.kind === "output"),
+    total: p.adjudicatorTotal,
+  })));
+  const sharedInputFlags = sharedInputInconsistencies(allElements);
 
   // Judgment path — re-adjudicate only flagged groups (anti-drift; minimal
   // churn). Unflagged elements keep their adjudicator rung. Semantic
@@ -452,5 +566,11 @@ export async function runConsistencyCalibration(
       changeLog: changeLog.filter((c) => c.reviewId === p.reviewId),
     };
   });
-  return { results, dominanceViolations, groupingMethod: deps.embed ? "embedding" : "lexical" };
+  return {
+    results,
+    dominanceViolations: dominanceFlags,
+    conjectureCeilingViolations: conjectureFlags,
+    sharedInputInconsistencies: sharedInputFlags,
+    groupingMethod: deps.embed ? "embedding" : "lexical",
+  };
 }
