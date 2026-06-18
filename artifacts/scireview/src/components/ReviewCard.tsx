@@ -1079,20 +1079,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     aggregateClassification ?? review.bestClassification,
   );
   const finalScore = combinedBand.median;
-  // The full provenance chain, surfaced together: BR1 → BR2 → adjudicator →
-  // calibration adjustment → final. Previously the adjudicated/final number
-  // was buried while the blind passes showed prominently.
+  // Adjudicator score for the header score chain (BR1 → BR2 → Adjudicator →
+  // Final). The provenance chain is rendered inline in the header row.
   const adjudicatorScore = Math.round(Number(
     parsedCoverage?.computedScore ?? parsedCoverage?.intrinsicScore ?? review.overallIntrinsicScore ?? review.score ?? finalScore,
   ));
-  const scoreChain: { label: string; value: string; emphasis?: boolean }[] = [];
-  blindPassScores.forEach((s: number, i: number) => scoreChain.push({ label: `BR${i + 1}`, value: String(Math.round(s)) }));
-  scoreChain.push({ label: 'Adjudicator', value: String(adjudicatorScore) });
-  if (finalScore !== adjudicatorScore) {
-    const delta = finalScore - adjudicatorScore;
-    scoreChain.push({ label: 'Calibration', value: `${delta > 0 ? '+' : ''}${delta}` });
-  }
-  scoreChain.push({ label: 'Final', value: String(finalScore), emphasis: true });
   const selectedPassScore = selectedPass
     ? Math.round(Number(selectedPass.intrinsicScore ?? selectedPass.score ?? selectedPass.scoreBand?.median ?? finalScore))
     : finalScore;
@@ -1499,46 +1490,99 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     </a>
                   )}
                 </div>
-                <div className="flex flex-wrap items-end gap-4">
-                  <p className="text-6xl font-black text-emerald-200 leading-none">
-                    {pairwiseCalibrated && !selectedPass ? calibratedDisplayScore : displayedScore}
-                  </p>
-                  <div className="pb-1">
-                    <p className="text-lg font-black text-white capitalize">{currentClassification}</p>
-                    <p className="text-xs text-slate-400">{currentLocalCohort || 'Comparison cohort not specified'}</p>
-                    {canonicalClusterLabel && (
-                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
-                        Cluster: {clusterLabelOverride ?? canonicalClusterLabel}
-                      </p>
-                    )}
-                    <span className="flex flex-wrap items-start gap-1.5 mt-1">
-                      {recognitionSuspected && (
-                        <span
-                          className="inline-block rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200"
-                          title="A blind pass or the adjudicator disclosed recognizing this manuscript as a known published work. Recognition does not affect diagnostic scores; recognized reviews are barred from automatic anchor service."
-                        >
-                          Recognition disclosed
-                        </span>
-                      )}
-                      {hindsightSuspected && (
-                        <details className="inline-block">
-                          <summary
-                            className="cursor-pointer inline-block rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200"
-                            title="The reviewer flagged statements in its own rationales that depend on knowledge of developments after the manuscript's epoch. Disclosed, not hidden; click to read."
+                {/* Score chain: Blind Pass 1 → Blind Pass 2 → Adjudicator → Final, on
+                    one line. The first three are compact clickable segments (they
+                    select that pass's detail view, replacing the old Review Views
+                    tabs); Final is the big headline number on the far right with the
+                    classification above it. */}
+                <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-3">
+                  <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1.5" role="tablist" aria-label="Score chain / review views">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mr-1">Score chain</span>
+                    {blindPassScores.map((score: number, index: number) => {
+                      const hasPassDetails = Boolean(storedIndividualReviews[index]);
+                      const active = activeTab === index;
+                      return (
+                        <React.Fragment key={`chain-bp-${index}`}>
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            disabled={!hasPassDetails}
+                            onClick={() => hasPassDetails && setActiveTab(index)}
+                            title={hasPassDetails ? `Show blind pass ${index + 1}` : 'Blind pass review text was not stored for this paper.'}
+                            className={`inline-flex items-baseline gap-1.5 rounded-lg border px-2.5 py-1 transition-all ${
+                              active
+                                ? 'border-white bg-fuchsia-400/25 text-white ring-2 ring-white/40'
+                                : hasPassDetails
+                                  ? 'border-white/15 bg-white/5 text-slate-300 hover:border-white/40 hover:text-white'
+                                  : 'cursor-not-allowed border-white/10 bg-white/[0.02] text-slate-500'
+                            }`}
                           >
-                            Hindsight disclosed
-                          </summary>
-                          {hindsightStatements.length > 0 && (
-                            <ul className="mt-1 max-w-md list-disc list-inside text-xs text-slate-400 space-y-0.5">
-                              {hindsightStatements.map((statement) => (
-                                <li key={statement}>"{statement}"</li>
-                              ))}
-                            </ul>
-                          )}
-                        </details>
-                      )}
-                    </span>
+                            <span className="text-[10px] font-black uppercase tracking-widest">Blind Pass {index + 1}</span>
+                            <span className="text-sm font-black">{Math.round(score)}</span>
+                          </button>
+                          <span className="text-slate-500">→</span>
+                        </React.Fragment>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={!selectedPass && activeTab === 'combined'}
+                      onClick={() => setActiveTab('combined')}
+                      title="Show the adjudicated final review"
+                      className={`inline-flex items-baseline gap-1.5 rounded-lg border px-2.5 py-1 transition-all ${
+                        !selectedPass && activeTab === 'combined'
+                          ? 'border-white bg-emerald-400/20 text-white ring-2 ring-white/40'
+                          : 'border-white/15 bg-white/5 text-slate-300 hover:border-white/40 hover:text-white'
+                      }`}
+                    >
+                      <span className="text-[10px] font-black uppercase tracking-widest">Adjudicator</span>
+                      <span className="text-sm font-black">{adjudicatorScore}</span>
+                    </button>
+                    <span className="text-slate-500">→</span>
                   </div>
+                  <div className="ml-auto text-right">
+                    <p className="text-lg font-black text-white capitalize leading-tight">{currentClassification}</p>
+                    <p className="text-6xl font-black text-emerald-200 leading-none">
+                      {pairwiseCalibrated && !selectedPass ? calibratedDisplayScore : displayedScore}
+                    </p>
+                  </div>
+                </div>
+                <div className="space-y-0.5">
+                  <p className="text-xs text-slate-400">{currentLocalCohort || 'Comparison cohort not specified'}</p>
+                  {canonicalClusterLabel && (
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mt-1">
+                      Cluster: {clusterLabelOverride ?? canonicalClusterLabel}
+                    </p>
+                  )}
+                  <span className="flex flex-wrap items-start gap-1.5 mt-1">
+                    {recognitionSuspected && (
+                      <span
+                        className="inline-block rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200"
+                        title="A blind pass or the adjudicator disclosed recognizing this manuscript as a known published work. Recognition does not affect diagnostic scores; recognized reviews are barred from automatic anchor service."
+                      >
+                        Recognition disclosed
+                      </span>
+                    )}
+                    {hindsightSuspected && (
+                      <details className="inline-block">
+                        <summary
+                          className="cursor-pointer inline-block rounded-full bg-violet-400/15 border border-violet-300/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-widest text-violet-200"
+                          title="The reviewer flagged statements in its own rationales that depend on knowledge of developments after the manuscript's epoch. Disclosed, not hidden; click to read."
+                        >
+                          Hindsight disclosed
+                        </summary>
+                        {hindsightStatements.length > 0 && (
+                          <ul className="mt-1 max-w-md list-disc list-inside text-xs text-slate-400 space-y-0.5">
+                            {hindsightStatements.map((statement) => (
+                              <li key={statement}>"{statement}"</li>
+                            ))}
+                          </ul>
+                        )}
+                      </details>
+                    )}
+                  </span>
                 </div>
                 {showAssumptionConditionals && (
                   <div className="pt-3 mt-1 border-t border-white/10">
@@ -1634,65 +1678,15 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               )}
             </div>
 
-            {!selectedPass && (
-              <div className="border-t border-white/10 pt-4">
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Score chain</p>
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                  {scoreChain.map((step, i) => (
-                    <React.Fragment key={step.label}>
-                      {i > 0 && <span className="text-slate-500">→</span>}
-                      <span className="inline-flex items-baseline gap-1">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">{step.label}</span>
-                        <span className={`font-black ${step.emphasis ? 'text-emerald-200 text-base' : 'text-slate-200'}`}>{step.value}</span>
-                      </span>
-                    </React.Fragment>
-                  ))}
-                </div>
-              </div>
-            )}
-
+            {/* The score chain + pass selectors now live in the header row above.
+                This slim row keeps stability, the Calibration view toggle, and the
+                score-path captions. */}
             <div className="border-t border-white/10 pt-4 space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-[10px] font-black text-slate-300 uppercase tracking-widest">Review Views</p>
                 <p className="text-xs font-bold text-slate-300">Review Stability: {stabilityDisplay}</p>
-              </div>
-              <div className="flex flex-wrap gap-2 pt-1" role="tablist" aria-label="Review detail views">
-                <button
-                  role="tab"
-                  aria-selected={activeTab === 'combined'}
-                  onClick={() => setActiveTab('combined')}
-                  className={`rounded-xl border px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${
-                    activeTab === 'combined'
-                      ? 'border-white bg-emerald-400/20 text-white ring-2 ring-white/50'
-                      : 'border-white/15 bg-white/5 text-slate-300 hover:border-white/40 hover:text-white'
-                  }`}
-                >
-                  Final Review
-                </button>
-                {blindPassScores.map((score: number, index: number) => {
-                  const hasPassDetails = Boolean(storedIndividualReviews[index]);
-                  return (
-                    <button
-                      key={`pass-tab-${index}`}
-                      role="tab"
-                      aria-selected={activeTab === index}
-                      onClick={() => hasPassDetails && setActiveTab(index)}
-                      disabled={!hasPassDetails}
-                      title={hasPassDetails ? `Show blind pass ${index + 1}` : 'Blind pass review text was not stored for this paper.'}
-                      className={`rounded-xl border px-4 py-2 text-xs font-black uppercase tracking-widest transition-all ${
-                        activeTab === index
-                          ? 'border-white bg-fuchsia-400/25 text-white ring-2 ring-white/50'
-                          : hasPassDetails
-                            ? 'border-white/15 bg-white/5 text-slate-300 hover:border-white/40 hover:text-white'
-                            : 'cursor-not-allowed border-white/10 bg-white/[0.02] text-slate-600'
-                      }`}
-                    >
-                      Blind Pass {index + 1}: {score}
-                    </button>
-                  );
-                })}
                 {pairwiseCalibrated && (
                   <button
+                    type="button"
                     role="tab"
                     aria-selected={activeTab === 'calibration'}
                     onClick={openCalibrationTab}
