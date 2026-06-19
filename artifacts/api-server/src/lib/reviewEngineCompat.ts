@@ -797,10 +797,13 @@ const LINKED_INPUT_JUSTIFICATION_ENABLED = process.env.ENABLE_LINKED_INPUT_JUSTI
 // tagging pass.
 const ASSUMPTION_CONDITIONALS_ENABLED = process.env.ENABLE_ASSUMPTION_CONDITIONALS === "true";
 // Centrality scaled by transferability to physically-realizable nature
-// (v19.0.5). A prompt delta -> new hash -> re-opens the benchmark; gated behind
-// ENABLE_CENTRALITY_TRANSFERABILITY so deploying does not change the active
-// prompt until the operator flips it.
-const CENTRALITY_TRANSFERABILITY_ENABLED = process.env.ENABLE_CENTRALITY_TRANSFERABILITY === "true";
+// (v19.0.5). A prompt delta -> new hash -> re-opens the benchmark. ACTIVATED BY
+// DEFAULT as of the v19.0.5 GO (2026-06-18): a push + auto-deploy turns it on
+// across api-server AND review-worker, which share this compiled module — so
+// there is no env var to miss on the worker (the gap that made v19.0.4 silently
+// emit as v19.0.2). Set ENABLE_CENTRALITY_TRANSFERABILITY=false to revert to the
+// v19.0.2 base.
+const CENTRALITY_TRANSFERABILITY_ENABLED = process.env.ENABLE_CENTRALITY_TRANSFERABILITY !== "false";
 const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
 --------------------------
 
@@ -877,9 +880,9 @@ nature-applicable result.
 
 Judge transferability QUALITATIVELY in the rationale: (a) name whether the
 referent is physically realizable; and (b) state how much of the structure
-transfers to real, testable physics (e.g. "the AdS/CFT structure genuinely
-informs real strongly-coupled physics -> high transfer" vs. "specific to AdS
-boundary conditions with Λ<0, which nature does not realize -> low transfer").
+transfers to real, testable physics (e.g. "the model's mechanism genuinely
+informs real, testable physics -> high transfer" vs. "a feature specific to a
+setting nature does not realize -> low transfer").
 Then assign the output centrality class/rung accordingly — a lower class when
 transfer is low. Do not compute or output any number; emit the centrality
 class/rung only. This is a deduction to the in-physics score (a "if the

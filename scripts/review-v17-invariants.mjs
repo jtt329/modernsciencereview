@@ -2063,13 +2063,20 @@ async function assertAssumptionConditionals() {
 await assertAssumptionConditionals();
 
 // --- v19.0.4 audit refinements -----------------------------------------------
-// #1 Centrality scaled by transferability to physically-realizable nature is a
-// GATED prompt delta (v19.0.5); off by default so the hash is unchanged.
-assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED = process\.env\.ENABLE_CENTRALITY_TRANSFERABILITY === "true"/);
+// #1 Centrality scaled by transferability to physically-realizable nature is the
+// v19.0.5 prompt delta — ACTIVATED BY DEFAULT as of the v19.0.5 GO (2026-06-18):
+// a push + auto-deploy turns it on across api-server AND review-worker (shared
+// module, no env var to miss). ENABLE_CENTRALITY_TRANSFERABILITY=false reverts.
+assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED = process\.env\.ENABLE_CENTRALITY_TRANSFERABILITY !== "false"/);
 assert.match(engineSource, /Centrality and physical realizability/);
 assert.match(engineSource, /physically realizable system/);
 assert.match(engineSource, /v19\.0\.5-computed-ico-halfpoint/);
-assert.match(engineSource, /v19\.0\.2-computed-ico-halfpoint/); // base hash unchanged when off
+assert.match(engineSource, /v19\.0\.2-computed-ico-halfpoint/); // base remains the revert target
+// The delta must be field-general: no single-subfield example baked in. The old
+// AdS/CFT illustration is gone; the example is now framework-agnostic.
+assert.doesNotMatch(engineSource, /AdS\/CFT structure genuinely/);
+assert.doesNotMatch(engineSource, /AdS boundary conditions with/);
+assert.match(engineSource, /the model's mechanism genuinely\s+informs real, testable physics/);
 // The delta rides the blind+full deltas AND the adjudicator (final subscores).
 assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED \? CENTRALITY_TRANSFERABILITY_DELTA : null/);
 assert.match(engineSource, /const ADJUDICATOR_PROMPT_DELTAS = \[/);
