@@ -1650,6 +1650,12 @@ assert.doesNotMatch(consistencySource, /export function sharedInputInconsistenci
 assert.match(consistencyPromptSource, /DEDUCTION_CONSISTENCY_V2_PROMPT/);
 assert.match(consistencyPromptSource, /NEVER move it to the group average|never the group average/i);
 assert.match(consistencyPromptSource, /Do NOT emit any\s+0-100 score/);
+// Deduction-consistency is rubric ALIGNMENT, not a one-way penalty: the prompt
+// must allow raising an over-penalized outlier (ABOVE/BELOW), and the engine
+// must NOT carry a reductions-only clamp on the move.
+assert.match(consistencyPromptSource, /ABOVE or BELOW|not a one-way penalty/i);
+assert.match(consistencySource, /NO reductions-only clamp|no one-way clamp|whichever direction/i);
+assert.doesNotMatch(consistencySource, /Math\.min\(cur, *to\)/);
 // Route is gated and defaults to dry run; legacy pairwise path untouched.
 assert.match(routesSource, /\/papers\/consistency-calibration/);
 assert.match(routesSource, /req\.body\?\.calibrationVersion !== CONSISTENCY_CALIBRATION_VERSION/);
@@ -2083,7 +2089,11 @@ assert.match(routesSource, /deductionConsistency/);
 assert.match(assumptionConditionalsSource, /export function computePointDeductions/);
 assert.match(engineSource, /pointDeductions: computePointDeductions\(/);
 assert.match(reviewCardSource, /pointDeductions/);
-assert.match(reviewCardSource, /Why not 100/);
+// Per-ICO "why not 10" (not a single "why not 100" roll-up): each below-10
+// dimension shows its subscore + points off 10 + cause.
+assert.match(reviewCardSource, /Why not 10/);
+assert.doesNotMatch(reviewCardSource, /Why not 100/);
+assert.match(reviewCardSource, /\.subscore/);
 
 // Functional: the detectors + point-deduction math, offline.
 async function assertAuditRefinements() {
@@ -2162,8 +2172,10 @@ async function assertAuditRefinements() {
       if (pd.length !== 2) throw new Error("only below-10 dimensions should produce a deduction");
       const inputPd = pd.find((d) => d.dimension === "input");
       if (!inputPd || inputPd.points !== 2) throw new Error("input 8 -> −2 pts");
+      if (inputPd.subscore !== 8) throw new Error("the deduction should carry the assigned subscore (per-ICO 'why not 10')");
       const outputPd = pd.find((d) => d.dimension === "output");
       if (!outputPd || outputPd.points !== 1.5) throw new Error("output 8.5 -> −1.5 pts");
+      if (outputPd.subscore !== 8.5) throw new Error("output deduction should carry subscore 8.5");
       if (outputPd.cause !== "conjecture cap") throw new Error("the deduction should carry the stored cause");
       if (pd.some((d) => d.dimension === "construction")) throw new Error("a dimension at 10 must not produce a deduction");
     })();

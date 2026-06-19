@@ -210,14 +210,18 @@ const NAMED_ASSUMPTION_PATTERNS: Array<[RegExp, string]> = [
 ];
 
 // --- Point-deduction display (anti-anchoring-safe) ---------------------------
-// For each I/C/O dimension below 10, the public "−X pts: [cause]" line. The
-// dimension subscore IS the rung→points contribution (0-10), so the deduction
-// is simply 10 − subscore — read from the same table, no model number. cause is
+// Per-ICO "why not 10": for each I/C/O dimension below 10, the public
+// "<dim> <subscore> · −<points> · <cause>" line. The dimension subscore IS the
+// rung→points contribution (0-10), so the deduction is simply 10 − subscore —
+// read from the same table, no model number. We carry BOTH the assigned subscore
+// (the "7.5") and the points off 10 (the "−2.5") so the display can show the
+// per-category breakdown rather than a single "why not 100" roll-up. cause is
 // the stored rationale (the same text the conditional classifier reads). Same
 // rung always yields the same deduction (consistent by construction).
 export type PointDeduction = {
   dimension: ScoreDimensionKey;
-  points: number;
+  subscore: number; // the assigned 0-10 rung→points contribution (the "7.5")
+  points: number;   // 10 − subscore (the "−2.5")
   cause: string;
 };
 
@@ -233,6 +237,7 @@ export function computePointDeductions(
     const causeRaw = rat[DIM_TO_SUBSCORE_KEY[dim]];
     out.push({
       dimension: dim,
+      subscore: Math.round(cur * 10) / 10,      // the assigned rung (0-10), one decimal
       points: Math.round((10 - cur) * 10) / 10, // top (10) − assigned, one decimal
       cause: typeof causeRaw === "string" ? causeRaw.trim() : "",
     });

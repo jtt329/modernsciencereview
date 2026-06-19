@@ -105,15 +105,21 @@ Decide two things:
 2. flags — when sameCauseAndRole is true, flag ONLY the outliers: deductions
    whose subscore (hence point deduction) materially diverges from the
    comparable-role peers WITHOUT justification. The same cause in the same role
-   should cost about the same. A LEGITIMATE weight difference — the result
-   genuinely hangs on the assumption in one paper and barely leans on it in
-   another — is the prompt's weighted-bottleneck judgment and is NOT an
-   inconsistency; do not flag it.
+   should cost about the same. An outlier can diverge in EITHER direction — it
+   may be too HARSH (subscore too low / deduction too large) or too LENIENT
+   (subscore too high / deduction too small) relative to its comparable-role
+   peers. Flag both kinds. A LEGITIMATE weight difference — the result genuinely
+   hangs on the assumption in one paper and barely leans on it in another — is
+   the prompt's weighted-bottleneck judgment and is NOT an inconsistency; do not
+   flag it.
 
 For each flagged outlier, give the dimension subscore the rubric prescribes for
 that cause + role (a 0-10 value, half-points allowed) so its deduction matches
-its comparable-role peers. NEVER move it to the group average; pick the value
-the rung definitions warrant. Leave every non-outlier untouched.
+its comparable-role peers. The prescribed value may be ABOVE or BELOW the
+outlier's current subscore: RAISE an over-penalized outlier and LOWER an
+under-penalized one, whichever way the rung definitions warrant. This is rubric
+ALIGNMENT, not a one-way penalty. NEVER move it to the group average; pick the
+value the rung definitions warrant. Leave every non-outlier untouched.
 
 Anti-anchoring: emit subscores/rungs and your reasoning only. Do NOT emit any
 0-100 score, points, or magnitude label — points are computed downstream.

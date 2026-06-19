@@ -536,7 +536,13 @@ export async function runConsistencyCalibration(
       addMove(cv.reviewId, { dimension: "output", from: cur, to: CONJECTURE_OUTPUT_CEILING, reason: "conjecture-ceiling: capped one firmness tier below the proven/derived top" });
     }
   }
-  // Deduction-consistency outliers: move to the rubric-prescribed subscore.
+  // Deduction-consistency outliers: move to the rubric-prescribed subscore in
+  // WHICHEVER direction the rubric dictates — up or down. This is rubric
+  // alignment, not a one-way penalty: there is intentionally NO reductions-only
+  // clamp — we never floor the move at the current subscore — so an
+  // over-penalized outlier is raised just as an under-penalized one is lowered.
+  // `to` is bounded only to the [0,10] rung range; totalWithDelta carries the
+  // signed (to − from) delta into the total.
   for (const f of flags) {
     const cur = subscoreOf(f.reviewId, f.dimension);
     const to = Math.max(0, Math.min(10, Number(f.prescribedSubscore)));

@@ -1594,17 +1594,32 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </div>
                 {showPointDeductions && (
                   <div className="pt-3 mt-1 border-t border-white/10">
-                    <p className="text-[10px] font-black text-rose-300/90 uppercase tracking-widest">Why not 100</p>
+                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                      <p className="text-[10px] font-black text-rose-300/90 uppercase tracking-widest">Why not 10 · by dimension</p>
+                      <span className="text-xs text-slate-500 max-w-xl">
+                        points off 10 for each of Input / Construction / Output that scored below top
+                      </span>
+                    </div>
                     <ul className="mt-2 space-y-1">
                       {pointDeductions
                         .filter((d: any) => typeof d?.points === 'number' && d.points > 0)
-                        .map((d: any, index: number) => (
-                          <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-sm text-slate-300">
-                            <span className="font-black text-rose-200 whitespace-nowrap">−{d.points} pts</span>
-                            <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{String(d.dimension)}</span>
-                            {d.cause && <span className="text-slate-400">{d.cause}</span>}
-                          </li>
-                        ))}
+                        .map((d: any, index: number) => {
+                          const subscore = typeof d?.subscore === 'number' ? d.subscore : Math.round((10 - d.points) * 10) / 10;
+                          return (
+                            <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-sm text-slate-300">
+                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{String(d.dimension)}</span>
+                              <span className="font-black text-slate-200 whitespace-nowrap">{subscore}</span>
+                              <span className="text-slate-600">·</span>
+                              <span className="font-black text-rose-200 whitespace-nowrap">−{d.points}</span>
+                              {d.cause && (
+                                <>
+                                  <span className="text-slate-600">·</span>
+                                  <span className="text-slate-400">{d.cause}</span>
+                                </>
+                              )}
+                            </li>
+                          );
+                        })}
                     </ul>
                   </div>
                 )}

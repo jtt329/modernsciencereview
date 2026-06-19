@@ -4608,7 +4608,7 @@ async function executeConsistencyCalibration(opts: {
           role: "user",
           parts: [{
             text: JSON.stringify({
-              auditNote: "Confirm these below-10 deductions share ONE cause in a COMPARABLE load-bearing role; flag ONLY unjustified outliers and give each the rubric-prescribed subscore (never the group average). Legitimate weight differences are not inconsistencies.",
+              auditNote: "Confirm these below-10 deductions share ONE cause in a COMPARABLE load-bearing role; flag ONLY unjustified outliers and give each the rubric-prescribed subscore (never the group average). The prescribed subscore may be ABOVE or BELOW the outlier's current value — raise an over-penalized outlier or lower an under-penalized one, whichever the rubric warrants; this is alignment, not a one-way penalty. Legitimate weight differences are not inconsistencies.",
               deductions: cluster.map((d) => ({
                 reviewId: d.reviewId, dimension: d.dimension, cause: d.cause, currentSubscore: d.subscore, currentDeductionPoints: d.points,
               })),
