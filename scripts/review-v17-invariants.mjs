@@ -2096,11 +2096,13 @@ assert.match(routesSource, /deductionConsistency/);
 assert.match(assumptionConditionalsSource, /export function computePointDeductions/);
 assert.match(engineSource, /pointDeductions: computePointDeductions\(/);
 assert.match(reviewCardSource, /pointDeductions/);
-// Per-ICO "why not 10" (not a single "why not 100" roll-up): each below-10
-// dimension shows its subscore + points off 10 + cause.
+// "Why not 10" is FOLDED INTO each I/C/O section (no separate top block, no
+// single "why not 100" roll-up): the per-dimension deduction (points off 10 +
+// cause) renders inside the active diagnostic section, keyed by dimension.
 assert.match(reviewCardSource, /Why not 10/);
 assert.doesNotMatch(reviewCardSource, /Why not 100/);
-assert.match(reviewCardSource, /\.subscore/);
+assert.match(reviewCardSource, /deductionByDimension/);
+assert.match(reviewCardSource, /activeDeduction/);
 
 // Functional: the detectors + point-deduction math, offline.
 async function assertAuditRefinements() {

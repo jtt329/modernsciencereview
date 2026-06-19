@@ -1392,21 +1392,21 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
       : '';
   const versionAndMode = [shortPromptVersion, pipelineModeLabel].filter(Boolean).join(' ');
   const modelPromptLine = [modelBase, versionAndMode].filter(Boolean).join(' · ');
+  // Top-of-section ("diagnostic") rationale stays HIGH-LEVEL: the dimension's
+  // subscore rationale only. Per-element assessments are NOT merged in here —
+  // they live solely in the per-element breakdown below (no duplication).
   const outputAssessmentText = mergeUniqueText(
     currentWhyOutputsMatter,
     currentInputConstructionOutputAssessment,
-    ...currentLedgerOutputs.map((item: any) => item?.assessment || item?.support || item?.validity),
   );
   const inputDiagnosticRationale = mergeUniqueText(
     currentSubscoreRationale?.inputStrengthScore,
     currentInputGrounding,
     currentInputFundamentality,
-    ...currentPrimitiveInputDetails.map((item) => item.assessment),
   );
   const constructionDiagnosticRationale = mergeUniqueText(
     currentSubscoreRationale?.constructionStrengthScore,
     currentConstructionAssessment,
-    ...currentIntroducedConstructionDetails.map((item) => item.assessment),
   );
   const outputDiagnosticRationale = mergeUniqueText(
     currentSubscoreRationale?.outputStrengthScore,
@@ -1440,6 +1440,13 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   ];
   const activeDiagnosticCard = diagnosticCards.find((card) => card.id === activeIcoTab);
   const activeDiagnosticRationale = activeDiagnosticCard?.fullRationale || activeDiagnosticCard?.previewRationale;
+  // Per-dimension point deduction ("why not 10"), folded INTO each I/C/O section
+  // (no separate top block). Keyed by dimension = card id.
+  const deductionByDimension: Record<string, { points: number; cause?: string }> = {};
+  for (const d of pointDeductions) {
+    if (d && typeof d.points === 'number' && d.points > 0) deductionByDimension[String(d.dimension)] = d;
+  }
+  const activeDeduction = activeDiagnosticCard ? deductionByDimension[activeDiagnosticCard.id] : undefined;
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     {
@@ -1592,37 +1599,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     )}
                   </span>
                 </div>
-                {showPointDeductions && (
-                  <div className="pt-3 mt-1 border-t border-white/10">
-                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                      <p className="text-[10px] font-black text-rose-300/90 uppercase tracking-widest">Why not 10 · by dimension</p>
-                      <span className="text-xs text-slate-500 max-w-xl">
-                        points off 10 for each of Input / Construction / Output that scored below top
-                      </span>
-                    </div>
-                    <ul className="mt-2 space-y-1">
-                      {pointDeductions
-                        .filter((d: any) => typeof d?.points === 'number' && d.points > 0)
-                        .map((d: any, index: number) => {
-                          const subscore = typeof d?.subscore === 'number' ? d.subscore : Math.round((10 - d.points) * 10) / 10;
-                          return (
-                            <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-sm text-slate-300">
-                              <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{String(d.dimension)}</span>
-                              <span className="font-black text-slate-200 whitespace-nowrap">{subscore}</span>
-                              <span className="text-slate-600">·</span>
-                              <span className="font-black text-rose-200 whitespace-nowrap">−{d.points}</span>
-                              {d.cause && (
-                                <>
-                                  <span className="text-slate-600">·</span>
-                                  <span className="text-slate-400">{d.cause}</span>
-                                </>
-                              )}
-                            </li>
-                          );
-                        })}
-                    </ul>
-                  </div>
-                )}
+                {/* "Why not 10" is no longer a separate top block — each
+                    dimension's deduction is folded into its I/C/O section below. */}
                 {showAssumptionConditionals && (
                   <div className="pt-3 mt-1 border-t border-white/10">
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -1798,29 +1776,31 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <Award className="w-4 h-4" /> {selectedPass ? 'Pass Review' : 'Scientific Review'}
               </h3>
               <Markdown>{scientificReviewText}</Markdown>
-              {!selectedPass && (
-                <details
-                  className="bg-slate-950/30 border border-white/10 rounded-xl p-3"
-                  onToggle={(event) => {
-                    if ((event.target as HTMLDetailsElement).open) loadSimplerExplanation();
-                  }}
-                >
-                  <summary className="cursor-pointer text-xs font-black text-sky-300 uppercase tracking-widest">
-                    Make it simpler
-                  </summary>
-                  <div className="mt-2 text-sm text-slate-300">
-                    {simplerLoading && <p className="text-slate-400">Writing a plain-language explanation…</p>}
-                    {simplerError && <p className="text-rose-300 text-xs">{simplerError}</p>}
-                    {simplerText && <p className="whitespace-pre-wrap leading-relaxed">{simplerText}</p>}
-                  </div>
-                </details>
-              )}
               {submittedAtLabel && (
                 <p className="pt-3 border-t border-white/10 text-[11px] font-bold uppercase tracking-widest text-slate-400">
                   Submitted {submittedAtLabel}
                 </p>
               )}
             </div>
+          )}
+
+          {/* Simplified explanation — its own section (e), after Scientific Review (d). */}
+          {scientificReviewText && !selectedPass && (
+            <details
+              className="bg-white/5 border border-white/10 rounded-2xl p-6"
+              onToggle={(event) => {
+                if ((event.target as HTMLDetailsElement).open) loadSimplerExplanation();
+              }}
+            >
+              <summary className="cursor-pointer text-xs font-black text-sky-300 uppercase tracking-widest">
+                Make it simpler
+              </summary>
+              <div className="mt-3 text-sm text-slate-300">
+                {simplerLoading && <p className="text-slate-400">Writing a plain-language explanation…</p>}
+                {simplerError && <p className="text-rose-300 text-xs">{simplerError}</p>}
+                {simplerText && <p className="whitespace-pre-wrap leading-relaxed">{simplerText}</p>}
+              </div>
+            </details>
           )}
 
           {hasIcoLedger && (
@@ -1854,26 +1834,26 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <div className={`rounded-2xl border-2 p-4 ${ICO_TAB_THEME.panel}`}>
                 {activeDiagnosticCard && (
                   <div className="mb-4 rounded-xl border border-indigo-300/15 bg-indigo-300/[0.045] p-4 text-sm leading-relaxed text-slate-200">
-                    <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-[10px] font-black uppercase tracking-widest text-indigo-300">
-                        {activeDiagnosticCard.label}
-                      </p>
-                      <p className={`text-2xl font-black ${activeDiagnosticCard.color}`}>
-                        {formatDiagnosticSubscore(activeDiagnosticCard.value)}
-                        {activeDiagnosticCard.value != null && <span className="text-sm font-bold text-slate-400">/10</span>}
-                      </p>
-                    </div>
+                    {/* No restated score here — it's in the preview card above. */}
+                    <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-indigo-300">
+                      {activeDiagnosticCard.label}
+                    </p>
                     {activeDiagnosticRationale && <Markdown>{activeDiagnosticRationale}</Markdown>}
+                    {activeDeduction && (
+                      <p className="mt-3 flex flex-wrap items-baseline gap-x-2 border-t border-white/10 pt-3 text-sm">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-rose-300/90">Why not 10</span>
+                        <span className="font-black text-rose-200 whitespace-nowrap">−{activeDeduction.points}</span>
+                        {activeDeduction.cause && (
+                          <>
+                            <span className="text-slate-600">·</span>
+                            <span className="text-slate-400">{activeDeduction.cause}</span>
+                          </>
+                        )}
+                      </p>
+                    )}
                   </div>
                 )}
                 {activeIcoTab === 'input' && <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Input Strength</p>
-                    <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentInputStrengthScore)}`}>
-                      {formatDiagnosticSubscore(currentInputStrengthScore)}
-                      {currentInputStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
-                    </p>
-                  </div>
                   {currentPrimitiveInputs.length > 0 && (
                     <div>
                       <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-2">Primitive Inputs</p>
@@ -1926,13 +1906,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </div>}
 
                 {activeIcoTab === 'construction' && <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Construction Strength</p>
-                    <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentConstructionStrengthScore)}`}>
-                      {formatDiagnosticSubscore(currentConstructionStrengthScore)}
-                      {currentConstructionStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
-                    </p>
-                  </div>
                   {currentIntroducedConstructions.length > 0 && (
                     <div>
                       <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest mb-2">Introduced Constructions</p>
@@ -1969,13 +1942,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 </div>}
 
                 {activeIcoTab === 'output' && <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-xs font-black text-indigo-300 uppercase tracking-widest">Output Strength</p>
-                    <p className={`rounded-xl border px-3 py-1 text-2xl font-black ${scoreToneClass(currentOutputStrengthScore)}`}>
-                      {formatDiagnosticSubscore(currentOutputStrengthScore)}
-                      {currentOutputStrengthScore != null && <span className="text-sm font-bold text-indigo-300/70">/10</span>}
-                    </p>
-                  </div>
                   {currentLedgerOutputs.length > 0 && (
                     <div className="space-y-3">
                       <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">Outputs</p>
