@@ -136,6 +136,8 @@ assert.match(routesSource, /existingPromptVersion === promptVersion/);
 assert.doesNotMatch(routesSource, /promptMismatchMatch/);
 assert.match(routesSource, /Allowing exact-source submission because existing review used a different prompt/);
 assert.match(routesSource, /Allowing metadata-matched submission because existing review used a different prompt/);
+// B: dedup off-switch for variance / A-B re-uploads (default OFF — dedup ON).
+assert.match(routesSource, /process\.env\.ALLOW_DUPLICATE_PAPER_UPLOADS !== "true"/);
 assert.match(routesSource, /promptScopedFeedDuplicateKey/);
 assert.match(routesSource, /clusteringScopeIncludesReview\(coverageLedger\)/);
 assert.match(routesSource, /isCalibrationCompatibleReviewObject\(coverageLedger \?\? aggregateAny\)/);
@@ -2086,6 +2088,14 @@ assert.match(engineSource, /Step 1 \(realizability\)/);
 assert.match(engineSource, /Step 2 \(transfer\)/);
 assert.match(engineSource, /Step 3 \(assign\)/);
 assert.match(engineSource, /do NOT print rung codes \(F1-F4,\s+C1-C5\) inline in the prose/);
+// A1 (#22 re-test fix): "transfer" must mean a concrete path to TESTABLE physics;
+// theoretical/conceptual relevance is not transfer and defaults lower.
+assert.match(engineSource, /"Transfer" means a CONCRETE path to real, TESTABLE physics/);
+assert.match(engineSource, /Theoretical or conceptual importance is NOT transfer/);
+// A2: conditionals only on LOAD-BEARING named assumptions, and the AdS/CFT priming
+// example is genericized out of the assumption-naming instruction.
+assert.match(engineSource, /LOAD-BEARING ONLY\. The named assumption must be one the result GENUINELY DEPENDS/);
+assert.doesNotMatch(engineSource, /the AdS\/CFT duality conjecture/);
 // The delta rides the blind+full deltas AND the adjudicator (final subscores).
 assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED \? CENTRALITY_TRANSFERABILITY_DELTA : null/);
 assert.match(engineSource, /const ADJUDICATOR_PROMPT_DELTAS = \[/);

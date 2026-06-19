@@ -823,10 +823,18 @@ const ASSUMPTION_CONDITIONALS_DELTA = String.raw`Named-assumption conditionals
 
 For each I/C/O dimension you score below 10, identify the single most
 specific named assumption the deduction rests on — the exact result,
-conjecture, or premise as the manuscript frames it (e.g. "the supergravity /
-D-brane input identifications", "the AdS/CFT duality conjecture", "the
-loop-quantum-gravity area spectrum"), NOT a broad field or framework label
-("string theory", "holography", "quantum gravity" are too coarse).
+conjecture, or premise as the manuscript frames it (name the specific construct
+the derivation invokes: the particular duality, correspondence, conjecture, or
+unproven premise the result is built on), NOT a broad field or framework label
+(naming a whole research programme is too coarse).
+
+LOAD-BEARING ONLY. The named assumption must be one the result GENUINELY DEPENDS
+ON — remove it and the result fails. Do NOT name an assumption, framework, or
+correspondence merely because it is mentioned, cited, or contrasted against in
+the text: a concept the paper compares itself to, or notes in passing, is NOT
+load-bearing and earns no conditional. If the deduction does not rest on a
+specific assumption the result needs (e.g. it is limited by scope, breadth, or
+robustness), omit that dimension.
 
 Classify the deduction's cause using CURRENT knowledge (assumptionStatus).
 A conditional is valid ONLY for genuine uncertainty — "wrong" is NOT
@@ -888,7 +896,14 @@ testable physics — full credit for structure that genuinely transfers, a
 deduction proportional to the structural distance from a nature-applicable
 result (e.g. "the model's mechanism genuinely informs real, testable physics ->
 high transfer" vs. "a feature specific to a setting nature does not realize ->
-low transfer").
+low transfer"). "Transfer" means a CONCRETE path to real, TESTABLE physics — a
+phenomenon, regime, or measurement in the realizable universe that the result
+informs; you MUST name that concrete testable path to rate transfer high.
+Theoretical or conceptual importance is NOT transfer: resolving a long-standing
+theoretical question, clarifying a formalism, or being foundational WITHIN the
+idealized setting does not count and, on its own, caps transfer at low/medium
+(default it lower). If you cannot name a concrete testable consequence, transfer
+is not high.
 
 Step 3 (assign). Set the output's centrality class/rung to REFLECT that
 transfer: a not-physically-realizable referent with low transfer takes a lower

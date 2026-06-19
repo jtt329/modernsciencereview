@@ -5701,6 +5701,11 @@ const expectedModelName = expectedReviewModelName(reviewMode);
 const reuseExistingReview = source.reuseExistingReview === true || source.reuseExisting === true;
 const forceFreshReview = source.forceFreshReview === true || source.forceFresh === true;
 const allowExistingReviewReuse =
+  // Dedup off-switch for variance / A-B testing: ALLOW_DUPLICATE_PAPER_UPLOADS=true
+  // disables BOTH source-hash reuse and the metadata-identity duplicate block, so
+  // the same paper can be re-uploaded (same prompt) without deleting. Default OFF
+  // (dedup ON). Per-request `forceFreshReview: true` does the same for one upload.
+  process.env.ALLOW_DUPLICATE_PAPER_UPLOADS !== "true" &&
   !forceFreshReview &&
   (reuseExistingReview || source.reuseExistingReview !== false);
 submissionKey = !durableJob && allowExistingReviewReuse && sourceHash ? `${user.id}:${expectedModelName}:${sourceHash}` : null;
