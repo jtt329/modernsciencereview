@@ -2077,6 +2077,15 @@ assert.match(engineSource, /v19\.0\.2-computed-ico-halfpoint/); // base remains 
 assert.doesNotMatch(engineSource, /AdS\/CFT structure genuinely/);
 assert.doesNotMatch(engineSource, /AdS boundary conditions with/);
 assert.match(engineSource, /the model's mechanism genuinely\s+informs real, testable physics/);
+// Strengthened (v19.0.5 re-rev): realizability + transfer are MANDATORY for
+// every output (the soft version skipped #22), and rung codes stay out of the
+// rationale prose (B6 folded into the gated delta, so the v19.0.2 base hash is
+// untouched).
+assert.match(engineSource, /MANDATORY — do this for EVERY output/);
+assert.match(engineSource, /Step 1 \(realizability\)/);
+assert.match(engineSource, /Step 2 \(transfer\)/);
+assert.match(engineSource, /Step 3 \(assign\)/);
+assert.match(engineSource, /do NOT print rung codes \(F1-F4,\s+C1-C5\) inline in the prose/);
 // The delta rides the blind+full deltas AND the adjudicator (final subscores).
 assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED \? CENTRALITY_TRANSFERABILITY_DELTA : null/);
 assert.match(engineSource, /const ADJUDICATOR_PROMPT_DELTAS = \[/);

@@ -871,23 +871,40 @@ rule that the strength of a background theory must not transfer to the
 introduced object: here it is the realizability of the output's referent
 that is at stake.
 
-When an output's referent is not a physically realizable system (an
-idealized, toy, lower-dimensional, or purely mathematical setting), its
-centrality is scaled by how much of its explanatory structure transfers to
-testable, physically-realizable nature — full credit for structure that
-transfers, a deduction proportional to the structural distance from a
-nature-applicable result.
+MANDATORY — do this for EVERY output, including outputs you rate highly, and
+write the result into that output's rationale. Never skip it: an output whose
+rationale does not address realizability and transfer is incomplete.
 
-Judge transferability QUALITATIVELY in the rationale: (a) name whether the
-referent is physically realizable; and (b) state how much of the structure
-transfers to real, testable physics (e.g. "the model's mechanism genuinely
-informs real, testable physics -> high transfer" vs. "a feature specific to a
-setting nature does not realize -> low transfer").
-Then assign the output centrality class/rung accordingly — a lower class when
-transfer is low. Do not compute or output any number; emit the centrality
-class/rung only. This is a deduction to the in-physics score (a "if the
-universe were [that idealized setting]" counterfactual is false, so it does
-NOT generate any "if true" lifting conditional).`;
+Step 1 (realizability). State explicitly whether the output's referent is a
+physically realizable system or is NOT physically realizable — an idealized,
+toy, lower-dimensional, or purely mathematical setting (e.g. a lower-dimensional
+toy model, an exactly soluble limit, a maximally symmetric or otherwise
+idealized spacetime that nature does not realize, or a purely mathematical
+construction). Name which it is, in plain words, in the rationale.
+
+Step 2 (transfer). If the referent is NOT physically realizable, state in the
+rationale how much of the output's explanatory structure transfers to real,
+testable physics — full credit for structure that genuinely transfers, a
+deduction proportional to the structural distance from a nature-applicable
+result (e.g. "the model's mechanism genuinely informs real, testable physics ->
+high transfer" vs. "a feature specific to a setting nature does not realize ->
+low transfer").
+
+Step 3 (assign). Set the output's centrality class/rung to REFLECT that
+transfer: a not-physically-realizable referent with low transfer takes a lower
+centrality class, and the rationale must say, in plain words, that the deduction
+is for limited physical realizability / transfer. A fully realizable referent:
+say so and proceed normally.
+
+Do not compute or output any number; emit the centrality class/rung only. This
+is a deduction to the in-physics score (a "if the universe were [that idealized
+setting]" counterfactual is false, so it does NOT generate any "if true"
+lifting conditional).
+
+Plain-words rungs. In all rationale and assessment PROSE, describe firmness and
+centrality in plain words (e.g. "an unproven construct of an untested
+framework", "a central, load-bearing result") — do NOT print rung codes (F1-F4,
+C1-C5) inline in the prose. Keep the codes to the structured fields only.`;
 
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
@@ -937,7 +954,7 @@ export const REVIEW_PROMPT_NAME = CENTRALITY_TRANSFERABILITY_ENABLED
       : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
 export const REVIEW_PROMPT_DATE = CENTRALITY_TRANSFERABILITY_ENABLED
-  ? "2026-06-17"
+  ? "2026-06-19"
   : ASSUMPTION_CONDITIONALS_ENABLED
     ? "2026-06-16"
     : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
