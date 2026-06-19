@@ -1,20 +1,32 @@
-// Rubric-consistency calibration (consistency-v1) — pure core.
+// Rubric-consistency calibration (consistency-v2) — pure core.
 //
-// Replaces the pairwise/Bradley-Terry/anchor machinery with a consistency
-// audit of the ICO scoring against the PROMPT'S OWN rubric. The reference
-// scale is the rubric's rungs (F1-F4 firmness, C1-C5 centrality,
-// rigor x forcedness for constructions), never paper anchors or human
-// numbers. Cross-paper comparison only DETECTS inconsistent rung
-// application; correction re-applies the ladder to each element
-// individually (never averages toward the group).
+// v2 REMOVES the broad element-by-element rung-recompute (it re-graded every
+// element from scratch and re-summed, compressing the scale — SD 17.6→13.7,
+// floor 5→30). Calibration must leave almost every score untouched. What v2
+// keeps and does instead:
+//   1. Dominance check — flags only impossible orderings (B ⊇ A yet scores
+//      lower). No score rewriting.
+//   2. Conjecture-ceiling check — flags a conjectured central output at/above
+//      the strongest derived/proven peer and caps ONLY that output one firmness
+//      tier below the proven/derived top (absolute, rubric-grounded — never
+//      pinned to a neighbor's score).
+//   3. Reason-grouped deduction consistency — operate on the deductions that
+//      ALREADY exist (each below-10 dimension's cause + 10−subscore). Embedding
+//      pre-cluster candidate same-cause deductions, then the model verifies one
+//      cluster at a time (same cause AND comparable load-bearing role?) and
+//      flags only unjustified divergences; the outlier's rung is re-adjudicated
+//      to the rubric-prescribed value (NEVER averaged), points recomputed in
+//      code. Everything else is untouched — no corpus-wide re-sum.
 //
-// This module is pure and offline-testable: the model judgment path is an
-// injected async function, so the deterministic pieces (extraction,
-// rung->weight, aggregation, fast-path dominance, correction application)
-// run and are tested with no network. Gated behind calibrationVersion
-// "consistency-v1"; the legacy anchored path is untouched.
+// Pure + offline-testable: the model judgment path is injected. Anti-anchoring:
+// the model emits rungs/subscores + the grouping judgment; code computes points.
+// Gated behind calibrationVersion "consistency-v2"; legacy anchored path intact.
 
-export const CONSISTENCY_CALIBRATION_VERSION = "consistency-v1";
+export const CONSISTENCY_CALIBRATION_VERSION = "consistency-v2";
+
+// A conjectured central output cannot occupy the top firmness tier (F1 = 10)
+// reserved for proven/derived results; it is capped one tier down (F2 = 8).
+export const CONJECTURE_OUTPUT_CEILING = 8;
 
 export type FirmnessRung = "F1" | "F2" | "F3" | "F4";
 export type CentralityClass = "C1" | "C2" | "C3" | "C4" | "C5";
@@ -220,148 +232,13 @@ export function supersetDominanceViolations(papers: Array<{
   return violations;
 }
 
-// --- Grouping (deterministic; embeddings optional via injection) -------
-function groupTokens(text: string) {
-  return new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
-}
-function jaccard(a: Set<string>, b: Set<string>) {
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  for (const t of a) if (b.has(t)) inter += 1;
-  return inter / (a.size + b.size - inter);
-}
-
-export type ElementGroup = { kind: IcoElementKind; elements: IcoElement[] };
-
-// Greedy single-pass clustering over a similarity function (>= threshold
-// joins). Shared by the lexical and embedding groupers so they batch
-// identically; only the similarity metric differs.
-function greedyGroups(
-  elements: IcoElement[],
-  similar: (a: number, b: number) => boolean,
-): ElementGroup[] {
-  const groups: ElementGroup[] = [];
-  for (const kind of ["input", "construction", "output"] as IcoElementKind[]) {
-    const idx = elements.map((e, i) => [e, i] as const).filter(([e]) => e.kind === kind);
-    const used = new Set<number>();
-    idx.forEach(([el, i]) => {
-      if (used.has(i)) return;
-      const members = [el];
-      used.add(i);
-      idx.forEach(([other, j]) => {
-        if (j <= i || used.has(j)) return;
-        if (similar(i, j)) { members.push(other); used.add(j); }
-      });
-      if (members.length >= 2) groups.push({ kind, elements: members });
-    });
-  }
-  return groups;
-}
-
-// Lexical (token-overlap) grouping. Deterministic, no model. Default
-// threshold 0.5. Retained as the offline default and embedding fallback.
-export function groupComparableElements(
-  elements: IcoElement[],
-  opts: { threshold?: number } = {},
-): ElementGroup[] {
-  const threshold = opts.threshold ?? 0.5;
-  const tokens = elements.map((e) => groupTokens(e.text));
-  return greedyGroups(elements, (a, b) => jaccard(tokens[a], tokens[b]) >= threshold);
-}
-
-function cosine(a: number[], b: number[]) {
-  let dot = 0, na = 0, nb = 0;
-  const n = Math.min(a.length, b.length);
-  for (let i = 0; i < n; i += 1) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
-  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
-}
-
-export type Embedder = (texts: string[]) => Promise<number[][]>;
-
-// Semantic (embedding) grouping — the preferred path: two elements making
-// substantively the same claim cluster even with different wording, which
-// lexical overlap misses. Embeds each element's text via the injected
-// `embed`, groups by cosine >= threshold (default 0.82). Falls back to
-// lexical grouping if embedding fails or returns nothing, so a transient
-// embedding error never aborts a calibration run.
-export async function groupComparableElementsByEmbedding(
-  elements: IcoElement[],
-  embed: Embedder,
-  opts: { threshold?: number; lexicalThreshold?: number } = {},
-): Promise<ElementGroup[]> {
-  const threshold = opts.threshold ?? 0.82;
-  try {
-    const vectors = await embed(elements.map((e) => e.text));
-    if (!Array.isArray(vectors) || vectors.length !== elements.length || vectors.some((v) => !Array.isArray(v) || v.length === 0)) {
-      return groupComparableElements(elements, { threshold: opts.lexicalThreshold });
-    }
-    return greedyGroups(elements, (a, b) => cosine(vectors[a], vectors[b]) >= threshold);
-  } catch {
-    return groupComparableElements(elements, { threshold: opts.lexicalThreshold });
-  }
-}
-
-// --- Corrections (Resolution Rule: per-element, never averaged) --------
-export type RungVerdict = {
-  reviewId: string;
-  kind: IcoElementKind;
-  index: number;
-  firmness?: FirmnessRung;
-  centrality?: CentralityClass;
-  validityLevel?: string;
-  hardToVaryLevel?: string;
-  reason: string;
-};
-
-export type ElementChange = {
-  reviewId: string;
-  kind: IcoElementKind;
-  index: number;
-  field: string;
-  from: string | undefined;
-  to: string | undefined;
-  reason: string;
-};
-
-// Applies per-element rung verdicts from the judgment path. Each flagged
-// element is set to the rung the DEFINITIONS prescribe for it (carried on
-// the verdict); unflagged elements are untouched. There is no averaging
-// toward the group — a correct minority element keeps its rung even if the
-// group majority sits elsewhere.
-export function applyCorrections(
-  elements: IcoElement[],
-  verdicts: RungVerdict[],
-): { corrected: IcoElement[]; changeLog: ElementChange[] } {
-  const byId = new Map(elements.map((e, i) => [`${e.reviewId}\0${e.kind}\0${e.index}`, i]));
-  const corrected = elements.map((e) => ({ ...e }));
-  const changeLog: ElementChange[] = [];
-  for (const v of verdicts) {
-    const idx = byId.get(`${v.reviewId}\0${v.kind}\0${v.index}`);
-    if (idx == null) continue;
-    const el = corrected[idx];
-    const fields: Array<["firmness" | "centrality" | "validityLevel" | "hardToVaryLevel", string | undefined]> = [
-      ["firmness", v.firmness],
-      ["centrality", v.centrality],
-      ["validityLevel", v.validityLevel],
-      ["hardToVaryLevel", v.hardToVaryLevel],
-    ];
-    for (const [field, to] of fields) {
-      if (to == null) continue;
-      const from = el[field] as string | undefined;
-      if (from === to) continue;
-      changeLog.push({ reviewId: v.reviewId, kind: v.kind, index: v.index, field, from, to, reason: v.reason });
-      (el as any)[field] = to;
-    }
-  }
-  return { corrected, changeLog };
-}
-
-// --- Conjecture-ceiling rule (2a) --------------------------------------
+// --- Conjecture-ceiling rule -------------------------------------------
 // The prompt places a CONJECTURED central output below derived/proven results.
 // Flag any paper whose central output is conjectured yet scores at or above the
 // strongest derived/proven peer (Bousso's Covariant Entropy Conjecture at 100,
-// level with Wald/Hawking, is the live case). Deterministic detection only; the
-// re-adjudication is done against the F-ladder by the judge, never by averaging.
+// level with Wald/Hawking). The correction is an ABSOLUTE rung cap (one firmness
+// tier below the proven/derived top), applied in the orchestrator — never a
+// peer-relative nudge.
 export type ConjectureCeilingViolation = {
   reviewId: string;
   total: number;
@@ -370,9 +247,8 @@ export type ConjectureCeilingViolation = {
   note: string;
 };
 
-// Prefix stems, no trailing \b (so "derives", "rigorously", "derivation" all
-// match). A trailing \b here would (wrongly) fail to match those inflections.
 const CONJECTURE_PROSE = /\bconjectur/i;
+// Prefix stems, no trailing \b (so "derives", "rigorously", "derivation" match).
 const DERIVED_PROSE = /\b(?:deriv|proven|proved|proof|rigorous|theorem|first[-\s]principle|exact(?:ly)?\s+(?:deriv|comput|solv|result))/i;
 
 // Classify a paper's central result epistemically from its output prose. A
@@ -403,71 +279,148 @@ export function conjectureCeilingViolations(
         total: p.total,
         topDerivedPeerReviewId: topDerived.reviewId,
         topDerivedPeerTotal: topDerived.total,
-        note: "Conjectured central output scores at/above the strongest derived/proven peer — re-adjudicate Output Strength below derived results (conjecture rule); never average.",
+        note: "Conjectured central output scores at/above the strongest derived/proven peer — cap Output Strength one firmness tier below the proven/derived top (conjecture rule).",
       });
     }
   }
   return violations;
 }
 
-// --- Shared-input reconciliation (2b) ----------------------------------
-// The same input assumption (entropy ∝ area for horizons; AdS/CFT duality; the
-// LQG area spectrum) should not carry different firmness across neighboring
-// papers just because each review decided independently. Group inputs by STRONG
-// identity (high lexical overlap — a local comparison, NOT a global registry)
-// and flag groups spanning ≥2 reviews whose firmness disagrees. The fix is to
-// re-adjudicate each flagged element against the F-ladder (the judge path),
-// NEVER to average toward the group (averaging is what compressed the scale).
-export type SharedInputInconsistency = {
-  representativeText: string;
-  members: Array<{ reviewId: string; index: number; firmness?: string }>;
-  distinctFirmness: string[];
-  note: string;
+// --- Reason-grouped deduction consistency ------------------------------
+// Operate on the deductions that ALREADY exist; never re-grade rungs from
+// scratch. Each below-10 I/C/O dimension carries a stated cause (its rationale)
+// and a deduction (10 − subscore).
+export type Deduction = {
+  reviewId: string;
+  paperId: string;
+  dimension: IcoElementKind;
+  cause: string;
+  subscore: number;
+  points: number; // 10 − subscore
 };
 
-export function sharedInputInconsistencies(
-  elements: IcoElement[],
-  opts: { strongThreshold?: number } = {},
-): SharedInputInconsistency[] {
-  const threshold = opts.strongThreshold ?? 0.8;
-  const inputs = elements.filter((e) => e.kind === "input");
-  const tokens = inputs.map((e) => groupTokens(e.text));
-  const used = new Set<number>();
-  const out: SharedInputInconsistency[] = [];
-  inputs.forEach((el, i) => {
-    if (used.has(i)) return;
-    const members = [el];
-    used.add(i);
-    inputs.forEach((other, j) => {
-      if (j <= i || used.has(j)) return;
-      if (jaccard(tokens[i], tokens[j]) >= threshold) { members.push(other); used.add(j); }
-    });
-    const distinctReviews = new Set(members.map((m) => m.reviewId));
-    const distinctFirmness = [...new Set(members.map((m) => m.firmness ?? "unspecified"))];
-    if (distinctReviews.size >= 2 && distinctFirmness.length >= 2) {
+// Read a dimension's stored subscore + cause from the v19 ledger. Same
+// precedence the UI/point-deduction display uses.
+function dimensionSubscore(ledger: Record<string, any> | null | undefined, dim: IcoElementKind): number | null {
+  const key = `${dim}StrengthScore`;
+  const raw = ledger?.[key] ?? ledger?.aggregate?.[key];
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
+}
+function dimensionCause(ledger: Record<string, any> | null | undefined, dim: IcoElementKind): string {
+  const subRat = ledger?.subscoreRationale ?? ledger?.aggregate?.subscoreRationale ?? {};
+  const v = subRat?.[`${dim}StrengthScore`];
+  return typeof v === "string" ? v.trim() : "";
+}
+
+export function collectDeductions(
+  papers: Array<{ reviewId: string; paperId: string; ledger: Record<string, any> | null }>,
+): Deduction[] {
+  const out: Deduction[] = [];
+  for (const p of papers) {
+    for (const dim of ["input", "construction", "output"] as IcoElementKind[]) {
+      const subscore = dimensionSubscore(p.ledger, dim);
+      if (subscore == null || subscore >= 10) continue;
       out.push({
-        representativeText: el.text,
-        members: members.map((m) => ({ reviewId: m.reviewId, index: m.index, firmness: m.firmness })),
-        distinctFirmness,
-        note: "Same input assumption assigned different firmness across neighbors — re-adjudicate each against the F-ladder (never average toward the group).",
+        reviewId: p.reviewId,
+        paperId: p.paperId,
+        dimension: dim,
+        cause: dimensionCause(p.ledger, dim),
+        subscore,
+        points: Math.round((10 - subscore) * 10) / 10,
       });
     }
-  });
+  }
   return out;
 }
 
-// --- Orchestrator (judgment path injected; never called in tests) ------
-export type ConsistencyJudge = (group: ElementGroup) => Promise<RungVerdict[]>;
+function cosine(a: number[], b: number[]) {
+  let dot = 0, na = 0, nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i += 1) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+}
+function causeTokens(text: string) {
+  return new Set(text.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 2));
+}
+function jaccard(a: Set<string>, b: Set<string>) {
+  if (a.size === 0 || b.size === 0) return 0;
+  let inter = 0;
+  for (const t of a) if (b.has(t)) inter += 1;
+  return inter / (a.size + b.size - inter);
+}
 
-// Stable, content-addressed key for a group: identifies the same SET of
-// elements regardless of the order grouping discovered them, so a resumed
-// run can match the verdicts a previous (interrupted) run already computed
-// for that group and skip re-calling the model (checkpointing).
-export function groupKey(group: ElementGroup): string {
-  return `${group.kind}|${group.elements
-    .map((e) => `${e.reviewId}:${e.kind}:${e.index}`)
-    .sort()
-    .join(",")}`;
+export type Embedder = (texts: string[]) => Promise<number[][]>;
+
+// Greedy single-pass clustering of deductions by CAUSE similarity. Embedding
+// (semantic) when an embedder is supplied — this is what the lexical matcher
+// could not do (e.g. "rests on the entropy-area relation" worded differently);
+// lexical fallback otherwise / on embedding failure. Only the candidate
+// clusters (≥2 members spanning ≥2 distinct reviews) are returned for judging.
+export async function clusterDeductionsByCause(
+  deductions: Deduction[],
+  embed?: Embedder,
+  opts: { threshold?: number; lexicalThreshold?: number } = {},
+): Promise<Deduction[][]> {
+  const n = deductions.length;
+  if (n < 2) return [];
+  let similar: (a: number, b: number) => boolean;
+  let method: "embedding" | "lexical" = "lexical";
+  if (embed) {
+    try {
+      const vectors = await embed(deductions.map((d) => d.cause));
+      if (Array.isArray(vectors) && vectors.length === n && vectors.every((v) => Array.isArray(v) && v.length > 0)) {
+        const threshold = opts.threshold ?? 0.82;
+        similar = (a, b) => cosine(vectors[a], vectors[b]) >= threshold;
+        method = "embedding";
+      } else {
+        const t = opts.lexicalThreshold ?? 0.5;
+        const toks = deductions.map((d) => causeTokens(d.cause));
+        similar = (a, b) => jaccard(toks[a], toks[b]) >= t;
+      }
+    } catch {
+      const t = opts.lexicalThreshold ?? 0.5;
+      const toks = deductions.map((d) => causeTokens(d.cause));
+      similar = (a, b) => jaccard(toks[a], toks[b]) >= t;
+    }
+  } else {
+    const t = opts.lexicalThreshold ?? 0.5;
+    const toks = deductions.map((d) => causeTokens(d.cause));
+    similar = (a, b) => jaccard(toks[a], toks[b]) >= t;
+  }
+  void method;
+  const used = new Set<number>();
+  const clusters: Deduction[][] = [];
+  for (let i = 0; i < n; i += 1) {
+    if (used.has(i)) continue;
+    const members = [i];
+    used.add(i);
+    for (let j = i + 1; j < n; j += 1) {
+      if (used.has(j)) continue;
+      if (similar(i, j)) { members.push(j); used.add(j); }
+    }
+    const reviews = new Set(members.map((m) => deductions[m].reviewId));
+    if (members.length >= 2 && reviews.size >= 2) clusters.push(members.map((m) => deductions[m]));
+  }
+  return clusters;
+}
+
+// Per-cluster model verdict: confirm the cluster is genuinely one cause in a
+// COMPARABLE load-bearing role, and flag only the outliers — the model emits
+// the rubric-prescribed subscore (a 0-10 rung; code computes points). A
+// legitimate weight difference (same cause, different load-bearing role) yields
+// NO flag.
+export type DeductionFlag = {
+  reviewId: string;
+  dimension: IcoElementKind;
+  prescribedSubscore: number;
+  reason: string;
+};
+export type DeductionClusterVerdict = { sameCauseAndRole: boolean; flags: DeductionFlag[] };
+export type DeductionClusterJudge = (cluster: Deduction[]) => Promise<DeductionClusterVerdict>;
+
+export function clusterKey(cluster: Deduction[]): string {
+  return cluster.map((d) => `${d.reviewId}:${d.dimension}`).sort().join(",");
 }
 
 export type ConsistencyPaperResult = {
@@ -475,102 +428,145 @@ export type ConsistencyPaperResult = {
   paperId: string;
   adjudicatorTotal: number;
   finalTotal: number;
-  calibrationAdjustment: number; // final - adjudicator
-  subscores: IcoAggregate;
-  changeLog: ElementChange[];
+  calibrationAdjustment: number; // final − adjudicator
+  changeLog: Array<{ dimension: IcoElementKind; from: number; to: number; reason: string }>;
 };
+
+export type DeductionConsistencyGroup = {
+  cause: string;
+  members: Array<{ reviewId: string; dimension: IcoElementKind; points: number }>;
+};
+
+// Recompute a paper's total as a DELTA from its adjudicator total (anchored, so
+// the stored score vs the I/C/O formula never disagree): each moved dimension
+// shifts the total by (to − from) * 10/3.
+function totalWithDelta(adjudicatorTotal: number, moves: Array<{ from: number; to: number }>): number {
+  const delta = moves.reduce((s, m) => s + (m.to - m.from) * (10 / 3), 0);
+  return Math.max(0, Math.min(100, Math.round(adjudicatorTotal + delta)));
+}
 
 export async function runConsistencyCalibration(
   papers: Array<{ reviewId: string; paperId: string; ledger: Record<string, any> | null; adjudicatorTotal: number }>,
   deps: {
-    judge: ConsistencyJudge;
-    groupThreshold?: number;
+    deductionJudge: DeductionClusterJudge;
     embed?: Embedder;
     embedThreshold?: number;
-    // Execution-only knobs (do not change the computed corrections):
-    // run several independent groups concurrently (bounded worker pool),
-    // reuse verdicts a prior run already produced, and report each freshly
-    // judged group so the caller can checkpoint progress.
+    groupThreshold?: number;
+    // Execution-only knobs (do not change which dimensions move): bounded
+    // concurrency over clusters + resume from prior cluster verdicts.
     judgeConcurrency?: number;
-    precomputedVerdicts?: Record<string, RungVerdict[]>;
-    onGroupJudged?: (groupKey: string, verdicts: RungVerdict[]) => void | Promise<void>;
+    precomputedVerdicts?: Record<string, DeductionClusterVerdict>;
+    onClusterJudged?: (clusterKey: string, verdict: DeductionClusterVerdict) => void | Promise<void>;
   },
 ): Promise<{
   results: ConsistencyPaperResult[];
   dominanceViolations: DominanceViolation[];
   conjectureCeilingViolations: ConjectureCeilingViolation[];
-  sharedInputInconsistencies: SharedInputInconsistency[];
-  groupingMethod: string;
+  deductionConsistency: { groupingMethod: string; groups: DeductionConsistencyGroup[]; flags: DeductionFlag[] };
 }> {
   const allElements = papers.flatMap((p) => extractIcoElements(p));
+  const outputsByReview = (reviewId: string) => allElements.filter((e) => e.reviewId === reviewId && e.kind === "output");
 
-  // Fast path — purely deterministic cross-paper flags (no model). These are
-  // surfaced in the dry-run preview; the re-adjudication itself is the judge
-  // path below (re-adjudicate against the ladder, never average).
+  // (1) + (2): deterministic cross-paper flags (no re-sum).
   const dominanceFlags = supersetDominanceViolations(papers.map((p) => ({
     reviewId: p.reviewId,
-    outputs: allElements.filter((e) => e.reviewId === p.reviewId && e.kind === "output"),
+    outputs: outputsByReview(p.reviewId),
     total: p.adjudicatorTotal,
   })));
   const conjectureFlags = conjectureCeilingViolations(papers.map((p) => ({
     reviewId: p.reviewId,
-    outputs: allElements.filter((e) => e.reviewId === p.reviewId && e.kind === "output"),
+    outputs: outputsByReview(p.reviewId),
     total: p.adjudicatorTotal,
   })));
-  const sharedInputFlags = sharedInputInconsistencies(allElements);
 
-  // Judgment path — re-adjudicate only flagged groups (anti-drift; minimal
-  // churn). Unflagged elements keep their adjudicator rung. Semantic
-  // (embedding) grouping when an embedder is supplied; lexical otherwise.
-  const groups = deps.embed
-    ? await groupComparableElementsByEmbedding(allElements, deps.embed, { threshold: deps.embedThreshold, lexicalThreshold: deps.groupThreshold })
-    : groupComparableElements(allElements, { threshold: deps.groupThreshold });
-
-  // Bounded worker pool over the groups. Groups are independent and the
-  // verdicts are keyed by element identity (not arrival order), so running
-  // several judgments concurrently — and reusing any already computed in a
-  // prior run — yields the same corrections, just faster and resumable.
+  // (3) reason-grouped deduction consistency. Embedding pre-cluster, then the
+  // model verifies + flags one cluster at a time (bounded concurrency + resume).
+  const deductions = collectDeductions(papers);
+  const clusters = await clusterDeductionsByCause(deductions, deps.embed, {
+    threshold: deps.embedThreshold,
+    lexicalThreshold: deps.groupThreshold,
+  });
   const concurrency = Math.max(1, deps.judgeConcurrency ?? 1);
   const precomputed = deps.precomputedVerdicts ?? {};
-  const perGroupVerdicts: RungVerdict[][] = new Array(groups.length);
-  let nextGroup = 0;
-  const judgeWorker = async () => {
+  const perCluster: DeductionClusterVerdict[] = new Array(clusters.length);
+  let nextCluster = 0;
+  const worker = async () => {
     for (;;) {
-      const i = nextGroup;
-      nextGroup += 1; // synchronous claim; no two workers take the same index
-      if (i >= groups.length) return;
-      const group = groups[i];
-      const key = groupKey(group);
+      const i = nextCluster;
+      nextCluster += 1;
+      if (i >= clusters.length) return;
+      const key = clusterKey(clusters[i]);
       const cached = precomputed[key];
-      if (cached) { perGroupVerdicts[i] = cached; continue; }
-      const judged = await deps.judge(group);
-      perGroupVerdicts[i] = judged;
-      if (deps.onGroupJudged) await deps.onGroupJudged(key, judged);
+      if (cached) { perCluster[i] = cached; continue; }
+      const verdict = await deps.deductionJudge(clusters[i]);
+      perCluster[i] = verdict;
+      if (deps.onClusterJudged) await deps.onClusterJudged(key, verdict);
     }
   };
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, Math.max(1, groups.length)) }, () => judgeWorker()),
-  );
-  const verdicts: RungVerdict[] = perGroupVerdicts.flat();
-  const { corrected, changeLog } = applyCorrections(allElements, verdicts);
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, clusters.length)) }, () => worker()));
+
+  // Collect flags only from clusters the model confirmed as one cause + role.
+  const flags: DeductionFlag[] = [];
+  for (let i = 0; i < clusters.length; i += 1) {
+    const verdict = perCluster[i];
+    if (!verdict || !verdict.sameCauseAndRole) continue;
+    for (const f of verdict.flags) {
+      // a flag must correspond to a real member of this cluster
+      if (clusters[i].some((d) => d.reviewId === f.reviewId && d.dimension === f.dimension)) flags.push(f);
+    }
+  }
+
+  // Apply ONLY the targeted moves (conjecture cap + flagged outliers). Every
+  // other paper is untouched: finalTotal === adjudicatorTotal.
+  type Move = { dimension: IcoElementKind; from: number; to: number; reason: string };
+  const movesByReview = new Map<string, Move[]>();
+  const addMove = (reviewId: string, move: Move) => {
+    const list = movesByReview.get(reviewId) ?? [];
+    list.push(move);
+    movesByReview.set(reviewId, list);
+  };
+  const subscoreOf = (reviewId: string, dim: IcoElementKind): number | null => {
+    const p = papers.find((x) => x.reviewId === reviewId);
+    return p ? dimensionSubscore(p.ledger, dim) : null;
+  };
+  // Conjecture-ceiling: cap the flagged paper's output one firmness tier down.
+  for (const cv of conjectureFlags) {
+    const cur = subscoreOf(cv.reviewId, "output");
+    if (cur != null && cur > CONJECTURE_OUTPUT_CEILING) {
+      addMove(cv.reviewId, { dimension: "output", from: cur, to: CONJECTURE_OUTPUT_CEILING, reason: "conjecture-ceiling: capped one firmness tier below the proven/derived top" });
+    }
+  }
+  // Deduction-consistency outliers: move to the rubric-prescribed subscore.
+  for (const f of flags) {
+    const cur = subscoreOf(f.reviewId, f.dimension);
+    const to = Math.max(0, Math.min(10, Number(f.prescribedSubscore)));
+    if (cur == null || !Number.isFinite(to) || to === cur) continue;
+    addMove(f.reviewId, { dimension: f.dimension, from: cur, to, reason: f.reason || "deduction-consistency: re-adjudicated to the rubric-prescribed rung" });
+  }
 
   const results: ConsistencyPaperResult[] = papers.map((p) => {
-    const subscores = aggregateFromElements(corrected.filter((e) => e.reviewId === p.reviewId));
+    const moves = movesByReview.get(p.reviewId) ?? [];
+    const finalTotal = moves.length ? totalWithDelta(p.adjudicatorTotal, moves) : p.adjudicatorTotal;
     return {
       reviewId: p.reviewId,
       paperId: p.paperId,
       adjudicatorTotal: p.adjudicatorTotal,
-      finalTotal: subscores.total,
-      calibrationAdjustment: subscores.total - p.adjudicatorTotal,
-      subscores,
-      changeLog: changeLog.filter((c) => c.reviewId === p.reviewId),
+      finalTotal,
+      calibrationAdjustment: finalTotal - p.adjudicatorTotal,
+      changeLog: moves.map((m) => ({ dimension: m.dimension, from: m.from, to: m.to, reason: m.reason })),
     };
   });
+
+  // Surface the candidate cause groups (for the dry-run preview).
+  const groups: DeductionConsistencyGroup[] = clusters.map((c) => ({
+    cause: c[0]?.cause ?? "",
+    members: c.map((d) => ({ reviewId: d.reviewId, dimension: d.dimension, points: d.points })),
+  }));
+
   return {
     results,
     dominanceViolations: dominanceFlags,
     conjectureCeilingViolations: conjectureFlags,
-    sharedInputInconsistencies: sharedInputFlags,
-    groupingMethod: deps.embed ? "embedding" : "lexical",
+    deductionConsistency: { groupingMethod: deps.embed ? "embedding" : "lexical", groups, flags },
   };
 }

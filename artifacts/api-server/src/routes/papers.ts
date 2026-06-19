@@ -76,11 +76,11 @@ import {
 import {
   CONSISTENCY_CALIBRATION_VERSION,
   runConsistencyCalibration,
-  type ConsistencyJudge,
-  type ElementGroup,
-  type RungVerdict,
+  type Deduction,
+  type DeductionClusterJudge,
+  type DeductionClusterVerdict,
 } from "../lib/consistencyCalibration";
-import { CONSISTENCY_CALIBRATION_V1_PROMPT } from "../lib/prompts/consistencyCalibrationV1";
+import { DEDUCTION_CONSISTENCY_V2_PROMPT } from "../lib/prompts/consistencyCalibrationV1";
 import { withModelRetry } from "../lib/modelRetry";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
@@ -2369,8 +2369,8 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
   await runDurableCorpusJob(record, {
     label: "consistency calibration",
     checkpointField: "consistencyCalibrationCheckpoint",
-    itemsKey: "verdictsByGroup",
-    doneKey: "groupsDone",
+    itemsKey: "verdictsByCluster",
+    doneKey: "clustersDone",
     resultField: "consistencyCalibrationResult",
     errorField: "consistencyCalibrationError",
     maxAttempts: CONSISTENCY_JOB_MAX_ATTEMPTS,
@@ -2379,8 +2379,8 @@ async function runConsistencyCalibrationJob(record: ReviewAttemptRecord) {
       groupThreshold: typeof params.groupThreshold === "number" ? params.groupThreshold : undefined,
       embedThreshold: typeof params.embedThreshold === "number" ? params.embedThreshold : undefined,
       judgeConcurrency: CONSISTENCY_JUDGE_CONCURRENCY,
-      precomputedVerdicts: checkpoint as Record<string, RungVerdict[]>,
-      onGroupJudged: recordProgress,
+      precomputedVerdicts: checkpoint as Record<string, DeductionClusterVerdict>,
+      onClusterJudged: recordProgress,
     }),
   });
 }
@@ -4541,25 +4541,22 @@ router.get("/papers/:id/realized-yield", async (req, res) => {
   }
 });
 
-const consistencyVerdictJsonSchema = {
+const deductionClusterVerdictJsonSchema = {
   type: "object",
-  required: ["verdicts"],
+  required: ["sameCauseAndRole", "flags"],
   additionalProperties: false,
   properties: {
-    verdicts: {
+    sameCauseAndRole: { type: "boolean" },
+    flags: {
       type: "array",
       items: {
         type: "object",
-        required: ["reviewId", "kind", "index", "reason"],
+        required: ["reviewId", "dimension", "prescribedSubscore", "reason"],
         additionalProperties: true,
         properties: {
           reviewId: { type: "string" },
-          kind: { type: "string", enum: ["input", "construction", "output"] },
-          index: { type: "number" },
-          firmness: { type: "string" },
-          centrality: { type: "string" },
-          validityLevel: { type: "string" },
-          hardToVaryLevel: { type: "string" },
+          dimension: { type: "string", enum: ["input", "construction", "output"] },
+          prescribedSubscore: { type: "number" },
           reason: { type: "string" },
         },
       },
@@ -4567,26 +4564,20 @@ const consistencyVerdictJsonSchema = {
   },
 };
 
-const normalizeRung = (value: unknown): string | undefined =>
-  typeof value === "string" && value.trim() && value.trim().toLowerCase() !== "null" ? value.trim() : undefined;
-
 // POST /api/papers/consistency-calibration — rubric-consistency calibration
-// (consistency-v1). Gated: requires { calibrationVersion: "consistency-v1" }
-// and defaults to a DRY RUN (compute + return, no write). The legacy
-// anchored pairwise path is untouched and remains the active engine until
-// this is validated; this never runs in prod by default.
-// Runs the rubric-consistency engine over the whole corpus. This is the
-// heavy work (embeddings + per-group Gemini adjudication for ~50+ reviews)
-// and is invoked from the durable background worker, never inline in the
-// web request — the corpus run exceeds the edge timeout. The calibration
-// logic itself is unchanged from the original synchronous route.
+// (consistency-v2). Gated: requires { calibrationVersion: "consistency-v2" }
+// and defaults to a DRY RUN (compute + return, no write). v2 leaves almost
+// every score untouched: dominance + conjecture-ceiling flags, plus a
+// reason-grouped deduction-consistency pass (embedding pre-cluster -> per-
+// cluster model verdict). No corpus-wide re-sum. Runs on the durable worker
+// (corpus read + a handful of cluster judge calls exceeds the edge timeout).
 async function executeConsistencyCalibration(opts: {
   apply: boolean;
   groupThreshold?: number;
   embedThreshold?: number;
   judgeConcurrency?: number;
-  precomputedVerdicts?: Record<string, RungVerdict[]>;
-  onGroupJudged?: (groupKey: string, verdicts: RungVerdict[]) => void | Promise<void>;
+  precomputedVerdicts?: Record<string, DeductionClusterVerdict>;
+  onClusterJudged?: (clusterKey: string, verdict: DeductionClusterVerdict) => void | Promise<void>;
 }) {
   const { apply } = opts;
   const papersRows = dedupePapers(await db.select().from(papersTable).orderBy(desc(papersTable.createdAt)));
@@ -4606,9 +4597,10 @@ async function executeConsistencyCalibration(opts: {
     });
   }
 
-  const judge: ConsistencyJudge = async (group: ElementGroup) => {
-    // Each group is one model call; retry transient blips (503/429/timeout)
-    // with backoff so a single bad call doesn't sink the multi-minute run.
+  // Per-cluster deduction-consistency judge: confirm one cause + comparable
+  // role, flag only unjustified outliers, emit the prescribed subscore (a rung;
+  // code computes points). One model call per candidate cluster, retry-wrapped.
+  const deductionJudge: DeductionClusterJudge = async (cluster: Deduction[]) => {
     const response = await withModelRetry<any>(
       () => (geminiAI.models.generateContent as any)({
         model: GEMINI_META_MODEL,
@@ -4616,46 +4608,44 @@ async function executeConsistencyCalibration(opts: {
           role: "user",
           parts: [{
             text: JSON.stringify({
-              auditNote: "Audit whether these comparable elements apply the rubric's rungs consistently; re-adjudicate each misplaced element against the rung definitions (never toward the group).",
-              kind: group.kind,
-              elements: group.elements.map((el) => ({
-                reviewId: el.reviewId, kind: el.kind, index: el.index, text: el.text,
-                firmness: el.firmness ?? null, centrality: el.centrality ?? null,
-                validityLevel: el.validityLevel ?? null, hardToVaryLevel: el.hardToVaryLevel ?? null,
+              auditNote: "Confirm these below-10 deductions share ONE cause in a COMPARABLE load-bearing role; flag ONLY unjustified outliers and give each the rubric-prescribed subscore (never the group average). Legitimate weight differences are not inconsistencies.",
+              deductions: cluster.map((d) => ({
+                reviewId: d.reviewId, dimension: d.dimension, cause: d.cause, currentSubscore: d.subscore, currentDeductionPoints: d.points,
               })),
             }, null, 2),
           }],
         }],
         config: {
-          systemInstruction: CONSISTENCY_CALIBRATION_V1_PROMPT,
+          systemInstruction: DEDUCTION_CONSISTENCY_V2_PROMPT,
           responseMimeType: "application/json",
-          responseJsonSchema: consistencyVerdictJsonSchema,
+          responseJsonSchema: deductionClusterVerdictJsonSchema,
           temperature: 0.1,
-          maxOutputTokens: 8192,
+          maxOutputTokens: 4096,
         },
       }),
       {
-        label: "consistency-judge",
+        label: "deduction-consistency-judge",
         onRetry: ({ attempt, maxAttempts, delayMs, error }) =>
-          logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error judging consistency group; retrying after backoff"),
+          logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error judging a deduction cluster; retrying after backoff"),
       },
     );
     const parsed = parseGeminiJsonResponse(response.text ?? "") as Record<string, any>;
-    const rawVerdicts = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
-    return rawVerdicts.map((v: any): RungVerdict => ({
-      reviewId: String(v.reviewId),
-      kind: v.kind,
-      index: Number(v.index),
-      firmness: normalizeRung(v.firmness) as RungVerdict["firmness"],
-      centrality: normalizeRung(v.centrality) as RungVerdict["centrality"],
-      validityLevel: normalizeRung(v.validityLevel),
-      hardToVaryLevel: normalizeRung(v.hardToVaryLevel),
-      reason: typeof v.reason === "string" ? v.reason : "",
-    })).filter((v: RungVerdict) => v.reviewId && v.kind && Number.isFinite(v.index));
+    const rawFlags = Array.isArray(parsed?.flags) ? parsed.flags : [];
+    return {
+      sameCauseAndRole: parsed?.sameCauseAndRole === true,
+      flags: rawFlags
+        .map((f: any) => ({
+          reviewId: String(f?.reviewId ?? ""),
+          dimension: f?.dimension,
+          prescribedSubscore: Number(f?.prescribedSubscore),
+          reason: typeof f?.reason === "string" ? f.reason : "",
+        }))
+        .filter((f: any) => f.reviewId && ["input", "construction", "output"].includes(f.dimension) && Number.isFinite(f.prescribedSubscore)),
+    };
   };
 
-  // Semantic grouping via Gemini embeddings (best-effort; the engine falls
-  // back to lexical grouping if this throws or returns nothing). Retry
+  // Semantic cause-clustering via Gemini embeddings (best-effort; the engine
+  // falls back to lexical clustering if this throws or returns nothing). Retry
   // transient blips first so a momentary 503 doesn't force the fallback.
   const embed = async (texts: string[]): Promise<number[][]> => {
     const response = await withModelRetry<any>(
@@ -4666,26 +4656,28 @@ async function executeConsistencyCalibration(opts: {
       {
         label: "consistency-embed",
         onRetry: ({ attempt, maxAttempts, delayMs, error }) =>
-          logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error embedding for consistency grouping; retrying after backoff"),
+          logger.warn({ attempt, maxAttempts, delayMs, err: (error as any)?.message ?? error }, "Transient error embedding for cause clustering; retrying after backoff"),
       },
     );
     const vectors = (response?.embeddings ?? []).map((e: any) => e?.values ?? e?.value ?? []);
     return vectors;
   };
 
-  const { results, dominanceViolations, conjectureCeilingViolations, sharedInputInconsistencies, groupingMethod } = await runConsistencyCalibration(subjects, {
-    judge,
+  const { results, dominanceViolations, conjectureCeilingViolations, deductionConsistency } = await runConsistencyCalibration(subjects, {
+    deductionJudge,
     embed,
     groupThreshold: opts.groupThreshold,
     embedThreshold: opts.embedThreshold,
     judgeConcurrency: opts.judgeConcurrency,
     precomputedVerdicts: opts.precomputedVerdicts,
-    onGroupJudged: opts.onGroupJudged,
+    onClusterJudged: opts.onClusterJudged,
   });
 
+  const moved = results.filter((r) => r.calibrationAdjustment !== 0);
   let updatedReviews = 0;
   if (apply) {
-    for (const result of results) {
+    // Only the moved papers are written; everything else is untouched.
+    for (const result of moved) {
       const review = reviews.find((r) => r.id === result.reviewId);
       if (!review) continue;
       const ledger = parseJsonObject(review.coverageLedgerJson);
@@ -4697,7 +4689,6 @@ async function executeConsistencyCalibration(opts: {
           adjudicatorTotal: result.adjudicatorTotal,
           finalTotal: result.finalTotal,
           calibrationAdjustment: result.calibrationAdjustment,
-          subscores: result.subscores,
           changeLog: result.changeLog,
           calibratedAt: new Date().toISOString(),
         },
@@ -4709,27 +4700,39 @@ async function executeConsistencyCalibration(opts: {
     }
   }
 
+  // Spread is the operator's regression guard: a correct pass keeps SD ≈ the
+  // adjudicator SD (no compression).
+  const sd = (xs: number[]) => {
+    if (xs.length < 2) return 0;
+    const m = xs.reduce((a, b) => a + b, 0) / xs.length;
+    return Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / xs.length);
+  };
+  const adjudicatorSpread = Math.round(sd(results.map((r) => r.adjudicatorTotal)) * 10) / 10;
+  const finalSpread = Math.round(sd(results.map((r) => r.finalTotal)) * 10) / 10;
+
   return {
     calibrationVersion: CONSISTENCY_CALIBRATION_VERSION,
     dryRun: !apply,
-    groupingMethod,
+    groupingMethod: deductionConsistency.groupingMethod,
     papers: results.length,
+    movedPapers: moved.length,
     updatedReviews,
+    adjudicatorSpread,
+    finalSpread,
     dominanceViolations,
     conjectureCeilingViolations,
-    sharedInputInconsistencies,
-    results: results.map((r) => ({
+    deductionConsistency,
+    results: moved.map((r) => ({
       reviewId: r.reviewId,
       paperId: r.paperId,
       adjudicatorTotal: r.adjudicatorTotal,
       finalTotal: r.finalTotal,
       calibrationAdjustment: r.calibrationAdjustment,
-      changes: r.changeLog.length,
+      changeLog: r.changeLog,
     })),
-    changeLog: results.flatMap((r) => r.changeLog),
     note: apply
-      ? "Applied: consistencyCalibration written to each review ledger; legacy anchored fields untouched."
-      : "Dry run: nothing written. Pass { apply: true } to persist.",
+      ? "Applied: consistencyCalibration written to the moved reviews only; all other ledgers untouched, no re-sum."
+      : "Dry run: nothing written. Pass { apply: true } to persist the targeted moves.",
   };
 }
 

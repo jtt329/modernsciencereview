@@ -1632,14 +1632,24 @@ async function assertPlaceholderTitleRejected() {
 }
 await assertPlaceholderTitleRejected();
 
-// Rubric-consistency calibration (consistency-v1) — gated, legacy intact.
+// Rubric-consistency calibration (consistency-v2) — gated, legacy intact.
+// v2 REMOVES the scale-compressing rung-recompute; it keeps dominance +
+// conjecture-ceiling and adds reason-grouped deduction consistency.
 const consistencySource = readFileSync(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"), "utf8");
 const consistencyPromptSource = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/consistencyCalibrationV1.ts"), "utf8");
-assert.match(consistencySource, /CONSISTENCY_CALIBRATION_VERSION = "consistency-v1"/);
+assert.match(consistencySource, /CONSISTENCY_CALIBRATION_VERSION = "consistency-v2"/);
 assert.match(consistencySource, /export function supersetDominanceViolations/);
-assert.match(consistencySource, /export function applyCorrections/);
-assert.match(consistencyPromptSource, /never averaging toward the\s+group|never toward the group|Do NOT move an element toward the group/);
-assert.match(consistencyPromptSource, /Do NOT output any 0-100 score/);
+assert.match(consistencySource, /export function collectDeductions/);
+assert.match(consistencySource, /export async function clusterDeductionsByCause/);
+assert.match(consistencySource, /export function conjectureCeilingViolations/);
+// The rung-recompute engine is GONE (it compressed the scale).
+assert.doesNotMatch(consistencySource, /export function applyCorrections/);
+assert.doesNotMatch(consistencySource, /export function groupComparableElements/);
+assert.doesNotMatch(consistencySource, /export function sharedInputInconsistencies/);
+// The v2 deduction-consistency prompt: never the group average, no 0-100.
+assert.match(consistencyPromptSource, /DEDUCTION_CONSISTENCY_V2_PROMPT/);
+assert.match(consistencyPromptSource, /NEVER move it to the group average|never the group average/i);
+assert.match(consistencyPromptSource, /Do NOT emit any\s+0-100 score/);
 // Route is gated and defaults to dry run; legacy pairwise path untouched.
 assert.match(routesSource, /\/papers\/consistency-calibration/);
 assert.match(routesSource, /req\.body\?\.calibrationVersion !== CONSISTENCY_CALIBRATION_VERSION/);
@@ -1682,25 +1692,25 @@ assert.match(routesSource, /CONSISTENCY_JOB_KIND = "consistency-calibration"/);
 const modelRetrySource = readFileSync(join(root, "artifacts/api-server/src/lib/modelRetry.ts"), "utf8");
 assert.match(modelRetrySource, /export function isTransientModelError/);
 assert.match(modelRetrySource, /export async function withModelRetry/);
-// Judge AND embed calls go through the retry wrapper.
+// Deduction-cluster judge AND embed calls go through the retry wrapper.
 assert.match(routesSource, /withModelRetry(<any>)?\(/);
-assert.match(routesSource, /label: "consistency-judge"/);
+assert.match(routesSource, /label: "deduction-consistency-judge"/);
 assert.match(routesSource, /label: "consistency-embed"/);
-// Bounded concurrency + checkpoint are threaded into the engine.
+// Bounded concurrency + checkpoint are threaded into the engine (per cluster).
 assert.match(routesSource, /judgeConcurrency: CONSISTENCY_JUDGE_CONCURRENCY/);
 assert.match(routesSource, /precomputedVerdicts: checkpoint/);
-assert.match(routesSource, /onGroupJudged/);
+assert.match(routesSource, /onClusterJudged/);
 assert.match(routesSource, /consistencyCalibrationCheckpoint/);
 // A mid-run failure re-queues to resume from the checkpoint, bounded by
 // maxAttempts, instead of restarting the corpus.
 assert.match(routesSource, /jobAttempt < spec\.maxAttempts/);
 assert.match(routesSource, /maxAttempts: CONSISTENCY_JOB_MAX_ATTEMPTS/);
 assert.match(routesSource, /jobAttempt: jobAttempt \+ 1/);
-// Engine exposes the execution knobs (concurrency / checkpoint hooks).
-assert.match(consistencySource, /export function groupKey/);
+// Engine exposes the execution knobs (per-cluster concurrency / checkpoint).
+assert.match(consistencySource, /export function clusterKey/);
 assert.match(consistencySource, /judgeConcurrency\?: number/);
-assert.match(consistencySource, /precomputedVerdicts\?: Record<string, RungVerdict\[\]>/);
-assert.match(consistencySource, /onGroupJudged\?:/);
+assert.match(consistencySource, /precomputedVerdicts\?: Record<string, DeductionClusterVerdict>/);
+assert.match(consistencySource, /onClusterJudged\?:/);
 
 // Functional: retry retries transient errors then succeeds, fails fast on
 // deterministic ones, and gives up after the cap; the engine runs groups
@@ -1746,23 +1756,20 @@ async function assertConsistencyResilience() {
       } catch { gaveUp = true; }
       if (!gaveUp || persistent !== 3) throw new Error("retry did not honor the attempt cap");
 
-      // (4) Engine: two papers with the SAME output text form one comparable
-      // group. Concurrent judging produces a result; a second run seeded with
-      // the captured verdicts (checkpoint) does NOT re-judge and is identical.
-      const subj = (id) => ({ reviewId: id, paperId: id, ledger: { inputConstructionOutputAssessment: { output: { outputs: [{ output: "shared horizon entropy result", validityLevel: "valid", centrality: "high" }] } }, computedScore: 60 } });
-      const subjects = [subj("G1"), subj("G2")];
+      // (4) Engine: two papers carry the SAME below-10 input cause -> one cause
+      // cluster -> judged once. A second run seeded with the captured cluster
+      // verdict (checkpoint) does NOT re-judge and is identical.
+      const subj = (id, sub) => ({ reviewId: id, paperId: id, adjudicatorTotal: 60, ledger: { inputStrengthScore: sub, constructionStrengthScore: 10, outputStrengthScore: 10, subscoreRationale: { inputStrengthScore: "rests on the entropy-area relation for horizons" } } });
+      const subjects = [subj("G1", 8), subj("G2", 8)];
       let judgeCalls = 0;
       const seen = {};
-      const countingJudge = async (group) => {
-        judgeCalls += 1;
-        return group.elements.map((e) => ({ reviewId: e.reviewId, kind: e.kind, index: e.index, firmness: "F2", reason: "x" }));
-      };
-      const run1 = await runConsistencyCalibration(subjects, { judge: countingJudge, judgeConcurrency: 4, onGroupJudged: (k, v) => { seen[k] = v; } });
-      if (judgeCalls < 1) throw new Error("comparable group was not judged");
-      if (Object.keys(seen).length < 1) throw new Error("onGroupJudged did not report a checkpoint entry");
+      const countingJudge = async () => { judgeCalls += 1; return { sameCauseAndRole: true, flags: [] }; };
+      const run1 = await runConsistencyCalibration(subjects, { deductionJudge: countingJudge, judgeConcurrency: 4, onClusterJudged: (k, v) => { seen[k] = v; } });
+      if (judgeCalls < 1) throw new Error("the shared-cause cluster was not judged");
+      if (Object.keys(seen).length < 1) throw new Error("onClusterJudged did not report a checkpoint entry");
       const callsAfterRun1 = judgeCalls;
-      const run2 = await runConsistencyCalibration(subjects, { judge: countingJudge, judgeConcurrency: 4, precomputedVerdicts: seen });
-      if (judgeCalls !== callsAfterRun1) throw new Error("checkpointed group was re-judged instead of resumed");
+      const run2 = await runConsistencyCalibration(subjects, { deductionJudge: countingJudge, judgeConcurrency: 4, precomputedVerdicts: seen });
+      if (judgeCalls !== callsAfterRun1) throw new Error("checkpointed cluster was re-judged instead of resumed");
       if (JSON.stringify(run1.results) !== JSON.stringify(run2.results)) throw new Error("checkpoint resume changed the calibration result");
     })();
   `);
@@ -2062,14 +2069,14 @@ assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED \? CENTRALITY_TRA
 assert.match(engineSource, /const ADJUDICATOR_PROMPT_DELTAS = \[/);
 
 // #2 Calibration enforces existing rules cross-paper (no prompt/hash change):
-// conjecture-ceiling + shared-input reconciliation, flagged then re-adjudicated
-// against the ladder (never averaged). Surfaced in the gated dry-run route.
+// conjecture-ceiling + reason-grouped deduction consistency, flagged then
+// re-adjudicated against the ladder (never averaged). Surfaced in the gated
+// dry-run route.
 assert.match(consistencySource, /export function conjectureCeilingViolations/);
 assert.match(consistencySource, /export function paperEpistemicStatus/);
-assert.match(consistencySource, /export function sharedInputInconsistencies/);
-assert.match(consistencySource, /never average/);
+assert.match(consistencySource, /CONJECTURE_OUTPUT_CEILING = 8/);
 assert.match(routesSource, /conjectureCeilingViolations/);
-assert.match(routesSource, /sharedInputInconsistencies/);
+assert.match(routesSource, /deductionConsistency/);
 
 // #3 Point-deduction display: derived in code (10 − subscore), model emits
 // rungs only; surfaced in the ledger + under the score.
@@ -2086,7 +2093,7 @@ async function assertAuditRefinements() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { conjectureCeilingViolations, paperEpistemicStatus, sharedInputInconsistencies } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
+    import { conjectureCeilingViolations, paperEpistemicStatus, collectDeductions, clusterDeductionsByCause, runConsistencyCalibration } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
     import { computePointDeductions } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"))};
     globalThis.__auditRefine = (async () => {
       const out = (reviewId, text) => ({ reviewId, paperId: reviewId, kind: "output", index: 0, text });
@@ -2106,14 +2113,46 @@ async function assertAuditRefinements() {
       if (paperEpistemicStatus(firewalls.outputs) !== "other") throw new Error("Firewalls (derives + conjectures) should be 'other', left alone");
       if (conjectureCeilingViolations([firewalls, wald]).some((f) => f.reviewId === "fw")) throw new Error("Firewalls must not be flagged as a bare conjecture");
 
-      // 2b shared-input: the same input (entropy ∝ area) with DIFFERENT firmness
-      // across two reviews -> flagged; re-adjudicate, never average.
-      const inp = (reviewId, firmness) => ({ reviewId, paperId: reviewId, kind: "input", index: 0, text: "the assumption that entropy is proportional to horizon area", firmness });
-      const sflags = sharedInputInconsistencies([inp("A", "F1"), inp("B", "F3")]);
-      if (sflags.length !== 1) throw new Error("a shared input with differing firmness should be flagged once");
-      if (sflags[0].distinctFirmness.length < 2) throw new Error("the flag should record the differing firmness rungs");
-      // Same input, SAME firmness -> not flagged.
-      if (sharedInputInconsistencies([inp("A", "F2"), inp("B", "F2")]).length !== 0) throw new Error("a consistently-scored shared input must not be flagged");
+      // 2b reason-grouped deduction consistency. NO scale compression: a clean
+      // run leaves untouched papers exactly at their adjudicator total, moves
+      // ONLY the conjecture-ceiling paper + judge-flagged outliers, and recomputes
+      // those as a delta (never a corpus re-sum).
+      const ledgerOf = (inputSub, rationale, outputs) => ({
+        inputStrengthScore: inputSub, constructionStrengthScore: 10, outputStrengthScore: outputs ?? 10,
+        subscoreRationale: { inputStrengthScore: rationale },
+        inputConstructionOutputAssessment: { output: { outputs: [{ output: "result", assessment: outputs === 10 ? "derived, an exact theorem" : "" }] } },
+      });
+      // collectDeductions: only below-10 dims become deductions, with 10−subscore.
+      const ded = collectDeductions([
+        { reviewId: "A", paperId: "A", ledger: ledgerOf(8, "rests on the entropy-area relation") },
+        { reviewId: "B", paperId: "B", ledger: ledgerOf(6, "rests on the entropy-area relation for horizons") },
+      ]);
+      if (ded.length !== 2 || ded.some((d) => d.dimension !== "input")) throw new Error("collectDeductions should yield the two below-10 input deductions");
+      if (ded.find((d) => d.reviewId === "A").points !== 2) throw new Error("A input 8 -> 2 deduction points");
+      // clusterDeductionsByCause (lexical fallback when no embedder): the two
+      // same-cause inputs cluster together.
+      const clusters = await clusterDeductionsByCause(ded);
+      if (clusters.length !== 1 || clusters[0].length !== 2) throw new Error("the two same-cause deductions should form one cluster");
+      // Orchestrator: a judge that flags B's input up to match A (8). Untouched
+      // papers stay put; only B moves; spread is NOT collapsed.
+      const flagJudge = async (cluster) => ({ sameCauseAndRole: true, flags: [{ reviewId: "B", dimension: "input", prescribedSubscore: 8, reason: "same cause+role as A" }] });
+      const calib = await runConsistencyCalibration([
+        { reviewId: "A", paperId: "A", ledger: ledgerOf(8, "rests on the entropy-area relation"), adjudicatorTotal: 93 },
+        { reviewId: "B", paperId: "B", ledger: ledgerOf(6, "rests on the entropy-area relation for horizons"), adjudicatorTotal: 87 },
+      ], { deductionJudge: flagJudge });
+      const aRes = calib.results.find((r) => r.reviewId === "A");
+      const bRes = calib.results.find((r) => r.reviewId === "B");
+      if (aRes.calibrationAdjustment !== 0 || aRes.finalTotal !== 93) throw new Error("A (not flagged) must be untouched");
+      if (bRes.calibrationAdjustment === 0) throw new Error("B (flagged outlier) should move");
+      if (bRes.finalTotal <= 87) throw new Error("B's input lifted 6->8 should raise its total");
+      if (calib.results.filter((r) => r.calibrationAdjustment !== 0).length !== 1) throw new Error("only the flagged paper should move (no corpus re-sum)");
+      // A judge that returns sameCauseAndRole:false -> nothing moves.
+      const noopJudge = async () => ({ sameCauseAndRole: false, flags: [] });
+      const calib2 = await runConsistencyCalibration([
+        { reviewId: "A", paperId: "A", ledger: ledgerOf(8, "rests on the entropy-area relation"), adjudicatorTotal: 93 },
+        { reviewId: "B", paperId: "B", ledger: ledgerOf(6, "rests on the entropy-area relation for horizons"), adjudicatorTotal: 87 },
+      ], { deductionJudge: noopJudge });
+      if (calib2.results.some((r) => r.calibrationAdjustment !== 0)) throw new Error("an unconfirmed cluster must move nothing");
 
       // #3 point deductions: 10 − subscore, only below-10 dims, cause carried.
       const pd = computePointDeductions(
@@ -2147,14 +2186,13 @@ async function assertConsistencyCalibration() {
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
     import {
-      supersetDominanceViolations, applyCorrections, aggregateFromElements,
-      elementContribution, runConsistencyCalibration,
+      supersetDominanceViolations, aggregateFromElements, elementContribution,
     } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
     globalThis.__consistency = (async () => {
       const out = (reviewId, index, firmness, centrality) => ({ reviewId, paperId: reviewId, kind: "output", index, text: "horizon entropy result " + index, firmness, centrality });
 
-      // (1) Superset monotonicity: Y's outputs ⊃ X's at equal rungs; if the
-      // adjudicator total of Y is below X, the FAST PATH flags it — no model.
+      // (1) Superset monotonicity (KEPT): Y's outputs ⊃ X's at equal rungs; if
+      // the adjudicator total of Y is below X, the dominance check flags it.
       const xOuts = [out("X",0,"F2","C2"), out("X",1,"F2","C2")];
       const yOuts = [out("Y",0,"F2","C2"), out("Y",1,"F2","C2"), out("Y",2,"F2","C2")];
       const violations = supersetDominanceViolations([
@@ -2162,39 +2200,17 @@ async function assertConsistencyCalibration() {
         { reviewId: "X", outputs: xOuts, total: 80 },
       ]);
       if (!violations.some((v) => v.supersetReviewId === "Y" && v.subsetReviewId === "X")) {
-        throw new Error("superset monotonicity violation was not flagged by the fast path");
+        throw new Error("superset monotonicity violation was not flagged");
       }
       // No violation when totals already respect dominance.
       const ok = supersetDominanceViolations([
         { reviewId: "Y", outputs: yOuts, total: 85 },
         { reviewId: "X", outputs: xOuts, total: 80 },
       ]);
-      if (ok.length !== 0) throw new Error("fast path flagged a non-violation");
+      if (ok.length !== 0) throw new Error("dominance flagged a non-violation");
 
-      // (2) Rung consistency: equivalent outputs on different rungs converge
-      // to the definition-prescribed rung (here F2), via per-element verdicts.
-      const elements = [out("A",0,"F2","C2"), out("B",0,"F4","C2")];
-      const { corrected, changeLog } = applyCorrections(elements, [
-        { reviewId: "B", kind: "output", index: 0, firmness: "F2", reason: "same measured-regime referent as A → F2" },
-      ]);
-      if (corrected.find((e) => e.reviewId === "B").firmness !== "F2") throw new Error("rung did not converge to the prescribed F2");
-      if (!changeLog.some((c) => c.from === "F4" && c.to === "F2")) throw new Error("rung change not logged");
-
-      // (3) No-drift: 3-element group, majority on the WRONG rung (F4), the
-      // correct minority (F2) must NOT be dragged to the majority. The judge
-      // returns each element's definition-prescribed rung independently.
-      const group3 = [out("P",0,"F4","C2"), out("Q",0,"F4","C2"), out("R",0,"F2","C2")];
-      const verdicts3 = [
-        { reviewId: "P", kind: "output", index: 0, firmness: "F2", reason: "measured regime → F2" },
-        { reviewId: "Q", kind: "output", index: 0, firmness: "F2", reason: "measured regime → F2" },
-        { reviewId: "R", kind: "output", index: 0, firmness: "F2", reason: "already correct → F2" },
-      ];
-      const drift = applyCorrections(group3, verdicts3);
-      const r = drift.corrected.find((e) => e.reviewId === "R");
-      if (r.firmness !== "F2") throw new Error("the correct minority element was dragged off its rung");
-
-      // (4) Anti-anchoring: corrections are rung/class changes that feed the
-      // computed-ICO aggregation; no raw 0-100 is introduced by a correction.
+      // (2) Anti-anchoring: the rung→points aggregation is monotonic and stays
+      // on the 0-100 scale (kept helpers; used by the dominance rung() + display).
       const before = aggregateFromElements([out("Z",0,"F4","C4")]);
       const after = aggregateFromElements([out("Z",0,"F1","C1")]);
       if (!(after.total > before.total)) throw new Error("rung upgrade did not raise the computed-ICO total");
@@ -2202,14 +2218,6 @@ async function assertConsistencyCalibration() {
       if (elementContribution(out("Z",0,"F1","C1")) <= elementContribution(out("Z",0,"F4","C4"))) {
         throw new Error("element contribution is not monotonic in rung quality");
       }
-
-      // Orchestrator wiring with an injected deterministic judge (no model).
-      const orchestrated = await runConsistencyCalibration(
-        [{ reviewId: "B", paperId: "B", ledger: { inputConstructionOutputAssessment: { output: { outputs: [{ output: "horizon entropy result 0 (F4)", validityLevel: "valid", centrality: "high" }] } }, computedScore: 60 } }],
-        { judge: async () => [{ reviewId: "B", kind: "output", index: 0, firmness: "F2", reason: "x" }] },
-      );
-      if (!Array.isArray(orchestrated.results) || orchestrated.results.length !== 1) throw new Error("orchestrator did not return a per-paper result");
-      if (typeof orchestrated.results[0].calibrationAdjustment !== "number") throw new Error("calibrationAdjustment missing");
     })();
   `);
   await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
@@ -2231,8 +2239,8 @@ assert.match(routesSource, /resolveLinkedInputFoundations/);
 assert.match(reviewCardSource, /foundationLabel/);
 assert.match(reviewCardSource, /Rests on/);
 
-// Embedding-based consistency grouping (with lexical fallback).
-assert.match(consistencySource, /export async function groupComparableElementsByEmbedding/);
+// Embedding-based CAUSE clustering of deductions (with lexical fallback).
+assert.match(consistencySource, /export async function clusterDeductionsByCause/);
 assert.match(consistencySource, /function cosine/);
 assert.match(routesSource, /embedContent/);
 assert.match(routesSource, /groupingMethod/);
@@ -2248,7 +2256,7 @@ async function assertLinkedInputsAndEmbedding() {
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
     import { resolveFoundationLink } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/reviewEngineCompat.ts"))};
-    import { groupComparableElementsByEmbedding } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
+    import { clusterDeductionsByCause } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/consistencyCalibration.ts"))};
     globalThis.__linkedEmbed = (async () => {
       const candidates = [
         { paperId: "gr-paper", title: "The Einstein Equation of State: Thermodynamics of Spacetime", arxivId: "gr-qc/9504004" },
@@ -2264,18 +2272,19 @@ async function assertLinkedInputsAndEmbedding() {
       if (resolveFoundationLink("string theory / AdS-CFT", candidates) !== "")
         throw new Error("non-matching foundation was wrongly linked");
 
-      const els = [
-        { reviewId: "A", paperId: "A", kind: "output", index: 0, text: "alpha" },
-        { reviewId: "B", paperId: "B", kind: "output", index: 0, text: "beta" },
-        { reviewId: "C", paperId: "C", kind: "output", index: 0, text: "gamma" },
+      // Cause-clustering of deductions: A and B share a cause (near-identical
+      // vectors), C is distinct → {A,B} is the one candidate cluster (≥2 reviews).
+      const ded = [
+        { reviewId: "A", paperId: "A", dimension: "input", cause: "alpha", subscore: 8, points: 2 },
+        { reviewId: "B", paperId: "B", dimension: "input", cause: "beta", subscore: 6, points: 4 },
+        { reviewId: "C", paperId: "C", dimension: "output", cause: "gamma", subscore: 7, points: 3 },
       ];
-      // A and B near-identical vectors, C orthogonal → {A,B} group.
       const vecs = { alpha: [1, 0], beta: [0.99, 0.01], gamma: [0, 1] };
-      const groups = await groupComparableElementsByEmbedding(els, async (texts) => texts.map((t) => vecs[t]), { threshold: 0.9 });
-      if (groups.length !== 1 || groups[0].elements.length !== 2) throw new Error("embedding grouping did not cluster A+B");
+      const clusters = await clusterDeductionsByCause(ded, async (texts) => texts.map((t) => vecs[t]), { threshold: 0.9 });
+      if (clusters.length !== 1 || clusters[0].length !== 2) throw new Error("cause clustering did not cluster A+B");
       // Embedder failure falls back to lexical (no throw).
-      const fallback = await groupComparableElementsByEmbedding(els, async () => { throw new Error("embed down"); });
-      if (!Array.isArray(fallback)) throw new Error("embedding failure did not fall back to lexical grouping");
+      const fallback = await clusterDeductionsByCause(ded, async () => { throw new Error("embed down"); });
+      if (!Array.isArray(fallback)) throw new Error("embedding failure did not fall back to lexical clustering");
     })();
   `);
   await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
@@ -2296,4 +2305,4 @@ async function assertLinkedInputsAndEmbedding() {
 }
 await assertLinkedInputsAndEmbedding();
 
-console.log("v19.0.2 review, pairwise-calibration, submission-hardening, consistency-v1, and linked-input invariants passed");
+console.log("v19.0.2 review, pairwise-calibration, submission-hardening, consistency-v2, and linked-input invariants passed");
