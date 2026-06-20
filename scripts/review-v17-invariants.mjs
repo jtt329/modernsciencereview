@@ -1824,11 +1824,18 @@ assert.match(engineSource, /assumptionConditionals: computeAssumptionConditional
 assert.match(engineSource, /blindAssumptionConditionals/);
 assert.match(engineSource, /adjudicatorAssumptionConditionals \?\? blindAssumptionConditionals/);
 assert.match(engineSource, /assumption-conditionals: raw tag capture/);
-// The tags are DERIVED from the subscoreRationale prose (the model would not
-// emit them structurally across 4 attempts); the structured field stays as an
-// optional fast-path only.
+// #22 fix: conditionals are now DERIVED FROM THE LEDGER's open inputs (not
+// narrative prose), and the wiring uses the ledger source + the realizability
+// cap. The prose deriver stays in the module (tested below) but is no longer the
+// active source, so a framework merely mentioned in prose can't leak in.
+assert.match(assumptionConditionalsSource, /export function deriveAssumptionConditionalsRawFromLedger/);
+assert.match(assumptionConditionalsSource, /export function outputReferentRealizableFromLedger/);
+assert.match(assumptionConditionalsSource, /export const REALIZABILITY_OUTPUT_LIFT_CEILING = 8/);
+assert.match(engineSource, /deriveAssumptionConditionalsRawFromLedger\(aggregate\.inputConstructionOutputLedger/);
+assert.match(engineSource, /outputReferentRealizable: outputReferentRealizableFromLedger\(/);
+assert.doesNotMatch(engineSource, /deriveAssumptionConditionalsRawFromRationale\(aggregate\.subscoreRationale/);
+// The prose deriver is retained for reference/tests.
 assert.match(assumptionConditionalsSource, /export function deriveAssumptionConditionalsRawFromRationale/);
-assert.match(engineSource, /deriveAssumptionConditionalsRawFromRationale\(aggregate\.subscoreRationale/);
 // Conservative classifier: "wrong"/"ruled out" prose never lifts; only clear
 // open-assumption prose (named framework / conjecture / untested) does. A
 // deliberate modeling APPROXIMATION (semiclassical, random-pure-state, ...) is
@@ -1870,9 +1877,76 @@ async function assertAssumptionConditionals() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromRationale } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"))};
+    import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromRationale, deriveAssumptionConditionalsRawFromLedger, outputReferentRealizableFromLedger } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/assumptionConditionals.ts"))};
     globalThis.__assumptionCond = (async () => {
-      // PROSE DERIVATION (the working source) — classify the subscoreRationale
+      // #22 FIX — LEDGER DERIVATION acceptance cases. Conditionals come from the
+      // OPEN entries of the ICO input ledger, never from prose mentions.
+      const ledgerChain = (ledger, subscores, inPhysicsScore, rationale) =>
+        computeAssumptionConditionals({
+          inPhysicsScore, subscores,
+          raw: deriveAssumptionConditionalsRawFromLedger(ledger, subscores),
+          outputReferentRealizable: outputReferentRealizableFromLedger(ledger, rationale ?? {}),
+        });
+      const icoLedger = (inputs, outputs) => ({ inputConstructionOutputAssessment: { input: { primitiveInputs: inputs }, construction: { introducedConstructions: [] }, output: { outputs: outputs ?? [] } } });
+
+      // #22 Kastor–Ray–Traschen: inputs are classical GR + Hamiltonian formalism,
+      // both ESTABLISHED (strong grounding / low framework dependence). AdS is the
+      // output's SETTING, not an input. -> NO open inputs -> NO conditional, even
+      // though "AdS" appears in the output prose.
+      const c22 = ledgerChain(
+        icoLedger(
+          [
+            { input: "General relativity", groundingQuality: "strong", frameworkDependenceLevel: "low" },
+            { input: "Hamiltonian formalism", groundingQuality: "strong", frameworkDependenceLevel: "low" },
+          ],
+          [{ output: "Smarr formula for AdS black holes", assessment: "the referent is an anti-de Sitter black hole, not physically realizable; transfer to testable physics is low" }],
+        ),
+        { input: 9, construction: 9, output: 7 },
+        85,
+        { outputStrengthScore: "set in AdS, a not physically realizable spacetime" },
+      );
+      if (c22.applicable) throw new Error("#22 (no open ledger inputs) must yield NO conditional even with 'AdS' in the prose");
+
+      // RT: AdS/CFT is genuinely an INPUT (open: high framework dependence). ->
+      // conditional retained, but realizability-capped below 100.
+      const cRT = ledgerChain(
+        icoLedger(
+          [{ input: "AdS/CFT correspondence", foundationLabel: "the AdS/CFT correspondence", groundingQuality: "weak", frameworkDependenceLevel: "high" }],
+          [{ output: "holographic entanglement entropy", assessment: "the construction lives in AdS, a not physically realizable setting" }],
+        ),
+        { input: 8, construction: 9, output: 8 },
+        88,
+        { outputStrengthScore: "the bulk is AdS, not physically realizable" },
+      );
+      if (!cRT.applicable) throw new Error("RT (AdS/CFT an open input) must retain its conditional");
+      if (!cRT.contingentOn.some((a) => /ads\\/cft/i.test(a))) throw new Error("RT conditional should name the AdS/CFT input");
+      if (cRT.conditionals[cRT.conditionals.length - 1].score >= 100) throw new Error("RT (non-realizable referent) if-true chain must be capped below 100");
+
+      // Maldacena: string-theory / D-brane open inputs -> conditional retained.
+      const cMald = ledgerChain(
+        icoLedger(
+          [
+            { input: "Type IIB string theory", foundationLabel: "string theory", groundingQuality: "weak", frameworkDependenceLevel: "high" },
+            { input: "D-brane construction", foundationLabel: "the D-brane construction", groundingQuality: "moderate", frameworkDependenceLevel: "high" },
+          ],
+          [{ output: "AdS/CFT duality", assessment: "the duality is conjectural; the gravity side is AdS, not physically realizable" }],
+        ),
+        { input: 6.5, construction: 9.5, output: 7.5 },
+        78,
+        { outputStrengthScore: "the strong-coupling side is AdS, not physically realizable" },
+      );
+      if (!cMald.applicable) throw new Error("Maldacena (string-theory/D-brane open inputs) must retain its conditional");
+
+      // A paper with only firm inputs and a realizable output -> no conditional.
+      const cFirm = ledgerChain(
+        icoLedger([{ input: "Quantum field theory in curved spacetime", groundingQuality: "strong", frameworkDependenceLevel: "low" }], [{ output: "Hawking temperature", assessment: "applies to real astrophysical black holes" }]),
+        { input: 9.5, construction: 9, output: 8.5 },
+        92,
+        { outputStrengthScore: "directly applicable to realizable black holes" },
+      );
+      if (cFirm.applicable) throw new Error("a paper with only firm inputs must yield no conditional");
+
+      // PROSE DERIVATION (retained, still tested) — classify the subscoreRationale
       // prose, then compute. Real acceptance cases from the set:
       const deriveChain = (rationale, subscores, inPhysicsScore) =>
         computeAssumptionConditionals({ inPhysicsScore, subscores, raw: deriveAssumptionConditionalsRawFromRationale(rationale, subscores) });

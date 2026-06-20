@@ -10,7 +10,7 @@ import {
   BLIND_REVIEW_PASS_V19_PROMPT,
 } from "./prompts/diagnosticOnlyV19";
 import { logger } from "./logger";
-import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromRationale, computePointDeductions } from "./assumptionConditionals";
+import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromLedger, outputReferentRealizableFromLedger, computePointDeductions } from "./assumptionConditionals";
 
 export const GPT_MODEL = "gpt-5.4-pro";
 export const GEMINI_REVIEW_MODEL =
@@ -6202,15 +6202,23 @@ function v16CanonicalReviewFromAggregate(aggregate: AggregateReview, representat
         construction: aggregate.constructionStrengthScore,
         output: aggregate.outputStrengthScore,
       },
-      raw: !ASSUMPTION_CONDITIONALS_ENABLED
-        ? aggregate.assumptionConditionalsRaw
-        : (aggregate.assumptionConditionalsRaw && Object.keys(aggregate.assumptionConditionalsRaw).length > 0)
-          ? aggregate.assumptionConditionalsRaw
-          : deriveAssumptionConditionalsRawFromRationale(aggregate.subscoreRationale, {
-              input: aggregate.inputStrengthScore,
-              construction: aggregate.constructionStrengthScore,
-              output: aggregate.outputStrengthScore,
-            }),
+      // #22 fix: conditionals are derived from the OPEN entries in the ICO input
+      // ledger (the premises the result is built from), NOT narrative prose — so
+      // a framework merely mentioned (e.g. an output's idealized setting) cannot
+      // leak in as a spurious conditional. No open inputs -> no conditional.
+      raw: ASSUMPTION_CONDITIONALS_ENABLED
+        ? deriveAssumptionConditionalsRawFromLedger(aggregate.inputConstructionOutputLedger, {
+            input: aggregate.inputStrengthScore,
+            construction: aggregate.constructionStrengthScore,
+            output: aggregate.outputStrengthScore,
+          })
+        : aggregate.assumptionConditionalsRaw,
+      // #22 fix (cap): a not-physically-realizable output referent (model's §5
+      // flag) caps the if-true chain below 100.
+      outputReferentRealizable: outputReferentRealizableFromLedger(
+        aggregate.inputConstructionOutputLedger,
+        aggregate.subscoreRationale,
+      ),
     }),
     // Public point-deduction breakdown: "−X pts: [cause]" per below-10
     // dimension, X = 10 − subscore (the rung→points gap), cause = the stored

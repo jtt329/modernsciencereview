@@ -105,10 +105,19 @@ function formulaTotal(subscores: Record<ScoreDimensionKey, number | null>): numb
 // whose status is OPEN and whose lift score genuinely exceeds the current
 // subscore; ruled-out / confirmed / unknown assumptions are recorded in
 // `excluded` but never lifted.
+// A not-physically-realizable output referent cannot reach full realizable
+// credit even if its open assumption is granted, so its conditional ("if-true")
+// OUTPUT lift is capped one firmness tier below top (8) — keeping the if-true
+// total strictly below 100 (e.g. RT caps ~93; #22 must not reach 100).
+export const REALIZABILITY_OUTPUT_LIFT_CEILING = 8;
+
 export function computeAssumptionConditionals(args: {
   inPhysicsScore: number | null;
   subscores: Partial<Record<ScoreDimensionKey, number | null>>;
   raw: unknown;
+  // When false, the output's referent is not physically realizable (the model's
+  // §5 flag); the OUTPUT lift is capped so the if-true chain stays < 100.
+  outputReferentRealizable?: boolean;
 }): AssumptionConditionalsResult {
   const base: Record<ScoreDimensionKey, number | null> = {
     input: num(args.subscores.input),
@@ -139,7 +148,13 @@ export function computeAssumptionConditionals(args: {
     const liftRaw = num(item.conditionalLiftScore);
     const cur = base[dim];
     if (liftRaw == null || cur == null) continue;
-    const to = Math.min(10, Math.max(cur, liftRaw));
+    let to = Math.min(10, Math.max(cur, liftRaw));
+    // Realizability cap (#2): cap the OUTPUT lift when the referent is not
+    // physically realizable, so granting the assumption can't push the if-true
+    // total to 100 for an idealized-setting result.
+    if (dim === "output" && args.outputReferentRealizable === false) {
+      to = Math.min(to, REALIZABILITY_OUTPUT_LIFT_CEILING);
+    }
     if (to <= cur) continue; // names an assumption but it doesn't lift the score
     lifts.push({ dim, assumption, to });
   }
@@ -302,4 +317,121 @@ export function deriveAssumptionConditionalsRawFromRationale(
     };
   }
   return out;
+}
+
+// --- Ledger derivation (the #22 fix) -----------------------------------------
+//
+// Source conditionals from the OPEN entries in the review's ICO input ledger —
+// the premises the result is genuinely built from — NOT from narrative prose.
+// A framework merely MENTIONED in the rationale (e.g. an output's idealized
+// setting like "AdS") is not a ledger INPUT and therefore cannot become a
+// conditional. If a paper has no open inputs/constructions, it gets NO
+// conditional.
+//
+// "Open" is read from the structured ledger so it survives the v19.0.6
+// plain-words-rungs change (which removes F1-F4/C1-C5 from prose) and does not
+// depend on the gated firmnessRung field:
+//   input:        firmnessRung F3/F4 (when present) OR frameworkDependenceLevel
+//                 "high" OR groundingQuality "weak".
+//   construction: validityLevel "conditional" (valid only if an assumption holds).
+// This reads an object the model already emits every review — no new structured-
+// emission field — so it avoids the emission fragility that forced the earlier
+// pivot to prose.
+
+function strField(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+function shortName(name: string): string {
+  const n = name.trim();
+  if (n.length <= 90) return n;
+  const cut = n.slice(0, 90);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+}
+function dedupeNames(names: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const n of names) {
+    const key = n.toLowerCase();
+    if (n && !seen.has(key)) { seen.add(key); out.push(n); }
+  }
+  return out;
+}
+function ledgerIco(ledger: Record<string, any> | null | undefined): Record<string, any> {
+  return (ledger?.inputConstructionOutputAssessment ?? ledger?.inputConstructionOutputLedger ?? ledger ?? {}) as Record<string, any>;
+}
+function openLedgerInputs(ledger: Record<string, any> | null | undefined): string[] {
+  const ico = ledgerIco(ledger);
+  const inputs = ico?.input?.primitiveInputs ?? (ledger as any)?.primitiveInputs ?? [];
+  const names: string[] = [];
+  for (const it of Array.isArray(inputs) ? inputs : []) {
+    if (!it || typeof it !== "object") continue;
+    const rung = strField((it as any).firmnessRung).toUpperCase();
+    const framework = strField((it as any).frameworkDependenceLevel).toLowerCase();
+    const grounding = strField((it as any).groundingQuality).toLowerCase();
+    const open = /F\s*[34]\b/.test(rung) || framework === "high" || grounding === "weak";
+    if (!open) continue;
+    const name = strField((it as any).foundationLabel) || strField((it as any).input);
+    if (name) names.push(shortName(name));
+  }
+  return dedupeNames(names);
+}
+function openLedgerConstructions(ledger: Record<string, any> | null | undefined): string[] {
+  const ico = ledgerIco(ledger);
+  const cons = ico?.construction?.introducedConstructions ?? (ledger as any)?.introducedConstructions ?? [];
+  const names: string[] = [];
+  for (const it of Array.isArray(cons) ? cons : []) {
+    if (!it || typeof it !== "object") continue;
+    if (strField((it as any).validityLevel).toLowerCase() !== "conditional") continue;
+    const name = strField((it as any).construction);
+    if (name) names.push(shortName(name));
+  }
+  return dedupeNames(names);
+}
+
+export function deriveAssumptionConditionalsRawFromLedger(
+  ledger: Record<string, any> | null | undefined,
+  subscores: Partial<Record<ScoreDimensionKey, number | null>>,
+): Record<string, { assumptionName: string; assumptionStatus: AssumptionStatus; conditionalLiftScore: number }> {
+  const out: Record<string, { assumptionName: string; assumptionStatus: AssumptionStatus; conditionalLiftScore: number }> = {};
+  const openInputs = openLedgerInputs(ledger);
+  const openConstructions = openLedgerConstructions(ledger);
+  const allOpen = dedupeNames([...openInputs, ...openConstructions]);
+  if (allOpen.length === 0) return out; // no open premise -> no conditional (the #22 fix)
+  const pick = (dim: ScoreDimensionKey): string => {
+    if (dim === "construction") return openConstructions[0] ?? openInputs[0] ?? allOpen[0];
+    if (dim === "output") return openInputs[1] ?? openInputs[0] ?? allOpen[0];
+    return openInputs[0] ?? allOpen[0]; // input
+  };
+  for (const dim of DIMENSIONS) {
+    const cur = num((subscores as any)[dim]);
+    if (cur == null || cur >= 10) continue; // already top / no usable subscore
+    const name = pick(dim);
+    if (!name) continue;
+    out[DIM_TO_SUBSCORE_KEY[dim]] = { assumptionName: name, assumptionStatus: "open", conditionalLiftScore: 10 };
+  }
+  return out;
+}
+
+// The model's §5 realizability flag, read from its stated prose (output
+// subscore rationale + output ledger assessments). Default REALIZABLE (true);
+// flips to false only when the output referent is explicitly not physically
+// realizable, which caps the if-true chain below 100 (see
+// REALIZABILITY_OUTPUT_LIFT_CEILING).
+const PROSE_NON_REALIZABLE = /\bnot[ -](?:a |fully )?physically[ -]realizable|not[ -]realizable|nature does not realize|does not realize|idealized (?:setting|spacetime|referent|system|background)|purely mathematical (?:setting|construction|referent)|lower[- ]dimensional (?:toy|model|setting)|limited (?:physical )?realizability|low transfer\b/i;
+
+export function outputReferentRealizableFromLedger(
+  ledger: Record<string, any> | null | undefined,
+  rationale: Record<string, any> | null | undefined,
+): boolean {
+  const rat = rationale && typeof rationale === "object" ? rationale : {};
+  const ico = ledgerIco(ledger);
+  const outs = ico?.output?.outputs ?? (ledger as any)?.outputs ?? [];
+  const texts: string[] = [];
+  const ratText = (rat as any)["outputStrengthScore"];
+  if (typeof ratText === "string") texts.push(ratText);
+  for (const o of Array.isArray(outs) ? outs : []) {
+    if (o && typeof o === "object" && typeof (o as any).assessment === "string") texts.push((o as any).assessment);
+  }
+  return !texts.some((t) => PROSE_NON_REALIZABLE.test(t));
 }
