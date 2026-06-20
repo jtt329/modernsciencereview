@@ -804,6 +804,13 @@ const ASSUMPTION_CONDITIONALS_ENABLED = process.env.ENABLE_ASSUMPTION_CONDITIONA
 // emit as v19.0.2). Set ENABLE_CENTRALITY_TRANSFERABILITY=false to revert to the
 // v19.0.2 base.
 const CENTRALITY_TRANSFERABILITY_ENABLED = process.env.ENABLE_CENTRALITY_TRANSFERABILITY !== "false";
+// First-principles deduction justification + idealized-result established credit
+// (v19.0.6). Every point off must be REASONED from the value-of-science criteria
+// (never popularity/prestige/consensus), and an idealized result earns
+// established credit only for what it has demonstrably explained about real,
+// testable physics. ACTIVATED BY DEFAULT; set ENABLE_DEDUCTION_FIRST_PRINCIPLES=
+// false to revert. Lives in its own delta so the v19.0.2 base hash is untouched.
+const DEDUCTION_FIRST_PRINCIPLES_ENABLED = process.env.ENABLE_DEDUCTION_FIRST_PRINCIPLES !== "false";
 const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
 --------------------------
 
@@ -921,9 +928,38 @@ centrality in plain words (e.g. "an unproven construct of an untested
 framework", "a central, load-bearing result") — do NOT print rung codes (F1-F4,
 C1-C5) inline in the prose. Keep the codes to the structured fields only.`;
 
+const DEDUCTION_FIRST_PRINCIPLES_DELTA = String.raw`First-principles deductions and idealized-result credit
+-------------------------------------------------------
+
+Every deduction must be REASONED from first principles, never asserted and never
+based on popularity. For each point you remove from ANY I/C/O dimension, state
+the explicit chain that ties the deduction to the core value-of-science criteria
+for THIS specific case, granularly. "It is untested / speculative" is NOT, by
+itself, a justification: reason the full chain — it is untested (a dock), but if
+every alternative in the domain is equally untested (there is no tested option),
+weigh its SPECIFIC demonstrated merits (concrete derived results, internal
+consistency, any empirical contact), and let the deduction that lands be
+justified by those specifics. NEVER use fame, prestige, popularity, citation
+count, or consensus as a basis for any score or deduction. The number is an
+OUTPUT of the reasoning, not a preset rule. (Empirically-tested theories still
+outrank all speculative frameworks — confirmation against nature is a stronger
+warrant than internal or mathematical support — but STATE that reasoning for the
+case at hand; do not assert it.) This applies to EVERY point off, on every
+dimension.
+
+Established-physics credit for idealized results. A result earns credit toward
+the established-physics score ONLY to the extent its structure has DEMONSTRABLY
+explained real, TESTABLE physics, in proportion to that real-world reach. An
+idealized result (e.g. one set in a not-physically-realizable spacetime) earns
+established credit only for what it has actually explained about the realizable
+universe — NOT for its fame and NOT for its if-true potential, which belong to
+the conditional ("if-true") score and the separate impact layer, not the
+established score.`;
+
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
   ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
+  DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 const withActiveDeltas = (base: string) =>
@@ -932,13 +968,15 @@ const withActiveDeltas = (base: string) =>
 const ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas(BLIND_REVIEW_PASS_V19_PROMPT);
 const ACTIVE_FULL_PROMPT = withActiveDeltas(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
 
-export const REVIEW_PROMPT_VERSION = CENTRALITY_TRANSFERABILITY_ENABLED
-  ? "v19.0.5-computed-ico-halfpoint"
-  : ASSUMPTION_CONDITIONALS_ENABLED
-    ? "v19.0.4-computed-ico-halfpoint"
-    : LINKED_INPUT_JUSTIFICATION_ENABLED
-      ? "v19.0.3-computed-ico-halfpoint"
-      : "v19.0.2-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = DEDUCTION_FIRST_PRINCIPLES_ENABLED
+  ? "v19.0.6-computed-ico-halfpoint"
+  : CENTRALITY_TRANSFERABILITY_ENABLED
+    ? "v19.0.5-computed-ico-halfpoint"
+    : ASSUMPTION_CONDITIONALS_ENABLED
+      ? "v19.0.4-computed-ico-halfpoint"
+      : LINKED_INPUT_JUSTIFICATION_ENABLED
+        ? "v19.0.3-computed-ico-halfpoint"
+        : "v19.0.2-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -960,19 +998,23 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(ACTIVE_BLIND_REVIEW_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = CENTRALITY_TRANSFERABILITY_ENABLED
-  ? "v19.0.5 computed ICO half-point"
-  : ASSUMPTION_CONDITIONALS_ENABLED
-    ? "v19.0.4 computed ICO half-point"
-    : LINKED_INPUT_JUSTIFICATION_ENABLED
-      ? "v19.0.3 computed ICO half-point"
-      : "v19.0.2 computed ICO half-point";
+export const REVIEW_PROMPT_NAME = DEDUCTION_FIRST_PRINCIPLES_ENABLED
+  ? "v19.0.6 computed ICO half-point"
+  : CENTRALITY_TRANSFERABILITY_ENABLED
+    ? "v19.0.5 computed ICO half-point"
+    : ASSUMPTION_CONDITIONALS_ENABLED
+      ? "v19.0.4 computed ICO half-point"
+      : LINKED_INPUT_JUSTIFICATION_ENABLED
+        ? "v19.0.3 computed ICO half-point"
+        : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = CENTRALITY_TRANSFERABILITY_ENABLED
-  ? "2026-06-19"
-  : ASSUMPTION_CONDITIONALS_ENABLED
-    ? "2026-06-16"
-    : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
+export const REVIEW_PROMPT_DATE = DEDUCTION_FIRST_PRINCIPLES_ENABLED
+  ? "2026-06-20"
+  : CENTRALITY_TRANSFERABILITY_ENABLED
+    ? "2026-06-19"
+    : ASSUMPTION_CONDITIONALS_ENABLED
+      ? "2026-06-16"
+      : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -1015,6 +1057,7 @@ export function isCalibrationCompatibleReviewObject(value: unknown) {
 // REVIEW_PROMPT_HASH; the hash is gated by the blind prompt's deltas.
 const ADJUDICATOR_PROMPT_DELTAS = [
   ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
+  DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(

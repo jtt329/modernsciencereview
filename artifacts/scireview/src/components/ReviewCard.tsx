@@ -1587,7 +1587,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     less prominent. The established-physics score above is unchanged. */}
                 {showAssumptionConditionals && (
                   <div className="pt-2">
-                    {allProposalsHoldScore != null && (
+                    {allProposalsHoldScore != null && conditionalSteps.length >= 2 && (
                       <p className="flex flex-wrap items-baseline gap-x-2">
                         <span className="text-[10px] font-black uppercase tracking-widest text-sky-300/90">If all its open proposals hold</span>
                         <span className="text-slate-400">→</span>
@@ -1644,8 +1644,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     )}
                   </span>
                 </div>
-                {/* "Why not 10" folds into each I/C/O section; the conditional
-                    now sits directly under the headline score above. */}
+                {/* The point-deduction line folds into each I/C/O section; the
+                    conditional now sits directly under the headline score above. */}
                 {pairwiseCalibrated && !selectedPass && (
                   <div className="pt-3 mt-1 border-t border-white/10">
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -1859,7 +1859,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     {activeDiagnosticRationale && <Markdown>{activeDiagnosticRationale}</Markdown>}
                     {activeDeduction && (
                       <p className="mt-3 flex flex-wrap items-baseline gap-x-2 border-t border-white/10 pt-3 text-sm">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-rose-300/90">Why not 10</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-rose-300/90">Point deduction</span>
                         <span className="font-black text-rose-200 whitespace-nowrap">−{activeDeduction.points}</span>
                         {activeDeduction.cause && (
                           <>

@@ -1025,7 +1025,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = CENTRALITY_TRANSFERABILITY_ENABLED[\s\S]{0,200}"2026-06-14" : "2026-06-12"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = DEDUCTION_FIRST_PRINCIPLES_ENABLED[\s\S]{0,320}"2026-06-14" : "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -1856,6 +1856,9 @@ assert.doesNotMatch(routesSource, /executeScoreReductionReasons|explainScoreRedu
 assert.match(reviewCardSource, /assumptionConditionals/);
 assert.match(reviewCardSource, /as established physics/);
 assert.match(reviewCardSource, /If all its open proposals hold/);
+// The cumulative "if all hold" line only shows with 2+ open assumptions (with a
+// single assumption it duplicates the one per-assumption line).
+assert.match(reviewCardSource, /conditionalSteps\.length >= 2/);
 assert.match(reviewCardSource, /allProposalsHoldScore/);
 assert.match(reviewCardSource, /Contingent on:/);
 
@@ -2104,6 +2107,16 @@ assert.doesNotMatch(engineSource, /the AdS\/CFT duality conjecture/);
 assert.match(engineSource, /CENTRALITY_TRANSFERABILITY_ENABLED \? CENTRALITY_TRANSFERABILITY_DELTA : null/);
 assert.match(engineSource, /const ADJUDICATOR_PROMPT_DELTAS = \[/);
 
+// v19.0.6 (default-on): every deduction reasoned from first principles, never
+// popularity; idealized results earn established credit only for demonstrated
+// real, testable reach. Rides the blind prompt AND the adjudicator.
+assert.match(engineSource, /DEDUCTION_FIRST_PRINCIPLES_ENABLED = process\.env\.ENABLE_DEDUCTION_FIRST_PRINCIPLES !== "false"/);
+assert.match(engineSource, /First-principles deductions and idealized-result credit/);
+assert.match(engineSource, /NEVER use fame, prestige, popularity, citation\s+count, or consensus/);
+assert.match(engineSource, /earns credit toward\s+the established-physics score ONLY to the extent/);
+assert.match(engineSource, /DEDUCTION_FIRST_PRINCIPLES_ENABLED \? DEDUCTION_FIRST_PRINCIPLES_DELTA : null/);
+assert.match(engineSource, /v19\.0\.6-computed-ico-halfpoint/);
+
 // #2 Calibration enforces existing rules cross-paper (no prompt/hash change):
 // conjecture-ceiling + reason-grouped deduction consistency, flagged then
 // re-adjudicated against the ladder (never averaged). Surfaced in the gated
@@ -2122,8 +2135,8 @@ assert.match(reviewCardSource, /pointDeductions/);
 // "Why not 10" is FOLDED INTO each I/C/O section (no separate top block, no
 // single "why not 100" roll-up): the per-dimension deduction (points off 10 +
 // cause) renders inside the active diagnostic section, keyed by dimension.
-assert.match(reviewCardSource, /Why not 10/);
-assert.doesNotMatch(reviewCardSource, /Why not 100/);
+assert.match(reviewCardSource, /Point deduction/);
+assert.doesNotMatch(reviewCardSource, /Why not 10/);
 assert.match(reviewCardSource, /deductionByDimension/);
 assert.match(reviewCardSource, /activeDeduction/);
 
