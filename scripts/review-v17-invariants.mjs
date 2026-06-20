@@ -1850,9 +1850,13 @@ assert.ok(
 assert.doesNotMatch(routesSource, /score-reduction-reasons/);
 assert.doesNotMatch(routesSource, /SCORE_REDUCTION_/);
 assert.doesNotMatch(routesSource, /executeScoreReductionReasons|explainScoreReductions/);
-// UI lists the named conditionals under the headline score.
+// UI: headline framed "as established physics" with the conditional ("if-true")
+// directly under it — a top-of-chain "if all its open proposals hold → N" line
+// plus the per-assumption breakdown.
 assert.match(reviewCardSource, /assumptionConditionals/);
-assert.match(reviewCardSource, /Conditional on its assumptions/);
+assert.match(reviewCardSource, /as established physics/);
+assert.match(reviewCardSource, /If all its open proposals hold/);
+assert.match(reviewCardSource, /allProposalsHoldScore/);
 assert.match(reviewCardSource, /Contingent on:/);
 
 // Functional: the cumulative conditional chain from emitted per-dimension tags.

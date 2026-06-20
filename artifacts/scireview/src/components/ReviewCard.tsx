@@ -1339,6 +1339,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     : [];
   const showAssumptionConditionals =
     !selectedPass && assumptionConditionals?.applicable === true && conditionalSteps.length > 0;
+  // "If all the paper's open proposals hold → N" — the cumulative top of the
+  // conditional chain (granting every open assumption). Things already known to
+  // be wrong never lift it, so it won't always reach 100. Display only.
+  const allProposalsHoldScore = conditionalSteps.length
+    ? Math.round(conditionalSteps[conditionalSteps.length - 1].score)
+    : null;
+  // Headline framing: the score is "as established physics" (built on our most
+  // empirically-supported theories), with speculative-but-leading work scoring
+  // lower here and higher in the conditional.
+  const establishedPhysicsDefinition =
+    "How much this advances physics built on our most empirically-supported theories — not a claim the work is wrong or uncertain; speculative-but-leading work scores lower here and higher in the conditional below.";
   // Public point-deduction breakdown ("−X pts: [cause]") per below-10
   // dimension, derived in code from the rung→points gap. Display only.
   const pointDeductions = Array.isArray(parsedCoverage?.pointDeductions)
@@ -1496,12 +1507,18 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
             <div className="flex flex-wrap items-start justify-between gap-5">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest">
-                    {pairwiseCalibrated && !selectedPass ? 'Calibrated Score' : displayedScoreLabel}
+                  <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest"
+                     title={selectedPass ? undefined : establishedPhysicsDefinition}>
+                    {selectedPass ? displayedScoreLabel : 'As established physics'}
                   </p>
+                  {!selectedPass && (
+                    <span className="text-xs text-slate-400 max-w-xl" title={establishedPhysicsDefinition}>
+                      how much it advances physics built on our most empirically-supported theories — not a verdict that it's wrong or uncertain; speculative-but-leading work scores lower here, higher in the conditional below
+                    </span>
+                  )}
                   {pairwiseCalibrated && !selectedPass && (
-                    <a href="/how-it-works#hiw-calibration" className="text-xs text-slate-400 max-w-xl hover:text-slate-300 hover:underline">
-                      position after blind pairwise comparison against neighboring benchmark papers, scaled through admin-pinned anchors
+                    <a href="/how-it-works#hiw-calibration" className="text-xs text-slate-500 hover:text-slate-300 hover:underline">
+                      how calibration works
                     </a>
                   )}
                 </div>
@@ -1562,8 +1579,36 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     <p className="text-6xl font-black text-emerald-200 leading-none">
                       {pairwiseCalibrated && !selectedPass ? calibratedDisplayScore : displayedScore}
                     </p>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-emerald-300/70 mt-1">as established physics</p>
                   </div>
                 </div>
+                {/* Conditional ("if-true") right under the headline: a clear
+                    top-of-chain line, then the per-assumption breakdown a notch
+                    less prominent. The established-physics score above is unchanged. */}
+                {showAssumptionConditionals && (
+                  <div className="pt-2">
+                    {allProposalsHoldScore != null && (
+                      <p className="flex flex-wrap items-baseline gap-x-2">
+                        <span className="text-[10px] font-black uppercase tracking-widest text-sky-300/90">If all its open proposals hold</span>
+                        <span className="text-slate-400">→</span>
+                        <span className="text-3xl font-black text-sky-200 leading-none">{allProposalsHoldScore}</span>
+                      </p>
+                    )}
+                    <ul className="mt-1.5 space-y-0.5">
+                      {conditionalSteps.map((step: any, index: number) => (
+                        <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-xs text-slate-400">
+                          <span>if</span>
+                          <span className="text-sky-100/90">{step.assumptions.join(' and ')}</span>
+                          <span>{step.assumptions.length > 1 ? 'hold' : 'holds'} →</span>
+                          <span className="font-black text-sky-200/90">~{Math.round(step.score)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                    {Array.isArray(assumptionConditionals.contingentOn) && assumptionConditionals.contingentOn.length > 0 && (
+                      <p className="mt-1 text-[11px] text-slate-500">Contingent on: {assumptionConditionals.contingentOn.join(' + ')}</p>
+                    )}
+                  </div>
+                )}
                 <div className="space-y-0.5">
                   <p className="text-xs text-slate-400">{currentLocalCohort || 'Comparison cohort not specified'}</p>
                   {canonicalClusterLabel && (
@@ -1599,35 +1644,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     )}
                   </span>
                 </div>
-                {/* "Why not 10" is no longer a separate top block — each
-                    dimension's deduction is folded into its I/C/O section below. */}
-                {showAssumptionConditionals && (
-                  <div className="pt-3 mt-1 border-t border-white/10">
-                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                      <p className="text-[10px] font-black text-sky-300/90 uppercase tracking-widest">
-                        Conditional on its assumptions
-                      </p>
-                      <span className="text-xs text-slate-500 max-w-xl">
-                        what it would score if the specific unproven assumptions it rests on are granted — the "in physics" score above is unchanged
-                      </span>
-                    </div>
-                    <ul className="mt-2 space-y-1">
-                      {conditionalSteps.map((step: any, index: number) => (
-                        <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-sm text-slate-300">
-                          <span className="text-slate-400">If</span>
-                          <span className="text-sky-100">{step.assumptions.join(' and ')}</span>
-                          <span className="text-slate-400">{step.assumptions.length > 1 ? 'hold' : 'holds'} →</span>
-                          <span className="font-black text-sky-200">~{Math.round(step.score)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                    {Array.isArray(assumptionConditionals.contingentOn) && assumptionConditionals.contingentOn.length > 0 && (
-                      <p className="mt-1.5 text-[11px] text-slate-500">
-                        Contingent on: {assumptionConditionals.contingentOn.join(' + ')}
-                      </p>
-                    )}
-                  </div>
-                )}
+                {/* "Why not 10" folds into each I/C/O section; the conditional
+                    now sits directly under the headline score above. */}
                 {pairwiseCalibrated && !selectedPass && (
                   <div className="pt-3 mt-1 border-t border-white/10">
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
