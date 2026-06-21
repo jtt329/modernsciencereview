@@ -2504,4 +2504,66 @@ async function assertLinkedInputsAndEmbedding() {
 }
 await assertLinkedInputsAndEmbedding();
 
-console.log("v19.0.2 review, pairwise-calibration, submission-hardening, consistency-v2, and linked-input invariants passed");
+// --- brief #2: adaptive sampling + consensus pinning + uncertainty surfacing ---
+const adaptiveSamplingSource = readFileSync(join(root, "artifacts/api-server/src/lib/adaptiveSampling.ts"), "utf8");
+// (a) adaptive sampling wired into the pass loop; (b) consensus pinning at the
+// adjudicator; thresholds match the spec (score gap 5, subscore gap 1.5, cap 5).
+assert.match(adaptiveSamplingSource, /DISAGREEMENT_SCORE_GAP = 5/);
+assert.match(adaptiveSamplingSource, /DISAGREEMENT_SUBSCORE_GAP = 1\.5/);
+assert.match(adaptiveSamplingSource, /MAX_BLIND_PASSES = 5/);
+assert.match(adaptiveSamplingSource, /export function passesDisagree/);
+assert.match(adaptiveSamplingSource, /export function dimensionConsensus/);
+assert.match(adaptiveSamplingSource, /export function mergeConsensusWithAdjudicated/);
+assert.match(engineSource, /passesDisagree\(passResults\.map\(\(r\) => passReviewSubscores\(r\.review\)\)\)\.disagree/);
+assert.match(engineSource, /passResults\.length < MAX_BLIND_PASSES/);
+assert.match(engineSource, /applyConsensusPinning\(adjudicatorResult\.parsed, consensus\)/);
+// (c) contested papers surface visible uncertainty.
+assert.match(reviewCardSource, /contestedReview/);
+assert.match(reviewCardSource, /independent blind passes disagreed by/);
+// Constraint: temperature untouched — both scoring calls stay at 0.15.
+assert.doesNotMatch(adaptiveSamplingSource, /temperature/i);
+
+async function assertAdaptiveSampling() {
+  const esbuildUrl = pathToFileURL(join(root, "artifacts/api-server/node_modules/esbuild/lib/main.js")).href;
+  const { build } = await import(esbuildUrl);
+  const dir = mkdtempSync(join(tmpdir(), "msr-adaptive-"));
+  const entry = join(dir, "entry.ts");
+  const out = join(dir, "bundle.cjs");
+  writeFileSync(entry, `
+    import { passesDisagree, shouldDrawAnotherPass, dimensionConsensus, mergeConsensusWithAdjudicated, passSpread, MAX_BLIND_PASSES } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/adaptiveSampling.ts"))};
+    globalThis.__adaptive = (async () => {
+      const firm = [{ input: 10, construction: 10, output: 10 }, { input: 10, construction: 10, output: 10 }];
+      const contested = [{ input: 6, construction: 9, output: 7 }, { input: 8, construction: 9, output: 9 }];
+      // (a) firm passes agree -> no escalation; contested -> escalate.
+      if (passesDisagree(firm).disagree) throw new Error("identical passes must not disagree");
+      if (shouldDrawAnotherPass(firm)) throw new Error("firm paper must stop at 2 passes");
+      if (!passesDisagree(contested).disagree) throw new Error("contested passes (score gap >5) must disagree");
+      if (!shouldDrawAnotherPass(contested)) throw new Error("contested paper must draw another pass");
+      // per-dimension trigger: input gap 1.6 (>1.5) triggers even if totals are close.
+      if (!passesDisagree([{ input: 7, construction: 9, output: 9 }, { input: 8.6, construction: 9, output: 9 }]).disagree) throw new Error("a per-dimension gap >1.5 must trigger");
+      // cap: never draw beyond 5.
+      if (shouldDrawAnotherPass([1,2,3,4,5].map(() => ({ input: 1, construction: 10, output: 1 })))) throw new Error("must not exceed the 5-pass cap");
+      // (b) consensus pinning: agreed dims -> median; contested dim -> adjudicator.
+      const passes = [{ input: 8, construction: 9, output: 6 }, { input: 8, construction: 9, output: 9 }];
+      const cons = dimensionConsensus(passes);
+      const inCons = cons.find((c) => c.dimension === "input");
+      const outCons = cons.find((c) => c.dimension === "output");
+      if (!inCons.agreed || inCons.median !== 8) throw new Error("input agreed -> median 8");
+      if (outCons.agreed) throw new Error("output gap 3 must be contested");
+      const merged = mergeConsensusWithAdjudicated(cons, { input: 5, construction: 5, output: 7 });
+      if (merged.input !== 8) throw new Error("agreed input must be PINNED to the median (8), not the adjudicator's 5");
+      if (merged.construction !== 9) throw new Error("agreed construction must be pinned to median 9");
+      if (merged.output !== 7) throw new Error("contested output must take the adjudicator's value (7)");
+      if (!merged.pinnedDimensions.includes("input") || merged.pinnedDimensions.includes("output")) throw new Error("pinnedDimensions must list agreed dims only");
+      // (c) spread surfaced.
+      if (passSpread(contested).contested !== true) throw new Error("contested spread must flag contested=true");
+      if (passSpread(firm).contested !== false) throw new Error("firm spread must flag contested=false");
+    })();
+  `);
+  await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
+  await import(pathToFileURL(out).href);
+  await globalThis.__adaptive;
+}
+await assertAdaptiveSampling();
+
+console.log("v19.0.2 review, pairwise-calibration, submission-hardening, consistency-v2, linked-input, and adaptive-sampling invariants passed");

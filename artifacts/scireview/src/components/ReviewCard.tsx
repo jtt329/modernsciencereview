@@ -1104,6 +1104,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const spreadText = scoreSpread == null
     ? 'Insufficient data'
     : `${scoreSpread} ${scoreSpread === 1 ? 'point' : 'points'}`;
+  // (brief #2c) A contested paper: the blind passes disagreed beyond the
+  // adaptive-sampling threshold (>5 points). Surface that as visible uncertainty
+  // rather than a quiet stability field. Adaptive sampling draws extra passes on
+  // these, so blindPassScores.length > 2 also signals an escalated paper.
+  const contestedReview = !selectedPass && scoreSpread != null && scoreSpread > 5;
   const adjustmentLabel = comparatorCalibrationApplied
     ? 'diagnostics calibrated'
     : 'not applied';
@@ -1717,6 +1722,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 This slim row keeps stability, the Calibration view toggle, and the
                 score-path captions. */}
             <div className="border-t border-white/10 pt-4 space-y-3">
+              {contestedReview && (
+                <div className="flex flex-wrap items-baseline gap-x-2 rounded-lg border border-amber-300/30 bg-amber-400/10 px-3 py-2">
+                  <span className="text-[10px] font-black uppercase tracking-widest text-amber-300">Uncertain</span>
+                  <span className="text-sm text-amber-50">
+                    the {blindPassScores.length} independent blind passes disagreed by {spreadText} — treat this score as a range, not a point
+                  </span>
+                </div>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-xs font-bold text-slate-300">Review Stability: {stabilityDisplay}</p>
                 {pairwiseCalibrated && (
