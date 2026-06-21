@@ -1096,7 +1096,7 @@ const ADJUDICATOR_PROMPT_DELTAS = [
   FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
-const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(
+export const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(
   ADJUDICATOR_PROMPT_DELTAS.length
     ? `${INTRINSIC_ADJUDICATOR_V19_PROMPT}\n\n${ADJUDICATOR_PROMPT_DELTAS.join("\n\n")}`
     : INTRINSIC_ADJUDICATOR_V19_PROMPT,
@@ -1392,7 +1392,7 @@ const reviewInputQualityJsonSchema = {
     shouldInvalidateReview: jsonBoolean,
   },
 };
-const individualReviewJsonSchema = {
+export const individualReviewJsonSchema = {
   type: "object",
   required: [
     "comparisonCohort",
@@ -3259,7 +3259,7 @@ function repairInvalidJsonEscapes(value: string) {
   return repaired;
 }
 
-function normalizeIndividualReview(input: unknown): IndividualReview {
+export function normalizeIndividualReview(input: unknown): IndividualReview {
   const source = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const coverage = source.coverageLedger && typeof source.coverageLedger === "object"
     ? (source.coverageLedger as Record<string, unknown>)
@@ -6458,7 +6458,7 @@ export function compactAggregateForStorage(aggregate: AggregateReview) {
   };
 }
 
-function buildAdjudicatorInput(
+export function buildAdjudicatorInput(
   blindedContent: ReviewInput,
   reviews: IndividualReview[],
 ): ReviewInput {
