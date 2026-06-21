@@ -2514,9 +2514,12 @@ assert.match(adaptiveSamplingSource, /MAX_BLIND_PASSES = 5/);
 assert.match(adaptiveSamplingSource, /export function passesDisagree/);
 assert.match(adaptiveSamplingSource, /export function dimensionConsensus/);
 assert.match(adaptiveSamplingSource, /export function mergeConsensusWithAdjudicated/);
+// ≥3-pass pin guard: pin agreed dims only with a robust (>=3-pass) median.
+assert.match(adaptiveSamplingSource, /MIN_PASSES_TO_PIN = 3/);
+assert.match(adaptiveSamplingSource, /const canPin = passCount >= MIN_PASSES_TO_PIN/);
+assert.match(engineSource, /applyConsensusPinning\(adjudicatorResult\.parsed, consensus, passResults\.length\)/);
 assert.match(engineSource, /passesDisagree\(passResults\.map\(\(r\) => passReviewSubscores\(r\.review\)\)\)\.disagree/);
 assert.match(engineSource, /passResults\.length < MAX_BLIND_PASSES/);
-assert.match(engineSource, /applyConsensusPinning\(adjudicatorResult\.parsed, consensus\)/);
 // (c) contested papers surface visible uncertainty.
 assert.match(reviewCardSource, /contestedReview/);
 assert.match(reviewCardSource, /independent blind passes disagreed by/);
@@ -2550,11 +2553,17 @@ async function assertAdaptiveSampling() {
       const outCons = cons.find((c) => c.dimension === "output");
       if (!inCons.agreed || inCons.median !== 8) throw new Error("input agreed -> median 8");
       if (outCons.agreed) throw new Error("output gap 3 must be contested");
-      const merged = mergeConsensusWithAdjudicated(cons, { input: 5, construction: 5, output: 7 });
+      // With >=3 passes the median is robust -> pin agreed dims.
+      const merged = mergeConsensusWithAdjudicated(cons, { input: 5, construction: 5, output: 7 }, 3);
       if (merged.input !== 8) throw new Error("agreed input must be PINNED to the median (8), not the adjudicator's 5");
       if (merged.construction !== 9) throw new Error("agreed construction must be pinned to median 9");
       if (merged.output !== 7) throw new Error("contested output must take the adjudicator's value (7)");
       if (!merged.pinnedDimensions.includes("input") || merged.pinnedDimensions.includes("output")) throw new Error("pinnedDimensions must list agreed dims only");
+      // ≥3-pass pin guard: with only 2 passes, do NOT pin — the adjudicator
+      // resolves every dimension (firm 2-pass papers keep the adjudicator value).
+      const merged2 = mergeConsensusWithAdjudicated(cons, { input: 5, construction: 5, output: 7 }, 2);
+      if (merged2.input !== 5 || merged2.construction !== 5 || merged2.output !== 7) throw new Error("with only 2 passes, no pinning — the adjudicator's values stand");
+      if (merged2.pinnedDimensions.length) throw new Error("2-pass merge must pin nothing");
       // (c) spread surfaced.
       if (passSpread(contested).contested !== true) throw new Error("contested spread must flag contested=true");
       if (passSpread(firm).contested !== false) throw new Error("firm spread must flag contested=false");

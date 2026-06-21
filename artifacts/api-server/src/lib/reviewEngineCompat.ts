@@ -7873,14 +7873,14 @@ function passReviewSubscores(review: { inputStrengthScore?: unknown; constructio
 // the adjudicator's parsed output, so the aggregate (band + total) is recomputed
 // consistently from the pinned subscores and the adjudicator effectively resolves
 // only the contested dimensions.
-function applyConsensusPinning(parsed: unknown, consensus: DimConsensus[]): unknown {
+function applyConsensusPinning(parsed: unknown, consensus: DimConsensus[], passCount: number): unknown {
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
   const p = parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : {};
   const merged = mergeConsensusWithAdjudicated(consensus, {
     input: n(p.inputStrengthScore),
     construction: n(p.constructionStrengthScore),
     output: n(p.outputStrengthScore),
-  });
+  }, passCount);
   const out: Record<string, any> = { ...p };
   if (merged.input != null) out.inputStrengthScore = merged.input;
   if (merged.construction != null) out.constructionStrengthScore = merged.construction;
@@ -8104,7 +8104,7 @@ async function generateMultiPassReview(
           // (brief #2b) Pin the dimensions the passes agree on to the pass median;
           // the adjudicator's values are kept only for the contested dimensions.
           const consensus = dimensionConsensus(passResults.map((r) => passReviewSubscores(r.review)));
-          aggregate = normalizeAggregateReview(applyConsensusPinning(adjudicatorResult.parsed, consensus), fallbackScores, fallbackRepresentativeReview);
+          aggregate = normalizeAggregateReview(applyConsensusPinning(adjudicatorResult.parsed, consensus, passResults.length), fallbackScores, fallbackRepresentativeReview);
           validateAggregateReview(aggregate, reviewInputSnapshot);
           adjudicatorAudit.inputStrengthScore = aggregate.inputStrengthScore;
           adjudicatorAudit.constructionStrengthScore = aggregate.constructionStrengthScore;

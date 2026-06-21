@@ -24,6 +24,12 @@ export const DISAGREEMENT_SCORE_GAP = 5; // final-score (0-100) gap that trigger
 export const DISAGREEMENT_SUBSCORE_GAP = 1.5; // per-dimension (0-10) gap that triggers escalation
 export const MIN_BLIND_PASSES = 2;
 export const MAX_BLIND_PASSES = 5;
+// Pin agreed dimensions to the pass median ONLY with >=3 passes — the median is
+// robust then. With exactly 2 passes the "median" is just their mean, which can
+// be noisier than the adjudicator's manuscript-aware resolution, so for a
+// non-escalated (firm) paper we keep the adjudicator's value (brief #2 harness
+// showed 2-pass pinning could add spread on already-stable papers).
+export const MIN_PASSES_TO_PIN = 3;
 
 const DIMS = ["input", "construction", "output"] as const;
 export type DimKey = (typeof DIMS)[number];
@@ -91,11 +97,15 @@ export function dimensionConsensus(passes: PassSubscores[]): DimConsensus[] {
 export function mergeConsensusWithAdjudicated(
   consensus: DimConsensus[],
   adjudicated: PassSubscores,
+  passCount: number,
 ): { input: number | null; construction: number | null; output: number | null; pinnedDimensions: DimKey[] } {
+  // Pinning is only applied with enough passes for a robust median; below that
+  // the adjudicator resolves every dimension (firm 2-pass papers are unaffected).
+  const canPin = passCount >= MIN_PASSES_TO_PIN;
   const out: Record<DimKey, number | null> = { input: null, construction: null, output: null };
   const pinned: DimKey[] = [];
   for (const c of consensus) {
-    if (c.agreed && c.median != null) {
+    if (canPin && c.agreed && c.median != null) {
       out[c.dimension] = c.median;
       pinned.push(c.dimension);
     } else {
