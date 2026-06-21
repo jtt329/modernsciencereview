@@ -1972,6 +1972,34 @@ async function assertAssumptionConditionals() {
         { input: 7, construction: 10, output: 9 },
       );
       if (!cRungOnly.inputStrengthScore) throw new Error("an F4 input must be treated as open even when the proxy ordinals are mid");
+      // #50 Campos control: a WRONG paper whose constructions are rated F4 but
+      // validity "invalid" must NOT get a conditional (invalid = error, not open).
+      const cWrong = computeAssumptionConditionals({
+        inPhysicsScore: 8,
+        subscores: { input: 2, construction: 0, output: 0 },
+        raw: deriveAssumptionConditionalsRawFromLedger(
+          { inputConstructionOutputAssessment: {
+            input: { primitiveInputs: [{ input: "standard GR", groundingQuality: "strong", frameworkDependenceLevel: "low" }] },
+            construction: { introducedConstructions: [{ construction: "an invalid charge-to-mass derivation", firmnessRung: "F4", validityLevel: "invalid" }] },
+          } },
+          { input: 2, construction: 0, output: 0 },
+        ),
+      });
+      if (cWrong.applicable) throw new Error("#50 Campos: an invalid (wrong) F4 construction must NOT generate a conditional");
+      // Precise rung is authoritative when present: a CLOSED F1 input must stay
+      // closed even if the grounding proxy is a noisy "weak" (the second Campos
+      // misfire path). Proxy only applies when the rung is absent.
+      const cRungBeatsProxy = deriveAssumptionConditionalsRawFromLedger(
+        { inputConstructionOutputAssessment: { input: { primitiveInputs: [{ input: "general relativity", firmnessRung: "F1", groundingQuality: "weak", frameworkDependenceLevel: "high" }] } } },
+        { input: 7, construction: 10, output: 10 },
+      );
+      if (Object.keys(cRungBeatsProxy).length) throw new Error("an F1 (closed) rung must beat a noisy weak/high proxy -> no open input");
+      // But when the rung is ABSENT, the proxy still works (fallback intact).
+      const cProxyFallback = deriveAssumptionConditionalsRawFromLedger(
+        { inputConstructionOutputAssessment: { input: { primitiveInputs: [{ input: "an unconfirmed framework", foundationLabel: "the unconfirmed framework", groundingQuality: "weak", frameworkDependenceLevel: "high" }] } } },
+        { input: 7, construction: 10, output: 10 },
+      );
+      if (!cProxyFallback.inputStrengthScore) throw new Error("with no rung, the framework/grounding proxy must still open the input");
 
       // PROSE DERIVATION (retained, still tested) — classify the subscoreRationale
       // prose, then compute. Real acceptance cases from the set:

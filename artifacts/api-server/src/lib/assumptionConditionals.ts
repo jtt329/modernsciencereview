@@ -369,7 +369,12 @@ function openLedgerInputs(ledger: Record<string, any> | null | undefined): strin
     const rung = strField((it as any).firmnessRung).toUpperCase();
     const framework = strField((it as any).frameworkDependenceLevel).toLowerCase();
     const grounding = strField((it as any).groundingQuality).toLowerCase();
-    const open = /F\s*[34]\b/.test(rung) || framework === "high" || grounding === "weak";
+    // The precise rung is AUTHORITATIVE when present (v19.0.7): open iff F3/F4.
+    // The framework/grounding proxy is only a FALLBACK for elements whose rung is
+    // absent/flaky — it must NOT override a closed (F1/F2) rung (otherwise a noisy
+    // "weak grounding" on a firm input opens it, the Campos misfire).
+    const hasRung = /F\s*[1-4]\b/.test(rung);
+    const open = hasRung ? /F\s*[34]\b/.test(rung) : (framework === "high" || grounding === "weak");
     if (!open) continue;
     const name = strField((it as any).foundationLabel) || strField((it as any).input);
     if (name) names.push(shortName(name));
@@ -382,10 +387,19 @@ function openLedgerConstructions(ledger: Record<string, any> | null | undefined)
   const names: string[] = [];
   for (const it of Array.isArray(cons) ? cons : []) {
     if (!it || typeof it !== "object") continue;
-    // Open construction / load-bearing hypothesis: precise rung F3/F4 (v19.0.7),
-    // else the validity proxy (valid only if an assumption holds).
+    const validity = strField((it as any).validityLevel).toLowerCase();
+    // A WRONG construction (validity "invalid") is an ERROR, not an open
+    // assumption — granting it can never lift the score, even if its firmness
+    // rung is F3/F4 (a conjectural rung on a refuted/invalid step). Only
+    // viable-but-unconfirmed constructions are "open". (Without this, a wrong
+    // paper like Campos whose invalid constructions are rated F4 would get a
+    // spurious "if-true -> ~100" conditional.)
+    if (validity === "invalid") continue;
+    // Precise rung authoritative when present (open iff F3/F4); else the validity
+    // proxy (valid only if an assumption holds) is the fallback.
     const rung = strField((it as any).firmnessRung).toUpperCase();
-    const open = /F\s*[34]\b/.test(rung) || strField((it as any).validityLevel).toLowerCase() === "conditional";
+    const hasRung = /F\s*[1-4]\b/.test(rung);
+    const open = hasRung ? /F\s*[34]\b/.test(rung) : (validity === "conditional");
     if (!open) continue;
     const name = strField((it as any).construction);
     if (name) names.push(shortName(name));
