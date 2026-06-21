@@ -1025,7 +1025,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = DEDUCTION_FIRST_PRINCIPLES_ENABLED[\s\S]{0,320}"2026-06-14" : "2026-06-12"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = FIRMNESS_RUNG_ENABLED[\s\S]{0,420}"2026-06-14" : "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -1946,6 +1946,33 @@ async function assertAssumptionConditionals() {
       );
       if (cFirm.applicable) throw new Error("a paper with only firm inputs must yield no conditional");
 
+      // #30 Page (v19.0.7 broadening): inputs all firm (low framework), but the
+      // result rests on an OPEN load-bearing CONSTRUCTION/hypothesis (random-pure-
+      // state typicality, firmnessRung F3) -> conditional restored, keyed on it.
+      const pageLedger = {
+        inputConstructionOutputAssessment: {
+          input: { primitiveInputs: [{ input: "unitary quantum mechanics", groundingQuality: "strong", frameworkDependenceLevel: "low" }] },
+          construction: { introducedConstructions: [{ construction: "the random-pure-state typicality assumption", firmnessRung: "F3" }] },
+          output: { outputs: [{ output: "the Page curve", assessment: "applies to realizable evaporating black holes" }] },
+        },
+      };
+      const pageSub = { input: 10, construction: 9, output: 8.5 };
+      const cPage = computeAssumptionConditionals({
+        inPhysicsScore: 93,
+        subscores: pageSub,
+        raw: deriveAssumptionConditionalsRawFromLedger(pageLedger, pageSub),
+        outputReferentRealizable: outputReferentRealizableFromLedger(pageLedger, { outputStrengthScore: "applies to realizable black holes" }),
+      });
+      if (!cPage.applicable) throw new Error("#30 Page: an open load-bearing construction (typicality F3) must restore a conditional");
+      if (!cPage.contingentOn.some((a) => /typicality/i.test(a))) throw new Error("Page conditional should name the typicality assumption");
+      // F3/F4 precise rung opens an input even when the framework-dependence proxy
+      // would call it closed (rung takes precedence).
+      const cRungOnly = deriveAssumptionConditionalsRawFromLedger(
+        { inputConstructionOutputAssessment: { input: { primitiveInputs: [{ input: "a conjectural premise", foundationLabel: "the conjectural premise", groundingQuality: "moderate", frameworkDependenceLevel: "medium", firmnessRung: "F4" }] } } },
+        { input: 7, construction: 10, output: 9 },
+      );
+      if (!cRungOnly.inputStrengthScore) throw new Error("an F4 input must be treated as open even when the proxy ordinals are mid");
+
       // PROSE DERIVATION (retained, still tested) — classify the subscoreRationale
       // prose, then compute. Real acceptance cases from the set:
       const deriveChain = (rationale, subscores, inPhysicsScore) =>
@@ -2190,6 +2217,19 @@ assert.match(engineSource, /NEVER use fame, prestige, popularity, citation\s+cou
 assert.match(engineSource, /earns credit toward\s+the established-physics score ONLY to the extent/);
 assert.match(engineSource, /DEDUCTION_FIRST_PRINCIPLES_ENABLED \? DEDUCTION_FIRST_PRINCIPLES_DELTA : null/);
 assert.match(engineSource, /v19\.0\.6-computed-ico-halfpoint/);
+
+// v19.0.7 (default-on): the precise firmness rung (F1-F4) is re-exposed as
+// INTERNAL structured data on inputs AND constructions, so conditionals key on
+// the precise open rung (F3/F4) with the framework-dependence proxy as fallback,
+// and load-bearing open hypotheses (e.g. typicality) can fire a conditional.
+assert.match(engineSource, /FIRMNESS_RUNG_ENABLED = process\.env\.ENABLE_FIRMNESS_RUNG !== "false"/);
+assert.match(engineSource, /Internal firmness rung \(structured, not for display\)/);
+assert.match(engineSource, /FIRMNESS_RUNG_ENABLED \? FIRMNESS_RUNG_DELTA : null/);
+assert.match(engineSource, /Internal precise firmness rung \(v19\.0\.7, optional\): F1-F4 marking an open/);
+assert.match(engineSource, /v19\.0\.7-computed-ico-halfpoint/);
+// Derivation keys on the precise rung (F3/F4) with the proxy as fallback, on
+// both inputs and constructions.
+assert.match(assumptionConditionalsSource, /\/F\\s\*\[34\]\\b\/\.test\(rung\)/);
 
 // #2 Calibration enforces existing rules cross-paper (no prompt/hash change):
 // conjecture-ceiling + reason-grouped deduction consistency, flagged then

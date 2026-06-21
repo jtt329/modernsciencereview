@@ -382,7 +382,11 @@ function openLedgerConstructions(ledger: Record<string, any> | null | undefined)
   const names: string[] = [];
   for (const it of Array.isArray(cons) ? cons : []) {
     if (!it || typeof it !== "object") continue;
-    if (strField((it as any).validityLevel).toLowerCase() !== "conditional") continue;
+    // Open construction / load-bearing hypothesis: precise rung F3/F4 (v19.0.7),
+    // else the validity proxy (valid only if an assumption holds).
+    const rung = strField((it as any).firmnessRung).toUpperCase();
+    const open = /F\s*[34]\b/.test(rung) || strField((it as any).validityLevel).toLowerCase() === "conditional";
+    if (!open) continue;
     const name = strField((it as any).construction);
     if (name) names.push(shortName(name));
   }

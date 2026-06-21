@@ -811,6 +811,14 @@ const CENTRALITY_TRANSFERABILITY_ENABLED = process.env.ENABLE_CENTRALITY_TRANSFE
 // testable physics. ACTIVATED BY DEFAULT; set ENABLE_DEDUCTION_FIRST_PRINCIPLES=
 // false to revert. Lives in its own delta so the v19.0.2 base hash is untouched.
 const DEDUCTION_FIRST_PRINCIPLES_ENABLED = process.env.ENABLE_DEDUCTION_FIRST_PRINCIPLES !== "false";
+// Internal precise firmness rung (v19.0.7). Re-exposes the F1-F4 rung as
+// INTERNAL structured data on each ledger element (inputs AND constructions /
+// load-bearing hypotheses) so the conditional-derivation stage keys on the
+// precise open rung (F3/F4) instead of the coarse framework-dependence proxy.
+// Display still translates to plain words (the speak-plainly rule stays; codes
+// live only in structured fields). ACTIVATED BY DEFAULT; set
+// ENABLE_FIRMNESS_RUNG=false to revert to the proxy-only behavior.
+const FIRMNESS_RUNG_ENABLED = process.env.ENABLE_FIRMNESS_RUNG !== "false";
 const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
 --------------------------
 
@@ -956,10 +964,30 @@ universe — NOT for its fame and NOT for its if-true potential, which belong to
 the conditional ("if-true") score and the separate impact layer, not the
 established score.`;
 
+const FIRMNESS_RUNG_DELTA = String.raw`Internal firmness rung (structured, not for display)
+----------------------------------------------------
+
+On EVERY primitive input AND every introduced construction, emit a precise
+firmness rung in the structured field "firmnessRung" — one of F1, F2, F3, F4:
+  F1 = established / empirically confirmed; F2 = strongly supported / standard;
+  F3 = plausible but unconfirmed (a viable but speculative premise the result
+       rests on); F4 = conjectural / untested framework or assumption.
+This is INTERNAL structured data only — do NOT put the rung code in any prose or
+rationale (the speak-plainly rule still holds; describe firmness in plain words
+for readers). The rung exists so downstream code can identify the open premises.
+
+Load-bearing assumptions count. If the result genuinely DEPENDS ON an unconfirmed
+assumption or hypothesis that is not itself a primitive input — e.g. a typicality
+or genericity assumption, an unproven duality, a conditional construction step —
+include it as an introduced-construction entry and give it its firmnessRung
+(F3/F4 if open). Only include assumptions the result actually rests on (remove it
+and the result fails), never concepts merely mentioned in passing.`;
+
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
   ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
   DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
+  FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 const withActiveDeltas = (base: string) =>
@@ -968,15 +996,17 @@ const withActiveDeltas = (base: string) =>
 const ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas(BLIND_REVIEW_PASS_V19_PROMPT);
 const ACTIVE_FULL_PROMPT = withActiveDeltas(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
 
-export const REVIEW_PROMPT_VERSION = DEDUCTION_FIRST_PRINCIPLES_ENABLED
-  ? "v19.0.6-computed-ico-halfpoint"
-  : CENTRALITY_TRANSFERABILITY_ENABLED
-    ? "v19.0.5-computed-ico-halfpoint"
-    : ASSUMPTION_CONDITIONALS_ENABLED
-      ? "v19.0.4-computed-ico-halfpoint"
-      : LINKED_INPUT_JUSTIFICATION_ENABLED
-        ? "v19.0.3-computed-ico-halfpoint"
-        : "v19.0.2-computed-ico-halfpoint";
+export const REVIEW_PROMPT_VERSION = FIRMNESS_RUNG_ENABLED
+  ? "v19.0.7-computed-ico-halfpoint"
+  : DEDUCTION_FIRST_PRINCIPLES_ENABLED
+    ? "v19.0.6-computed-ico-halfpoint"
+    : CENTRALITY_TRANSFERABILITY_ENABLED
+      ? "v19.0.5-computed-ico-halfpoint"
+      : ASSUMPTION_CONDITIONALS_ENABLED
+        ? "v19.0.4-computed-ico-halfpoint"
+        : LINKED_INPUT_JUSTIFICATION_ENABLED
+          ? "v19.0.3-computed-ico-halfpoint"
+          : "v19.0.2-computed-ico-halfpoint";
 const REVIEW_OBJECT_VERSION = "v17.1-diagnostic-only-halfpoint";
 export const REVIEW_CALIBRATION_COMPATIBILITY_FAMILY = "v17-diagnostic-ico-halfpoint";
 export const REVIEW_DIAGNOSTIC_SCALE_VERSION = "0-10-halfpoint-v1";
@@ -998,23 +1028,27 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(ACTIVE_BLIND_REVIEW_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = DEDUCTION_FIRST_PRINCIPLES_ENABLED
-  ? "v19.0.6 computed ICO half-point"
-  : CENTRALITY_TRANSFERABILITY_ENABLED
-    ? "v19.0.5 computed ICO half-point"
-    : ASSUMPTION_CONDITIONALS_ENABLED
-      ? "v19.0.4 computed ICO half-point"
-      : LINKED_INPUT_JUSTIFICATION_ENABLED
-        ? "v19.0.3 computed ICO half-point"
-        : "v19.0.2 computed ICO half-point";
+export const REVIEW_PROMPT_NAME = FIRMNESS_RUNG_ENABLED
+  ? "v19.0.7 computed ICO half-point"
+  : DEDUCTION_FIRST_PRINCIPLES_ENABLED
+    ? "v19.0.6 computed ICO half-point"
+    : CENTRALITY_TRANSFERABILITY_ENABLED
+      ? "v19.0.5 computed ICO half-point"
+      : ASSUMPTION_CONDITIONALS_ENABLED
+        ? "v19.0.4 computed ICO half-point"
+        : LINKED_INPUT_JUSTIFICATION_ENABLED
+          ? "v19.0.3 computed ICO half-point"
+          : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = DEDUCTION_FIRST_PRINCIPLES_ENABLED
+export const REVIEW_PROMPT_DATE = FIRMNESS_RUNG_ENABLED
   ? "2026-06-20"
-  : CENTRALITY_TRANSFERABILITY_ENABLED
-    ? "2026-06-19"
-    : ASSUMPTION_CONDITIONALS_ENABLED
-      ? "2026-06-16"
-      : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
+  : DEDUCTION_FIRST_PRINCIPLES_ENABLED
+    ? "2026-06-20"
+    : CENTRALITY_TRANSFERABILITY_ENABLED
+      ? "2026-06-19"
+      : ASSUMPTION_CONDITIONALS_ENABLED
+        ? "2026-06-16"
+        : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
 export const REVIEW_PROMPT_HASH = createHash("sha256")
   .update(REVIEW_SYSTEM_INSTRUCTION)
   .digest("hex")
@@ -1058,6 +1092,7 @@ export function isCalibrationCompatibleReviewObject(value: unknown) {
 const ADJUDICATOR_PROMPT_DELTAS = [
   ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
   DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
+  FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(
@@ -1297,6 +1332,10 @@ const introducedConstructionItemJsonSchema = {
     fragilityLevel: jsonString,
     fragilityOrLimits: jsonString,
     assessment: jsonString,
+    // Internal precise firmness rung (v19.0.7, optional): F1-F4 marking an open
+    // (F3/F4) load-bearing construction step / hypothesis the result rests on.
+    // Not for display; conditional derivation reads it.
+    firmnessRung: jsonString,
   },
 };
 const inputConstructionOutputAssessmentJsonSchema = {
