@@ -5260,30 +5260,20 @@ type ScoringCallOptions = {
 };
 
 // GPT-5.5 standard via the Responses API (the 5.5 family is Responses-only).
-// Native-best input (brief #3 correction): when the review input carries the
-// PDF, send it as input_file so GPT reads equations/figures directly (matching a
-// multimodal pass); otherwise send the manuscript text as input_text. The prompt
-// instructs JSON-only output and extractJson recovers it. Reasoning effort high.
+// Input policy (brief #3, Option 2): GPT reads the same identity-blind manuscript
+// TEXT as every other model — no raw-PDF path, so it never sees author/venue
+// identities and the comparison stays fully controlled. The prompt instructs
+// JSON-only output and extractJson recovers it. Reasoning effort high.
 async function callGpt(prompt: string, input: ReviewInput, options?: ScoringCallOptions): Promise<ScoringCallResult> {
   const text = reviewInputText(input);
-  const pdfBase64 = typeof input === "string" ? "" : input.pdfBase64;
-  const mimeType = typeof input === "string" ? "application/pdf" : (input.mimeType || "application/pdf");
-  if (!text.trim() && !pdfBase64) {
-    throw new Error("GPT-5.5 review requires extractable manuscript text or an attached PDF; neither was available.");
-  }
-  const userContent: any[] = [{ type: "input_text", text }];
-  if (pdfBase64) {
-    userContent.push({
-      type: "input_file",
-      filename: "manuscript.pdf",
-      file_data: `data:${mimeType};base64,${pdfBase64}`,
-    });
+  if (!text.trim()) {
+    throw new Error("GPT-5.5 review requires extractable manuscript text; none was available for this PDF.");
   }
   return withModelRetries(GPT_MODEL, async () => {
     const response: any = await getOpenAI().responses.create({
       model: GPT_MODEL,
       instructions: prompt,
-      input: [{ role: "user", content: userContent }],
+      input: [{ role: "user", content: [{ type: "input_text", text }] }],
       max_output_tokens: options?.maxOutputTokens ?? 16384,
       reasoning: { effort: "high" },
       text: { format: { type: "json_object" } },
