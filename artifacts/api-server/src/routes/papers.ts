@@ -5641,8 +5641,11 @@ const isAdmin = Boolean(ADMIN_EMAIL && user.email === ADMIN_EMAIL);
 const requestedReviewMode: ReviewPipelineMode = normalizeReviewPipelineMode(source.reviewMode);
 const reviewMode: ReviewPipelineMode = isAdmin ? requestedReviewMode : "normal-review";
 // (brief #3, C) Model selectable at upload: Gemini 3.1 Pro (default), GPT-5.5
-// (standard), GLM-5.2 (OpenRouter). Unknown values fall back to the default.
-const selectedModel: ReviewModel = normalizeReviewModel(source.model);
+// (standard), GLM-5.2 (OpenRouter). The paid alternates are admin-only — the UI
+// only renders them for the admin account AND the backend enforces it here, so a
+// non-admin cannot pick GPT/GLM by posting source.model directly. Non-admins
+// always run the Gemini default. (Mirrors the reviewMode admin gate above.)
+const selectedModel: ReviewModel = isAdmin ? normalizeReviewModel(source.model) : "gemini";
 const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string; pdfBase64?: string; mimeType?: string } = {
   fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
 };

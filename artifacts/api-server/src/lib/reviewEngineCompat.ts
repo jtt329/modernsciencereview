@@ -5259,19 +5259,31 @@ type ScoringCallOptions = {
   timeoutMs?: number;
 };
 
-// GPT-5.5 standard via the Responses API (the 5.5 family is Responses-only). The
-// blinded manuscript text is sent as input_text; the prompt instructs JSON-only
-// output and extractJson recovers it. Reasoning effort high for scoring quality.
+// GPT-5.5 standard via the Responses API (the 5.5 family is Responses-only).
+// Native-best input (brief #3 correction): when the review input carries the
+// PDF, send it as input_file so GPT reads equations/figures directly (matching a
+// multimodal pass); otherwise send the manuscript text as input_text. The prompt
+// instructs JSON-only output and extractJson recovers it. Reasoning effort high.
 async function callGpt(prompt: string, input: ReviewInput, options?: ScoringCallOptions): Promise<ScoringCallResult> {
   const text = reviewInputText(input);
-  if (!text.trim()) {
-    throw new Error("GPT-5.5 review requires extractable manuscript text; none was available for this PDF.");
+  const pdfBase64 = typeof input === "string" ? "" : input.pdfBase64;
+  const mimeType = typeof input === "string" ? "application/pdf" : (input.mimeType || "application/pdf");
+  if (!text.trim() && !pdfBase64) {
+    throw new Error("GPT-5.5 review requires extractable manuscript text or an attached PDF; neither was available.");
+  }
+  const userContent: any[] = [{ type: "input_text", text }];
+  if (pdfBase64) {
+    userContent.push({
+      type: "input_file",
+      filename: "manuscript.pdf",
+      file_data: `data:${mimeType};base64,${pdfBase64}`,
+    });
   }
   return withModelRetries(GPT_MODEL, async () => {
     const response: any = await getOpenAI().responses.create({
       model: GPT_MODEL,
       instructions: prompt,
-      input: [{ role: "user", content: [{ type: "input_text", text }] }],
+      input: [{ role: "user", content: userContent }],
       max_output_tokens: options?.maxOutputTokens ?? 16384,
       reasoning: { effort: "high" },
       text: { format: { type: "json_object" } },

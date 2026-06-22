@@ -2549,6 +2549,12 @@ assert.match(engineSource, /const adjudicatorResult = await runScoringModel\(\s*
 assert.match(papersRouteSource, /normalizeReviewModel\(source\.model\)/);
 assert.match(papersRouteSource, /expectedReviewModelName\(reviewMode, selectedModel\)/);
 assert.match(engineSource, /model === "gemini" \? base :/);
+// (correction) Paid alternates are admin-only AND backend-enforced: a non-admin
+// posting source.model directly still runs the Gemini default (not bypassable).
+assert.match(papersRouteSource, /isAdmin \? normalizeReviewModel\(source\.model\) : "gemini"/);
+// (correction) GPT reads the PDF directly when the input carries one (native
+// input parity with a multimodal pass); text otherwise.
+assert.match(engineSource, /type: "input_file",/);
 // (D) Contested papers surface visible uncertainty.
 assert.match(reviewCardSource, /contestedReview/);
 assert.match(reviewCardSource, /independent blind passes disagreed by/);
