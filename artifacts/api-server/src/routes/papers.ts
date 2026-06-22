@@ -1066,7 +1066,14 @@ async function existingSourceSubmission(
   sourceHash: string,
   promptHash: string,
   promptVersion: string,
+  expectedModelName?: string,
 ) {
+  // (brief #3, C) A review by a DIFFERENT scoring model is not a duplicate — the
+  // same exact source can be reviewed once per model (Gemini / GPT-5.5 / GLM).
+  // The source hash + prompt hash are model-independent, so without this guard a
+  // GPT/GLM upload of an existing Gemini paper is wrongly rejected pre-extraction.
+  const modelMismatch = (paper: typeof papersTable.$inferSelect) =>
+    !!expectedModelName && !!paper.modelName && paper.modelName !== expectedModelName;
   const userPapers = await db.select().from(papersTable).where(
     eq(papersTable.authorId, authorId),
   ).orderBy(desc(papersTable.createdAt));
@@ -1087,6 +1094,7 @@ async function existingSourceSubmission(
     if (!attempt.paperId) continue;
     const paper = userPapers.find((candidate) => candidate.id === attempt.paperId);
     if (!paper) continue;
+    if (modelMismatch(paper)) continue;
     const review = reviewByPaper.get(paper.id);
     if (!visiblePaperIds.has(paper.id)) {
       logger.warn({
@@ -1124,6 +1132,7 @@ async function existingSourceSubmission(
   }
 
   for (const paper of userPapers) {
+    if (modelMismatch(paper)) continue;
     const review = reviewByPaper.get(paper.id);
     const ledger = parseJsonObject(review?.coverageLedgerJson ?? null);
     if (ledger?.submissionSourceHash !== sourceHash) continue;
@@ -5770,6 +5779,7 @@ const existingBySource = allowExistingReviewReuse && sourceHash
       sourceHash,
       REVIEW_PROMPT_HASH,
       REVIEW_PROMPT_VERSION,
+      expectedModelName,
     )
   : null;
 if (existingBySource?.review) {

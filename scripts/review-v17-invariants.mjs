@@ -2552,6 +2552,15 @@ assert.match(engineSource, /model === "gemini" \? base :/);
 // (correction) Paid alternates are admin-only AND backend-enforced: a non-admin
 // posting source.model directly still runs the Gemini default (not bypassable).
 assert.match(papersRouteSource, /isAdmin \? normalizeReviewModel\(source\.model\) : "gemini"/);
+// (correction) The pre-extraction source-hash reuse block is model-aware too, so
+// the SAME paper can be reviewed once per model (Gemini/GPT/GLM) — not just the
+// metadata-reuse path. Both source-hash loops guard on the model mismatch.
+assert.match(papersRouteSource, /const modelMismatch = \(paper/);
+assert.ok(
+  (papersRouteSource.match(/if \(modelMismatch\(paper\)\) continue;/g) || []).length >= 2,
+  "both existingSourceSubmission loops must skip papers from a different model",
+);
+assert.match(papersRouteSource, /REVIEW_PROMPT_VERSION,\s*\n\s*expectedModelName,/);
 // (correction, Option 2) All models read the same identity-blind manuscript
 // text — GPT has no raw-PDF path, so the comparison stays fully controlled.
 assert.doesNotMatch(engineSource, /type: "input_file"/);
