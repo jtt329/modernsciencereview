@@ -1104,11 +1104,14 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const spreadText = scoreSpread == null
     ? 'Insufficient data'
     : `${scoreSpread} ${scoreSpread === 1 ? 'point' : 'points'}`;
-  // (brief #2c) A contested paper: the blind passes disagreed beyond the
-  // adaptive-sampling threshold (>5 points). Surface that as visible uncertainty
-  // rather than a quiet stability field. Adaptive sampling draws extra passes on
-  // these, so blindPassScores.length > 2 also signals an escalated paper.
-  const contestedReview = !selectedPass && scoreSpread != null && scoreSpread > 5;
+  // (brief #3, D) A contested paper: the blind passes disagreed beyond the
+  // adaptive-sampling threshold. Surface that as visible uncertainty rather than
+  // a quiet stability field. The backend escalates on a final-score gap > 5 OR a
+  // per-dimension gap > 1.5; that per-dimension trigger can fire with a score
+  // spread <= 5, so a drawn 3rd pass (blindPassScores.length > 2) also marks the
+  // review as escalated/contested.
+  const escalatedReview = !selectedPass && blindPassScores.length > 2;
+  const contestedReview = !selectedPass && ((scoreSpread != null && scoreSpread > 5) || escalatedReview);
   const adjustmentLabel = comparatorCalibrationApplied
     ? 'diagnostics calibrated'
     : 'not applied';

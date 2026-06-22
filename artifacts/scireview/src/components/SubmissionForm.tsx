@@ -983,10 +983,14 @@ export default function SubmissionForm({
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                 <Cpu className="w-3 h-3" /> Review Model
               </label>
-              <div className="flex gap-2">
-                {([
-                  { id: 'gemini', label: 'Gemini Pro x2 + Calibration' },
-                ] as const).map((m) => (
+              <div className="flex flex-wrap gap-2">
+                {(([
+                  { id: 'gemini', label: 'Gemini 3.1 Pro x2 + Calibration', adminOnly: false },
+                  // Paid alternates are admin-gated to protect public cost; the
+                  // backend accepts any of the three (brief #3, C).
+                  { id: 'gpt', label: 'GPT-5.5 (standard)', adminOnly: true },
+                  { id: 'glm', label: 'GLM-5.2 (OpenRouter)', adminOnly: true },
+                ] as const).filter((m) => isAdmin || !m.adminOnly)).map((m) => (
                   <button
                     key={m.id}
                     type="button"

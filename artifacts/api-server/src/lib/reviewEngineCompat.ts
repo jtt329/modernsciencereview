@@ -11,9 +11,14 @@ import {
 } from "./prompts/diagnosticOnlyV19";
 import { logger } from "./logger";
 import { computeAssumptionConditionals, deriveAssumptionConditionalsRawFromLedger, outputReferentRealizableFromLedger, computePointDeductions } from "./assumptionConditionals";
-import { passesDisagree, dimensionConsensus, mergeConsensusWithAdjudicated, MIN_BLIND_PASSES, MAX_BLIND_PASSES, type PassSubscores, type DimConsensus } from "./adaptiveSampling";
+import { passesDisagree, passSpread, MIN_BLIND_PASSES, MAX_BLIND_PASSES, type PassSubscores } from "./adaptiveSampling";
 
-export const GPT_MODEL = "gpt-5.4-pro";
+// GPT-5.5 *standard* (Responses API). The Pro tier is rate-gated on new accounts
+// (see brief #2 probe), so prod uses the standard reasoning model.
+export const GPT_MODEL = process.env.SCIREVIEW_GPT_MODEL?.trim() || "gpt-5.5";
+// GLM-5.2 via OpenRouter (OpenAI-compatible).
+export const GLM_MODEL = process.env.SCIREVIEW_GLM_MODEL?.trim() || "z-ai/glm-5.2";
+export const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL?.trim() || "https://openrouter.ai/api/v1";
 export const GEMINI_REVIEW_MODEL =
   process.env.SCIREVIEW_GEMINI_REVIEW_MODEL?.trim() ||
   "gemini-3.5-flash";
@@ -44,20 +49,48 @@ export function reviewPipelineLabel(mode: ReviewPipelineMode = DEFAULT_REVIEW_PI
     : `${GEMINI_PIPELINE_LABEL} + benchmark ingestion`;
 }
 
-export function expectedReviewModelName(mode: ReviewPipelineMode = DEFAULT_REVIEW_PIPELINE_MODE) {
-  return `${reviewPipelineLabel(mode)} · ${REVIEW_PROMPT_VERSION}`;
+export function expectedReviewModelName(
+  mode: ReviewPipelineMode = DEFAULT_REVIEW_PIPELINE_MODE,
+  model: ReviewModel = "gemini",
+) {
+  const base = `${reviewPipelineLabel(mode)} · ${REVIEW_PROMPT_VERSION}`;
+  // Gemini keeps the exact historical label (no dedup/migration churn); GPT-5.5
+  // and GLM-5.2 get a distinct suffix so cross-model reviews of the same paper
+  // are treated as distinct reviews, not duplicates.
+  return model === "gemini" ? base : `${base} · ${scoringModelId(model)}`;
 }
 
 let openai: OpenAI | null = null;
 function getOpenAI() {
   if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is required when the OpenAI review model is selected.");
+    throw new Error("OPENAI_API_KEY is required when the GPT-5.5 review model is selected.");
   }
   openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   return openai;
 }
 
-export type ReviewModel = "gpt" | "gemini";
+let openrouter: OpenAI | null = null;
+function getOpenRouter() {
+  if (!process.env.OPENROUTER_API_KEY) {
+    throw new Error("OPENROUTER_API_KEY is required when the GLM-5.2 (OpenRouter) review model is selected.");
+  }
+  openrouter ??= new OpenAI({ apiKey: process.env.OPENROUTER_API_KEY, baseURL: OPENROUTER_BASE_URL });
+  return openrouter;
+}
+
+export type ReviewModel = "gpt" | "gemini" | "glm";
+
+// Allowed at upload (brief #3, C). Anything else falls back to the default.
+export const SELECTABLE_REVIEW_MODELS: ReviewModel[] = ["gemini", "gpt", "glm"];
+export const DEFAULT_REVIEW_MODEL: ReviewModel = "gemini";
+export function normalizeReviewModel(value: unknown): ReviewModel {
+  return typeof value === "string" && (SELECTABLE_REVIEW_MODELS as string[]).includes(value)
+    ? (value as ReviewModel)
+    : DEFAULT_REVIEW_MODEL;
+}
+export function scoringModelId(model: ReviewModel, geminiModel = GEMINI_PASS_MODEL): string {
+  return model === "gpt" ? GPT_MODEL : model === "glm" ? GLM_MODEL : geminiModel;
+}
 
 export type ReviewInput =
   | string
@@ -739,6 +772,7 @@ type MultiPassReviewResult = {
   passAudit: ReviewRunAuditEntry[];
   reviewInputSnapshot: ReviewInputSnapshot;
   extractionCompleteness: ExtractionCompletenessReport;
+  adaptiveSampling: ReturnType<typeof passSpread>;
 };
 
 type IndividualPassResult = {
@@ -3205,11 +3239,20 @@ function extractFirstJsonObject(value: string) {
   return null;
 }
 
+// Repair the JSON-escape failures that LaTeX-heavy / PDF-extracted model output
+// produces inside string values, so a paper never errors out on a parse (brief
+// #3, E). Runs only as a fallback after a strict JSON.parse already failed.
+// Handles, inside strings:
+//   - lone/invalid backslashes (`\gamma`, `$\frac12$`) -> doubled to `\\gamma`;
+//   - VALID escapes (`\n`, `\"`, `\\`, `\uXXXX`) preserved verbatim (the escaped
+//     char is consumed so a `\"` is never mistaken for the closing quote);
+//   - raw control characters (newline, tab, form feed, NUL, ...) -> escaped.
+// The one irreducible ambiguity — an unescaped `"` literally inside prose — is
+// still treated as the string terminator; nothing can disambiguate that.
 function repairInvalidJsonEscapes(value: string) {
   let repaired = "";
   let inString = false;
-  let escaped = false;
-  const validEscapes = new Set(['"', "\\", "/", "b", "f", "n", "r", "t", "u"]);
+  const validEscapes = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
   const isHex = (char: string | undefined) => !!char && /^[0-9a-fA-F]$/.test(char);
 
   for (let i = 0; i < value.length; i += 1) {
@@ -3221,41 +3264,40 @@ function repairInvalidJsonEscapes(value: string) {
       continue;
     }
 
-    if (escaped) {
-      if (char === "u" && !(isHex(value[i + 1]) && isHex(value[i + 2]) && isHex(value[i + 3]) && isHex(value[i + 4]))) {
-        repaired += "\\\\u";
-        escaped = false;
+    if (char === "\\") {
+      const next = value[i + 1];
+      if (next === "u" && isHex(value[i + 2]) && isHex(value[i + 3]) && isHex(value[i + 4]) && isHex(value[i + 5])) {
+        repaired += "\\u";
+        i += 1; // consume the 'u'; the four hex digits flow through as plain chars
         continue;
       }
-      if (!validEscapes.has(char)) repaired += "\\";
-      repaired += char;
-      escaped = false;
+      if (next !== undefined && validEscapes.has(next)) {
+        repaired += "\\" + next; // legit escape — keep it and consume the escaped char
+        i += 1;
+        continue;
+      }
+      repaired += "\\\\"; // lone/invalid backslash -> escape it
       continue;
     }
 
-    if (char === "\\") {
-      escaped = true;
+    if (char === '"') {
+      repaired += '"';
+      inString = false;
       continue;
     }
 
-    if (char === "\n") {
-      repaired += "\\n";
-      continue;
-    }
-    if (char === "\r") {
-      repaired += "\\r";
-      continue;
-    }
-    if (char === "\t") {
-      repaired += "\\t";
+    const code = char.charCodeAt(0);
+    if (code < 0x20) {
+      if (char === "\n") repaired += "\\n";
+      else if (char === "\r") repaired += "\\r";
+      else if (char === "\t") repaired += "\\t";
+      else repaired += `\\u${code.toString(16).padStart(4, "0")}`;
       continue;
     }
 
     repaired += char;
-    if (char === '"') inString = false;
   }
 
-  if (escaped) repaired += "\\\\";
   return repaired;
 }
 
@@ -5201,23 +5243,89 @@ export async function extractManuscriptTextFromPdfForReview(input: {
   }
 }
 
-async function callGpt(prompt: string, input: ReviewInput) {
-  if (typeof input !== "string") {
-    throw new Error("OpenAI review currently requires extractable PDF text. Try the Gemini review pipeline for this PDF.");
+// Shape returned by every scoring-model call so the blind-pass / adjudicator
+// orchestration is model-agnostic.
+type ScoringCallResult = {
+  parsed: unknown;
+  thinkingText: string | null;
+  requestId: string | null;
+  usage: { inputTokenCount: number | null; outputTokenCount: number | null };
+};
+type ScoringCallOptions = {
+  maxOutputTokens?: number;
+  includeThoughts?: boolean;
+  responseJsonSchema?: unknown;
+  temperature?: number;
+  timeoutMs?: number;
+};
+
+// GPT-5.5 standard via the Responses API (the 5.5 family is Responses-only). The
+// blinded manuscript text is sent as input_text; the prompt instructs JSON-only
+// output and extractJson recovers it. Reasoning effort high for scoring quality.
+async function callGpt(prompt: string, input: ReviewInput, options?: ScoringCallOptions): Promise<ScoringCallResult> {
+  const text = reviewInputText(input);
+  if (!text.trim()) {
+    throw new Error("GPT-5.5 review requires extractable manuscript text; none was available for this PDF.");
   }
   return withModelRetries(GPT_MODEL, async () => {
-    const response = await getOpenAI().chat.completions.create({
+    const response: any = await getOpenAI().responses.create({
       model: GPT_MODEL,
-      max_completion_tokens: 8192,
+      instructions: prompt,
+      input: [{ role: "user", content: [{ type: "input_text", text }] }],
+      max_output_tokens: options?.maxOutputTokens ?? 16384,
+      reasoning: { effort: "high" },
+      text: { format: { type: "json_object" } },
+    } as any);
+    const content: string = response.output_text
+      ?? (Array.isArray(response.output)
+        ? response.output
+            .flatMap((item: any) => (Array.isArray(item?.content) ? item.content : []))
+            .map((part: any) => part?.text ?? "")
+            .join("")
+        : "");
+    if (!content) throw new Error("No response from GPT-5.5 model.");
+    const usage = response.usage ?? null;
+    return {
+      parsed: extractJson(content),
+      thinkingText: null,
+      requestId: response.id ?? null,
+      usage: {
+        inputTokenCount: typeof usage?.input_tokens === "number" ? usage.input_tokens : null,
+        outputTokenCount: typeof usage?.output_tokens === "number" ? usage.output_tokens : null,
+      },
+    };
+  });
+}
+
+// GLM-5.2 via OpenRouter (OpenAI-compatible chat.completions).
+async function callGlm(prompt: string, input: ReviewInput, options?: ScoringCallOptions): Promise<ScoringCallResult> {
+  const text = reviewInputText(input);
+  if (!text.trim()) {
+    throw new Error("GLM-5.2 review requires extractable manuscript text; none was available for this PDF.");
+  }
+  return withModelRetries(GLM_MODEL, async () => {
+    const response: any = await getOpenRouter().chat.completions.create({
+      model: GLM_MODEL,
+      max_tokens: options?.maxOutputTokens ?? 16384,
+      temperature: options?.temperature ?? 0.2,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: prompt },
-        { role: "user", content: input },
+        { role: "user", content: text },
       ],
     });
-    const content = response.choices[0]?.message?.content;
-    if (!content) throw new Error("No response from GPT model.");
-    return { parsed: extractJson(content), thinkingText: null as string | null };
+    const content = response.choices?.[0]?.message?.content;
+    if (!content) throw new Error("No response from GLM-5.2 model.");
+    const usage = response.usage ?? null;
+    return {
+      parsed: extractJson(content),
+      thinkingText: null,
+      requestId: response.id ?? null,
+      usage: {
+        inputTokenCount: typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : null,
+        outputTokenCount: typeof usage?.completion_tokens === "number" ? usage.completion_tokens : null,
+      },
+    };
   });
 }
 
@@ -5305,20 +5413,34 @@ async function callGeminiPlainText(
   });
 }
 
-async function runModel(prompt: string, input: ReviewInput, model: ReviewModel, geminiModel = GEMINI_META_MODEL) {
-  return model === "gemini" ? callGemini(prompt, input, geminiModel) : callGpt(prompt, input);
+// Model-agnostic scoring dispatcher (brief #3, C). Routes blind passes and the
+// adjudicator to the selected provider so all three run the IDENTICAL pipeline.
+// Gemini gets multimodal input + an optional response schema; GPT-5.5 (Responses
+// API) and GLM-5.2 (OpenRouter) get the blinded manuscript text + JSON mode.
+async function runScoringModel(
+  model: ReviewModel,
+  prompt: string,
+  input: ReviewInput,
+  geminiModel = GEMINI_META_MODEL,
+  options?: ScoringCallOptions,
+): Promise<ScoringCallResult> {
+  if (model === "gpt") return callGpt(prompt, input, options);
+  if (model === "glm") return callGlm(prompt, input, options);
+  return callGemini(prompt, input, geminiModel, options);
 }
 
 async function runIndividualPass(
   prompt: string,
   input: ReviewInput,
-  _model: ReviewModel,
+  model: ReviewModel,
   index: number,
   reviewRunId: string,
   inputAuditHashes: { textHash: string; pdfHash: string | null },
   reviewInputSnapshot?: ReviewInputSnapshot | null,
 ): Promise<IndividualPassResult> {
-  const { parsed, thinkingText, requestId, usage } = await callGemini(
+  const passModelId = scoringModelId(model, GEMINI_PASS_MODEL);
+  const { parsed, thinkingText, requestId, usage } = await runScoringModel(
+    model,
     prompt,
     input,
     GEMINI_PASS_MODEL,
@@ -5335,7 +5457,7 @@ async function runIndividualPass(
     review,
     thinkingText,
     index,
-    modelName: GEMINI_PASS_MODEL,
+    modelName: passModelId,
     audit: {
       reviewRunId,
       paperId: null,
@@ -5343,7 +5465,7 @@ async function runIndividualPass(
       promptHash: REVIEW_PROMPT_HASH,
       role: index < REVIEW_PASS_COUNT ? `blind_pass_${index + 1}` as "blind_pass_1" | "blind_pass_2" : "blind_pass_replacement",
       passNumber: index + 1,
-      model: GEMINI_PASS_MODEL,
+      model: passModelId,
       requestId,
       cacheUsed: false,
       previousReviewUsed: false,
@@ -5372,11 +5494,12 @@ async function runPassWithGenerationRetries(
   reviewRunId: string,
   inputAuditHashes: { textHash: string; pdfHash: string | null },
   reviewInputSnapshot?: ReviewInputSnapshot | null,
+  model: ReviewModel = "gemini",
 ): Promise<IndividualPassResult> {
   let lastError: unknown;
   for (let attempt = 0; attempt < PASS_GENERATION_ATTEMPTS; attempt += 1) {
     try {
-      return await runIndividualPass(prompt, input, "gemini", index, reviewRunId, inputAuditHashes, reviewInputSnapshot);
+      return await runIndividualPass(prompt, input, model, index, reviewRunId, inputAuditHashes, reviewInputSnapshot);
     } catch (reason) {
       lastError = reason;
       if (attempt < PASS_GENERATION_ATTEMPTS - 1) {
@@ -7869,28 +7992,9 @@ function passReviewSubscores(review: { inputStrengthScore?: unknown; constructio
   const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
   return { input: n(review.inputStrengthScore), construction: n(review.constructionStrengthScore), output: n(review.outputStrengthScore) };
 }
-// (brief #2b) Pin the dimensions the blind passes AGREE on to the pass median in
-// the adjudicator's parsed output, so the aggregate (band + total) is recomputed
-// consistently from the pinned subscores and the adjudicator effectively resolves
-// only the contested dimensions.
-function applyConsensusPinning(parsed: unknown, consensus: DimConsensus[], passCount: number): unknown {
-  const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-  const p = parsed && typeof parsed === "object" ? (parsed as Record<string, any>) : {};
-  const merged = mergeConsensusWithAdjudicated(consensus, {
-    input: n(p.inputStrengthScore),
-    construction: n(p.constructionStrengthScore),
-    output: n(p.outputStrengthScore),
-  }, passCount);
-  const out: Record<string, any> = { ...p };
-  if (merged.input != null) out.inputStrengthScore = merged.input;
-  if (merged.construction != null) out.constructionStrengthScore = merged.construction;
-  if (merged.output != null) out.outputStrengthScore = merged.output;
-  return out;
-}
-
 async function generateMultiPassReview(
   paperContent: ReviewInput,
-  _model: ReviewModel,
+  model: ReviewModel,
   promptOverride?: string,
   options: { selectComparatorContext?: ComparatorContextSelector; reviewMode?: ReviewPipelineMode; extractionCompleteness?: ExtractionCompletenessReport } = {},
 ): Promise<MultiPassReviewResult> {
@@ -7911,7 +8015,7 @@ async function generateMultiPassReview(
 
   const initialPasses = await Promise.allSettled(
     Array.from({ length: REVIEW_PASS_COUNT }, (_unused, index) =>
-      runPassWithGenerationRetries(systemPrompt, modelBlindedContent, index, reviewRunId, inputAuditHashes, reviewInputSnapshot),
+      runPassWithGenerationRetries(systemPrompt, modelBlindedContent, index, reviewRunId, inputAuditHashes, reviewInputSnapshot, model),
     ),
   );
 
@@ -7932,7 +8036,7 @@ async function generateMultiPassReview(
   const maxPassAttempts = REVIEW_PASS_COUNT + REPLACEMENT_PASS_ATTEMPTS;
   while (passResults.length < REVIEW_PASS_COUNT && extraIndex < maxPassAttempts) {
     try {
-      passResults.push(await runPassWithGenerationRetries(systemPrompt, modelBlindedContent, extraIndex, reviewRunId, inputAuditHashes, reviewInputSnapshot));
+      passResults.push(await runPassWithGenerationRetries(systemPrompt, modelBlindedContent, extraIndex, reviewRunId, inputAuditHashes, reviewInputSnapshot, model));
     } catch (reason) {
       passFailures.push({ reason, index: extraIndex });
       if (isDailyModelQuotaError(reason)) {
@@ -7943,18 +8047,20 @@ async function generateMultiPassReview(
   }
 
   // (brief #2a) Adaptive / sequential sampling: with the floor of valid passes in
-  // hand, draw additional blind passes (cap MAX_BLIND_PASSES) WHILE they disagree
-  // beyond tolerance (final-score gap > 5 OR any per-dimension gap > 1.5). Firm
-  // papers (passes already agree) stop at 2; contested ones escalate. A failed
-  // extra pass does not abort — adjudicate with what we have. Temperature is
-  // unchanged; the passes stay uniform (same prompt) for fairness.
+  // hand, draw additional blind passes (cap MAX_BLIND_PASSES = 3) WHILE they
+  // disagree beyond tolerance (final-score gap > 5 OR any per-dimension gap >
+  // 1.5). Firm papers (passes already agree) stop at 2; contested ones draw
+  // EXACTLY one more (then stop — no climb to 5). The extra pass gives the
+  // adjudicator more independent reasoning to weigh; it is NOT averaged in. A
+  // failed extra pass does not abort — adjudicate with what we have. Temperature
+  // is unchanged; the passes stay uniform (same prompt) for fairness.
   while (
     passResults.length >= MIN_BLIND_PASSES &&
     passResults.length < MAX_BLIND_PASSES &&
     passesDisagree(passResults.map((r) => passReviewSubscores(r.review))).disagree
   ) {
     try {
-      passResults.push(await runPassWithGenerationRetries(systemPrompt, modelBlindedContent, extraIndex, reviewRunId, inputAuditHashes, reviewInputSnapshot));
+      passResults.push(await runPassWithGenerationRetries(systemPrompt, modelBlindedContent, extraIndex, reviewRunId, inputAuditHashes, reviewInputSnapshot, model));
     } catch (reason) {
       if (isDailyModelQuotaError(reason)) throw new Error(dailyQuotaErrorMessage(reason));
       passFailures.push({ reason, index: extraIndex });
@@ -7962,6 +8068,10 @@ async function generateMultiPassReview(
     }
     extraIndex += 1;
   }
+  // (brief #3, B/D) Record the realized sampling decision — pass count, whether
+  // escalation fired, the score/dimension spread, and the trigger in plain words
+  // — for the metadata record and the uncertainty surfaced on the review.
+  const samplingMetadata = passSpread(passResults.map((r) => passReviewSubscores(r.review)));
 
   const passFailureDetails = passFailures.map(({ reason, index }) => `attempt ${index + 1}: ${errorMessage(reason)}`).join("; ");
   if (passResults.length === 0) {
@@ -8064,7 +8174,8 @@ async function generateMultiPassReview(
           const retryInstruction = attempt === 0
             ? ""
             : `\n\nThe previous adjudication was rejected by validation: ${errorMessage(adjudicatorFailure)}\nReturn a valid v17 diagnostic-only adjudication. Do not output intrinsicScore, scoreBand, bestClassification, scoreConfidence, scoreCappingReason, or scoreAdjustmentReason. Resolve only inputStrengthScore, constructionStrengthScore, outputStrengthScore, and the supporting canonical review fields.`;
-          const adjudicatorResult = await callGemini(
+          const adjudicatorResult = await runScoringModel(
+            model,
             `${BLIND_INTRINSIC_ADJUDICATOR_PROMPT}${retryInstruction}`,
             buildAdjudicatorInput(modelBlindedContent, individualReviews),
             GEMINI_META_MODEL,
@@ -8081,7 +8192,7 @@ async function generateMultiPassReview(
             promptHash: REVIEW_PROMPT_HASH,
             role: "adjudicator",
             passNumber: null,
-            model: GEMINI_META_MODEL,
+            model: scoringModelId(model, GEMINI_META_MODEL),
             requestId: adjudicatorResult.requestId,
             cacheUsed: false,
             previousReviewUsed: false,
@@ -8101,10 +8212,13 @@ async function generateMultiPassReview(
             classification: null,
           };
           adjudicatorThinking = adjudicatorResult.thinkingText;
-          // (brief #2b) Pin the dimensions the passes agree on to the pass median;
-          // the adjudicator's values are kept only for the contested dimensions.
-          const consensus = dimensionConsensus(passResults.map((r) => passReviewSubscores(r.review)));
-          aggregate = normalizeAggregateReview(applyConsensusPinning(adjudicatorResult.parsed, consensus, passResults.length), fallbackScores, fallbackRepresentativeReview);
+          // (brief #3, A) The adjudicator NEVER averages. It reads all blind
+          // passes' full reasoning and renders ONE reasoned verdict (a correct
+          // finding from a single pass governs; a confirmed fatal defect floors
+          // the paper). Its chosen subscores are used verbatim — no code-side
+          // median/pinning across passes. The score is computed from those three
+          // dimensions of the one adjudicated review (formula unchanged).
+          aggregate = normalizeAggregateReview(adjudicatorResult.parsed, fallbackScores, fallbackRepresentativeReview);
           validateAggregateReview(aggregate, reviewInputSnapshot);
           adjudicatorAudit.inputStrengthScore = aggregate.inputStrengthScore;
           adjudicatorAudit.constructionStrengthScore = aggregate.constructionStrengthScore;
@@ -8122,7 +8236,7 @@ async function generateMultiPassReview(
             errorDetails: errorDetailsForLog(reason),
             errorMessage: errorMessage(reason),
             attempt: attempt + 1,
-            model: GEMINI_META_MODEL,
+            model: scoringModelId(model, GEMINI_META_MODEL),
             adjudicatorInputChars: reviewInputText(buildAdjudicatorInput(modelBlindedContent, individualReviews)).length,
           }, "Blind adjudicator attempt failed");
           if (isDailyModelQuotaError(reason)) {
@@ -8277,7 +8391,7 @@ async function generateMultiPassReview(
 
   return {
     reviewRunId,
-    modelName: expectedReviewModelName(reviewMode),
+    modelName: expectedReviewModelName(reviewMode, model),
     pipelineMode: reviewMode,
     systemPrompt,
     blindedContent,
@@ -8292,6 +8406,7 @@ async function generateMultiPassReview(
     ],
     reviewInputSnapshot,
     extractionCompleteness: reviewInputSnapshot,
+    adaptiveSampling: samplingMetadata,
   };
 }
 
@@ -8429,8 +8544,20 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     modelName: result.modelName,
     passModel: GEMINI_PASS_MODEL,
     adjudicatorModel: GEMINI_META_MODEL,
-    passCount: REVIEW_PASS_COUNT,
+    // Actual realized blind-pass count (2, or 3 when adaptive sampling escalated
+    // a contested paper) — not the floor.
+    passCount: result.adaptiveSampling.passCount,
+    expectedPassFloor: REVIEW_PASS_COUNT,
     validPassCount: result.individualReviews.length,
+    // (brief #3, B/D) Adaptive-sampling decision record + uncertainty surfacing.
+    adaptiveSampling: {
+      passCount: result.adaptiveSampling.passCount,
+      escalated: result.adaptiveSampling.escalated,
+      contested: result.adaptiveSampling.contested,
+      scoreSpread: result.adaptiveSampling.scoreSpread,
+      maxDimGap: result.adaptiveSampling.maxDimGap,
+      trigger: result.adaptiveSampling.trigger,
+    },
     pipelineMode: result.pipelineMode,
     clusterVersion: "v17.1-diagnostic-only-halfpoint",
     benchmarkSetCandidate:
@@ -8490,9 +8617,13 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     finalInputStrengthScore: aggregate.inputStrengthScore,
     finalConstructionStrengthScore: aggregate.constructionStrengthScore,
     finalOutputStrengthScore: aggregate.outputStrengthScore,
-    blindPassScores: aggregate.individualScores,
-    blindPassSpread: aggregate.scoreRange,
-    passDisagreement: aggregate.scoreRange,
+    // Real per-pass medians (all 2-3 drawn passes) so the UI surfaces the true
+    // spread + pass count; falls back to the aggregate's list if empty.
+    blindPassScores: result.individualReviews.length
+      ? result.individualReviews.map((review) => review.scoreBand.median)
+      : aggregate.individualScores,
+    blindPassSpread: result.adaptiveSampling.scoreSpread,
+    passDisagreement: result.adaptiveSampling.scoreSpread,
     scoreStability: aggregate.scoreStability,
     adjudicatorStatus: aggregate.adjudicatorStatus,
     diagnosticBaselineScore: aggregate.diagnosticBaselineScore,
@@ -8548,7 +8679,7 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     publicVerdict: null,
     individualReviewsJson: JSON.stringify(storedIndividualReviews),
     aggregateMetaJson: JSON.stringify(canonicalReview),
-    passCount: REVIEW_PASS_COUNT,
+    passCount: result.adaptiveSampling.passCount,
     modelName: result.modelName,
     systemPrompt: result.systemPrompt,
   };

@@ -639,6 +639,19 @@ If either pass credibly reports truncated or incomplete manuscript text,
 set reviewInputQuality.shouldInvalidateReview to true and explain; do not
 resolve extraction problems by lowering Output Strength.
 
+Reconciliation philosophy — you render ONE reasoned verdict; you never
+average. Read both passes' full reasoning and decide which is correct on
+each diagnostic, justifying the decision in adjudicationRationale. Do not
+split the difference, average, or otherwise compromise between the passes'
+numbers. A correct finding from a single pass wins, even if the other pass
+missed it: if exactly one pass identifies a real load-bearing defect, a
+broken step, an invalid output, or a genuine strength, and that finding
+survives your own check of the manuscript, adopt it. A confirmed fatal
+defect floors the affected diagnostic — never let a generous pass average
+it back up. Symmetrically, do not let an unduly harsh pass that invented a
+non-defect drag a sound diagnostic down. Your subscores are your own
+manuscript-grounded judgment, not a function of the two passes' values.
+
 When resolving disagreement, prefer the pass that best follows the ledger
 discipline, role classification, correctness gate, output centrality
 classes, and actual-update principle. Do not choose the higher score

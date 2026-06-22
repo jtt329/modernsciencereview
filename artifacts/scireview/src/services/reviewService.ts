@@ -1,4 +1,4 @@
-export type ReviewModel = 'gpt' | 'gemini';
+export type ReviewModel = 'gpt' | 'gemini' | 'glm';
 export type ReviewMode = 'benchmark-ingestion' | 'normal-review';
 
 export interface ReviewSource {

@@ -35,6 +35,7 @@ import {
   isCalibrationCompatibleReviewObject,
   normalizePaperDisplayMetadata,
   normalizeReviewPipelineMode,
+  normalizeReviewModel,
   parseGeminiJsonResponse,
   recalibrateStoredAggregateWithComparators,
   reviewRuntimeInfo,
@@ -1371,6 +1372,7 @@ function metadataIdentityDuplicateReason(
 async function existingMetadataIdentitySubmission(
   authorId: string,
   metadata: ExtractedPaperMetadata,
+  expectedModelName?: string,
 ): Promise<ExistingReviewSubmissionMatch | null> {
   const target = extractedMetadataIdentity(metadata);
   if (!target.strong) return null;
@@ -1386,6 +1388,9 @@ async function existingMetadataIdentitySubmission(
   for (const paper of userPapers) {
     const review = reviewByPaper.get(paper.id);
     if (!review) continue;
+    // (brief #3, C) A review by a DIFFERENT scoring model is not a duplicate —
+    // the same paper can be reviewed under Gemini, GPT-5.5, and GLM-5.2.
+    if (expectedModelName && paper.modelName && paper.modelName !== expectedModelName) continue;
     const existing = paperMetadataIdentity(normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(review)));
     const duplicateReason = metadataIdentityDuplicateReason(target, existing);
     if (!duplicateReason) continue;
@@ -5635,7 +5640,9 @@ if (!source?.type || !source?.data) { throw submissionHttpError("source.type and
 const isAdmin = Boolean(ADMIN_EMAIL && user.email === ADMIN_EMAIL);
 const requestedReviewMode: ReviewPipelineMode = normalizeReviewPipelineMode(source.reviewMode);
 const reviewMode: ReviewPipelineMode = isAdmin ? requestedReviewMode : "normal-review";
-const selectedModel: ReviewModel = "gemini";
+// (brief #3, C) Model selectable at upload: Gemini 3.1 Pro (default), GPT-5.5
+// (standard), GLM-5.2 (OpenRouter). Unknown values fall back to the default.
+const selectedModel: ReviewModel = normalizeReviewModel(source.model);
 const metadataHints: { fileName?: string; pdfTitle?: string; pdfAuthor?: string; pdfBase64?: string; mimeType?: string } = {
   fileName: typeof source.fileName === "string" ? source.fileName.trim() : undefined,
 };
@@ -5697,7 +5704,7 @@ await updateReviewAttemptProgress(attemptContext, {
   debugPayload: { requestPhase: "received" },
 });
 const sourceHash = sourceHashFor(source);
-const expectedModelName = expectedReviewModelName(reviewMode);
+const expectedModelName = expectedReviewModelName(reviewMode, selectedModel);
 const reuseExistingReview = source.reuseExistingReview === true || source.reuseExisting === true;
 const forceFreshReview = source.forceFreshReview === true || source.forceFresh === true;
 const allowExistingReviewReuse =
@@ -6174,6 +6181,7 @@ const existingByMetadata = allowExistingReviewReuse
   ? await existingMetadataIdentitySubmission(
       user.id,
       metadata,
+      expectedModelName,
     )
   : null;
 if (existingByMetadata?.review) {

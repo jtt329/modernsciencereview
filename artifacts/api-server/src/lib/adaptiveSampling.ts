@@ -1,18 +1,21 @@
-// Adaptive / sequential blind sampling + consensus pinning (brief #2). Pure core
-// (no db, no network), offline-testable, and SHARED by the production review
-// orchestration and the variance harness so both use the exact same decision
-// logic. The model emits per-pass subscores; code decides escalation and the
-// agreed-dimension consensus (anti-anchoring: code computes, model never sees a
-// 0-100 number).
+// Adaptive / sequential blind sampling (brief #3, v1). Pure core (no db, no
+// network), offline-testable, and SHARED by the production review orchestration
+// so the decision logic lives in one place. The model emits per-pass subscores;
+// code decides escalation. Anti-anchoring: code computes the spread, the model
+// never sees a 0-100 number.
 //
-//  (a) Adaptive sampling — run the 2 blind passes; if they disagree beyond
-//      tolerance, draw more (cap 5) before adjudicating. Trigger: final-score
-//      gap > 5 OR any per-dimension subscore gap > 1.5. Firm papers stop at 2;
-//      contested ones escalate.
-//  (b) Consensus pinning — dimensions the passes agree on (gap <= tolerance) are
-//      carried through as the pass MEDIAN; only contested dimensions are left to
-//      the adjudicator to resolve.
-//  (c) Spread — the per-pass score spread, surfaced as visible uncertainty.
+// Reconciliation philosophy (brief #3): the adjudicator NEVER averages. Extra
+// passes buy the adjudicator MORE independent reasoning to weigh — they are not
+// pooled into a mean or median. So this module no longer pins/medians agreed
+// dimensions; it only decides whether to draw one more pass and reports the
+// spread as uncertainty.
+//
+//  (a) Adaptive sampling v1 — run the 2 blind passes; if they disagree beyond
+//      tolerance, draw EXACTLY ONE more (3 total) and stop. No climb to 5: a
+//      persistent outlier would always max it out. Trigger: final-score gap > 5
+//      OR any per-dimension subscore gap > 1.5. Firm papers stop at 2.
+//  (b) Spread — the per-pass score spread + the trigger, surfaced as visible
+//      uncertainty and recorded in metadata.
 
 export type PassSubscores = {
   input: number | null;
@@ -23,13 +26,10 @@ export type PassSubscores = {
 export const DISAGREEMENT_SCORE_GAP = 5; // final-score (0-100) gap that triggers escalation
 export const DISAGREEMENT_SUBSCORE_GAP = 1.5; // per-dimension (0-10) gap that triggers escalation
 export const MIN_BLIND_PASSES = 2;
-export const MAX_BLIND_PASSES = 5;
-// Pin agreed dimensions to the pass median ONLY with >=3 passes — the median is
-// robust then. With exactly 2 passes the "median" is just their mean, which can
-// be noisier than the adjudicator's manuscript-aware resolution, so for a
-// non-escalated (firm) paper we keep the adjudicator's value (brief #2 harness
-// showed 2-pass pinning could add spread on already-stable papers).
-export const MIN_PASSES_TO_PIN = 3;
+// Adaptive sampling v1: cap at 3. Disagreeing passes draw exactly one more, then
+// stop. Tunable later; deliberately NOT climbing to 5 (a stubborn outlier would
+// always force the maximum).
+export const MAX_BLIND_PASSES = 3;
 
 const DIMS = ["input", "construction", "output"] as const;
 export type DimKey = (typeof DIMS)[number];
@@ -41,11 +41,6 @@ function nums(xs: Array<number | null | undefined>): number[] {
 export function passTotal(p: PassSubscores): number | null {
   const v = nums([p.input, p.construction, p.output]);
   return v.length ? Math.round((10 * v.reduce((a, b) => a + b, 0)) / v.length) : null;
-}
-export function median(xs: number[]): number {
-  const s = [...xs].sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
 // Do the drawn passes disagree beyond tolerance? final-score gap > 5 OR any
@@ -71,57 +66,46 @@ export function passesDisagree(passes: PassSubscores[]): {
 }
 
 // Should another blind pass be drawn before adjudicating? Always draw up to the
-// floor (2); beyond that, draw only while the passes disagree, capped at 5.
+// floor (2); beyond that, draw only while the passes disagree, capped at 3 (so
+// in practice exactly one extra pass for a contested paper).
 export function shouldDrawAnotherPass(passes: PassSubscores[]): boolean {
   if (passes.length >= MAX_BLIND_PASSES) return false;
   if (passes.length < MIN_BLIND_PASSES) return true;
   return passesDisagree(passes).disagree;
 }
 
-// Per-dimension consensus across all drawn passes. Agreed (gap <= tolerance) ->
-// pin the median; contested -> leave for the adjudicator.
-export type DimConsensus = { dimension: DimKey; agreed: boolean; median: number | null; gap: number };
-export function dimensionConsensus(passes: PassSubscores[]): DimConsensus[] {
-  return DIMS.map((d) => {
-    const vals = nums(passes.map((p) => p[d]));
-    if (!vals.length) return { dimension: d, agreed: false, median: null, gap: 0 };
-    const gap = Math.max(...vals) - Math.min(...vals);
-    return { dimension: d, agreed: gap <= DISAGREEMENT_SUBSCORE_GAP, median: median(vals), gap: Math.round(gap * 100) / 100 };
-  });
-}
-
-// Merge: agreed dimensions are pinned to the pass MEDIAN; contested dimensions
-// take the adjudicator's resolved value. Returns the final subscores plus which
-// dimensions were code-pinned (so the adjudicator effectively resolves only the
-// contested ones).
-export function mergeConsensusWithAdjudicated(
-  consensus: DimConsensus[],
-  adjudicated: PassSubscores,
-  passCount: number,
-): { input: number | null; construction: number | null; output: number | null; pinnedDimensions: DimKey[] } {
-  // Pinning is only applied with enough passes for a robust median; below that
-  // the adjudicator resolves every dimension (firm 2-pass papers are unaffected).
-  const canPin = passCount >= MIN_PASSES_TO_PIN;
-  const out: Record<DimKey, number | null> = { input: null, construction: null, output: null };
-  const pinned: DimKey[] = [];
-  for (const c of consensus) {
-    if (canPin && c.agreed && c.median != null) {
-      out[c.dimension] = c.median;
-      pinned.push(c.dimension);
-    } else {
-      out[c.dimension] = adjudicated[c.dimension] ?? c.median;
+// Why escalation did / didn't fire, in plain words, for the metadata record.
+export function samplingTrigger(passes: PassSubscores[]): string {
+  const d = passesDisagree(passes);
+  if (passes.length < MIN_BLIND_PASSES) return "below blind-pass floor";
+  const reasons: string[] = [];
+  if (d.scoreGap > DISAGREEMENT_SCORE_GAP) reasons.push(`final-score spread ${d.scoreGap} > ${DISAGREEMENT_SCORE_GAP}`);
+  for (const dim of DIMS) {
+    if (d.perDimGap[dim] > DISAGREEMENT_SUBSCORE_GAP) {
+      reasons.push(`${dim} spread ${d.perDimGap[dim]} > ${DISAGREEMENT_SUBSCORE_GAP}`);
     }
   }
-  return { input: out.input, construction: out.construction, output: out.output, pinnedDimensions: pinned };
+  return reasons.length ? reasons.join("; ") : "passes agreed within tolerance";
 }
 
-// Pass spread for the uncertainty display.
+// Pass spread + trigger for the uncertainty display and metadata record.
 export function passSpread(passes: PassSubscores[]): {
   passCount: number;
   scoreSpread: number;
   maxDimGap: number;
+  perDimGap: Record<DimKey, number>;
   contested: boolean;
+  escalated: boolean;
+  trigger: string;
 } {
   const d = passesDisagree(passes);
-  return { passCount: passes.length, scoreSpread: d.scoreGap, maxDimGap: d.maxDimGap, contested: d.disagree };
+  return {
+    passCount: passes.length,
+    scoreSpread: d.scoreGap,
+    maxDimGap: d.maxDimGap,
+    perDimGap: d.perDimGap,
+    contested: d.disagree,
+    escalated: passes.length > MIN_BLIND_PASSES,
+    trigger: samplingTrigger(passes),
+  };
 }

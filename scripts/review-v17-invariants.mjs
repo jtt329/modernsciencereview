@@ -2504,26 +2504,61 @@ async function assertLinkedInputsAndEmbedding() {
 }
 await assertLinkedInputsAndEmbedding();
 
-// --- brief #2: adaptive sampling + consensus pinning + uncertainty surfacing ---
+// --- brief #3: production consolidation (adjudicator never averages; adaptive
+// sampling cap 3; model selection; uncertainty surfacing; parser robustness) ---
 const adaptiveSamplingSource = readFileSync(join(root, "artifacts/api-server/src/lib/adaptiveSampling.ts"), "utf8");
-// (a) adaptive sampling wired into the pass loop; (b) consensus pinning at the
-// adjudicator; thresholds match the spec (score gap 5, subscore gap 1.5, cap 5).
+const adjudicatorPromptSource = readFileSync(join(root, "artifacts/api-server/src/lib/prompts/diagnosticOnlyV19.ts"), "utf8");
+const papersRouteSource = readFileSync(join(root, "artifacts/api-server/src/routes/papers.ts"), "utf8");
+// (B) Adaptive sampling v1: thresholds unchanged (score gap 5, subscore gap 1.5);
+// cap LOWERED to 3 — a contested paper draws exactly one more pass, then stops.
 assert.match(adaptiveSamplingSource, /DISAGREEMENT_SCORE_GAP = 5/);
 assert.match(adaptiveSamplingSource, /DISAGREEMENT_SUBSCORE_GAP = 1\.5/);
-assert.match(adaptiveSamplingSource, /MAX_BLIND_PASSES = 5/);
+assert.match(adaptiveSamplingSource, /MAX_BLIND_PASSES = 3/);
+assert.doesNotMatch(adaptiveSamplingSource, /MAX_BLIND_PASSES = 5/);
 assert.match(adaptiveSamplingSource, /export function passesDisagree/);
-assert.match(adaptiveSamplingSource, /export function dimensionConsensus/);
-assert.match(adaptiveSamplingSource, /export function mergeConsensusWithAdjudicated/);
-// ≥3-pass pin guard: pin agreed dims only with a robust (>=3-pass) median.
-assert.match(adaptiveSamplingSource, /MIN_PASSES_TO_PIN = 3/);
-assert.match(adaptiveSamplingSource, /const canPin = passCount >= MIN_PASSES_TO_PIN/);
-assert.match(engineSource, /applyConsensusPinning\(adjudicatorResult\.parsed, consensus, passResults\.length\)/);
+assert.match(adaptiveSamplingSource, /export function passSpread/);
+// (A) Consensus pinning / median logic is GONE — the adjudicator never averages.
+assert.doesNotMatch(adaptiveSamplingSource, /mergeConsensusWithAdjudicated|dimensionConsensus|MIN_PASSES_TO_PIN/);
+assert.doesNotMatch(engineSource, /applyConsensusPinning/);
+// The adjudicator's chosen subscores are used verbatim (no pinning wrapper).
+assert.match(engineSource, /normalizeAggregateReview\(adjudicatorResult\.parsed, fallbackScores, fallbackRepresentativeReview\)/);
 assert.match(engineSource, /passesDisagree\(passResults\.map\(\(r\) => passReviewSubscores\(r\.review\)\)\)\.disagree/);
 assert.match(engineSource, /passResults\.length < MAX_BLIND_PASSES/);
-// (c) contested papers surface visible uncertainty.
+// (A) Adjudicator prompt encodes the reconciliation philosophy: never average; a
+// correct finding from a single pass wins; a confirmed fatal defect floors.
+assert.match(adjudicatorPromptSource, /never\s+average/i);
+assert.match(adjudicatorPromptSource, /a single pass/i);
+assert.match(adjudicatorPromptSource, /floor/i);
+// (B/D) The realized sampling decision (count + trigger + spread) is recorded.
+assert.match(engineSource, /const samplingMetadata = passSpread\(/);
+assert.match(engineSource, /adaptiveSampling: samplingMetadata/);
+assert.match(engineSource, /adaptiveSampling:\s*\{/);
+assert.match(engineSource, /passCount: result\.adaptiveSampling\.passCount/);
+// (C) Model selection in prod: three selectable models, dispatched through one
+// path; GPT-5.5 on the Responses API, GLM-5.2 on OpenRouter; default Gemini.
+assert.match(engineSource, /export type ReviewModel = "gpt" \| "gemini" \| "glm"/);
+assert.match(engineSource, /SELECTABLE_REVIEW_MODELS: ReviewModel\[\] = \["gemini", "gpt", "glm"\]/);
+assert.match(engineSource, /async function runScoringModel\(/);
+assert.match(engineSource, /getOpenAI\(\)\.responses\.create/);
+assert.match(engineSource, /getOpenRouter\(\)\.chat\.completions\.create/);
+assert.match(engineSource, /OPENROUTER_API_KEY is required/);
+// Model is threaded into the passes AND the adjudicator (identical pipeline).
+assert.match(engineSource, /runIndividualPass\(prompt, input, model,/);
+assert.match(engineSource, /const adjudicatorResult = await runScoringModel\(\s*model,/);
+// Route derives the model from the upload + keeps cross-model reviews distinct.
+assert.match(papersRouteSource, /normalizeReviewModel\(source\.model\)/);
+assert.match(papersRouteSource, /expectedReviewModelName\(reviewMode, selectedModel\)/);
+assert.match(engineSource, /model === "gemini" \? base :/);
+// (D) Contested papers surface visible uncertainty.
 assert.match(reviewCardSource, /contestedReview/);
 assert.match(reviewCardSource, /independent blind passes disagreed by/);
-// Constraint: temperature untouched — both scoring calls stay at 0.15.
+// (E) Parser robustness: valid escapes preserved (escaped char consumed), lone
+// backslashes doubled, control chars escaped — so LaTeX/PDF prose never errors.
+assert.match(engineSource, /const validEscapes = new Set\(\['"',/);
+assert.match(engineSource, /legit escape — keep it and consume the escaped char/);
+assert.match(engineSource, /lone\/invalid backslash -> escape it/);
+assert.match(engineSource, /code < 0x20/);
+// Constraint: temperature untouched in the sampling core (scoring calls 0.15).
 assert.doesNotMatch(adaptiveSamplingSource, /temperature/i);
 
 async function assertAdaptiveSampling() {
@@ -2533,7 +2568,7 @@ async function assertAdaptiveSampling() {
   const entry = join(dir, "entry.ts");
   const out = join(dir, "bundle.cjs");
   writeFileSync(entry, `
-    import { passesDisagree, shouldDrawAnotherPass, dimensionConsensus, mergeConsensusWithAdjudicated, passSpread, MAX_BLIND_PASSES } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/adaptiveSampling.ts"))};
+    import { passesDisagree, shouldDrawAnotherPass, passSpread, samplingTrigger, MAX_BLIND_PASSES } from ${JSON.stringify(join(root, "artifacts/api-server/src/lib/adaptiveSampling.ts"))};
     globalThis.__adaptive = (async () => {
       const firm = [{ input: 10, construction: 10, output: 10 }, { input: 10, construction: 10, output: 10 }];
       const contested = [{ input: 6, construction: 9, output: 7 }, { input: 8, construction: 9, output: 9 }];
@@ -2544,29 +2579,19 @@ async function assertAdaptiveSampling() {
       if (!shouldDrawAnotherPass(contested)) throw new Error("contested paper must draw another pass");
       // per-dimension trigger: input gap 1.6 (>1.5) triggers even if totals are close.
       if (!passesDisagree([{ input: 7, construction: 9, output: 9 }, { input: 8.6, construction: 9, output: 9 }]).disagree) throw new Error("a per-dimension gap >1.5 must trigger");
-      // cap: never draw beyond 5.
-      if (shouldDrawAnotherPass([1,2,3,4,5].map(() => ({ input: 1, construction: 10, output: 1 })))) throw new Error("must not exceed the 5-pass cap");
-      // (b) consensus pinning: agreed dims -> median; contested dim -> adjudicator.
-      const passes = [{ input: 8, construction: 9, output: 6 }, { input: 8, construction: 9, output: 9 }];
-      const cons = dimensionConsensus(passes);
-      const inCons = cons.find((c) => c.dimension === "input");
-      const outCons = cons.find((c) => c.dimension === "output");
-      if (!inCons.agreed || inCons.median !== 8) throw new Error("input agreed -> median 8");
-      if (outCons.agreed) throw new Error("output gap 3 must be contested");
-      // With >=3 passes the median is robust -> pin agreed dims.
-      const merged = mergeConsensusWithAdjudicated(cons, { input: 5, construction: 5, output: 7 }, 3);
-      if (merged.input !== 8) throw new Error("agreed input must be PINNED to the median (8), not the adjudicator's 5");
-      if (merged.construction !== 9) throw new Error("agreed construction must be pinned to median 9");
-      if (merged.output !== 7) throw new Error("contested output must take the adjudicator's value (7)");
-      if (!merged.pinnedDimensions.includes("input") || merged.pinnedDimensions.includes("output")) throw new Error("pinnedDimensions must list agreed dims only");
-      // ≥3-pass pin guard: with only 2 passes, do NOT pin — the adjudicator
-      // resolves every dimension (firm 2-pass papers keep the adjudicator value).
-      const merged2 = mergeConsensusWithAdjudicated(cons, { input: 5, construction: 5, output: 7 }, 2);
-      if (merged2.input !== 5 || merged2.construction !== 5 || merged2.output !== 7) throw new Error("with only 2 passes, no pinning — the adjudicator's values stand");
-      if (merged2.pinnedDimensions.length) throw new Error("2-pass merge must pin nothing");
-      // (c) spread surfaced.
-      if (passSpread(contested).contested !== true) throw new Error("contested spread must flag contested=true");
+      // (b) cap LOWERED to 3: with 3 passes still disagreeing, do NOT draw a 4th.
+      if (MAX_BLIND_PASSES !== 3) throw new Error("MAX_BLIND_PASSES must be 3");
+      const three = [1,2,3].map(() => ({ input: 1, construction: 10, output: 1 }));
+      if (shouldDrawAnotherPass(three)) throw new Error("must not exceed the 3-pass cap");
+      // (c) spread + escalation flag + trigger surfaced for the metadata record.
+      const cSpread = passSpread(contested);
+      if (cSpread.contested !== true) throw new Error("contested spread must flag contested=true");
+      if (cSpread.passCount !== 2 || cSpread.escalated !== false) throw new Error("2-pass contested is not yet escalated");
+      if (!/spread/.test(cSpread.trigger)) throw new Error("trigger must describe the spread");
+      const escalated = passSpread([...contested, { input: 7, construction: 9, output: 8 }]);
+      if (escalated.passCount !== 3 || escalated.escalated !== true) throw new Error("3 passes must read as escalated");
       if (passSpread(firm).contested !== false) throw new Error("firm spread must flag contested=false");
+      if (samplingTrigger(firm) !== "passes agreed within tolerance") throw new Error("firm trigger must say agreed");
     })();
   `);
   await build({ entryPoints: [entry], outfile: out, bundle: true, platform: "node", format: "cjs", nodePaths: [join(root, "artifacts/api-server/node_modules")] });
@@ -2575,4 +2600,4 @@ async function assertAdaptiveSampling() {
 }
 await assertAdaptiveSampling();
 
-console.log("v19.0.2 review, pairwise-calibration, submission-hardening, consistency-v2, linked-input, and adaptive-sampling invariants passed");
+console.log("v19.0.2 review, pairwise-calibration, submission-hardening, consistency-v2, linked-input, and brief-#3 production-consolidation invariants passed");
