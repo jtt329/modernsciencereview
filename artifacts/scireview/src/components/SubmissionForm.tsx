@@ -195,6 +195,8 @@ function failureStatusLabel(value: string | null | undefined) {
       return 'Validation failed';
     case 'retryable':
       return 'Retryable';
+    case 'model_provider_retryable':
+      return 'Model provider retryable';
     case 'interrupted_by_server_restart':
       return 'Interrupted by server restart';
     case 'needs_manual_repair':

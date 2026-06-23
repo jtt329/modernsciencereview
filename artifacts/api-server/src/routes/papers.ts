@@ -258,7 +258,7 @@ function classifyAttemptFromError(context: ReviewAttemptContext, err: unknown, m
 function isRetryableAttemptError(message: string, statusCode: number | null) {
   if (statusCode === 422 || /invalid_extraction_truncated/i.test(message)) return true;
   if ([429, 500, 502, 503, 504].includes(statusCode ?? 0)) return true;
-  return /bad escaped character|could not parse|json|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
+  return /bad escaped character|could not parse|json|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|connection error|network error|fetch failed|econnreset|etimedout|timeout|socket hang up|\b(429|500|502|503|504)\b/i.test(message);
 }
 
 function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" | "stageType" | "errorMessage" | "reviewStatus" | "extractionCompletenessStatus" | "retryable">): string | null {
@@ -317,6 +317,12 @@ function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" |
     /json|bad escaped character|parse/i.test(message)
   ) {
     return "failed_review_json";
+  }
+  if (
+    record.stageType === "scientific_review" &&
+    /connection error|network error|fetch failed|econnreset|etimedout|timeout|socket hang up|unavailable|overloaded|temporar|\b(500|502|503|504)\b/i.test(message)
+  ) {
+    return "model_provider_retryable";
   }
   if (
     record.reviewStatus === "invalid_extraction_truncated" ||
