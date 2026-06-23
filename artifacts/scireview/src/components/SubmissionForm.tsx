@@ -508,12 +508,14 @@ export default function SubmissionForm({
   const [error, setError] = useState<string | null>(null);
   const [batchCompleteMessage, setBatchCompleteMessage] = useState<string | null>(null);
   const [doneCount, setDoneCount] = useState(0);
+  const [forceFreshReview, setForceFreshReview] = useState(false);
 
   const isBatch = files.length > 1;
   const isHandledFile = (file: QueuedFile) => file.status === 'done' || file.status === 'duplicate';
   const remainingFiles = files.filter(f => !isHandledFile(f));
   const failedFiles = files.filter(f => f.status === 'error');
   const effectiveReviewMode: ReviewMode = isAdmin ? reviewMode : 'normal-review';
+  const effectiveForceFreshReview = Boolean(isAdmin && forceFreshReview);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setError(null);
@@ -692,6 +694,8 @@ export default function SubmissionForm({
           data: text.trim(),
           model,
           reviewMode: effectiveReviewMode,
+          forceFreshReview: effectiveForceFreshReview,
+          reuseExistingReview: effectiveForceFreshReview ? false : undefined,
           batchRunId,
           queueItemId: makeClientId('queue'),
           attemptId: makeClientId('attempt'),
@@ -760,6 +764,8 @@ export default function SubmissionForm({
       const sourceAuditFieldsForFile = (qf: QueuedFile, clientRequestStartedAt = new Date().toISOString()) => ({
         model,
         reviewMode: effectiveReviewMode,
+        forceFreshReview: effectiveForceFreshReview,
+        reuseExistingReview: effectiveForceFreshReview ? false : undefined,
         fileName: qf.file.name,
         pdfUrl: linkUrl,
         displayPdf: displayPdf && !!linkUrl,
@@ -1033,6 +1039,31 @@ export default function SubmissionForm({
                 ))}
               </div>
             </div>
+          )}
+
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => setForceFreshReview(v => !v)}
+              disabled={isSubmitting}
+              className={`w-full flex items-start gap-3 rounded-2xl border p-4 text-left transition-all ${
+                forceFreshReview
+                  ? 'bg-amber-50 border-amber-300 text-amber-900'
+                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              } ${isSubmitting ? 'opacity-60 cursor-not-allowed' : ''}`}
+            >
+              <div className={`mt-0.5 w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${
+                forceFreshReview ? 'bg-amber-500 border-amber-500' : 'border-slate-300'
+              }`}>
+                {forceFreshReview && <CheckCircle2 className="w-3.5 h-3.5 text-white" />}
+              </div>
+              <div>
+                <p className="text-sm font-black">Run fresh duplicate reviews</p>
+                <p className={`text-xs mt-1 ${forceFreshReview ? 'text-amber-700' : 'text-slate-500'}`}>
+                  Admin testing only: bypass existing-paper reuse so the same PDFs can be reviewed again under the selected model/prompt.
+                </p>
+              </div>
+            </button>
           )}
 
           {/* PDF section */}
