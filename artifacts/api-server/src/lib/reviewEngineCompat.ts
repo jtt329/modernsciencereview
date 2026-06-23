@@ -5269,11 +5269,21 @@ async function callGpt(prompt: string, input: ReviewInput, options?: ScoringCall
   if (!text.trim()) {
     throw new Error("GPT-5.5 review requires extractable manuscript text; none was available for this PDF.");
   }
+  // OpenAI JSON mode validates the model input messages, not just the separate
+  // `instructions` field. Keep the canonical review prompt in `instructions`,
+  // but include an explicit JSON-only directive in the user input so Responses
+  // API requests are accepted without changing the scoring prompt.
+  const jsonModeInput = [
+    "Return JSON only. Produce exactly one valid JSON object matching the active review schema.",
+    "",
+    "Blinded manuscript text:",
+    text,
+  ].join("\n");
   return withModelRetries(GPT_MODEL, async () => {
     const response: any = await getOpenAI().responses.create({
       model: GPT_MODEL,
       instructions: prompt,
-      input: [{ role: "user", content: [{ type: "input_text", text }] }],
+      input: [{ role: "user", content: [{ type: "input_text", text: jsonModeInput }] }],
       max_output_tokens: options?.maxOutputTokens ?? 16384,
       reasoning: { effort: "high" },
       text: { format: { type: "json_object" } },
