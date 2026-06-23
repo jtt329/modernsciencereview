@@ -261,6 +261,11 @@ function isRetryableAttemptError(message: string, statusCode: number | null) {
   return /bad escaped character|could not parse|json|transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|connection error|network error|fetch failed|econnreset|etimedout|timeout|socket hang up|\b(429|500|502|503|504)\b/i.test(message);
 }
 
+function isModelProviderConnectionFailure(message: string) {
+  return /connection error|network error|fetch failed|econnreset|etimedout|timeout|socket hang up|unavailable|overloaded|temporar|\b(500|502|503|504)\b/i.test(message) &&
+    /blind pass|pass\s*[12]|adjudicat|scientific_review|review failed|z-ai|glm|openrouter|gpt-|o3|o4|model/i.test(message);
+}
+
 function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" | "stageType" | "errorMessage" | "reviewStatus" | "extractionCompletenessStatus" | "retryable">): string | null {
   const message = record.errorMessage || "";
   if (!message.trim()) {
@@ -319,8 +324,8 @@ function failureStatusForAttempt(record: Pick<ReviewAttemptRecord, "stageName" |
     return "failed_review_json";
   }
   if (
-    record.stageType === "scientific_review" &&
-    /connection error|network error|fetch failed|econnreset|etimedout|timeout|socket hang up|unavailable|overloaded|temporar|\b(500|502|503|504)\b/i.test(message)
+    (record.stageType === "scientific_review" || record.stageName === "blind_pass_1" || record.stageName === "blind_pass_2" || record.stageName === "adjudicator" || record.retryable) &&
+    isModelProviderConnectionFailure(message)
   ) {
     return "model_provider_retryable";
   }
@@ -484,6 +489,14 @@ function reviewAttemptInsertValues(record: ReviewAttemptRecord): typeof reviewAt
 
 function reviewAttemptRecordFromRow(row: typeof reviewAttemptsTable.$inferSelect): ReviewAttemptRecord {
   const debugPayload = row.debugPayload ?? null;
+  const derivedFailureStatus = failureStatusForAttempt({
+    stageName: row.stageName as ReviewAttemptStageName,
+    stageType: row.stageType as ReviewAttemptStageType,
+    errorMessage: row.errorMessage,
+    reviewStatus: row.reviewStatus,
+    extractionCompletenessStatus: row.extractionCompletenessStatus,
+    retryable: row.retryable === 1,
+  });
   return {
     attemptId: row.id,
     batchRunId: debugString(debugPayload, "batchRunId"),
@@ -509,14 +522,9 @@ function reviewAttemptRecordFromRow(row: typeof reviewAttemptsTable.$inferSelect
     pdfVisibleFallbackUsed: row.pdfVisibleFallbackUsed === 1,
     fallbackSucceeded: row.fallbackSucceeded === 1,
     reviewStatus: row.reviewStatus,
-    failureStatus: row.failureStatus ?? failureStatusForAttempt({
-      stageName: row.stageName as ReviewAttemptStageName,
-      stageType: row.stageType as ReviewAttemptStageType,
-      errorMessage: row.errorMessage,
-      reviewStatus: row.reviewStatus,
-      extractionCompletenessStatus: row.extractionCompletenessStatus,
-      retryable: row.retryable === 1,
-    }),
+    failureStatus: derivedFailureStatus === "model_provider_retryable"
+      ? derivedFailureStatus
+      : row.failureStatus ?? derivedFailureStatus,
     scientificScoringAttempted: row.scientificScoringAttempted === 1,
     debugPayload,
     retryable: row.retryable === 1,
@@ -6393,7 +6401,8 @@ function submissionResponsePayload(err: any) {
     /daily request quota reached|generate_requests_per_model_per_day|per_model_per_day|please retry in|exceeded your current quota/i.test(message);
   const transient =
     !quotaExhausted &&
-    /transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|\b(429|500|502|503|504)\b/i.test(message);
+    (/transient model error|resource[_ ]exhausted|unavailable|overloaded|rate limit|quota|temporar|connection error|network error|fetch failed|econnreset|etimedout|timeout|socket hang up|\b(429|500|502|503|504)\b/i.test(message) ||
+      isModelProviderConnectionFailure(message));
   const retryAfterText = message.match(/retry in\s*([^.;]+)/i)?.[1]?.trim() ?? null;
   return {
     status: explicitStatusCode ?? (quotaExhausted ? 429 : transient ? 503 : 500),
