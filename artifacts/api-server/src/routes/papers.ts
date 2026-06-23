@@ -638,10 +638,14 @@ function frontendPageStaleAfterApiRestart(source: any) {
 
 function sourceSnapshotBackendGitSha(sourceSnapshot: Record<string, any>, record: ReviewAttemptRecord) {
   const payload = debugPayloadObject(record.debugPayload);
-  return runtimeGitSha(sourceSnapshot.apiRuntimeVersion) ??
-    runtimeGitSha(sourceSnapshot.apiRuntimeAtBatchStart) ??
+  // Prefer server-recorded runtime identity. The source snapshot can contain a
+  // frontend-supplied apiRuntimeVersion from a page loaded before the latest
+  // Railway deploy/env restart; using that first falsely marks fresh jobs as
+  // worker_build_mismatch even when the API and worker are now on the same SHA.
+  return runtimeGitSha(payload.apiRuntimeAtQueued) ??
     runtimeGitSha(payload.apiRuntimeAtRegistration) ??
-    runtimeGitSha(payload.apiRuntimeAtQueued) ??
+    runtimeGitSha(sourceSnapshot.apiRuntimeVersion) ??
+    runtimeGitSha(sourceSnapshot.apiRuntimeAtBatchStart) ??
     null;
 }
 
