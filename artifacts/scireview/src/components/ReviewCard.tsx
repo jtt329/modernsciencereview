@@ -765,6 +765,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const [simplerText, setSimplerText] = useState<string | null>(null);
   const [simplerLoading, setSimplerLoading] = useState(false);
   const [simplerError, setSimplerError] = useState('');
+  const [expandedConditionalRows, setExpandedConditionalRows] = useState<Record<string, boolean>>({});
   const loadSimplerExplanation = () => {
     if (simplerText || simplerLoading) return;
     setSimplerLoading(true);
@@ -1649,21 +1650,48 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 {showAssumptionConditionals && (
                   <div className="pt-2">
                     {allProposalsHoldScore != null && conditionalSteps.length >= 2 && (
-                      <p className="flex flex-wrap items-baseline gap-x-2">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-sky-300/90">If all its open proposals hold</span>
-                        <span className="text-slate-400">→</span>
-                        <span className="text-3xl font-black text-sky-200 leading-none">{allProposalsHoldScore}</span>
-                      </p>
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-4">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-sky-300/90">If all its open proposals hold</p>
+                        <p className="whitespace-nowrap text-right">
+                          <span className="text-slate-400">→</span>
+                          <span className="ml-2 text-3xl font-black text-sky-200 leading-none">{allProposalsHoldScore}</span>
+                        </p>
+                      </div>
                     )}
-                    <ul className="mt-1.5 space-y-0.5">
-                      {conditionalSteps.map((step: any, index: number) => (
-                        <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-xs text-slate-400">
-                          <span>if</span>
-                          <InlineMathText text={step.assumptions.join(' and ')} className="text-sky-100/90" />
-                          <span>{step.assumptions.length > 1 ? 'hold' : 'holds'} →</span>
-                          <span className="font-black text-sky-200/90">~{Math.round(step.score)}</span>
-                        </li>
-                      ))}
+                    <ul className="mt-1.5 space-y-1.5">
+                      {conditionalSteps.map((step: any, index: number) => {
+                        const conditionText = step.assumptions.join(' and ');
+                        const conditionKey = `${index}:${conditionText}`;
+                        const isLongCondition = conditionText.length > 130;
+                        const isExpanded = Boolean(expandedConditionalRows[conditionKey]);
+                        return (
+                          <li key={conditionKey} className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 text-xs text-slate-400">
+                            <div className="min-w-0">
+                              <p className={`${isLongCondition && !isExpanded ? 'max-h-12 overflow-hidden' : ''}`}>
+                                <span className="mr-1">if</span>
+                                <InlineMathText text={conditionText} className="text-sky-100/90" />
+                                <span className="ml-1">{step.assumptions.length > 1 ? 'hold' : 'holds'}</span>
+                              </p>
+                              {isLongCondition && (
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedConditionalRows((rows) => ({
+                                    ...rows,
+                                    [conditionKey]: !isExpanded,
+                                  }))}
+                                  className="mt-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300/80 hover:text-sky-100"
+                                >
+                                  {isExpanded ? 'Show less' : 'See more'}
+                                </button>
+                              )}
+                            </div>
+                            <p className="whitespace-nowrap text-right">
+                              <span className="text-slate-500">→</span>
+                              <span className="ml-1 font-black text-sky-200/90">~{Math.round(step.score)}</span>
+                            </p>
+                          </li>
+                        );
+                      })}
                     </ul>
                     {conditionalContingentOn.length > 0 && (
                       <p className="mt-1 text-[11px] text-slate-500">

@@ -1891,8 +1891,13 @@ assert.match(reviewCardSource, /allProposalsHoldScore/);
 assert.match(reviewCardSource, /Contingent on:/);
 assert.match(reviewCardSource, /InlineMathText/);
 assert.match(reviewCardSource, /normalizeMathMarkdown\(text\)/);
-assert.match(reviewCardSource, /<InlineMathText text=\{step\.assumptions\.join\(' and '\)\}/);
+assert.match(reviewCardSource, /expandedConditionalRows/);
+assert.match(reviewCardSource, /See more/);
+assert.match(reviewCardSource, /Show less/);
+assert.match(reviewCardSource, /grid-cols-\[minmax\(0,1fr\)_auto\]/);
+assert.match(reviewCardSource, /<InlineMathText text=\{conditionText\}/);
 assert.match(reviewCardSource, /<InlineMathText text=\{conditionalContingentOn\.join\(' \+ '\)\}/);
+assert.doesNotMatch(assumptionConditionalsSource, /slice\(0,\s*90\)/);
 // UI-side safety net for older saved reviews: non-grantable "what if this known
 // failed/weak analogy were true" conditionals must not render even if already
 // persisted in a review object.

@@ -362,11 +362,7 @@ function strField(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 function shortName(name: string): string {
-  const n = name.trim();
-  if (n.length <= 90) return n;
-  const cut = n.slice(0, 90);
-  const lastSpace = cut.lastIndexOf(" ");
-  return `${(lastSpace > 40 ? cut.slice(0, lastSpace) : cut).trim()}…`;
+  return name.replace(/\s+/g, " ").trim();
 }
 function dedupeNames(names: string[]): string[] {
   const seen = new Set<string>();
