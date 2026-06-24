@@ -1889,6 +1889,10 @@ assert.match(reviewCardSource, /If all its open proposals hold/);
 assert.match(reviewCardSource, /conditionalSteps\.length >= 2/);
 assert.match(reviewCardSource, /allProposalsHoldScore/);
 assert.match(reviewCardSource, /Contingent on:/);
+assert.match(reviewCardSource, /InlineMathText/);
+assert.match(reviewCardSource, /normalizeMathMarkdown\(text\)/);
+assert.match(reviewCardSource, /<InlineMathText text=\{step\.assumptions\.join\(' and '\)\}/);
+assert.match(reviewCardSource, /<InlineMathText text=\{conditionalContingentOn\.join\(' \+ '\)\}/);
 // UI-side safety net for older saved reviews: non-grantable "what if this known
 // failed/weak analogy were true" conditionals must not render even if already
 // persisted in a review object.

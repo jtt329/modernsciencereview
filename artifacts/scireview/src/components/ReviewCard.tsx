@@ -88,6 +88,20 @@ const Markdown = ({ children }: { children: string }) => (
   </div>
 );
 
+const InlineMathText = ({ text, className }: { text: string; className?: string }) => (
+  <span className={className}>
+    <ReactMarkdown
+      remarkPlugins={[remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+      components={{
+        p: ({ children }) => <>{children}</>,
+      }}
+    >
+      {withGlossaryLinks(normalizeMathMarkdown(text))}
+    </ReactMarkdown>
+  </span>
+);
+
 const Section = ({ icon, label, color, children }: { icon: React.ReactNode; label: string; color: string; children: React.ReactNode }) => (
   <div className="bg-white/5 border border-white/10 rounded-2xl p-5 space-y-2">
     <h3 className={`text-xs font-black uppercase tracking-widest flex items-center gap-2 ${color}`}>
@@ -1645,14 +1659,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       {conditionalSteps.map((step: any, index: number) => (
                         <li key={index} className="flex flex-wrap items-baseline gap-x-2 text-xs text-slate-400">
                           <span>if</span>
-                          <span className="text-sky-100/90">{step.assumptions.join(' and ')}</span>
+                          <InlineMathText text={step.assumptions.join(' and ')} className="text-sky-100/90" />
                           <span>{step.assumptions.length > 1 ? 'hold' : 'holds'} →</span>
                           <span className="font-black text-sky-200/90">~{Math.round(step.score)}</span>
                         </li>
                       ))}
                     </ul>
                     {conditionalContingentOn.length > 0 && (
-                      <p className="mt-1 text-[11px] text-slate-500">Contingent on: {conditionalContingentOn.join(' + ')}</p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        <span>Contingent on: </span>
+                        <InlineMathText text={conditionalContingentOn.join(' + ')} />
+                      </p>
                     )}
                   </div>
                 )}
