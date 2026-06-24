@@ -2595,7 +2595,9 @@ assert.match(engineSource, /export type ReviewModel = "gpt" \| "gemini" \| "glm"
 assert.match(engineSource, /SELECTABLE_REVIEW_MODELS: ReviewModel\[\] = \["gemini", "gpt", "glm"\]/);
 assert.match(engineSource, /async function runScoringModel\(/);
 assert.match(engineSource, /getOpenAI\(\)\.responses\.create/);
-assert.match(engineSource, /getOpenRouter\(\)\.chat\.completions\.create/);
+assert.match(engineSource, /callOpenRouterChatCompletions\(/);
+assert.match(engineSource, /fetch\(openRouterUrl\("chat\/completions"\)/);
+assert.match(engineSource, /Authorization: `Bearer \$\{apiKey\}`/);
 assert.match(engineSource, /OPENROUTER_API_KEY is required/);
 assert.match(engineSource, /HTTP-Referer/);
 assert.match(engineSource, /X-Title/);

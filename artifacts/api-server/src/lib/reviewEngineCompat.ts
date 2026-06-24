@@ -69,20 +69,57 @@ function getOpenAI() {
   return openai;
 }
 
-let openrouter: OpenAI | null = null;
-function getOpenRouter() {
-  if (!process.env.OPENROUTER_API_KEY) {
+function openRouterUrl(path: string) {
+  return `${OPENROUTER_BASE_URL.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+async function callOpenRouterChatCompletions(body: Record<string, unknown>, timeoutMs: number) {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
     throw new Error("OPENROUTER_API_KEY is required when the GLM-5.2 (OpenRouter) review model is selected.");
   }
-  openrouter ??= new OpenAI({
-    apiKey: process.env.OPENROUTER_API_KEY,
-    baseURL: OPENROUTER_BASE_URL,
-    defaultHeaders: {
-      "HTTP-Referer": process.env.PUBLIC_WEB_ORIGIN?.trim() || "https://modernscience.space",
-      "X-Title": "Modern Science Review",
-    },
-  });
-  return openrouter;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(openRouterUrl("chat/completions"), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": process.env.PUBLIC_WEB_ORIGIN?.trim() || "https://modernscience.space",
+        "X-Title": "Modern Science Review",
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const responseText = await response.text();
+    let parsed: any = null;
+    if (responseText.trim()) {
+      try {
+        parsed = JSON.parse(responseText);
+      } catch {
+        parsed = null;
+      }
+    }
+    if (!response.ok) {
+      const providerMessage =
+        parsed?.error?.message ??
+        parsed?.message ??
+        responseText.slice(0, 1000) ??
+        response.statusText;
+      throw new Error(`OpenRouter ${response.status} ${response.statusText}: ${providerMessage}`);
+    }
+    if (parsed) return parsed;
+    throw new Error(`OpenRouter returned an empty or non-JSON response: ${responseText.slice(0, 1000)}`);
+  } catch (error: any) {
+    if (error?.name === "AbortError") {
+      throw new Error(`OpenRouter request timed out after ${timeoutMs}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export type ReviewModel = "gpt" | "gemini" | "glm";
@@ -5349,7 +5386,8 @@ async function callGpt(prompt: string, input: ReviewInput, options?: ScoringCall
   });
 }
 
-// GLM-5.2 via OpenRouter (OpenAI-compatible chat.completions).
+// GLM-5.2 via OpenRouter. Use direct fetch instead of the OpenAI SDK wrapper so
+// provider/network failures surface with the real OpenRouter status/body.
 async function callGlm(prompt: string, input: ReviewInput, options?: ScoringCallOptions): Promise<ScoringCallResult> {
   const text = reviewInputText(input);
   if (!text.trim()) {
@@ -5363,7 +5401,7 @@ async function callGlm(prompt: string, input: ReviewInput, options?: ScoringCall
     text,
   ].join("\n");
   return withModelRetries(GLM_MODEL, async () => {
-    const response: any = await getOpenRouter().chat.completions.create({
+    const response: any = await callOpenRouterChatCompletions({
       model: GLM_MODEL,
       max_tokens: options?.maxOutputTokens ?? 16384,
       temperature: options?.temperature ?? 0.2,
@@ -5371,9 +5409,17 @@ async function callGlm(prompt: string, input: ReviewInput, options?: ScoringCall
         { role: "system", content: prompt },
         { role: "user", content: jsonOnlyInput },
       ],
-    });
+    }, options?.timeoutMs ?? GEMINI_REVIEW_CALL_TIMEOUT_MS);
     const content = response.choices?.[0]?.message?.content;
-    if (!content) throw new Error("No response from GLM-5.2 model.");
+    if (!content) {
+      const finishReason = response.choices?.[0]?.finish_reason;
+      const reasoning = response.choices?.[0]?.message?.reasoning;
+      throw new Error(
+        `No JSON content from GLM-5.2 model${finishReason ? ` (finish_reason=${finishReason})` : ""}${
+          reasoning ? "; model returned reasoning without final content" : ""
+        }.`,
+      );
+    }
     const usage = response.usage ?? null;
     return {
       parsed: extractJson(content),
