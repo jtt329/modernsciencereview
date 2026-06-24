@@ -2600,6 +2600,13 @@ assert.match(engineSource, /const validEscapes = new Set\(\['"',/);
 assert.match(engineSource, /legit escape — keep it and consume the escaped char/);
 assert.match(engineSource, /lone\/invalid backslash -> escape it/);
 assert.match(engineSource, /code < 0x20/);
+// Structural validation failures get one targeted repair attempt instead of
+// blindly repeating the same pass prompt or saving an incomplete review.
+assert.match(engineSource, /function isReviewSchemaCompletenessError/);
+assert.match(engineSource, /function promptWithReviewSchemaRepairInstruction/);
+assert.match(engineSource, /The previous review response was rejected by validation/);
+assert.match(engineSource, /inputConstructionOutputAssessment\.output\.outputs/);
+assert.match(engineSource, /if \(isReviewSchemaCompletenessError\(lastError\)\)/);
 // Constraint: temperature untouched in the sampling core (scoring calls 0.15).
 assert.doesNotMatch(adaptiveSamplingSource, /temperature/i);
 

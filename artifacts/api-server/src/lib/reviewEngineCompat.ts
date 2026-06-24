@@ -1716,6 +1716,39 @@ function errorMessage(error: unknown) {
   return raw;
 }
 
+function isReviewSchemaCompletenessError(error: unknown) {
+  const message = errorMessage(error);
+  return /missing input-construction-output ledger accounting|missing output-level assessment\/validity\/support|missing assessment sensitivity|missing a scientific review|missing a central claim|missing one or more required diagnostic subscores/i.test(message);
+}
+
+function promptWithReviewSchemaRepairInstruction(prompt: string, reason: unknown) {
+  return [
+    prompt,
+    "",
+    "Validation repair instruction",
+    "-----------------------------",
+    `The previous review response was rejected by validation: ${errorMessage(reason)}`,
+    "",
+    "Return the same canonical JSON object, but make sure these fields are present and nonempty:",
+    "- scientificReview",
+    "- centralClaim",
+    "- inputStrengthScore, constructionStrengthScore, outputStrengthScore",
+    "- subscoreRationale.inputStrengthScore",
+    "- subscoreRationale.constructionStrengthScore",
+    "- subscoreRationale.outputStrengthScore",
+    "- inputConstructionOutputAssessment.input.overallAssessment",
+    "- inputConstructionOutputAssessment.input.primitiveInputs",
+    "- inputConstructionOutputAssessment.construction.overallAssessment",
+    "- inputConstructionOutputAssessment.construction.introducedConstructions",
+    "- inputConstructionOutputAssessment.output.overallAssessment",
+    "- inputConstructionOutputAssessment.output.whyOutputsMatter",
+    "- inputConstructionOutputAssessment.output.outputs",
+    "- assessmentSensitivity inside technicalAssessment",
+    "",
+    "For every output, include its output claim, validity/assessment/support, centrality, and dependencies. Do not omit the Input -> Construction -> Output accounting. Do not add a 0-100 final score.",
+  ].join("\n");
+}
+
 function errorDetailsForLog(error: unknown) {
   if (error instanceof Error) {
     return {
@@ -5517,6 +5550,21 @@ async function runPassWithGenerationRetries(
       if (attempt < PASS_GENERATION_ATTEMPTS - 1) {
         await sleep(passAttemptDelayMs(attempt, reason));
       }
+    }
+  }
+  if (isReviewSchemaCompletenessError(lastError)) {
+    try {
+      return await runIndividualPass(
+        promptWithReviewSchemaRepairInstruction(prompt, lastError),
+        input,
+        model,
+        index,
+        reviewRunId,
+        inputAuditHashes,
+        reviewInputSnapshot,
+      );
+    } catch (repairReason) {
+      lastError = repairReason;
     }
   }
   const error = new Error(`pass ${index + 1} failed after ${PASS_GENERATION_ATTEMPTS} generation attempts: ${errorMessage(lastError)}`);
