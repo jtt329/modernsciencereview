@@ -13,12 +13,15 @@ import PromptAnalysis from './components/PromptAnalysis';
 import HowItWorksModal from './components/HowItWorksModal';
 import SandboxViewer from './components/SandboxViewer';
 import { ReviewSource } from './services/reviewService';
+import { StoredReviewModelFamily, storedReviewModelFamily, storedReviewModelFamilyLabel } from './lib/modelLabels';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || '';
 
 const FIELDS = ['All Fields', 'Physics', 'Mathematics', 'Computer Science', 'Biology', 'Chemistry'];
 const RANKINGS = ['Top Rated', 'Most Viewed', 'Most Discussed', 'Newest'];
 const TIMEFRAMES = ['All Time', 'Past Year', 'Past Month', 'Past Week'];
+const MODEL_FAMILY_ORDER: StoredReviewModelFamily[] = ['gemini', 'gpt', 'glm', 'other'];
+const ALL_MODEL_FAMILIES = 'All Models';
 
 interface PaperDateMetadata {
   displayedTitle?: string;
@@ -314,6 +317,7 @@ export default function App() {
   const [selectedField, setSelectedField] = useState('All Fields');
   const [selectedSubfield, setSelectedSubfield] = useState('All Subfields');
   const [selectedPromptVersion, setSelectedPromptVersion] = useState('All Prompt Versions');
+  const [selectedModelFamily, setSelectedModelFamily] = useState<StoredReviewModelFamily | typeof ALL_MODEL_FAMILIES>(ALL_MODEL_FAMILIES);
   const [selectedRanking, setSelectedRanking] = useState('Top Rated');
   const [selectedTimeframe, setSelectedTimeframe] = useState('All Time');
 
@@ -645,6 +649,25 @@ export default function App() {
     }
   }, [promptVersions, selectedPromptVersion]);
 
+  const modelFamilies = useMemo(() => {
+    const families = new Set<StoredReviewModelFamily>();
+    papers.forEach((paper) => {
+      const family = storedReviewModelFamily(paper.modelName);
+      if (family !== 'other') families.add(family);
+    });
+    papers.forEach((paper) => {
+      const family = storedReviewModelFamily(paper.modelName);
+      if (family === 'other' && paper.modelName) families.add(family);
+    });
+    return MODEL_FAMILY_ORDER.filter((family) => families.has(family));
+  }, [papers]);
+
+  useEffect(() => {
+    if (selectedModelFamily !== ALL_MODEL_FAMILIES && !modelFamilies.includes(selectedModelFamily)) {
+      setSelectedModelFamily(ALL_MODEL_FAMILIES);
+    }
+  }, [modelFamilies, selectedModelFamily]);
+
   const filteredPapers = papers
     .filter(p => {
       const q = searchQuery.trim().toLowerCase();
@@ -661,13 +684,14 @@ export default function App() {
         p.subfields?.some(s => s.toLowerCase().includes(fieldLower));
       const matchesSubfield = selectedSubfield === 'All Subfields' || p.subfields?.includes(selectedSubfield);
       const matchesPromptVersion = selectedPromptVersion === 'All Prompt Versions' || p.promptVersion === selectedPromptVersion;
+      const matchesModelFamily = selectedModelFamily === ALL_MODEL_FAMILIES || storedReviewModelFamily(p.modelName) === selectedModelFamily;
       const now = Date.now();
       const ts = new Date(p.createdAt).getTime();
       let matchesTime = true;
       if (selectedTimeframe === 'Past Week') matchesTime = ts > now - 7 * 86400000;
       else if (selectedTimeframe === 'Past Month') matchesTime = ts > now - 30 * 86400000;
       else if (selectedTimeframe === 'Past Year') matchesTime = ts > now - 365 * 86400000;
-      return matchesSearch && matchesField && matchesSubfield && matchesPromptVersion && matchesTime;
+      return matchesSearch && matchesField && matchesSubfield && matchesPromptVersion && matchesModelFamily && matchesTime;
     })
     .sort((a, b) => {
       if (selectedRanking === 'Most Viewed') return b.viewCount - a.viewCount;
@@ -793,6 +817,26 @@ export default function App() {
                           className={`px-4 py-1.5 rounded-full font-bold text-xs transition-all border ${selectedPromptVersion === version ? 'bg-violet-600 text-white border-violet-600' : 'bg-violet-50 text-violet-700 border-violet-100 hover:bg-violet-100'}`}
                         >
                           {version}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {user && modelFamilies.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                      <span className="mr-1 text-xs font-black uppercase tracking-widest text-slate-400">Model</span>
+                      <button
+                        onClick={() => setSelectedModelFamily(ALL_MODEL_FAMILIES)}
+                        className={`px-4 py-1.5 rounded-full font-bold text-xs transition-all border ${selectedModelFamily === ALL_MODEL_FAMILIES ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                      >
+                        All
+                      </button>
+                      {modelFamilies.map((family) => (
+                        <button
+                          key={family}
+                          onClick={() => setSelectedModelFamily(family)}
+                          className={`px-4 py-1.5 rounded-full font-bold text-xs transition-all border ${selectedModelFamily === family ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'}`}
+                        >
+                          {storedReviewModelFamilyLabel(family)}
                         </button>
                       ))}
                     </div>

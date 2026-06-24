@@ -29,24 +29,39 @@ export function reviewPipelineDescription(model: ReviewModel, mode: ReviewMode) 
 export function formatStoredReviewModelName(modelName: string | null | undefined) {
   const raw = String(modelName ?? '').trim();
   if (!raw) return '';
-  const lower = raw.toLowerCase();
+  const selectedModel = storedReviewModelFamily(raw);
 
   // Non-Gemini stored records append the actual selected scoring model after
   // the historical Gemini pipeline label. Prefer that explicit suffix over
   // generic words like "benchmark ingestion" or "blind adjudicator".
-  const selectedModel =
-    lower.includes('z-ai/glm-5.2') || lower.includes('glm-5.2') ? 'GLM-5.2'
-    : lower.includes('gpt-5.5') ? 'GPT-5.5'
-    : lower.includes('gpt') ? 'GPT'
-    : lower.includes('gemini-3.1-pro') ? 'Gemini 3.1 Pro'
-    : lower.includes('gemini-3.5-flash') ? 'Gemini 3.5 Flash'
-    : lower.startsWith('gemini') ? 'Gemini'
+  const selectedModelLabel =
+    selectedModel === 'glm' ? 'GLM-5.2'
+    : selectedModel === 'gpt' ? 'GPT-5.5'
+    : selectedModel === 'gemini' ? (raw.toLowerCase().includes('gemini-3.5-flash') ? 'Gemini 3.5 Flash' : 'Gemini 3.1 Pro')
     : '';
-
+  const lower = raw.toLowerCase();
   const modeSuffix =
     lower.includes('comparator calibration') ? ' + calibration'
     : '';
 
-  if (selectedModel) return `${selectedModel} x2 + blind adjudicator${modeSuffix}`;
+  if (selectedModelLabel) return `${selectedModelLabel} x2 + blind adjudicator${modeSuffix}`;
   return raw;
+}
+
+export type StoredReviewModelFamily = 'gemini' | 'gpt' | 'glm' | 'other';
+
+export function storedReviewModelFamily(modelName: string | null | undefined): StoredReviewModelFamily {
+  const lower = String(modelName ?? '').trim().toLowerCase();
+  if (!lower) return 'other';
+  if (lower.includes('z-ai/glm-5.2') || lower.includes('glm-5.2') || /\bglm\b/.test(lower)) return 'glm';
+  if (lower.includes('gpt-5.5') || /\bgpt\b/.test(lower) || lower.includes('openai')) return 'gpt';
+  if (lower.includes('gemini')) return 'gemini';
+  return 'other';
+}
+
+export function storedReviewModelFamilyLabel(family: StoredReviewModelFamily) {
+  if (family === 'gemini') return 'Gemini';
+  if (family === 'gpt') return 'GPT';
+  if (family === 'glm') return 'GLM';
+  return 'Other';
 }
