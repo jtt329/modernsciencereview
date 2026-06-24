@@ -74,7 +74,14 @@ function getOpenRouter() {
   if (!process.env.OPENROUTER_API_KEY) {
     throw new Error("OPENROUTER_API_KEY is required when the GLM-5.2 (OpenRouter) review model is selected.");
   }
-  openrouter ??= new OpenAI({ apiKey: process.env.OPENROUTER_API_KEY, baseURL: OPENROUTER_BASE_URL });
+  openrouter ??= new OpenAI({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    baseURL: OPENROUTER_BASE_URL,
+    defaultHeaders: {
+      "HTTP-Referer": process.env.PUBLIC_WEB_ORIGIN?.trim() || "https://modernscience.space",
+      "X-Title": "Modern Science Review",
+    },
+  });
   return openrouter;
 }
 
@@ -5348,15 +5355,21 @@ async function callGlm(prompt: string, input: ReviewInput, options?: ScoringCall
   if (!text.trim()) {
     throw new Error("GLM-5.2 review requires extractable manuscript text; none was available for this PDF.");
   }
+  const jsonOnlyInput = [
+    "Return JSON only. Produce exactly one valid JSON object matching the active review schema.",
+    "Do not wrap the JSON in Markdown fences. Do not include prose before or after the JSON.",
+    "",
+    "Blinded manuscript text:",
+    text,
+  ].join("\n");
   return withModelRetries(GLM_MODEL, async () => {
     const response: any = await getOpenRouter().chat.completions.create({
       model: GLM_MODEL,
       max_tokens: options?.maxOutputTokens ?? 16384,
       temperature: options?.temperature ?? 0.2,
-      response_format: { type: "json_object" },
       messages: [
         { role: "system", content: prompt },
-        { role: "user", content: text },
+        { role: "user", content: jsonOnlyInput },
       ],
     });
     const content = response.choices?.[0]?.message?.content;

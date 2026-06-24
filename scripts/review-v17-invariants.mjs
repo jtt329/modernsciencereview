@@ -2597,6 +2597,10 @@ assert.match(engineSource, /async function runScoringModel\(/);
 assert.match(engineSource, /getOpenAI\(\)\.responses\.create/);
 assert.match(engineSource, /getOpenRouter\(\)\.chat\.completions\.create/);
 assert.match(engineSource, /OPENROUTER_API_KEY is required/);
+assert.match(engineSource, /HTTP-Referer/);
+assert.match(engineSource, /X-Title/);
+assert.match(engineSource, /Return JSON only\. Produce exactly one valid JSON object matching the active review schema\./);
+assert.doesNotMatch(engineSource, /response_format:\s*\{\s*type:\s*"json_object"\s*\}/);
 // Model is threaded into the passes AND the adjudicator (identical pipeline).
 assert.match(engineSource, /runIndividualPass\(prompt, input, model,/);
 assert.match(engineSource, /const adjudicatorResult = await runScoringModel\(\s*model,/);
