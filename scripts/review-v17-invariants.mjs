@@ -2336,6 +2336,10 @@ assert.match(reviewCardSource, /Point deduction/);
 assert.doesNotMatch(reviewCardSource, /Why not 10/);
 assert.match(reviewCardSource, /deductionByDimension/);
 assert.match(reviewCardSource, /activeDeduction/);
+assert.match(reviewCardSource, /diagnosticDeductionPoints/);
+assert.match(reviewCardSource, /10 - clamped/);
+assert.doesNotMatch(reviewCardSource, /typeof d\.points === 'number' && d\.points > 0\) deductionByDimension/);
+assert.match(engineSource, /function v16CanonicalReviewFromIndividual[\s\S]*?pointDeductions: computePointDeductions/);
 
 // Functional: the detectors + point-deduction math, offline.
 async function assertAuditRefinements() {

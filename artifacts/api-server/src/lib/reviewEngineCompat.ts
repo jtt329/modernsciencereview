@@ -6438,6 +6438,14 @@ function v16CanonicalReviewFromIndividual(review: IndividualReview, index?: numb
     constructionStrengthScore: review.constructionStrengthScore,
     outputStrengthScore: review.outputStrengthScore,
     subscoreRationale: review.subscoreRationale,
+    pointDeductions: computePointDeductions(
+      {
+        input: review.inputStrengthScore,
+        construction: review.constructionStrengthScore,
+        output: review.outputStrengthScore,
+      },
+      review.subscoreRationale,
+    ),
     inputConstructionOutputAssessment: v16IcoAssessmentOnly(review.inputConstructionOutputLedger),
     technicalAssessment: v16TechnicalAssessmentFromIndividual(review),
     failureAnalysis: v17FailureAnalysisFromIndividual(review),

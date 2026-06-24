@@ -673,6 +673,13 @@ const validSubscore = (value: unknown, isValid = true): number | null => {
   return Math.round(numeric * 2) / 2;
 };
 
+const diagnosticDeductionPoints = (score: number | null | undefined): number | null => {
+  if (score == null || !Number.isFinite(score)) return null;
+  const clamped = Math.max(0, Math.min(10, score));
+  const points = Math.round((10 - clamped) * 2) / 2;
+  return points > 0 ? points : null;
+};
+
 const asLedgerOutputs = (ledger: any): Array<{
   output: string;
   dependsOnInputs: string[];
@@ -1386,7 +1393,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     : Array.isArray(storedAggregate?.pointDeductions)
       ? storedAggregate.pointDeductions
       : [];
-  const showPointDeductions = !selectedPass && pointDeductions.some((d: any) => typeof d?.points === 'number' && d.points > 0);
   const subscoreIsValid = (key: string, legacyKey: string) =>
     (selectedSubscoreValidity as any)?.[key] ?? (selectedSubscoreValidity as any)?.[legacyKey] ?? true;
   const currentInputStrengthScore = validSubscore(
@@ -1477,9 +1483,26 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   const activeDiagnosticRationale = activeDiagnosticCard?.fullRationale || activeDiagnosticCard?.previewRationale;
   // Per-dimension point deduction ("why not 10"), folded INTO each I/C/O section
   // (no separate top block). Keyed by dimension = card id.
-  const deductionByDimension: Record<string, { points: number; cause?: string }> = {};
+  const deductionCauseByDimension: Record<string, string> = {};
   for (const d of pointDeductions) {
-    if (d && typeof d.points === 'number' && d.points > 0) deductionByDimension[String(d.dimension)] = d;
+    if (d && typeof d.dimension === 'string' && hasText(d.cause)) {
+      deductionCauseByDimension[String(d.dimension)] = String(d.cause);
+    }
+  }
+  const scoreByDimension: Record<IcoTabId, number | null> = {
+    input: currentInputStrengthScore,
+    construction: currentConstructionStrengthScore,
+    output: currentOutputStrengthScore,
+  };
+  const deductionByDimension: Record<string, { points: number; cause?: string }> = {};
+  for (const [dimension, score] of Object.entries(scoreByDimension)) {
+    const points = diagnosticDeductionPoints(score);
+    if (points != null) {
+      deductionByDimension[dimension] = {
+        points,
+        cause: deductionCauseByDimension[dimension],
+      };
+    }
   }
   const activeDeduction = activeDiagnosticCard ? deductionByDimension[activeDiagnosticCard.id] : undefined;
   const technicalAssessmentBoxes = [
@@ -1892,7 +1915,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                     {activeDeduction && (
                       <p className="mt-3 flex flex-wrap items-baseline gap-x-2 border-t border-white/10 pt-3 text-sm">
                         <span className="text-[10px] font-black uppercase tracking-widest text-rose-300/90">Point deduction</span>
-                        <span className="font-black text-rose-200 whitespace-nowrap">−{activeDeduction.points}</span>
+                        <span className="font-black text-rose-200 whitespace-nowrap">−{formatDiagnosticSubscore(activeDeduction.points)}</span>
                         {activeDeduction.cause && (
                           <>
                             <span className="text-slate-600">·</span>
