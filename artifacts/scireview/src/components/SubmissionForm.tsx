@@ -4,6 +4,7 @@ import { Send, X, BookOpen, Loader2, FileText, Upload, CheckCircle2, AlertCircle
 import { useDropzone } from 'react-dropzone';
 import { ReviewSource, ReviewModel, ReviewMode } from '../services/reviewService';
 import { SITE_VERSION } from '../lib/version';
+import { reviewPipelineDescription, reviewPipelineProcessingLabel, reviewPipelineShortLabel } from '../lib/modelLabels';
 
 interface SubmissionFormProps {
   onSubmit: (source: ReviewSource, skipSelect?: boolean, onJobUpdate?: (attempt: any) => void) => Promise<any>;
@@ -39,18 +40,14 @@ function makeClientId(prefix: string) {
   return `${prefix}_${random}`;
 }
 
-const reviewModeCopy: Record<ReviewMode, { label: string; shortLabel: string; description: string; processing: string }> = {
+const reviewModeCopy: Record<ReviewMode, { label: string; description: string }> = {
   'benchmark-ingestion': {
     label: 'Benchmark ingestion',
-    shortLabel: 'Gemini Pro x2 + blind adjudicator',
     description: 'Identity-blind intrinsic review only (the manuscript is stripped of identifying information; the model discloses if it nevertheless recognizes the work). Use this for building the benchmark suite before calibration backfill.',
-    processing: 'Reviewing with Gemini Pro x2 + blind adjudicator...',
   },
   'normal-review': {
     label: 'Normal calibrated review',
-    shortLabel: 'Gemini Pro x2 + blind adjudicator + calibration',
     description: 'Identity-blind review first, then calibrate against nearby benchmark papers if available.',
-    processing: 'Reviewing with Gemini Pro x2 + blind adjudicator + calibration...',
   },
 };
 
@@ -158,7 +155,7 @@ function activeStageLabel(attempt: any) {
     default:
       if (reviewStatus === 'queued') return 'Queued behind another paper...';
       if (reviewStatus === 'running') return 'Review worker running...';
-      return reviewModeCopy['benchmark-ingestion'].processing;
+      return 'Reviewing with the selected blind model...';
   }
 }
 
@@ -518,6 +515,8 @@ export default function SubmissionForm({
   const failedFiles = files.filter(f => f.status === 'error');
   const effectiveReviewMode: ReviewMode = isAdmin ? reviewMode : 'normal-review';
   const effectiveForceFreshReview = Boolean(isAdmin && forceFreshReview);
+  const selectedPipelineShortLabel = reviewPipelineShortLabel(model, effectiveReviewMode);
+  const selectedPipelineProcessingLabel = reviewPipelineProcessingLabel(model, effectiveReviewMode);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setError(null);
@@ -948,7 +947,7 @@ export default function SubmissionForm({
             <div>
               <h2 className="text-xl font-black tracking-tight">Submit Scientific Paper</h2>
               <p className="text-xs font-bold text-indigo-200 uppercase tracking-widest">
-                Blind AI Review · {reviewModeCopy[effectiveReviewMode].shortLabel}
+                Blind AI Review · {selectedPipelineShortLabel}
                 {isBatch && ` · ${files.length} papers queued`}
               </p>
             </div>
@@ -1117,7 +1116,7 @@ export default function SubmissionForm({
                         <div className="flex-1 min-w-0">
                           <p className="font-bold text-slate-800 truncate">{qf.file.name}</p>
                           {qf.status === 'processing' && (
-                            <p className="text-xs text-indigo-500 break-words">{qf.error || reviewModeCopy[effectiveReviewMode].processing}</p>
+                            <p className="text-xs text-indigo-500 break-words">{qf.error || selectedPipelineProcessingLabel}</p>
                           )}
                           {qf.status === 'duplicate' && (
                             <p className="text-xs text-sky-600 break-words">{qf.error || 'Already in system.'}</p>
@@ -1297,8 +1296,8 @@ export default function SubmissionForm({
                   {isBatch
                     ? `Up to ${BATCH_CONCURRENCY} papers are reviewed at once. Each completed paper is saved immediately, and failed papers move to a repair lane without blocking the rest of the queue.`
                     : effectiveReviewMode === 'benchmark-ingestion'
-                      ? 'This runs metadata extraction, two independent blind Gemini Pro review passes, and a blind Gemini Pro adjudicator. Comparator calibration is skipped for benchmark ingestion.'
-                      : 'This runs metadata extraction, two independent blind Gemini Pro review passes, a blind Gemini Pro adjudicator, then benchmark comparator calibration. Please keep this window open.'}
+                      ? reviewPipelineDescription(model, 'benchmark-ingestion')
+                      : reviewPipelineDescription(model, 'normal-review')}
                 </p>
               </div>
             </div>
@@ -1320,7 +1319,7 @@ export default function SubmissionForm({
             {isSubmitting ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin" />
-                {isBatch ? `${doneCount}/${files.length} done…` : reviewModeCopy[effectiveReviewMode].processing}
+                {isBatch ? `${doneCount}/${files.length} done…` : selectedPipelineProcessingLabel}
               </>
             ) : (
               <>

@@ -4,6 +4,7 @@ import { Heart, MessageSquare, Users, ChevronRight, Check, Share2 } from 'lucide
 import { format } from 'date-fns';
 import { Paper } from '../types';
 import LatexText from './LatexText';
+import { formatStoredReviewModelName } from '../lib/modelLabels';
 
 interface PaperCardProps {
   paper: Paper;
@@ -30,6 +31,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
   const centralClaim = paper.reviewCentralClaim;
   const finalJudgment = paper.reviewFinalJudgment;
   const fallbackPreview = paper.reviewSummary || paper.content.substring(0, 500);
+  const modelLabel = formatStoredReviewModelName(paper.modelName);
 
   const scoreColorClass = paper.score != null
     ? paper.score >= 80 ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
@@ -101,9 +103,9 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
                   Anchored scientific merit score: 0 means wrong or no real contribution, 50 means an average serious published paper in the comparison cohort, and 99 means foundational or paradigm-shifting.
                 </div>
               </div>
-              {paper.modelName && (
+              {modelLabel && (
                 <span className="text-[9px] font-semibold text-slate-400 tracking-wide">
-                  {paper.modelName.includes('benchmark ingestion') ? 'Gemini Pro x2 + Benchmark Ingestion' : paper.modelName.includes('comparator calibration') ? 'Gemini Pro x2 + Benchmark Calibration' : paper.modelName.includes('blind adjudicator') ? 'Gemini Pro x2 + Adjudicator' : paper.modelName.startsWith('gemini-3.5-flash') ? 'Gemini 3.5 Flash x2 + Adjudicator' : paper.modelName.startsWith('gemini-3.1-pro') ? 'Gemini Pro x2 + Adjudicator' : paper.modelName.startsWith('gemini') ? 'Gemini x2 + Adjudicator' : paper.modelName.startsWith('gpt') ? 'GPT-5.4 Pro' : paper.modelName}
+                  {modelLabel}
                 </span>
               )}
             </div>

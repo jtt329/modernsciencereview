@@ -8,6 +8,7 @@ import { format } from 'date-fns';
 import { AIReview } from '../types';
 import ReviewChat from './ReviewChat';
 import { normalizeMathMarkdown } from '../lib/mathMarkdown';
+import { formatStoredReviewModelName } from '../lib/modelLabels';
 
 interface ReviewCardProps {
   review: AIReview;
@@ -1397,12 +1398,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     currentFrameworkConditionality,
     currentFrameworkIndependence,
   );
-  const rawModelPipeline = String(parsedCoverage?.modelName ?? review.modelName ?? '');
-  const modelBase = /gemini-3\.1-pro/i.test(rawModelPipeline)
-    ? 'Gemini 3.1 Pro Preview'
-    : /gemini-3\.5-flash/i.test(rawModelPipeline)
-      ? 'Gemini 3.5 Flash'
-      : rawModelPipeline;
+  const modelBase = formatStoredReviewModelName(parsedCoverage?.modelName ?? review.modelName);
   const shortPromptVersion = promptVersion ? String(promptVersion).match(/^v\d+(?:\.\d+)?/)?.[0] ?? String(promptVersion) : '';
   const pipelineModeLabel = parsedCoverage?.pipelineMode === 'benchmark-ingestion'
     ? 'benchmark ingestion'
@@ -2589,7 +2585,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <BrainCircuit className="w-6 h-6" />
                   <div>
                     <h3 className="text-xl font-black tracking-tight">Model Thinking</h3>
-                    {review.modelName && <p className="text-[10px] font-bold text-violet-200 uppercase tracking-widest">Internal reasoning from {review.modelName}</p>}
+                    {modelBase && <p className="text-[10px] font-bold text-violet-200 uppercase tracking-widest">Internal reasoning from {modelBase}</p>}
                   </div>
                 </div>
                 <button onClick={() => setShowThinking(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
@@ -2630,7 +2626,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                   <Info className="w-6 h-6" />
                   <div>
                     <h3 className="text-xl font-black tracking-tight">System Prompt</h3>
-                    {review.modelName && <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest">Used with {review.modelName}</p>}
+                    {modelBase && <p className="text-[10px] font-bold text-indigo-200 uppercase tracking-widest">Used with {modelBase}</p>}
                   </div>
                 </div>
                 <button onClick={() => setShowPrompt(false)} className="p-2 hover:bg-white/10 rounded-full transition-colors">
