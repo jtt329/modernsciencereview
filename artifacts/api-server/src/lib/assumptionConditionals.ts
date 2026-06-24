@@ -92,6 +92,25 @@ export function normalizeAssumptionStatus(value: unknown): AssumptionStatus {
   return "unknown";
 }
 
+// Extra deterministic guard for the two ways a non-grantable "condition" can
+// sneak past a model status label:
+//   1) the assumption name itself says the premise is wrong / ruled out;
+//   2) the premise is a mere/weak/soap-bubble analogy. Conditionals are for
+//      unresolved physical frameworks or conjectures, not "what if this failed
+//      analogy were true" counterfactuals.
+const ASSUMPTION_NAME_ERROR = /\b(?:does not hold|do not hold|fails?|failed|invalid|unphysical|nonphysical|non-physical|incorrect|wrong|refut(?:ed|es|ing)?|contradict(?:ed|s|ing)?|inconsistent|unsound|incoherent|false|not valid|not justified|breaks down|break down)\b/i;
+const ASSUMPTION_NAME_RULED_OUT = /\b(?:ruled[-\s]?out|falsified|disproven|disproved|excluded by (?:experiment|data|observation)|known (?:to be )?false|overturned)\b/i;
+const NON_GRANTABLE_ANALOGY = /\b(?:soap[-\s]?bubble|bubble analogy|weak analogy|mere analogy|heuristic analogy|analogy)\b/i;
+
+function nonGrantableAssumptionStatusFromText(text: string): AssumptionStatus | null {
+  const s = text.trim();
+  if (!s) return null;
+  if (ASSUMPTION_NAME_ERROR.test(s)) return "error";
+  if (ASSUMPTION_NAME_RULED_OUT.test(s)) return "ruled_out";
+  if (NON_GRANTABLE_ANALOGY.test(s)) return "unknown";
+  return null;
+}
+
 function formulaTotal(subscores: Record<ScoreDimensionKey, number | null>): number | null {
   const vals = DIMENSIONS.map((k) => subscores[k]).filter((v): v is number => typeof v === "number");
   if (vals.length === 0) return null;
@@ -137,12 +156,13 @@ export function computeAssumptionConditionals(args: {
     const assumption = typeof item.assumptionName === "string" ? item.assumptionName.trim() : "";
     if (!assumption) continue;
     const status = normalizeAssumptionStatus(item.assumptionStatus);
+    const nonGrantableStatus = status === "open" ? nonGrantableAssumptionStatusFromText(assumption) : null;
     // ONLY an open (unconfirmed-but-not-contradicted) assumption earns a
     // conditional. Ruled-out / confirmed / unknown are recorded but never
     // lifted — lifting a ruled-out premise would hand the paper a misleadingly
     // high second score.
-    if (status !== "open") {
-      excluded.push({ dimension: dim, assumptionName: assumption, status });
+    if (status !== "open" || nonGrantableStatus) {
+      excluded.push({ dimension: dim, assumptionName: assumption, status: nonGrantableStatus ?? status });
       continue;
     }
     const liftRaw = num(item.conditionalLiftScore);
@@ -357,6 +377,14 @@ function dedupeNames(names: string[]): string[] {
   }
   return out;
 }
+function ledgerEntryText(it: Record<string, any>): string {
+  const fields = [
+    "foundationLabel", "input", "groundingQuality", "frameworkDependenceLevel",
+    "construction", "role", "assessment", "validity", "validityLevel",
+    "hardToVaryAssessment", "fragilityLimits", "support",
+  ];
+  return fields.map((field) => strField(it[field])).filter(Boolean).join(" ");
+}
 function ledgerIco(ledger: Record<string, any> | null | undefined): Record<string, any> {
   return (ledger?.inputConstructionOutputAssessment ?? ledger?.inputConstructionOutputLedger ?? ledger ?? {}) as Record<string, any>;
 }
@@ -376,6 +404,7 @@ function openLedgerInputs(ledger: Record<string, any> | null | undefined): strin
     const hasRung = /F\s*[1-4]\b/.test(rung);
     const open = hasRung ? /F\s*[34]\b/.test(rung) : (framework === "high" || grounding === "weak");
     if (!open) continue;
+    if (nonGrantableAssumptionStatusFromText(ledgerEntryText(it as Record<string, any>))) continue;
     const name = strField((it as any).foundationLabel) || strField((it as any).input);
     if (name) names.push(shortName(name));
   }
@@ -401,6 +430,7 @@ function openLedgerConstructions(ledger: Record<string, any> | null | undefined)
     const hasRung = /F\s*[1-4]\b/.test(rung);
     const open = hasRung ? /F\s*[34]\b/.test(rung) : (validity === "conditional");
     if (!open) continue;
+    if (nonGrantableAssumptionStatusFromText(ledgerEntryText(it as Record<string, any>))) continue;
     const name = strField((it as any).construction);
     if (name) names.push(shortName(name));
   }

@@ -1796,7 +1796,7 @@ assert.match(assumptionConditionalsSource, /export function computeAssumptionCon
 // Only OPEN assumptions earn a conditional — ruled-out / confirmed never get a
 // "what if it were true" score. The status gate + classifier must be present.
 assert.match(assumptionConditionalsSource, /export function normalizeAssumptionStatus/);
-assert.match(assumptionConditionalsSource, /if \(status !== "open"\)/);
+assert.match(assumptionConditionalsSource, /if \(status !== "open" \|\| nonGrantableStatus\)/);
 assert.match(assumptionConditionalsSource, /ruled_out/);
 // "Wrong" causes get their own ineligible status — never a conditional.
 assert.match(assumptionConditionalsSource, /"error"/);
@@ -1986,6 +1986,33 @@ async function assertAssumptionConditionals() {
         ),
       });
       if (cWrong.applicable) throw new Error("#50 Campos: an invalid (wrong) F4 construction must NOT generate a conditional");
+      // #50 Campos second path: a ruled-out/failed analogy can be mislabeled
+      // "conditional"/F4 by the model, but it is not a genuine open physical
+      // assumption. "If the soap-bubble analogy holds" is ineligible once the
+      // review itself says the analogy does not hold.
+      const cSoapBubbleLedger = computeAssumptionConditionals({
+        inPhysicsScore: 8,
+        subscores: { input: 2, construction: 0, output: 0 },
+        raw: deriveAssumptionConditionalsRawFromLedger(
+          { inputConstructionOutputAssessment: {
+            input: { primitiveInputs: [{ input: "standard GR", groundingQuality: "strong", frameworkDependenceLevel: "low" }] },
+            construction: { introducedConstructions: [{
+              construction: "soap bubble analogy for black holes",
+              firmnessRung: "F4",
+              validityLevel: "conditional",
+              assessment: "the analogy does not hold for black holes and the construction fails",
+            }] },
+          } },
+          { input: 2, construction: 0, output: 0 },
+        ),
+      });
+      if (cSoapBubbleLedger.applicable) throw new Error("#50 Campos: a failed soap-bubble analogy must NOT generate a ledger-derived conditional");
+      const cSoapBubbleRaw = computeAssumptionConditionals({
+        inPhysicsScore: 8,
+        subscores: { input: 2, construction: 0, output: 0 },
+        raw: { outputStrengthScore: { assumptionName: "the soap-bubble analogy for black holes", assumptionStatus: "open", conditionalLiftScore: 10 } },
+      });
+      if (cSoapBubbleRaw.applicable) throw new Error("#50 Campos: a raw model-provided soap-bubble analogy must NOT generate a conditional");
       // Precise rung is authoritative when present: a CLOSED F1 input must stay
       // closed even if the grounding proxy is a noisy "weak" (the second Campos
       // misfire path). Proxy only applies when the rung is absent.
