@@ -100,6 +100,27 @@ const Section = ({ icon, label, color, children }: { icon: React.ReactNode; labe
 const winRatePercent = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? `${Math.round(value * 100)}%` : '—';
 
+const nonGrantableConditionalPattern =
+  /\b(?:soap[-\s]?bubble|bubble analogy|weak analogy|mere analogy|heuristic analogy|does not hold|do not hold|fails?|failed|invalid|unphysical|nonphysical|non-physical|incorrect|wrong|refut(?:ed|es|ing)?|contradict(?:ed|s|ing)?|inconsistent|unsound|incoherent|false|not valid|not justified|breaks down|break down|ruled[-\s]?out|falsified|disproven|disproved|known (?:to be )?false|overturned)\b/i;
+
+const isDisplayableAssumptionConditional = (conditional: any) => {
+  if (!conditional || !Array.isArray(conditional.assumptions) || typeof conditional.score !== 'number') return false;
+  return conditional.assumptions.every((assumption: unknown) => (
+    typeof assumption === 'string' &&
+    assumption.trim().length > 0 &&
+    !nonGrantableConditionalPattern.test(assumption)
+  ));
+};
+
+const displayableContingentOn = (conditionals: any) => {
+  const source = Array.isArray(conditionals?.contingentOn) ? conditionals.contingentOn : [];
+  return source.filter((assumption: unknown) => (
+    typeof assumption === 'string' &&
+    assumption.trim().length > 0 &&
+    !nonGrantableConditionalPattern.test(assumption)
+  ));
+};
+
 // Calibration transparency tab: the full trail from the stored
 // pairwiseCalibration object plus the raw pair judgments. Nothing is
 // stripped — both model rationales are shown verbatim for every pair.
@@ -1342,10 +1363,9 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     storedAggregate?.assumptionConditionals ??
     null;
   const conditionalSteps = Array.isArray(assumptionConditionals?.conditionals)
-    ? assumptionConditionals.conditionals.filter(
-        (c: any) => c && Array.isArray(c.assumptions) && typeof c.score === 'number',
-      )
+    ? assumptionConditionals.conditionals.filter(isDisplayableAssumptionConditional)
     : [];
+  const conditionalContingentOn = displayableContingentOn(assumptionConditionals);
   const showAssumptionConditionals =
     !selectedPass && assumptionConditionals?.applicable === true && conditionalSteps.length > 0;
   // "If all the paper's open proposals hold → N" — the cumulative top of the
@@ -1608,8 +1628,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                         </li>
                       ))}
                     </ul>
-                    {Array.isArray(assumptionConditionals.contingentOn) && assumptionConditionals.contingentOn.length > 0 && (
-                      <p className="mt-1 text-[11px] text-slate-500">Contingent on: {assumptionConditionals.contingentOn.join(' + ')}</p>
+                    {conditionalContingentOn.length > 0 && (
+                      <p className="mt-1 text-[11px] text-slate-500">Contingent on: {conditionalContingentOn.join(' + ')}</p>
                     )}
                   </div>
                 )}

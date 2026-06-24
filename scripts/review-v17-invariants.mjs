@@ -1889,6 +1889,13 @@ assert.match(reviewCardSource, /If all its open proposals hold/);
 assert.match(reviewCardSource, /conditionalSteps\.length >= 2/);
 assert.match(reviewCardSource, /allProposalsHoldScore/);
 assert.match(reviewCardSource, /Contingent on:/);
+// UI-side safety net for older saved reviews: non-grantable "what if this known
+// failed/weak analogy were true" conditionals must not render even if already
+// persisted in a review object.
+assert.match(reviewCardSource, /isDisplayableAssumptionConditional/);
+assert.match(reviewCardSource, /nonGrantableConditionalPattern/);
+assert.match(reviewCardSource, /soap\[-\\s\]\?bubble/);
+assert.match(reviewCardSource, /does not hold/);
 
 // Functional: the cumulative conditional chain from emitted per-dimension tags.
 async function assertAssumptionConditionals() {
