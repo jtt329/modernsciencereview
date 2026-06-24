@@ -2579,6 +2579,13 @@ assert.doesNotMatch(engineSource, /applyConsensusPinning/);
 assert.match(engineSource, /normalizeAggregateReview\(adjudicatorResult\.parsed, fallbackScores, fallbackRepresentativeReview\)/);
 assert.match(engineSource, /passesDisagree\(passResults\.map\(\(r\) => passReviewSubscores\(r\.review\)\)\)\.disagree/);
 assert.match(engineSource, /passResults\.length < MAX_BLIND_PASSES/);
+// The benchmark completion guard must accept the optional adaptive third blind
+// pass; otherwise contested papers fail after doing exactly what the sampler
+// requested.
+assert.ok(papersRouteSource.includes("MIN_BLIND_PASSES"));
+assert.ok(papersRouteSource.includes("MAX_BLIND_PASSES"));
+assert.ok(papersRouteSource.includes("^blind_pass_\\d+$"));
+assert.doesNotMatch(papersRouteSource, /Expected 2 valid blind passes/);
 // (A) Adjudicator prompt encodes the reconciliation philosophy: never average; a
 // correct finding from a single pass wins; a confirmed fatal defect floors.
 assert.match(adjudicatorPromptSource, /never\s+average/i);

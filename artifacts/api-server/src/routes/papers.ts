@@ -83,6 +83,7 @@ import {
 } from "../lib/consistencyCalibration";
 import { DEDUCTION_CONSISTENCY_V2_PROMPT } from "../lib/prompts/consistencyCalibrationV1";
 import { withModelRetry } from "../lib/modelRetry";
+import { MAX_BLIND_PASSES, MIN_BLIND_PASSES } from "../lib/adaptiveSampling";
 
 const ADMIN_EMAIL = process.env.VITE_ADMIN_EMAIL || process.env.ADMIN_EMAIL || "";
 
@@ -1531,10 +1532,13 @@ function benchmarkCompletionIssue(reviewValues: Record<string, any>) {
   const ledger = parseJsonObject(reviewValues.coverageLedgerJson ?? null);
   if (!ledger) return "Review ledger was not saved.";
   const passAudit = Array.isArray(ledger.passAudit) ? ledger.passAudit : [];
-  const blindPassAudit = passAudit.filter((entry: any) => /^blind_pass_[12]$/.test(String(entry?.role ?? "")));
+  const blindPassAudit = passAudit.filter((entry: any) => /^blind_pass_\d+$/.test(String(entry?.role ?? "")));
   const adjudicatorAudit = passAudit.find((entry: any) => entry?.role === "adjudicator");
   const textHashes = new Set(blindPassAudit.map((entry: any) => entry?.textHash).filter(Boolean));
   const pdfHashes = new Set(blindPassAudit.map((entry: any) => entry?.pdfHash ?? ""));
+  const validPassCount = Number.isFinite(Number(ledger.validPassCount))
+    ? Number(ledger.validPassCount)
+    : blindPassAudit.length;
   const deterministicReviewable = benchmarkSnapshotIsDeterministicallyReviewable(ledger);
   const invalidQuality = [
     ledger.reviewInputQuality,
@@ -1551,8 +1555,13 @@ function benchmarkCompletionIssue(reviewValues: Record<string, any>) {
   ) {
     return `Review input snapshot extraction status is ${ledger.reviewInputSnapshot.extractionCompletenessStatus}.`;
   }
-  if (Number(ledger.validPassCount ?? 0) !== 2 || blindPassAudit.length !== 2) {
-    return `Expected 2 valid blind passes but found ${ledger.validPassCount ?? blindPassAudit.length}.`;
+  if (
+    validPassCount < MIN_BLIND_PASSES ||
+    validPassCount > MAX_BLIND_PASSES ||
+    blindPassAudit.length < MIN_BLIND_PASSES ||
+    blindPassAudit.length > MAX_BLIND_PASSES
+  ) {
+    return `Expected ${MIN_BLIND_PASSES}-${MAX_BLIND_PASSES} valid blind passes but found ${validPassCount}.`;
   }
   if (ledger.adjudicatorStatus !== "success") {
     return `Adjudicator status is ${ledger.adjudicatorStatus ?? "unknown"}.`;
