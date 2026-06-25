@@ -19,6 +19,9 @@ async function buildAll() {
       path.resolve(artifactDir, "src/index.ts"),
       path.resolve(artifactDir, "src/worker.ts"),
       path.resolve(artifactDir, "src/supervisor.ts"),
+      // One-off maintenance entry: provenance backfill, bundled so it can run in
+      // the deployed image's Console (pg + db inlined) — see src/scripts/backfillProvenance.ts.
+      path.resolve(artifactDir, "src/scripts/backfillProvenance.ts"),
     ],
     platform: "node",
     bundle: true,
