@@ -2648,6 +2648,23 @@ assert.match(papersRouteSource, /REVIEW_PROMPT_VERSION,\s*\n\s*expectedModelName
 // (correction, Option 2) All models read the same identity-blind manuscript
 // text — GPT has no raw-PDF path, so the comparison stays fully controlled.
 assert.doesNotMatch(engineSource, /type: "input_file"/);
+// (audit) Provenance integrity: the stored ledger names the TRUE executed engine
+// per stage, not a hardcoded Gemini default. The legacy scalar fields are gone.
+assert.doesNotMatch(engineSource, /passModel: GEMINI_PASS_MODEL,/);
+assert.doesNotMatch(engineSource, /adjudicatorModel: GEMINI_META_MODEL,/);
+assert.match(engineSource, /passModel: resolvedPassModel,/);
+assert.match(engineSource, /passModels,/);
+assert.match(engineSource, /adjudicatorModel: resolvedAdjudicatorModel,/);
+assert.match(engineSource, /selectedModel: model,/);
+// Per-pass + adjudicator models read from the audit (the engine that answered).
+assert.match(engineSource, /scoringPassAudits\.map\(\(entry\) => entry\.model\)/);
+assert.match(engineSource, /find\(\(entry\) => entry\.role === "adjudicator"\)\?\.model/);
+// Loud fail if a saved pass / adjudication disagrees with the selected engine
+// (catches a silent Gemini fallback or a mislabel before it is persisted).
+assert.match(engineSource, /Provenance violation: review selected model/);
+assert.match(engineSource, /const mismatchedPass = passResults\.find\(\(r\) => r\.audit\.model !== expectedPassModelId\)/);
+// The thinkingText default no longer falsely names Gemini.
+assert.doesNotMatch(engineSource, /\$\{GEMINI_META_MODEL\} adjudicator reviewed the manuscript/);
 // (D) Contested papers surface visible uncertainty.
 assert.match(reviewCardSource, /contestedReview/);
 assert.match(reviewCardSource, /independent blind passes disagreed by/);

@@ -806,6 +806,7 @@ type AggregateReview = {
 type MultiPassReviewResult = {
   reviewRunId: string;
   modelName: string;
+  selectedModel: ReviewModel;
   pipelineMode: ReviewPipelineMode;
   systemPrompt: string;
   blindedContent: ReviewInput;
@@ -6228,7 +6229,7 @@ function normalizeAggregateReview(input: unknown, fallbackScores: number[], fall
       fallbackReview.finalJudgment,
     ]),
     internalCalibrationNotes: [
-      asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments, `${GEMINI_META_MODEL} adjudicator reviewed the manuscript and both independent ${GEMINI_PASS_MODEL} passes.`),
+      asString(source.internalCalibrationNotes ?? adjudicationSource.calibrationAdjustments, "The blind adjudicator reviewed the manuscript and the independent blind passes."),
       ...adjudicationRepairNotes,
     ].filter(Boolean).join("\n\n"),
     reviewInputQuality,
@@ -8413,6 +8414,25 @@ async function generateMultiPassReview(
   if (reviewQualityRequiresInvalidation(aggregate, reviewInputSnapshot)) {
     throw invalidReviewInputQualityError(aggregate, "Adjudicator", reviewInputSnapshot);
   }
+  // (provenance integrity) Every SAVED blind pass and the adjudication must have
+  // run on the SELECTED engine. There is no Gemini fallback in the scoring path,
+  // so a mismatch means a silent fallback or a mislabel slipped in — fail loudly
+  // rather than persist a review whose provenance disagrees with the engine that
+  // actually answered. (Extraction/metadata/comparator-calibration are separate
+  // helper stages and are intentionally Gemini for every model.)
+  const expectedPassModelId = scoringModelId(model, GEMINI_PASS_MODEL);
+  const mismatchedPass = passResults.find((r) => r.audit.model !== expectedPassModelId);
+  if (mismatchedPass) {
+    throw new Error(
+      `Provenance violation: review selected model "${model}" (${expectedPassModelId}) but a saved blind pass ran on "${mismatchedPass.audit.model}". Refusing to persist a mislabeled or silently-fallen-back review.`,
+    );
+  }
+  const expectedAdjudicatorModelId = scoringModelId(model, GEMINI_META_MODEL);
+  if (adjudicatorAudit && adjudicatorAudit.model !== expectedAdjudicatorModelId) {
+    throw new Error(
+      `Provenance violation: review selected model "${model}" but the adjudication ran on "${adjudicatorAudit.model}" (expected ${expectedAdjudicatorModelId}).`,
+    );
+  }
   let aggregateReview: AggregateReview = aggregate;
   const comparatorAuditEntries: ReviewRunAuditEntry[] = [];
   const comparatorContext = reviewMode === "normal-review" && options.selectComparatorContext
@@ -8512,13 +8532,14 @@ async function generateMultiPassReview(
   }
   const representativeReview = pickRepresentativeReview(individualReviews, aggregateReview.finalScoreBand.median);
   if (adjudicatorThinking) {
-    thinkingChunks.push(`Adjudicator (${GEMINI_META_MODEL})\n${adjudicatorThinking}`);
+    thinkingChunks.push(`Adjudicator (${scoringModelId(model, GEMINI_META_MODEL)})\n${adjudicatorThinking}`);
   }
   thinkingChunks.push(aggregateReview.internalCalibrationNotes);
 
   return {
     reviewRunId,
     modelName: expectedReviewModelName(reviewMode, model),
+    selectedModel: model,
     pipelineMode: reviewMode,
     systemPrompt,
     blindedContent,
@@ -8621,6 +8642,23 @@ export async function recalibrateStoredAggregateWithComparators(
 function buildStoredReviewValues(result: MultiPassReviewResult) {
   const { representativeReview, aggregate } = result;
   const generatedAt = new Date().toISOString();
+  // (provenance integrity) Name the TRUE executed engine per stage, read from the
+  // per-pass / adjudicator audit (which records the model that actually answered)
+  // rather than a hardcoded Gemini default. selectedModel is the engine chosen at
+  // upload; passModels is the real per-pass list (adaptive draws 2-3); the legacy
+  // scalar passModel/adjudicatorModel now carry the real values too.
+  const selectedModel = result.selectedModel;
+  const scoringPassAudits = result.passAudit.filter(
+    (entry) => typeof entry.role === "string" && entry.role.startsWith("blind_pass"),
+  );
+  const passModels = scoringPassAudits.length
+    ? scoringPassAudits.map((entry) => entry.model)
+    : result.individualReviews.map(() => scoringModelId(selectedModel, GEMINI_PASS_MODEL));
+  const resolvedPassModel = passModels[0] ?? scoringModelId(selectedModel, GEMINI_PASS_MODEL);
+  const resolvedAdjudicatorModel =
+    result.passAudit.find((entry) => entry.role === "adjudicator")?.model
+    ?? scoringModelId(selectedModel, GEMINI_META_MODEL);
+  const usesFlashScoring = /flash/i.test(`${resolvedPassModel} ${resolvedAdjudicatorModel}`);
   const extractionMethod = reviewExtractionMethod(result.blindedContent);
   const pdfVisibleFallbackUsed = extractionMethod === "gemini-native-pdf-fallback";
   const blindingStrength = pdfVisibleFallbackUsed ? "weaker" : "strong";
@@ -8669,8 +8707,12 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     promptHash: REVIEW_PROMPT_HASH,
     generatedAt,
     modelName: result.modelName,
-    passModel: GEMINI_PASS_MODEL,
-    adjudicatorModel: GEMINI_META_MODEL,
+    // True executed engine (brief #3 provenance fix): the model selected at
+    // upload + the real per-stage models that answered, not a Gemini default.
+    selectedModel,
+    passModel: resolvedPassModel,
+    passModels,
+    adjudicatorModel: resolvedAdjudicatorModel,
     // Actual realized blind-pass count (2, or 3 when adaptive sampling escalated
     // a contested paper) — not the floor.
     passCount: result.adaptiveSampling.passCount,
@@ -8729,8 +8771,8 @@ function buildStoredReviewValues(result: MultiPassReviewResult) {
     recognitionSuspected,
     hindsightSuspected,
     injectionSuspected,
-    usesFlashForScientificScoring: /flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
-    usesProOnlyForScientificScoring: !/flash/i.test(`${GEMINI_PASS_MODEL} ${GEMINI_META_MODEL}`),
+    usesFlashForScientificScoring: usesFlashScoring,
+    usesProOnlyForScientificScoring: !usesFlashScoring,
     intrinsicInputStrengthScore: canonicalReview.inputStrengthScore,
     intrinsicConstructionStrengthScore: canonicalReview.constructionStrengthScore,
     intrinsicOutputStrengthScore: canonicalReview.outputStrengthScore,
