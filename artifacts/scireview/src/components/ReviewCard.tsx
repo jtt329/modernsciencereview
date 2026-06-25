@@ -135,6 +135,73 @@ const displayableContingentOn = (conditionals: any) => {
   ));
 };
 
+const ConditionalScoreRow = ({
+  step,
+  isExpanded,
+  onToggle,
+}: {
+  step: any;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) => {
+  const textRef = React.useRef<HTMLParagraphElement | null>(null);
+  const [canExpand, setCanExpand] = useState(false);
+  const assumptions = Array.isArray(step?.assumptions) ? step.assumptions : [];
+  const conditionText = assumptions.join(' and ');
+  const hasStoredEllipsis = /\.\.\.|…/.test(conditionText);
+
+  useEffect(() => {
+    const node = textRef.current;
+    if (!node) return undefined;
+
+    const measure = () => {
+      const clippedHeight = node.scrollHeight > node.clientHeight + 1;
+      const clippedWidth = node.scrollWidth > node.clientWidth + 1;
+      const shouldExpand = clippedHeight || clippedWidth || hasStoredEllipsis || conditionText.length > 110;
+      setCanExpand((wasExpandable) => wasExpandable || shouldExpand);
+    };
+
+    measure();
+
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', measure);
+      return () => window.removeEventListener('resize', measure);
+    }
+
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [conditionText, hasStoredEllipsis, isExpanded]);
+
+  return (
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 text-xs text-slate-400">
+      <div className="min-w-0">
+        <p
+          ref={textRef}
+          className={`break-words transition-[max-height] duration-200 ${isExpanded ? 'max-h-none overflow-visible' : 'max-h-[4.5rem] overflow-hidden'}`}
+        >
+          <span className="mr-1">if</span>
+          <InlineMathText text={conditionText} className="text-sky-100/90" />
+          <span className="ml-1">{assumptions.length > 1 ? 'hold' : 'holds'}</span>
+        </p>
+        {canExpand && (
+          <button
+            type="button"
+            onClick={onToggle}
+            className="mt-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300/80 hover:text-sky-100"
+          >
+            {isExpanded ? 'Show less' : 'See more'}
+          </button>
+        )}
+      </div>
+      <p className="whitespace-nowrap text-right">
+        <span className="text-slate-500">→</span>
+        <span className="ml-1 font-black text-sky-200/90">~{Math.round(step.score)}</span>
+      </p>
+    </li>
+  );
+};
+
 // Calibration transparency tab: the full trail from the stored
 // pairwiseCalibration object plus the raw pair judgments. Nothing is
 // stripped — both model rationales are shown verbatim for every pair.
@@ -1662,34 +1729,17 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                       {conditionalSteps.map((step: any, index: number) => {
                         const conditionText = step.assumptions.join(' and ');
                         const conditionKey = `${index}:${conditionText}`;
-                        const isLongCondition = conditionText.length > 130;
                         const isExpanded = Boolean(expandedConditionalRows[conditionKey]);
                         return (
-                          <li key={conditionKey} className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 text-xs text-slate-400">
-                            <div className="min-w-0">
-                              <p className={`${isLongCondition && !isExpanded ? 'max-h-12 overflow-hidden' : ''}`}>
-                                <span className="mr-1">if</span>
-                                <InlineMathText text={conditionText} className="text-sky-100/90" />
-                                <span className="ml-1">{step.assumptions.length > 1 ? 'hold' : 'holds'}</span>
-                              </p>
-                              {isLongCondition && (
-                                <button
-                                  type="button"
-                                  onClick={() => setExpandedConditionalRows((rows) => ({
-                                    ...rows,
-                                    [conditionKey]: !isExpanded,
-                                  }))}
-                                  className="mt-0.5 text-[10px] font-black uppercase tracking-wider text-sky-300/80 hover:text-sky-100"
-                                >
-                                  {isExpanded ? 'Show less' : 'See more'}
-                                </button>
-                              )}
-                            </div>
-                            <p className="whitespace-nowrap text-right">
-                              <span className="text-slate-500">→</span>
-                              <span className="ml-1 font-black text-sky-200/90">~{Math.round(step.score)}</span>
-                            </p>
-                          </li>
+                          <ConditionalScoreRow
+                            key={conditionKey}
+                            step={step}
+                            isExpanded={isExpanded}
+                            onToggle={() => setExpandedConditionalRows((rows) => ({
+                              ...rows,
+                              [conditionKey]: !isExpanded,
+                            }))}
+                          />
                         );
                       })}
                     </ul>
