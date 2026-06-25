@@ -899,6 +899,13 @@ const DEDUCTION_FIRST_PRINCIPLES_ENABLED = process.env.ENABLE_DEDUCTION_FIRST_PR
 // live only in structured fields). ACTIVATED BY DEFAULT; set
 // ENABLE_FIRMNESS_RUNG=false to revert to the proxy-only behavior.
 const FIRMNESS_RUNG_ENABLED = process.env.ENABLE_FIRMNESS_RUNG !== "false";
+// v19.0.8 — the firmness/validity classification of a load-bearing element must
+// be CONSISTENT with the deduction analysis: a premise the review refutes or
+// deducts for is refuted (no "if-true" lift), never an open F3/F4 conjecture.
+// Closes the Campos incoherent-conditional bug at the reasoning level (the model
+// stops marking a refuted premise as open), not by a code clamp. ACTIVATED BY
+// DEFAULT; set ENABLE_CONDITIONAL_COHERENCE=false to revert.
+const CONDITIONAL_COHERENCE_ENABLED = process.env.ENABLE_CONDITIONAL_COHERENCE !== "false";
 const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
 --------------------------
 
@@ -1063,11 +1070,40 @@ include it as an introduced-construction entry and give it its firmnessRung
 (F3/F4 if open). Only include assumptions the result actually rests on (remove it
 and the result fails), never concepts merely mentioned in passing.`;
 
+const CONDITIONAL_COHERENCE_DELTA = String.raw`Refuted is not open — conditional coherence
+-------------------------------------------
+
+Your firmness/validity classification of every load-bearing element MUST be
+CONSISTENT with your own deduction analysis. The "if-true" conditional exists
+only for GENUINE open uncertainty — an admissible premise that is unproven but
+NOT contradicted (an accepted framework, an unproven conjecture like a duality or
+typicality assumption, a reasonable-but-unverified modeling choice). It must
+NEVER rest on a premise you judged false.
+
+So, when you DEDUCT a dimension's established score because a load-bearing input
+or construction is invalid, unphysical, internally inconsistent, refuted,
+falsified, or an inappropriate / incorrect modeling choice (e.g. a mere analogy
+treated as a derivation), that element is REFUTED, not open:
+- it is NOT firmnessRung F3 or F4 — F3/F4 is reserved for admissible,
+  not-yet-confirmed premises that are still viable; a refuted premise is not
+  viable, so it does not get a conjectural rung;
+- for an introduced construction, set its validityLevel to "invalid";
+- say plainly in its grounding/assessment that it is refuted/invalid.
+
+A result whose central output depends on a refuted premise has a FATAL FLAW: it
+earns the deduction AND no conditional — the refuted premise belongs in the
+excluded set, with no "if-true" lift. Do not floor the established score for a
+broken premise and then hand the paper a high second score contingent on that
+same broken premise being true; that contradicts your own analysis. Granting "if
+the false thing were true" is not a meaningful conditional. Only an admissible
+open premise (one you did NOT deduct for as wrong) may carry an if-true lift.`;
+
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
   ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
   DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
   FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
+  CONDITIONAL_COHERENCE_ENABLED ? CONDITIONAL_COHERENCE_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 const withActiveDeltas = (base: string) =>
@@ -1076,7 +1112,9 @@ const withActiveDeltas = (base: string) =>
 const ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas(BLIND_REVIEW_PASS_V19_PROMPT);
 const ACTIVE_FULL_PROMPT = withActiveDeltas(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
 
-export const REVIEW_PROMPT_VERSION = FIRMNESS_RUNG_ENABLED
+export const REVIEW_PROMPT_VERSION = CONDITIONAL_COHERENCE_ENABLED
+  ? "v19.0.8-computed-ico-halfpoint"
+  : FIRMNESS_RUNG_ENABLED
   ? "v19.0.7-computed-ico-halfpoint"
   : DEDUCTION_FIRST_PRINCIPLES_ENABLED
     ? "v19.0.6-computed-ico-halfpoint"
@@ -1108,7 +1146,9 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(ACTIVE_BLIND_REVIEW_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = FIRMNESS_RUNG_ENABLED
+export const REVIEW_PROMPT_NAME = CONDITIONAL_COHERENCE_ENABLED
+  ? "v19.0.8 computed ICO half-point"
+  : FIRMNESS_RUNG_ENABLED
   ? "v19.0.7 computed ICO half-point"
   : DEDUCTION_FIRST_PRINCIPLES_ENABLED
     ? "v19.0.6 computed ICO half-point"
@@ -1120,7 +1160,9 @@ export const REVIEW_PROMPT_NAME = FIRMNESS_RUNG_ENABLED
           ? "v19.0.3 computed ICO half-point"
           : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = FIRMNESS_RUNG_ENABLED
+export const REVIEW_PROMPT_DATE = CONDITIONAL_COHERENCE_ENABLED
+  ? "2026-06-25"
+  : FIRMNESS_RUNG_ENABLED
   ? "2026-06-20"
   : DEDUCTION_FIRST_PRINCIPLES_ENABLED
     ? "2026-06-20"
@@ -1173,6 +1215,7 @@ const ADJUDICATOR_PROMPT_DELTAS = [
   ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
   DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
   FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
+  CONDITIONAL_COHERENCE_ENABLED ? CONDITIONAL_COHERENCE_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 export const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(

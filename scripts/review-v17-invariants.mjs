@@ -1031,7 +1031,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = FIRMNESS_RUNG_ENABLED[\s\S]{0,420}"2026-06-14" : "2026-06-12"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = CONDITIONAL_COHERENCE_ENABLED[\s\S]{0,520}"2026-06-14" : "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -2325,6 +2325,25 @@ assert.match(engineSource, /v19\.0\.7-computed-ico-halfpoint/);
 // Derivation keys on the precise rung (F3/F4) with the proxy as fallback, on
 // both inputs and constructions.
 assert.match(assumptionConditionalsSource, /\/F\\s\*\[34\]\\b\/\.test\(rung\)/);
+
+// v19.0.8 (default-on): conditional coherence — the model must classify a
+// refuted/deducted premise as refuted (validityLevel "invalid", never F3/F4), so
+// the ledger-derived "if-true" conditional cannot rest on a premise the review
+// judged false (the Campos incoherent-conditional fix; reasoning-level, no clamp).
+assert.match(engineSource, /CONDITIONAL_COHERENCE_ENABLED = process\.env\.ENABLE_CONDITIONAL_COHERENCE !== "false"/);
+assert.match(engineSource, /Refuted is not open — conditional coherence/);
+assert.match(engineSource, /CONDITIONAL_COHERENCE_ENABLED \? CONDITIONAL_COHERENCE_DELTA : null/);
+// Wired into BOTH the blind-pass active deltas AND the adjudicator deltas (the
+// conditional is derived from the adjudicator's resolved ICO ledger).
+assert.ok(
+  (engineSource.match(/CONDITIONAL_COHERENCE_ENABLED \? CONDITIONAL_COHERENCE_DELTA : null/g) || []).length >= 2,
+  "CONDITIONAL_COHERENCE_DELTA must be active in both the blind-pass and adjudicator delta sets",
+);
+// Version bumped to v19.0.8 when the coherence delta is on (prompt-text change).
+assert.match(engineSource, /CONDITIONAL_COHERENCE_ENABLED\s*\?\s*"v19\.0\.8-computed-ico-halfpoint"/);
+// The delta names the refuted->invalid classification + the no-conditional rule.
+assert.match(engineSource, /set its validityLevel to "invalid"/);
+assert.match(engineSource, /earns the deduction AND no conditional/);
 
 // #2 Calibration enforces existing rules cross-paper (no prompt/hash change):
 // conjecture-ceiling + reason-grouped deduction consistency, flagged then
