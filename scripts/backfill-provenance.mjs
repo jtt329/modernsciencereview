@@ -55,8 +55,16 @@ function changedKeys(a, b) {
 }
 
 globalThis.__run = (async () => {
-  const reviews = await db.select().from(reviewsTable);
-  const papers = await db.select().from(papersTable);
+  // Explicit column projection: the code schema is ahead of the prod DB on some
+  // columns (e.g. simplified_explanation), and we only need these five.
+  const reviews = await db.select({
+    id: reviewsTable.id,
+    paperId: reviewsTable.paperId,
+    score: reviewsTable.score,
+    modelName: reviewsTable.modelName,
+    coverageLedgerJson: reviewsTable.coverageLedgerJson,
+  }).from(reviewsTable);
+  const papers = await db.select({ id: papersTable.id, title: papersTable.title }).from(papersTable);
   const titleById = new Map(papers.map((p) => [p.id, p.title]));
 
   const report = [];
