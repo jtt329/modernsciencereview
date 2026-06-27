@@ -913,6 +913,11 @@ const CONDITIONAL_COHERENCE_ENABLED = process.env.ENABLE_CONDITIONAL_COHERENCE !
 // dimension over. Reasoning-level (no clamp). ACTIVATED BY DEFAULT; set
 // ENABLE_INPUT_COHERENCE=false to revert.
 const INPUT_COHERENCE_ENABLED = process.env.ENABLE_INPUT_COHERENCE !== "false";
+// v19.1.0 — the per-element / per-section assessment fields must carry the
+// reasoning that determines the subscores (audit trail), not one-line labels.
+// Pairs with the assessment-driven Input score. ACTIVATED BY DEFAULT; set
+// ENABLE_ASSESSMENT_DEPTH=false to revert.
+const ASSESSMENT_DEPTH_ENABLED = process.env.ENABLE_ASSESSMENT_DEPTH !== "false";
 const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
 --------------------------
 
@@ -1079,71 +1084,101 @@ and the result fails), never concepts merely mentioned in passing.`;
 
 const CONDITIONAL_COHERENCE_DELTA = String.raw`Refuted is not open — conditional coherence
 -------------------------------------------
+A subscore, a firmness rung, and an if-true conditional are three projections of
+one judgment about an element; they must agree with each other and with your
+deduction analysis. Incoherence — flooring a dimension for a broken premise and
+then lifting it with a conditional on that same premise, or rating an element firm
+while your own assessment calls it broken — is the signature of a signal other than
+your finding (the element's pedigree, fame, or the prestige of its framework)
+leaking into a slot that must reflect only what you concluded.
 
-Your firmness/validity classification of every load-bearing element MUST be
-CONSISTENT with your own deduction analysis. The "if-true" conditional exists
-only for GENUINE open uncertainty — an admissible premise that is unproven but
-NOT contradicted (an accepted framework, an unproven conjecture like a duality or
-typicality assumption, a reasonable-but-unverified modeling choice). It must
-NEVER rest on a premise you judged false.
+The "if-true" conditional exists ONLY for genuine open uncertainty: an admissible
+premise — unproven but not contradicted, one that could still turn out true without
+conflicting with known results (an accepted-but-unconfirmed framework; an unproven
+conjecture such as a duality, typicality, or genericity assumption; a
+reasonable-but-unverified modeling choice). Only an admissible open premise may
+carry an if-true lift.
 
-So, when you DEDUCT a dimension's established score because a load-bearing input
-or construction is invalid, unphysical, internally inconsistent, refuted,
-falsified, or an inappropriate / incorrect modeling choice (e.g. a mere analogy
-treated as a derivation), that element is REFUTED, not open:
-- it is NOT firmnessRung F3 or F4 — F3/F4 is reserved for admissible,
-  not-yet-confirmed premises that are still viable; a refuted premise is not
-  viable, so it does not get a conjectural rung;
+A premise you judged FALSE is not open and earns no conditional. The test for
+"wrong as used" is whether the manuscript's actual use of the element meets the
+conditions under which it would be valid; when it does not, the element is REFUTED,
+and granting it "as true" is incoherent because your analysis already found it
+false. This failure takes structurally different forms — reason from the test to
+recognize it in any form, including those not listed; the set below spans the
+kinds, it is not a checklist to match:
+- formal: an algebra, sign, factor, or dimensional error in the load-bearing step;
+- domain: a valid theorem or formula invoked outside the hypotheses where it holds,
+  or a limit/approximation pushed into a regime where it breaks;
+- inferential: an analogy, metaphor, or heuristic presented as a derivation, or a
+  suggestive correspondence treated as an identity;
+- circular: a step that assumes what it sets out to establish;
+- conflation: two distinct quantities, regimes, or concepts treated as one;
+- ad hoc: an assumption, parameter, or definition introduced after the fact to
+  force the result;
+- inconsistent: a step that contradicts another part of the work or a firmly
+  established constraint.
+For any such element:
+- it is NOT firmnessRung F3 or F4 — those are reserved for admissible,
+  not-yet-confirmed premises that remain viable; a refuted premise is not viable;
 - for an introduced construction, set its validityLevel to "invalid";
-- say plainly in its grounding/assessment that it is refuted/invalid.
-
+- say plainly in its grounding/assessment that it is refuted/invalid, and why.
 A result whose central output depends on a refuted premise has a FATAL FLAW: it
-earns the deduction AND no conditional — the refuted premise belongs in the
-excluded set, with no "if-true" lift. Do not floor the established score for a
-broken premise and then hand the paper a high second score contingent on that
-same broken premise being true; that contradicts your own analysis. Granting "if
-the false thing were true" is not a meaningful conditional. Only an admissible
-open premise (one you did NOT deduct for as wrong) may carry an if-true lift.`;
+earns the deduction AND no conditional — the refuted premise goes in the excluded
+set with no if-true lift. Do not floor the established score for a broken premise
+and then hand the paper a high second score contingent on that same premise being
+true; that contradicts your own analysis. Granting "if the false thing were true"
+is not a meaningful conditional.`;
 
 const INPUT_DIMENSION_COHERENCE_DELTA = String.raw`Input dimension — the assessment drives the score
 -------------------------------------------------
-
 The Input Strength score must be driven by your ASSESSMENT of the load-bearing
-inputs — whether each is correct AS APPLIED in THIS manuscript — not by the
-input's pedigree. Grounding quality, fundamentality, and framework dependence
-describe an input's standing in the literature; they are DESCRIPTIVE CONTEXT, not
-the score. A textbook-standard formula applied with a fatal algebraic error, a
-valid premise used in an invalid way, or a refuted analogy treated as a
-derivation is NOT a strong input here, however impeccable its pedigree. Score
-validity-as-applied, not provenance.
+inputs — whether each is correct AS APPLIED in THIS manuscript — not by the input's
+pedigree. Grounding quality, fundamentality, and framework dependence describe an
+input's standing in the literature; they are DESCRIPTIVE CONTEXT, not the score.
+The most impeccable result in science, used wrongly, is not a strong input here.
+Score validity-as-applied, not provenance.
 
-Fatal flaw in a load-bearing input floors the Input dimension. If a primitive
-input the contribution depends on has an assessment identifying a fatal or
-disqualifying flaw — misapplication, algebraic error, invalid premise, refuted
-analogy — the Input section score must crater, exactly as a refuted premise earns
-no if-true lift (the same coherence rule, one dimension over). Reason to this; do
-NOT let a favorable grounding/fundamentality/framework rating hold the number up.
-Your Input score must be consistent with your own assessment prose: if the
-assessment says the load-bearing input is fatally misused, the number is low.
+Whether an input is "wrong as applied" is judged by the same test and the same
+structural forms set out under conditional coherence above: if the input, as the
+manuscript actually uses it, does not meet the conditions under which it would be
+valid, it is fatally misapplied — and its pedigree earns it nothing.
 
-Concretely: Input Strength measures the inputs AS THEY FUNCTION in this paper, so
-a fatally-misapplied load-bearing input contributes essentially nothing usable and
-scores in the BOTTOM band of Input Strength (0-2). Its impeccable pedigree
-("the formula is standard") earns it NO Input credit once the load-bearing use is
-broken — "standard formula, fatal error solving it" is a bottom-band Input, not a
-middling one. Do not split the difference between a strong pedigree and a fatal
-misuse; the misuse governs.
+A fatal flaw in a load-bearing input floors the Input dimension. If a primitive
+input the contribution depends on is fatally misapplied in your assessment, the
+Input section score must crater — the same coherence rule as the refused if-true
+lift, one dimension over. Do NOT let a favorable grounding/fundamentality/framework
+rating hold the number up; the score must agree with your assessment prose. Such an
+input contributes essentially nothing usable and belongs in the bottom band (0-2)
+of Input Strength; do not split the difference between a strong pedigree and a
+fatal misuse — the misuse governs.
 
 Score the Input dimension at the SECTION level, informed by the per-input
 assessments — do NOT average per-input firmness. A load-bearing fatal flaw
-DOMINATES the section score; an incidental valid input (e.g. correct use of
-general relativity alongside the broken step) does not dilute it.
+DOMINATES the section score; an incidental sound input used correctly elsewhere
+does not dilute it.
 
 This must NOT flatten Input on sound papers. When every load-bearing input is
 correct as applied, score the Input dimension on its genuine firmness with FULL
-differentiation — a strong, deep, correctly-applied input set scores high and
-still outscores a marginal one. The floor triggers ONLY on a fatal flaw in a
-load-bearing input, never as a blanket penalty.`;
+differentiation — a strong, deep, correctly-applied input set scores high and still
+outscores a marginal one. The floor triggers ONLY on a fatal flaw in a load-bearing
+input, never as a blanket penalty.`;
+
+const ASSESSMENT_DEPTH_DELTA = String.raw`Assessment depth — the assessment carries the reasoning
+-------------------------------------------------------
+The per-element and per-section assessment fields — for every primitive input,
+introduced construction, and output, and for each section's overallAssessment —
+are not labels or summaries. They carry the reasoning that determines the
+subscores, and a reader must be able to audit each subscore from them alone. For
+every load-bearing element, the assessment must state BOTH the judgment AND the
+specific reasoning behind it: what is right or wrong about the element as applied
+in this manuscript, the step or evidence that establishes it, and what it implies
+for the dimension's score. Do not merely restate the element's name, pedigree, or
+standing in the literature; explain its validity as used here. Make the depth
+proportional to how much the element bears on the contribution — a single bland
+sentence is insufficient for a load-bearing strength or a load-bearing flaw,
+though a genuinely minor element may stay brief. The subscore and its assessment
+prose must agree: if a dimension is scored low, its assessment must show why; if
+high, likewise.`;
 
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
@@ -1152,6 +1187,7 @@ const ACTIVE_PROMPT_DELTAS = [
   FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
   CONDITIONAL_COHERENCE_ENABLED ? CONDITIONAL_COHERENCE_DELTA : null,
   INPUT_COHERENCE_ENABLED ? INPUT_DIMENSION_COHERENCE_DELTA : null,
+  ASSESSMENT_DEPTH_ENABLED ? ASSESSMENT_DEPTH_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 const withActiveDeltas = (base: string) =>
@@ -1160,7 +1196,9 @@ const withActiveDeltas = (base: string) =>
 const ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas(BLIND_REVIEW_PASS_V19_PROMPT);
 const ACTIVE_FULL_PROMPT = withActiveDeltas(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
 
-export const REVIEW_PROMPT_VERSION = INPUT_COHERENCE_ENABLED
+export const REVIEW_PROMPT_VERSION = ASSESSMENT_DEPTH_ENABLED
+  ? "v19.1.0-computed-ico-halfpoint"
+  : INPUT_COHERENCE_ENABLED
   ? "v19.0.9-computed-ico-halfpoint"
   : CONDITIONAL_COHERENCE_ENABLED
   ? "v19.0.8-computed-ico-halfpoint"
@@ -1196,7 +1234,9 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(ACTIVE_BLIND_REVIEW_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = INPUT_COHERENCE_ENABLED
+export const REVIEW_PROMPT_NAME = ASSESSMENT_DEPTH_ENABLED
+  ? "v19.1.0 computed ICO half-point"
+  : INPUT_COHERENCE_ENABLED
   ? "v19.0.9 computed ICO half-point"
   : CONDITIONAL_COHERENCE_ENABLED
   ? "v19.0.8 computed ICO half-point"
@@ -1212,7 +1252,9 @@ export const REVIEW_PROMPT_NAME = INPUT_COHERENCE_ENABLED
           ? "v19.0.3 computed ICO half-point"
           : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = INPUT_COHERENCE_ENABLED
+export const REVIEW_PROMPT_DATE = ASSESSMENT_DEPTH_ENABLED
+  ? "2026-06-27"
+  : INPUT_COHERENCE_ENABLED
   ? "2026-06-25"
   : CONDITIONAL_COHERENCE_ENABLED
   ? "2026-06-25"
@@ -1271,6 +1313,7 @@ const ADJUDICATOR_PROMPT_DELTAS = [
   FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
   CONDITIONAL_COHERENCE_ENABLED ? CONDITIONAL_COHERENCE_DELTA : null,
   INPUT_COHERENCE_ENABLED ? INPUT_DIMENSION_COHERENCE_DELTA : null,
+  ASSESSMENT_DEPTH_ENABLED ? ASSESSMENT_DEPTH_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 export const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(

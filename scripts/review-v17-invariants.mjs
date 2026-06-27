@@ -1031,7 +1031,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = INPUT_COHERENCE_ENABLED[\s\S]{0,640}"2026-06-14" : "2026-06-12"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = ASSESSMENT_DEPTH_ENABLED[\s\S]{0,760}"2026-06-14" : "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -2355,9 +2355,24 @@ assert.ok(
   (engineSource.match(/INPUT_COHERENCE_ENABLED \? INPUT_DIMENSION_COHERENCE_DELTA : null/g) || []).length >= 2,
   "INPUT_DIMENSION_COHERENCE_DELTA must be active in both the blind-pass and adjudicator delta sets",
 );
-assert.match(engineSource, /INPUT_COHERENCE_ENABLED\s*\?\s*"v19\.0\.9-computed-ico-halfpoint"/);
+assert.match(engineSource, /INPUT_COHERENCE_ENABLED\s*\n?\s*\?\s*"v19\.0\.9-computed-ico-halfpoint"/);
+// v19.1.0 (default-on): assessment-depth delta — assessments carry the reasoning
+// that drives the subscores. Conditional/input coherence deltas reworded (rev 2):
+// unifying coherence principle + a spanning failure taxonomy (reason beyond, not
+// match), eval-paper quotes removed. New top version branch.
+assert.match(engineSource, /ASSESSMENT_DEPTH_ENABLED = process\.env\.ENABLE_ASSESSMENT_DEPTH !== "false"/);
+assert.match(engineSource, /Assessment depth — the assessment carries the reasoning/);
+assert.ok(
+  (engineSource.match(/ASSESSMENT_DEPTH_ENABLED \? ASSESSMENT_DEPTH_DELTA : null/g) || []).length >= 2,
+  "ASSESSMENT_DEPTH_DELTA must be active in both the blind-pass and adjudicator delta sets",
+);
+assert.match(engineSource, /ASSESSMENT_DEPTH_ENABLED\s*\n?\s*\?\s*"v19\.1\.0-computed-ico-halfpoint"/);
+// rev-2 coherence: unifying-projection principle + spanning taxonomy + shared reference.
+assert.match(engineSource, /three projections of\n?\s*one judgment/);
+assert.match(engineSource, /the set below spans the\n?\s*kinds, it is not a checklist to match/);
+assert.match(engineSource, /the same test and the same\n?\s*structural forms set out under conditional coherence above/);
 // Fatal flaw floors Input at the SECTION level; sound papers keep differentiation.
-assert.match(engineSource, /Fatal flaw in a load-bearing input floors the Input dimension/);
+assert.match(engineSource, /fatal flaw in a load-bearing input floors the Input dimension/i);
 assert.match(engineSource, /do NOT average per-input firmness/);
 assert.match(engineSource, /This must NOT flatten Input on sound papers/);
 // The descriptive axes remain DESCRIPTIVE CONTEXT, not score inputs.
