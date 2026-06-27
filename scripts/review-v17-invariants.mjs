@@ -1031,7 +1031,7 @@ assert.match(howItWorksSource, /not the reviewing model/);
 assert.match(routesSource, /\/protocol-chat/);
 assert.match(routesSource, /You are not the reviewing model and you never claim to be/);
 assert.match(routesSource, /promptDate: REVIEW_PROMPT_DATE/);
-assert.match(engineSource, /REVIEW_PROMPT_DATE = CONDITIONAL_COHERENCE_ENABLED[\s\S]{0,520}"2026-06-14" : "2026-06-12"/);
+assert.match(engineSource, /REVIEW_PROMPT_DATE = INPUT_COHERENCE_ENABLED[\s\S]{0,640}"2026-06-14" : "2026-06-12"/);
 
 // Prompt sandbox: separate table and admin routes only; the public export
 // path never reads sandbox_reviews.
@@ -2344,6 +2344,24 @@ assert.match(engineSource, /CONDITIONAL_COHERENCE_ENABLED\s*\?\s*"v19\.0\.8-comp
 // The delta names the refuted->invalid classification + the no-conditional rule.
 assert.match(engineSource, /set its validityLevel to "invalid"/);
 assert.match(engineSource, /earns the deduction AND no conditional/);
+
+// v19.0.9 (default-on): Input-dimension coherence — the per-input ASSESSMENT
+// (validity as applied) drives the Input score, not the pedigree axes; a fatal
+// flaw in a load-bearing input floors the Input section (reasoning-level, no
+// clamp; inputStrengthScore stays model-emitted). Must not flatten sound papers.
+assert.match(engineSource, /INPUT_COHERENCE_ENABLED = process\.env\.ENABLE_INPUT_COHERENCE !== "false"/);
+assert.match(engineSource, /Input dimension — the assessment drives the score/);
+assert.ok(
+  (engineSource.match(/INPUT_COHERENCE_ENABLED \? INPUT_DIMENSION_COHERENCE_DELTA : null/g) || []).length >= 2,
+  "INPUT_DIMENSION_COHERENCE_DELTA must be active in both the blind-pass and adjudicator delta sets",
+);
+assert.match(engineSource, /INPUT_COHERENCE_ENABLED\s*\?\s*"v19\.0\.9-computed-ico-halfpoint"/);
+// Fatal flaw floors Input at the SECTION level; sound papers keep differentiation.
+assert.match(engineSource, /Fatal flaw in a load-bearing input floors the Input dimension/);
+assert.match(engineSource, /do NOT average per-input firmness/);
+assert.match(engineSource, /This must NOT flatten Input on sound papers/);
+// The descriptive axes remain DESCRIPTIVE CONTEXT, not score inputs.
+assert.match(engineSource, /they are DESCRIPTIVE CONTEXT, not\n?\s*the score/);
 
 // #2 Calibration enforces existing rules cross-paper (no prompt/hash change):
 // conjecture-ceiling + reason-grouped deduction consistency, flagged then

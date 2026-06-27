@@ -2035,14 +2035,25 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                 </span>
                                 <div className="min-w-0 flex-1 space-y-1">
                                   <Markdown>{item.input}</Markdown>
-                                  {item.role && <Markdown>{item.role}</Markdown>}
+                                  {item.role && <Markdown>{`**How it's applied:** ${item.role}`}</Markdown>}
                                 </div>
                               </div>
-                              <div className="space-y-1">
-                                {(item.grounding || item.groundingQuality) && qualityLine('Grounding', item.grounding || item.groundingQuality, groundingTone(item.groundingQuality || item.grounding))}
-                                {(item.fundamentalityLevel || item.fundamentality) && qualityLine('Fundamentality', item.fundamentalityLevel || item.fundamentality, levelTone(item.fundamentalityLevel || item.fundamentality))}
-                                {(item.frameworkDependenceLevel || item.frameworkDependence) && qualityLine('Framework Dependence', item.frameworkDependenceLevel || item.frameworkDependence, levelTone(item.frameworkDependenceLevel || item.frameworkDependence, true))}
-                              </div>
+                              {/* Assessment — the load-bearing judgment (validity as applied) that
+                                  drives the Input score; surfaced first, above the descriptive axes. */}
+                              {item.assessment && (
+                                <div className="rounded-lg border border-indigo-300/30 bg-indigo-300/[0.07] p-3">
+                                  <p className="text-[9px] font-black text-indigo-200 uppercase tracking-widest mb-1">Assessment — validity as applied</p>
+                                  <Markdown>{formatAssessmentMarkdown(item.assessment)}</Markdown>
+                                </div>
+                              )}
+                              {(item.grounding || item.groundingQuality || item.fundamentalityLevel || item.fundamentality || item.frameworkDependenceLevel || item.frameworkDependence) && (
+                                <div className="space-y-1">
+                                  <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Pedigree (context, not the score)</p>
+                                  {(item.grounding || item.groundingQuality) && qualityLine('Grounding', item.grounding || item.groundingQuality, groundingTone(item.groundingQuality || item.grounding))}
+                                  {(item.fundamentalityLevel || item.fundamentality) && qualityLine('Fundamentality', item.fundamentalityLevel || item.fundamentality, levelTone(item.fundamentalityLevel || item.fundamentality))}
+                                  {(item.frameworkDependenceLevel || item.frameworkDependence) && qualityLine('Framework Dependence', item.frameworkDependenceLevel || item.frameworkDependence, levelTone(item.frameworkDependenceLevel || item.frameworkDependence, true))}
+                                </div>
+                              )}
                               {(item.foundationLabel || item.confirmednessNote) && (
                                 <div className="border-t border-white/10 pt-3">
                                   <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Rests on</p>
@@ -2057,12 +2068,6 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                                     {item.firmnessRung && <span className="ml-2 text-[10px] font-black uppercase tracking-widest text-slate-400">{item.firmnessRung}</span>}
                                   </p>
                                   {item.confirmednessNote && <p className="text-xs text-slate-400 mt-1">{item.confirmednessNote}</p>}
-                                </div>
-                              )}
-                              {item.assessment && (
-                                <div className="border-t border-white/10 pt-3">
-                                  <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Assessment</p>
-                                  <Markdown>{formatAssessmentMarkdown(item.assessment)}</Markdown>
                                 </div>
                               )}
                             </div>

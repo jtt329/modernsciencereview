@@ -906,6 +906,13 @@ const FIRMNESS_RUNG_ENABLED = process.env.ENABLE_FIRMNESS_RUNG !== "false";
 // stops marking a refuted premise as open), not by a code clamp. ACTIVATED BY
 // DEFAULT; set ENABLE_CONDITIONAL_COHERENCE=false to revert.
 const CONDITIONAL_COHERENCE_ENABLED = process.env.ENABLE_CONDITIONAL_COHERENCE !== "false";
+// v19.0.9 — the Input-dimension score must be driven by the per-input ASSESSMENT
+// (validity AS APPLIED), not the favorable pedigree axes (grounding /
+// fundamentality / framework-dependence). A fatal flaw in a load-bearing input
+// floors the Input section, mirroring the v19.0.8 refuted-premise rule one
+// dimension over. Reasoning-level (no clamp). ACTIVATED BY DEFAULT; set
+// ENABLE_INPUT_COHERENCE=false to revert.
+const INPUT_COHERENCE_ENABLED = process.env.ENABLE_INPUT_COHERENCE !== "false";
 const LINKED_INPUT_JUSTIFICATION_DELTA = String.raw`Linked-input justification
 --------------------------
 
@@ -1098,12 +1105,53 @@ same broken premise being true; that contradicts your own analysis. Granting "if
 the false thing were true" is not a meaningful conditional. Only an admissible
 open premise (one you did NOT deduct for as wrong) may carry an if-true lift.`;
 
+const INPUT_DIMENSION_COHERENCE_DELTA = String.raw`Input dimension — the assessment drives the score
+-------------------------------------------------
+
+The Input Strength score must be driven by your ASSESSMENT of the load-bearing
+inputs — whether each is correct AS APPLIED in THIS manuscript — not by the
+input's pedigree. Grounding quality, fundamentality, and framework dependence
+describe an input's standing in the literature; they are DESCRIPTIVE CONTEXT, not
+the score. A textbook-standard formula applied with a fatal algebraic error, a
+valid premise used in an invalid way, or a refuted analogy treated as a
+derivation is NOT a strong input here, however impeccable its pedigree. Score
+validity-as-applied, not provenance.
+
+Fatal flaw in a load-bearing input floors the Input dimension. If a primitive
+input the contribution depends on has an assessment identifying a fatal or
+disqualifying flaw — misapplication, algebraic error, invalid premise, refuted
+analogy — the Input section score must crater, exactly as a refuted premise earns
+no if-true lift (the same coherence rule, one dimension over). Reason to this; do
+NOT let a favorable grounding/fundamentality/framework rating hold the number up.
+Your Input score must be consistent with your own assessment prose: if the
+assessment says the load-bearing input is fatally misused, the number is low.
+
+Concretely: Input Strength measures the inputs AS THEY FUNCTION in this paper, so
+a fatally-misapplied load-bearing input contributes essentially nothing usable and
+scores in the BOTTOM band of Input Strength (0-2). Its impeccable pedigree
+("the formula is standard") earns it NO Input credit once the load-bearing use is
+broken — "standard formula, fatal error solving it" is a bottom-band Input, not a
+middling one. Do not split the difference between a strong pedigree and a fatal
+misuse; the misuse governs.
+
+Score the Input dimension at the SECTION level, informed by the per-input
+assessments — do NOT average per-input firmness. A load-bearing fatal flaw
+DOMINATES the section score; an incidental valid input (e.g. correct use of
+general relativity alongside the broken step) does not dilute it.
+
+This must NOT flatten Input on sound papers. When every load-bearing input is
+correct as applied, score the Input dimension on its genuine firmness with FULL
+differentiation — a strong, deep, correctly-applied input set scores high and
+still outscores a marginal one. The floor triggers ONLY on a fatal flaw in a
+load-bearing input, never as a blanket penalty.`;
+
 const ACTIVE_PROMPT_DELTAS = [
   LINKED_INPUT_JUSTIFICATION_ENABLED ? LINKED_INPUT_JUSTIFICATION_DELTA : null,
   ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
   DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
   FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
   CONDITIONAL_COHERENCE_ENABLED ? CONDITIONAL_COHERENCE_DELTA : null,
+  INPUT_COHERENCE_ENABLED ? INPUT_DIMENSION_COHERENCE_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 const withActiveDeltas = (base: string) =>
@@ -1112,7 +1160,9 @@ const withActiveDeltas = (base: string) =>
 const ACTIVE_BLIND_REVIEW_PROMPT = withActiveDeltas(BLIND_REVIEW_PASS_V19_PROMPT);
 const ACTIVE_FULL_PROMPT = withActiveDeltas(BENCHMARK_CALIBRATED_V19_FULL_PROMPT);
 
-export const REVIEW_PROMPT_VERSION = CONDITIONAL_COHERENCE_ENABLED
+export const REVIEW_PROMPT_VERSION = INPUT_COHERENCE_ENABLED
+  ? "v19.0.9-computed-ico-halfpoint"
+  : CONDITIONAL_COHERENCE_ENABLED
   ? "v19.0.8-computed-ico-halfpoint"
   : FIRMNESS_RUNG_ENABLED
   ? "v19.0.7-computed-ico-halfpoint"
@@ -1146,7 +1196,9 @@ function withLatexMarkdownFormatting(prompt: string) {
 
 export const REVIEW_SYSTEM_INSTRUCTION = withLatexMarkdownFormatting(ACTIVE_BLIND_REVIEW_PROMPT);
 export const REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
-export const REVIEW_PROMPT_NAME = CONDITIONAL_COHERENCE_ENABLED
+export const REVIEW_PROMPT_NAME = INPUT_COHERENCE_ENABLED
+  ? "v19.0.9 computed ICO half-point"
+  : CONDITIONAL_COHERENCE_ENABLED
   ? "v19.0.8 computed ICO half-point"
   : FIRMNESS_RUNG_ENABLED
   ? "v19.0.7 computed ICO half-point"
@@ -1160,7 +1212,9 @@ export const REVIEW_PROMPT_NAME = CONDITIONAL_COHERENCE_ENABLED
           ? "v19.0.3 computed ICO half-point"
           : "v19.0.2 computed ICO half-point";
 // Date the active prompt text was adopted; bump together with the version.
-export const REVIEW_PROMPT_DATE = CONDITIONAL_COHERENCE_ENABLED
+export const REVIEW_PROMPT_DATE = INPUT_COHERENCE_ENABLED
+  ? "2026-06-25"
+  : CONDITIONAL_COHERENCE_ENABLED
   ? "2026-06-25"
   : FIRMNESS_RUNG_ENABLED
   ? "2026-06-20"
@@ -1216,6 +1270,7 @@ const ADJUDICATOR_PROMPT_DELTAS = [
   DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
   FIRMNESS_RUNG_ENABLED ? FIRMNESS_RUNG_DELTA : null,
   CONDITIONAL_COHERENCE_ENABLED ? CONDITIONAL_COHERENCE_DELTA : null,
+  INPUT_COHERENCE_ENABLED ? INPUT_DIMENSION_COHERENCE_DELTA : null,
   CENTRALITY_TRANSFERABILITY_ENABLED ? CENTRALITY_TRANSFERABILITY_DELTA : null,
 ].filter((delta): delta is string => Boolean(delta));
 export const BLIND_INTRINSIC_ADJUDICATOR_PROMPT = withLatexMarkdownFormatting(
