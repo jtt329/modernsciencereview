@@ -248,6 +248,10 @@ export const pageSpansTable = pgTable("page_spans", {
   // to every new page version; a span whose text no longer appears in the version's markdown is
   // kept as a superseded copy — history is never deleted (brief P0.1).
   superseded: boolean("superseded").notNull().default(false),
+  // Lineage (slice 3): when a rewrite replaces this span's text, the replacing span's id — lets
+  // the paper page TRANSCLUDE the current state of a contribution ("watch it get absorbed or
+  // superseded"). Remapped during carry-forward like referenceId.
+  supersededBySpanId: varchar("superseded_by_span_id"),
   referenceId: varchar("reference_id"), // -> page_references.id when sourced (soft)
   createdByReviewVersionId: varchar("created_by_review_version_id"),
   createdByPaperId: varchar("created_by_paper_id"),

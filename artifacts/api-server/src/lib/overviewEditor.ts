@@ -212,18 +212,30 @@ async function newDraftVersion(
       refIdMap.set(r.id, copy.id);
     }
     // 2. Spans, re-anchored; superseded reflects presence in THIS version's markdown.
+    // Two passes: copy first (building old->new id map), then remap supersededBySpanId lineage
+    // pointers so a superseded contribution keeps pointing at its live replacement (slice 3).
     const prevSpans = await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, sourceVersionId));
+    const spanIdMap = new Map<string, string>();
     for (const s of prevSpans) {
       const idx = s.text ? markdown.indexOf(s.text) : -1;
-      await db.insert(pageSpansTable).values({
+      const [copy] = await db.insert(pageSpansTable).values({
         pageId, versionId: version.id, sectionSlug: s.sectionSlug, text: s.text,
         startOffset: idx >= 0 ? idx : null,
         endOffset: idx >= 0 ? idx + s.text.length : null,
         supportStatus: s.supportStatus,
         superseded: idx < 0,
+        supersededBySpanId: s.supersededBySpanId, // remapped below once all copies exist
         referenceId: s.referenceId ? (refIdMap.get(s.referenceId) ?? s.referenceId) : null,
         createdByReviewVersionId: s.createdByReviewVersionId, createdByPaperId: s.createdByPaperId,
-      });
+      }).returning();
+      spanIdMap.set(s.id, copy.id);
+    }
+    for (const s of prevSpans) {
+      if (s.supersededBySpanId && spanIdMap.has(s.supersededBySpanId)) {
+        await db.update(pageSpansTable)
+          .set({ supersededBySpanId: spanIdMap.get(s.supersededBySpanId)! })
+          .where(eq(pageSpansTable.id, spanIdMap.get(s.id)!));
+      }
     }
     // 3. Inter-page links (slice 1), re-anchored by phrase; orphaned -> superseded copy.
     const prevLinks = await db.select().from(pageLinksTable).where(eq(pageLinksTable.versionId, sourceVersionId));
@@ -559,6 +571,13 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
       let refId: string | undefined;
       if (isSourced && sourcePaperId) { const ref = await createReference(tx, { pageId: page.id, versionId: version.id, markdown, anchorText: anchor, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
       const span = await createSpan(tx, { pageId: page.id, versionId: version.id, sectionSlug: edit.targetSectionSlug ?? null, text: insertedText, markdown, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
+      // Lineage (slice 3): a rewrite's replaced span(s) point at their replacement, so the
+      // original contributor's paper page can transclude the CURRENT state of its region.
+      if (edit.action === "edit_existing_text" && edit.anchorText) {
+        await tx.update(pageSpansTable)
+          .set({ supersededBySpanId: span.id })
+          .where(and(eq(pageSpansTable.versionId, version.id), eq(pageSpansTable.superseded, true), eq(pageSpansTable.text, edit.anchorText)));
+      }
       const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
       await recordAttributionWatch({ editId: id, refId, spanId: span.id, pageId: page.id, anchoredText: insertedText });
       return { action: edit.action, targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId: span.id, supportStatus, droppedCitations: dropped };
@@ -714,6 +733,57 @@ export async function runPostReviewOverviewHook(
     correctnessPublic: routing, edits, claims: (rv.claims as ReviewClaim[] | null) ?? [],
   });
   return { applied };
+}
+
+// ---- Contribution transclusion (slice 3 — review<->page convergence, spec §2.1) -----
+// The review is the PAPER-CENTRIC lens and the field page the NATURE-CENTRIC lens on one
+// claim-and-justification store: the review explains the delta, the page explains the sum.
+// The paper page's "Contribution to the Explanatory Structure" section is therefore a LIVE
+// TRANSCLUSION of the paper's applied edit regions in the CURRENT page versions — never a
+// separately-stored copy that drifts. A superseded contribution shows its current state via
+// the span lineage chain (watching a contribution get absorbed or superseded is informative).
+export type ContributionRegion = {
+  pageSlug: string; pageTitle: string;
+  status: "live" | "superseded";
+  originalText: string;
+  currentText: string | null; // for superseded: the live replacement via lineage, if traceable
+  supportStatus: string;
+};
+
+export async function getContributionTransclusion(db: Db, paperId: string): Promise<{ regions: ContributionRegion[]; fallbackPassage: string | null }> {
+  const spans = await db.select().from(pageSpansTable).where(eq(pageSpansTable.createdByPaperId, paperId));
+  const regions: ContributionRegion[] = [];
+  const latestByPage = new Map<string, string | null>();
+  const pageMeta = new Map<string, { slug: string; title: string }>();
+  for (const s of spans) {
+    if (!latestByPage.has(s.pageId)) {
+      latestByPage.set(s.pageId, (await latestVersion(db, s.pageId))?.id ?? null);
+      const p = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, s.pageId)).limit(1))[0];
+      if (p) pageMeta.set(s.pageId, { slug: p.slug, title: p.title });
+    }
+    if (!s.versionId || s.versionId !== latestByPage.get(s.pageId)) continue; // only the CURRENT version
+    const meta = pageMeta.get(s.pageId);
+    if (!meta) continue;
+    if (!s.superseded) {
+      regions.push({ pageSlug: meta.slug, pageTitle: meta.title, status: "live", originalText: s.text, currentText: s.text, supportStatus: s.supportStatus });
+    } else {
+      // Follow the lineage chain to the live replacement (bounded walk; chains are short).
+      let current: typeof s | null = s;
+      for (let hop = 0; hop < 10 && current?.supersededBySpanId; hop += 1) {
+        current = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.id, current.supersededBySpanId)).limit(1))[0] ?? null;
+        if (current && !current.superseded) break;
+      }
+      regions.push({
+        pageSlug: meta.slug, pageTitle: meta.title, status: "superseded",
+        originalText: s.text,
+        currentText: current && current.id !== s.id && !current.superseded ? current.text : null,
+        supportStatus: s.supportStatus,
+      });
+    }
+  }
+  // Fallback for papers whose review proposed no_change (they touched no page).
+  const rv = (await db.select().from(reviewVersionsTable).where(eq(reviewVersionsTable.paperId, paperId)).orderBy(desc(reviewVersionsTable.createdAt)).limit(1))[0];
+  return { regions, fallbackPassage: regions.length ? null : (rv?.contributionPassage || null) };
 }
 
 // ---- Corrections ledger (§3.2) — compact "what changed and why" per page, fed to the editor

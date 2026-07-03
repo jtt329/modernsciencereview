@@ -12,7 +12,7 @@ import {
   attributionChecksTable, pageLinksTable,
 } from "@workspace/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook } from "../lib/overviewEditor";
+import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook, getContributionTransclusion } from "../lib/overviewEditor";
 import { logger } from "../lib/logger";
 
 // Enrich references with the canonical paper slug + title (the model never writes slugs — §10.2a).
@@ -123,6 +123,15 @@ router.get("/papers/:paperId/review-version", async (req, res) => {
       ...(correctnessPublic && correctnessPublic !== "hidden" ? { correctnessPublic } : {}),
     });
   } catch (err) { logger.error({ err }, "review-version failed"); res.status(500).json({ error: "review-version failed" }); }
+});
+
+// GET /api/papers/:paperId/contribution — the paper page's "Contribution to the Explanatory
+// Structure" section as a LIVE TRANSCLUSION of its applied edit regions (slice 3, spec §2.1).
+router.get("/papers/:paperId/contribution", async (req, res) => {
+  try {
+    const t = await getContributionTransclusion(db as any, req.params.paperId);
+    res.json({ paperId: req.params.paperId, ...t });
+  } catch (err) { logger.error({ err }, "contribution transclusion failed"); res.status(500).json({ error: "contribution failed" }); }
 });
 
 // GET /api/papers/:paperId/overview-edits — the diffs this paper proposed (monitoring/paper page)

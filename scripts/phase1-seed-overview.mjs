@@ -396,6 +396,28 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   ] });
   assert(badLink[0]?.status === "rejected" && badLink[0]?.rejectionReason === "unknown_link_target", "S1: unknown link target rejected (slugs come from the index, never invented)");
 
+  // ---- Slice 3 acceptance: contribution transclusion follows the live region -----------
+  const { getContributionTransclusion } = await import(${JSON.stringify(editorPath)});
+  const TA = "The FRW apparent horizon admits a unified first law governing its energy flux.";
+  const TB = "The FRW apparent horizon obeys a unified first law whose energy flux term fixes the Friedmann dynamics.";
+  const pA = await upsertPaper("Unified first law paper A");
+  const rvA2 = await persistReview(pA, { promptVersion: "synthetic", recommendedScore: 70, correctnessInternal: "sound", correctnessPublic: "sound", claims: [{ id: "C1", statement: "A unified first law governs the apparent horizon energy flux.", status: "established" }] });
+  const pB = await upsertPaper("Refining paper B");
+  const rvB2 = await persistReview(pB, { promptVersion: "synthetic", recommendedScore: 60, correctnessInternal: "sound", correctnessPublic: "sound", claims: [{ id: "C1", statement: "The unified first law energy flux fixes the Friedmann dynamics.", status: "established" }] });
+  await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: pA, reviewVersionId: rvA2, correctnessPublic: "sound", claims: [{ id: "C1", statement: "A unified first law governs the apparent horizon energy flux.", status: "established" }], edits: [
+    { action: "add_paragraph", targetPageSlug: "cosmological-horizons", proposedMarkdown: TA, citedPaperIds: [pA], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  const t1 = await getContributionTransclusion(db, pA);
+  assert(t1.regions.length === 1 && t1.regions[0].status === "live" && t1.regions[0].currentText === TA, "S3: contribution section transcludes the live region the paper's edit produced");
+  await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: pB, reviewVersionId: rvB2, correctnessPublic: "sound", claims: [{ id: "C1", statement: "The unified first law energy flux fixes the Friedmann dynamics.", status: "established" }], edits: [
+    { action: "edit_existing_text", targetPageSlug: "cosmological-horizons", anchorText: TA, proposedMarkdown: TB, citedPaperIds: [pB], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  const t2 = await getContributionTransclusion(db, pA);
+  const supRegion = t2.regions.find((r) => r.status === "superseded");
+  assert(!!supRegion && supRegion.originalText === TA && supRegion.currentText === TB, "S3: after a second paper rewrites the region, the transclusion shows the NEW state via lineage");
+  const t3 = await getContributionTransclusion(db, pB);
+  assert(t3.regions.some((r) => r.status === "live" && r.currentText === TB), "S3: the rewriting paper's transclusion is the live region");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);
