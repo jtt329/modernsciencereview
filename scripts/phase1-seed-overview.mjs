@@ -155,7 +155,7 @@ import {
   ensureOverviewSkeleton, applyOverviewImpact, assembleOverviewMarkdown,
   computeProminence, publishOverview, rollbackPage, checkEquationFidelity, assembleCorrectionsLedger,
 } from ${JSON.stringify(editorPath)};
-import { fieldPagesTable, fieldPageVersionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable } from "@workspace/db";
+import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 
 const MODE = ${JSON.stringify(MODE)};
@@ -418,6 +418,17 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   const t3 = await getContributionTransclusion(db, pB);
   assert(t3.regions.some((r) => r.status === "live" && r.currentText === TB), "S3: the rewriting paper's transclusion is the live region");
 
+  // ---- Slice 4 acceptance: maintained page summaries stored on the new version ---------
+  await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: pA, reviewVersionId: rvA2, correctnessPublic: "sound", edits: [
+    { action: "add_paragraph", targetPageSlug: "cosmological-horizons", proposedMarkdown: "A further explanatory paragraph on horizon thermodynamics in cosmology.",
+      pageSummaryOneLine: "FRW apparent horizons behave as thermodynamic systems.",
+      pageSummaryShort: "Cosmological and FRW apparent horizons carry temperature and entropy; applying a first law at the apparent horizon reproduces the cosmological dynamics.",
+      citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  const cosmoPage = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, "cosmological-horizons")))[0];
+  const cosmoV = await latestOf(cosmoPage.id);
+  assert(cosmoV.summaryOneLine === "FRW apparent horizons behave as thermodynamic systems." && cosmoV.summaryShort.length > 40, "S4: edit's maintained page summaries stored on the new version (multi-resolution layer authored)");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);
@@ -454,40 +465,50 @@ async function runLive(db, upsertPaper, persistReview) {
     }
     throw lastErr;
   }
-  const overviewIndexText = "CURRENT OVERVIEW (slug: " + OVERVIEW_SLUG + "). Pages you may edit:\\n" +
-    SEED_PAGES.map((p) => "- " + p.slug + ": " + p.title + " -- " + p.scopeStatement).join("\\n");
+  // RETRIEVAL-SCOPED EDITING (slice 4): the editor navigates by the FIELD INDEX (every page's
+  // slug + maintained one-line summary + sections), then receives the FULL text of only the
+  // pages it selected — never a global blob, never a silent truncation. The same
+  // multi-resolution structure serves the reader's [+] descent and the editor.
+  const latestVer = async (pageId) => (await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, pageId)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  async function fieldIndexText() {
+    const rows = [];
+    for (const p of await db.select().from(fieldPagesTable)) {
+      const v = await latestVer(p.id);
+      const secs = v ? await db.select().from(pageSectionsTable).where(eq(pageSectionsTable.versionId, v.id)) : [];
+      rows.push("- " + p.slug + ": " + (v?.summaryOneLine || p.scopeStatement.slice(0, 140)) + (secs.length ? "  [sections: " + secs.map((s) => s.slug).join(", ") + "]" : ""));
+    }
+    return "FIELD INDEX (slug: one-line summary [sections]) — navigate by this; you will get the FULL text of the pages you target:\\n" + rows.join("\\n");
+  }
+  async function liveUnsourcedForPages(pageIds) {
+    const allUnsourced = await db.select().from(pageSpansTable).where(inArray(pageSpansTable.supportStatus, ["unsourced_explanatory", "needs_source"]));
+    const out = [];
+    for (const s of allUnsourced) {
+      if (s.superseded) continue;
+      if (pageIds && !pageIds.has(s.pageId)) continue;
+      const v = await latestVer(s.pageId);
+      if (v && s.versionId === v.id) out.push(s);
+    }
+    return out;
+  }
 
   for (const paper of MANIFEST) {
     const ctx = { mode: paper.mode, reviewEpoch: paper.reviewEpoch };
     const imageParts = paper.pages.map((pg) => ({ inlineData: { mimeType: "image/png", data: readFileSync(pg.path).toString("base64") } }));
     const advisory = blindManuscriptText(readFileSync(paper.textPath, "utf8")).slice(0, 30000);
-    // Inject the LIVE draft overview + its unsourced spans so the editor edits against current
-    // state and can SOURCE existing unsourced sentences this paper establishes (accretion).
-    // NEVER truncate the editor's view silently (P1.2 — same failure class as the Ong dropped-ε:
-    // a model reasoning correctly on corrupted input). Fail loudly if it outgrows the budget;
-    // the fix at scale is retrieval-scoped editing (brief §C), not slicing.
-    const currentOverviewMd = await assembleOverviewMarkdown(db, OVERVIEW_SLUG);
-    const OVERVIEW_CHAR_BUDGET = 180000; // ~45k tokens; generous for the Phase-1 corpus
-    if (currentOverviewMd.length > OVERVIEW_CHAR_BUDGET) {
-      throw new Error("overview (" + currentOverviewMd.length + " chars) exceeds the editor context budget — refusing to truncate silently; implement retrieval-scoped editing (brief P1.2/§C)");
-    }
-    // Accretion query reads LIVE spans of each page's LATEST version only (P0.1 — per-version
-    // carry-forward copies mean an unscoped query would surface stale duplicates).
-    const allUnsourced = await db.select().from(pageSpansTable).where(inArray(pageSpansTable.supportStatus, ["unsourced_explanatory", "needs_source"]));
-    const latestVerByPage = new Map();
-    for (const pg of await db.select().from(fieldPagesTable)) latestVerByPage.set(pg.id, pg.currentVersionId);
-    const unsourced = allUnsourced.filter((s) => !s.superseded && s.versionId === latestVerByPage.get(s.pageId));
-    // Complete list — no silent cap (P1.2). If this ever grows unwieldy, scope per page loudly.
-    const unsourcedText = unsourced.length
-      ? "UNSOURCED sentences currently in the overview (" + unsourced.length + " total) — if THIS paper genuinely establishes one, propose add_reference with anchorText = that phrase:\\n" + unsourced.map((s) => "- " + (s.text || "").slice(0, 200)).join("\\n")
-      : "(no unsourced sentences yet)";
-    const correctionsLedger = await assembleCorrectionsLedger(db, OVERVIEW_SLUG);
-    const passText = ["reviewContext: " + JSON.stringify(ctx), "", overviewIndexText, "", "CURRENT DRAFT OVERVIEW (rewrite the affected region to be optimal; do not duplicate or re-litigate what is already written):", currentOverviewMd, "", unsourcedText, "", "CORRECTIONS LEDGER (what changed and why — do not re-introduce fixed mistakes):", correctionsLedger, "", "Manuscript is the PAGE IMAGES below (authoritative). Advisory text follows (secondary).", "", "[advisory]", advisory, "", "Produce your review, claims (each with status), and overviewImpact."].join("\\n");
     console.log("\\n### LIVE " + paper.id + " (" + paper.pages.length + "pp)");
     try {
+      // ---- STEP 1 (navigation): review passes + adjudicator see the INDEX only. ----
+      const index = await fieldIndexText();
+      const globalUnsourced = await liveUnsourcedForPages(null);
+      const unsourcedDigest = globalUnsourced.length
+        ? "UNSOURCED sentences currently in the overview (" + globalUnsourced.length + ") — if THIS paper genuinely establishes one, plan an add_reference:\\n" + globalUnsourced.map((s) => "- " + (s.text || "").slice(0, 160)).join("\\n")
+        : "(no unsourced sentences yet)";
+      const passText = ["reviewContext: " + JSON.stringify(ctx), "", index, "", unsourcedDigest, "",
+        "NAVIGATION STEP: you see the field index only. Produce your full review and a PROVISIONAL overviewImpact naming the target pages (and link targets) from the index; exact anchors and final prose will be refined next against the full text of the pages you select.",
+        "", "Manuscript is the PAGE IMAGES below (authoritative). Advisory text follows (secondary).", "", "[advisory]", advisory, "", "Produce your review, claims (each with status), and overviewImpact."].join("\\n");
       const [p1, p2] = (await Promise.all([callMM(B21.EXPLANATORY_UPDATE_B21_PROMPT, passText, imageParts), callMM(B21.EXPLANATORY_UPDATE_B21_PROMPT, passText, imageParts)])).map(extractJson);
-      const adjInput = JSON.stringify({ adjudicatorInputNote: "Use the page images, reviewContext, current overview, and the two reviews. Resolve; never average. Output the same schema incl. claims + overviewImpact.", reviewContext: ctx, currentOverview: SEED_PAGES, independentReviewPasses: [p1, p2] }, null, 2);
-      const adj = extractJson(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, adjInput + "\\n\\nPage images follow.", imageParts));
+      const adjInput = JSON.stringify({ adjudicatorInputNote: "Use the page images, reviewContext, field index, and the two reviews. Resolve; never average. Output the same schema incl. claims + (provisional) overviewImpact.", reviewContext: ctx, independentReviewPasses: [p1, p2] }, null, 2);
+      const adj = extractJson(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, adjInput + "\\n\\n" + index + "\\n\\nPage images follow.", imageParts));
       const score = num(adj?.recommendedExplanatoryUpdateScore);
       // FAIL CLOSED (brief P0.3): a missing/unrecognized correctness verdict must never take the
       // permissive branch. Persist the review, but hold every overview edit.
@@ -512,7 +533,35 @@ async function runLive(db, upsertPaper, persistReview) {
         scope: adj?.scopeOfUpdate, correctnessInternal: correctnessValid ? internal : null, correctnessPublic: pub,
         claims, overviewImpact: oi, contributionPassage: adj?.deltaBeyondPriorField || adj?.explanatoryUpdate || "", adjudicatedJson: adj,
       });
-      const edits = Array.isArray(oi.proposedEdits) ? oi.proposedEdits : [];
+      let edits = Array.isArray(oi.proposedEdits) ? oi.proposedEdits : [];
+      // ---- STEP 2 (refinement, slice 4): full text of ONLY the selected pages. ----
+      const wantsPages = edits.some((e) => e.action !== "no_change");
+      if (wantsPages) {
+        const allPages = await db.select().from(fieldPagesTable);
+        const bySlug = new Map(allPages.map((p) => [p.slug, p]));
+        const selectedSlugs = [...new Set(edits.map((e) => e.targetPageSlug).filter((s) => s && bySlug.has(s)))];
+        if (selectedSlugs.length) {
+          const selectedIds = new Set(selectedSlugs.map((s) => bySlug.get(s).id));
+          let pagesBlock = "";
+          for (const slug of selectedSlugs) {
+            const p = bySlug.get(slug);
+            const v = await latestVer(p.id);
+            const ledger = await assembleCorrectionsLedger(db, OVERVIEW_SLUG, slug);
+            pagesBlock += "\\n\\n=== PAGE " + slug + " (full current text) ===\\n" + (v?.markdownFull ?? "") + "\\n[corrections ledger for this page]\\n" + ledger;
+          }
+          const PAGE_BUDGET = 180000;
+          if (pagesBlock.length > PAGE_BUDGET) throw new Error("selected pages (" + pagesBlock.length + " chars) exceed the refinement budget — refusing to truncate silently");
+          const selUnsourced = await liveUnsourcedForPages(selectedIds);
+          const selUnsourcedText = selUnsourced.length ? "Unsourced sentences on the selected pages:\\n" + selUnsourced.map((s) => "- " + (s.text || "").slice(0, 200)).join("\\n") : "(none)";
+          console.log("  [step2] refining against full text of " + selectedSlugs.length + " selected page(s): " + selectedSlugs.join(", ") + " (" + pagesBlock.length + " chars)");
+          const refineText = ["REFINEMENT STEP: below are your adjudicated review and the FULL current text of the pages you selected. Emit the FINAL review JSON (same schema) with overviewImpact refined against the real prose: exact anchorText for rewrites/links/sourcing, final proposedMarkdown, and maintained pageSummaryOneLine + pageSummaryShort for every page you touch. Do not change your correctness verdict or claims.",
+            "", "ADJUDICATED REVIEW:", JSON.stringify(adj, null, 2), pagesBlock, "", selUnsourcedText, "", "Page images follow."].join("\\n");
+          const refined = extractJson(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, refineText, imageParts));
+          const refinedEdits = refined?.overviewImpact?.proposedEdits;
+          if (Array.isArray(refinedEdits) && refinedEdits.length) edits = refinedEdits;
+          else console.log("  ⚠ refinement returned no edits — keeping provisional edits");
+        }
+      }
       // Routing value: undefined when the verdict was unavailable (service holds all edits);
       // "fatal_unverified" for a pending fatal allegation (service holds all edits).
       const routingCorrectness = !correctnessValid ? undefined

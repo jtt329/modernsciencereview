@@ -126,6 +126,12 @@ add_reference / sourcing, the existing phrase to attach to), and a one-line reas
 markdown links, URLs, or paper slugs in proposedMarkdown — write plain prose; the application renders
 source chips from citedPaperIds. You never invent slugs.
 
+MAINTAINED SUMMARIES (required with every page-touching edit): include pageSummaryOneLine (a
+single sentence capturing the page AFTER your edit) and pageSummaryShort (2-4 sentences, same).
+These are the multi-resolution layer that powers both the reader's progressive disclosure and
+the editor's own navigation index — keep them current, in the same explanatory-update voice,
+describing the PAGE (the sum), not your paper (the delta).
+
 EXPLANATION-FIRST — unsourced is fine, MIS-sourced is not (this reverses the earlier provenance gate):
   - Write the BEST explanation now. A connective, background, or bridging sentence that no single
     paper in hand establishes is legitimate — leave it UNSOURCED (citedPaperIds empty, supportStatus
@@ -179,6 +185,8 @@ valid JSON, no comments, no trailing commas):
         "linkTargetSlug": "",
         "anchorText": "",
         "proposedMarkdown": "",
+        "pageSummaryOneLine": "",
+        "pageSummaryShort": "",
         "citedPaperIds": [],
         "citedClaimIds": [],
         "supportStatus": "unsourced_explanatory",

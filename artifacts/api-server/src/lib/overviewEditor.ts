@@ -94,6 +94,10 @@ export type OverviewImpactEdit = {
   linkTargetSlug?: string; // add_link: destination page slug, chosen FROM THE INDEX (slice 1)
   anchorText?: string;
   proposedMarkdown?: string;
+  // Maintained multi-resolution summaries of the PAGE after this edit (slice 4) — the same
+  // structure that powers the reader's [+] descent powers the editor's retrieval index.
+  pageSummaryOneLine?: string;
+  pageSummaryShort?: string;
   citedPaperIds?: string[];
   citedClaimIds?: string[];
   supportStatus?: SpanSupportStatus; // model-assigned; sourced only if a citation actually resolves
@@ -485,7 +489,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
           const title = (edit.proposedMarkdown?.match(/^#+\s*(.+)/)?.[1] || targetSlug.replace(/-/g, " ")).slice(0, 120);
           const [page] = await tx.insert(fieldPagesTable).values({ slug: targetSlug, title, parentPageId: root?.id ?? null, scopeStatement: edit.reason ?? "", summary: "" }).returning();
           const md = edit.proposedMarkdown ?? `## ${title}\n`;
-          const version = await newDraftVersion(tx, page.id, md, [{ at: new Date().toISOString(), action: `create_subpage from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+          const version = await newDraftVersion(tx, page.id, md, [{ at: new Date().toISOString(), action: `create_subpage from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId, { oneLine: edit.pageSummaryOneLine, short: edit.pageSummaryShort });
           let refId: string | undefined;
           if (isSourced && sourcePaperId) { const ref = await createReference(tx, { pageId: page.id, versionId: version.id, markdown: md, anchorText: edit.anchorText || title, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
           const span = await createSpan(tx, { pageId: page.id, versionId: version.id, text: (edit.proposedMarkdown ?? title).slice(0, 400), markdown: md, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
@@ -526,7 +530,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
           const id = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: "anchor_not_found: link phrase not present on the page" });
           return { action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: "anchor_not_found" };
         }
-        const version = await newDraftVersion(tx, page.id, current, [{ at: new Date().toISOString(), action: `add_link "${phrase.slice(0, 40)}" -> ${edit.linkTargetSlug} from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+        const version = await newDraftVersion(tx, page.id, current, [{ at: new Date().toISOString(), action: `add_link "${phrase.slice(0, 40)}" -> ${edit.linkTargetSlug} from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId, { oneLine: edit.pageSummaryOneLine, short: edit.pageSummaryShort });
         const idx = current.indexOf(phrase);
         await tx.insert(pageLinksTable).values({
           fromPageId: page.id, toPageId: linkTarget.id, phrase, versionId: version.id,
@@ -542,7 +546,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
         // Create the new version FIRST (carry-forward copies every span onto it), then match and
         // update the NEW version's copy — updating the old version's row would be lost (P0.1).
         const anchor = edit.anchorText?.trim() || current.slice(0, 80);
-        const version = await newDraftVersion(tx, page.id, current, [{ at: new Date().toISOString(), action: `add_reference (source span) from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+        const version = await newDraftVersion(tx, page.id, current, [{ at: new Date().toISOString(), action: `add_reference (source span) from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId, { oneLine: edit.pageSummaryOneLine, short: edit.pageSummaryShort });
         const spans = (await tx.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, version.id))).filter((s: any) => !s.superseded);
         const match = spans.find((s: any) => s.text && (s.text.includes(anchor) || (anchor.length > 20 && anchor.includes(s.text.slice(0, 40)))));
         let refId: string | undefined, spanId: string | undefined, finalStatus: SpanSupportStatus = supportStatus;
@@ -567,7 +571,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
         return { action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: failure };
       }
       const insertedText = (edit.proposedMarkdown ?? anchor).trim();
-      const version = await newDraftVersion(tx, page.id, markdown, [{ at: new Date().toISOString(), action: `${edit.action} from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+      const version = await newDraftVersion(tx, page.id, markdown, [{ at: new Date().toISOString(), action: `${edit.action} from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId, { oneLine: edit.pageSummaryOneLine, short: edit.pageSummaryShort });
       let refId: string | undefined;
       if (isSourced && sourcePaperId) { const ref = await createReference(tx, { pageId: page.id, versionId: version.id, markdown, anchorText: anchor, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
       const span = await createSpan(tx, { pageId: page.id, versionId: version.id, sectionSlug: edit.targetSectionSlug ?? null, text: insertedText, markdown, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
