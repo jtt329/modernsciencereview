@@ -86,13 +86,28 @@ router.get("/papers/:paperId/overview-location", async (req, res) => {
   } catch (err) { logger.error({ err }, "overview-location failed"); res.status(500).json({ error: "overview-location failed" }); }
 });
 
-// GET /api/papers/:paperId/review-version — persisted B.2.1 review (evidence packets, claims,
-// contribution passage). correctnessPublic is included but the FRONTEND hides it until spot-check.
+// GET /api/papers/:paperId/review-version — persisted B.2.1 review (claims, contribution
+// passage). SAFETY BOUNDARY (brief P0.2): the internal correctness verdict, the raw adjudicated
+// JSON, and evidence packets (which contain unverified fatal-flaw ALLEGATIONS) are stripped for
+// non-admin callers at the API — the frontend hiding them is not enforcement. correctnessPublic
+// is served only when it is not "hidden" (i.e. spot-check has cleared it); until then the public
+// shape carries no correctness field at all. "Unverified fatal never leaves the internal record."
+function isAdminRequest(req: any): boolean {
+  return !!(req.isAuthenticated?.() && ADMIN_EMAIL && req.user?.email === ADMIN_EMAIL);
+}
 router.get("/papers/:paperId/review-version", async (req, res) => {
   try {
     const rv = (await db.select().from(reviewVersionsTable).where(eq(reviewVersionsTable.paperId, req.params.paperId)).orderBy(desc(reviewVersionsTable.createdAt)).limit(1))[0];
     if (!rv) { res.status(404).json({ error: "no review version" }); return; }
-    res.json(rv);
+    if (isAdminRequest(req)) { res.json(rv); return; }
+    const {
+      correctnessInternal: _internal, adjudicatedJson: _adjudicated, evidencePackets: _packets,
+      correctnessPublic, ...publicFields
+    } = rv;
+    res.json({
+      ...publicFields,
+      ...(correctnessPublic && correctnessPublic !== "hidden" ? { correctnessPublic } : {}),
+    });
   } catch (err) { logger.error({ err }, "review-version failed"); res.status(500).json({ error: "review-version failed" }); }
 });
 

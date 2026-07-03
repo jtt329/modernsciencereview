@@ -70,6 +70,9 @@ export type ApplyOverviewInput = {
   paperId: string;
   reviewVersionId?: string | null;
   // Public correctness of the paper (drives fatal routing). "flawed" => disputed page only.
+  // FAIL CLOSED (brief P0.3): if this is missing or unrecognized (e.g. a malformed adjudicator
+  // response), ALL edits are held as rejected/correctness_unavailable — corrupted model output
+  // must never take the permissive branch.
   correctnessPublic?: "sound" | "contested" | "flawed" | "hidden";
   edits: OverviewImpactEdit[];
   claims?: ReviewClaim[]; // the review's claim table (with per-claim status) — for chip claimStatus
@@ -239,6 +242,9 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
   const provenance = input.provenance ?? "model_review";
   const results: AppliedEditResult[] = [];
   const disputedSlug = `${input.overviewSlug}-${DISPUTED_PAGE_SLUG_SUFFIX}`;
+  // Fail closed (P0.3): unknown correctness → hold every edit; never default to the sound path.
+  const KNOWN_CORRECTNESS = ["sound", "contested", "flawed", "hidden"];
+  const correctnessKnown = input.correctnessPublic != null && KNOWN_CORRECTNESS.includes(input.correctnessPublic);
 
   for (const edit of input.edits) {
     const recordEdit = async (
@@ -262,6 +268,13 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
 
     if (edit.action === "no_change") {
       results.push({ action: edit.action, targetPageSlug: null, status: "no_change", proposedOverviewEditId: await recordEdit("no_change") });
+      continue;
+    }
+
+    // Fail closed (P0.3): without a valid correctness verdict, no edit touches a page.
+    if (!correctnessKnown) {
+      const id = await recordEdit("rejected", { rejectionReason: "correctness_unavailable: missing/unrecognized correctness verdict — all edits held (fail closed)" });
+      results.push({ action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "correctness_unavailable" });
       continue;
     }
 
@@ -469,7 +482,10 @@ export async function publishOverview(db: Db, overviewSlug: string) {
       published += 1;
     }
   }
-  await db.update(proposedOverviewEditsTable).set({ status: "published" }).where(eq(proposedOverviewEditsTable.overviewSlug, overviewSlug));
+  // Only promote applied drafts — never clobber rejected (safety-held) or reverted records;
+  // publish is a visibility switch, not a rewrite of edit history (brief P0.4).
+  await db.update(proposedOverviewEditsTable).set({ status: "published" })
+    .where(and(eq(proposedOverviewEditsTable.overviewSlug, overviewSlug), eq(proposedOverviewEditsTable.status, "draft_applied")));
   return { publishedVersions: published };
 }
 

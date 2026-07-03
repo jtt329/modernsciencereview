@@ -225,21 +225,32 @@ async function runLive(db, upsertPaper, persistReview) {
       const adjInput = JSON.stringify({ adjudicatorInputNote: "Use the page images, reviewContext, current overview, and the two reviews. Resolve; never average. Output the same schema incl. claims + overviewImpact.", reviewContext: ctx, currentOverview: SEED_PAGES, independentReviewPasses: [p1, p2] }, null, 2);
       const adj = extractJson(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, adjInput + "\\n\\nPage images follow.", imageParts));
       const score = num(adj?.recommendedExplanatoryUpdateScore);
-      const internal = adj?.correctnessAssessment?.internalStatusProposed || "sound";
-      const pub = internal === "fatal_verified" ? "flawed" : internal === "contested_defensible" ? "contested" : "hidden";
+      // FAIL CLOSED (brief P0.3): a missing/unrecognized correctness verdict must never take the
+      // permissive branch. Persist the review, but hold every overview edit.
+      const VALID_INTERNAL = ["sound", "contested_defensible", "fatal_verified", "fatal_alleged_unverified"];
+      const internalRaw = adj?.correctnessAssessment?.internalStatusProposed;
+      const correctnessValid = VALID_INTERNAL.includes(internalRaw);
+      const internal = correctnessValid ? internalRaw : "unavailable";
+      if (!correctnessValid) console.log("  !! CORRECTNESS UNAVAILABLE (adjudicator returned " + JSON.stringify(internalRaw ?? null) + ") — holding ALL overview edits (fail closed)");
+      // fatal_alleged_unverified routes as contested (never main-page sound, never public flawed).
+      const pub = !correctnessValid ? "hidden"
+        : internal === "fatal_verified" ? "flawed"
+        : (internal === "contested_defensible" || internal === "fatal_alleged_unverified") ? "contested"
+        : "hidden";
       const claims = Array.isArray(adj?.claims) ? adj.claims : [];
       const oi = adj?.overviewImpact || {};
       const paperId = await upsertPaper(paper.id);
       const rvId = await persistReview(paperId, {
         promptVersion: B21.EXPLANATORY_UPDATE_B21_PROMPT_VERSION, promptHash: B21.EXPLANATORY_UPDATE_B21_PROMPT_HASH,
         recommendedScore: score, estimatedImportanceLow: score != null ? Math.max(0, score - 5) : null, estimatedImportanceHigh: score != null ? Math.min(100, score + 5) : null,
-        scope: adj?.scopeOfUpdate, correctnessInternal: internal, correctnessPublic: pub,
+        scope: adj?.scopeOfUpdate, correctnessInternal: correctnessValid ? internal : null, correctnessPublic: pub,
         claims, overviewImpact: oi, contributionPassage: adj?.deltaBeyondPriorField || adj?.explanatoryUpdate || "", adjudicatedJson: adj,
       });
       const edits = Array.isArray(oi.proposedEdits) ? oi.proposedEdits : [];
       // Equation-fidelity watch: overview equations should come verbatim from verified claims.
       const eqFlags = checkEquationFidelity(JSON.stringify(edits.map((e) => e.proposedMarkdown || "")), claims);
-      const applied = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, correctnessPublic: pub === "hidden" ? "sound" : pub, edits, claims });
+      // Pass undefined correctness when the verdict was unavailable → the service holds all edits.
+      const applied = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, correctnessPublic: correctnessValid ? (pub === "hidden" ? "sound" : pub) : undefined, edits, claims });
       console.log("  score=" + score + " scope=" + adj?.scopeOfUpdate + " correctness=" + internal + " | " + claims.length + " claims, " + edits.length + " proposed edits");
       if (eqFlags.length) console.log("  ⚠ equation-fidelity: " + eqFlags.length + " overview eq(s) not matched to a claim: " + eqFlags.slice(0, 3).map((f) => f.equation.slice(0, 40)).join(" ; "));
       for (const r of applied) console.log("    " + r.status.padEnd(13) + " " + r.action.padEnd(16) + " -> " + (r.targetPageSlug || "-") + " [" + (r.supportStatus || "-") + "]" + (r.droppedCitations?.length ? " DROPPED-CITES:" + r.droppedCitations.length : "") + (r.rejectionReason ? " (REJECTED: " + r.rejectionReason + ")" : ""));
