@@ -10,5 +10,9 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "tsx": "catalog:"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.3",
+    "mupdf": "^1.28.0"
   }
 }

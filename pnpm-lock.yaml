@@ -104,7 +104,7 @@ importers:
         version: 2.8.6
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.1(@types/pg@8.18.0)(pg@8.20.0)
+        version: 0.45.1(@electric-sql/pglite@0.5.3)(@types/pg@8.18.0)(pg@8.20.0)
       express:
         specifier: ^5
         version: 5.2.1
@@ -561,10 +561,10 @@ importers:
     dependencies:
       drizzle-orm:
         specifier: 'catalog:'
-        version: 0.45.1(@types/pg@8.18.0)(pg@8.20.0)
+        version: 0.45.1(@electric-sql/pglite@0.5.3)(@types/pg@8.18.0)(pg@8.20.0)
       drizzle-zod:
         specifier: ^0.8.3
-        version: 0.8.3(drizzle-orm@0.45.1(@types/pg@8.18.0)(pg@8.20.0))(zod@3.25.76)
+        version: 0.8.3(drizzle-orm@0.45.1(@electric-sql/pglite@0.5.3)(@types/pg@8.18.0)(pg@8.20.0))(zod@3.25.76)
       pg:
         specifier: ^8.20.0
         version: 8.20.0
@@ -609,6 +609,13 @@ importers:
         version: 7.1.1
 
   scripts:
+    dependencies:
+      '@electric-sql/pglite':
+        specifier: ^0.5.3
+        version: 0.5.3
+      mupdf:
+        specifier: ^1.28.0
+        version: 1.28.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -716,6 +723,9 @@ packages:
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
+
+  '@electric-sql/pglite@0.5.3':
+    resolution: {integrity: sha512-iTTYbA5Uesrl+N7zss0J5LopT7KE4j9aymYo+EZZh+rZbARQCUQOs+n2pay64JRUpc3fCkpfrniTNJnvYzOE+g==}
 
   '@esbuild/aix-ppc64@0.27.3':
     resolution: {integrity: sha512-9fJMTNFTWZMh5qwrBItuziu834eOCUcEqymSH7pY+zoMVEZg3gcPuBNxH1EvfVYe9h0x/Ptw8KBzv7qxb7l8dg==}
@@ -3257,6 +3267,9 @@ packages:
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
+  mupdf@1.28.0:
+    resolution: {integrity: sha512-ACUnbpECaQ5JLq04pwd89lS+0IGMest5qL5tb08g9TAR7bDtfqflHEkb2Xm3o4rvC/szguLiV+WEbW9kstj8Sg==}
+
   nanoid@3.3.11:
     resolution: {integrity: sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
@@ -4267,6 +4280,8 @@ snapshots:
   '@date-fns/tz@1.4.1': {}
 
   '@drizzle-team/brocli@0.10.2': {}
+
+  '@electric-sql/pglite@0.5.3': {}
 
   '@esbuild/aix-ppc64@0.27.3':
     optional: true
@@ -5900,14 +5915,15 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.45.1(@types/pg@8.18.0)(pg@8.20.0):
+  drizzle-orm@0.45.1(@electric-sql/pglite@0.5.3)(@types/pg@8.18.0)(pg@8.20.0):
     optionalDependencies:
+      '@electric-sql/pglite': 0.5.3
       '@types/pg': 8.18.0
       pg: 8.20.0
 
-  drizzle-zod@0.8.3(drizzle-orm@0.45.1(@types/pg@8.18.0)(pg@8.20.0))(zod@3.25.76):
+  drizzle-zod@0.8.3(drizzle-orm@0.45.1(@electric-sql/pglite@0.5.3)(@types/pg@8.18.0)(pg@8.20.0))(zod@3.25.76):
     dependencies:
-      drizzle-orm: 0.45.1(@types/pg@8.18.0)(pg@8.20.0)
+      drizzle-orm: 0.45.1(@electric-sql/pglite@0.5.3)(@types/pg@8.18.0)(pg@8.20.0)
       zod: 3.25.76
 
   dunder-proto@1.0.1:
@@ -6850,6 +6866,8 @@ snapshots:
   motion-utils@12.29.2: {}
 
   ms@2.1.3: {}
+
+  mupdf@1.28.0: {}
 
   nanoid@3.3.11: {}
 

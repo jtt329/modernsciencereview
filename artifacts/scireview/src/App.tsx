@@ -12,6 +12,7 @@ import SubmissionForm from './components/SubmissionForm';
 import PromptAnalysis from './components/PromptAnalysis';
 import HowItWorksModal from './components/HowItWorksModal';
 import SandboxViewer from './components/SandboxViewer';
+import FieldOverviewPage from './components/FieldOverviewPage';
 import { ReviewSource } from './services/reviewService';
 import { StoredReviewModelFamily, storedReviewModelFamily, storedReviewModelFamilyLabel } from './lib/modelLabels';
 
@@ -276,10 +277,12 @@ function paperPath(paperId: string) {
 function readRoute() {
   const path = window.location.pathname;
   const paperMatch = path.match(/^\/papers\/([^/]+)\/?$/);
+  const fieldMatch = path.match(/^\/fields\/([^/]+)\/?$/);
   const queryPaper = new URLSearchParams(window.location.search).get('paper');
 
   return {
     paperId: paperMatch ? decodeURIComponent(paperMatch[1]) : queryPaper,
+    fieldSlug: fieldMatch ? decodeURIComponent(fieldMatch[1]) : null,
     showHowItWorks: path === '/how-it-works',
     showSandbox: path === '/admin/sandbox',
     usedLegacyPaperQuery: !paperMatch && !!queryPaper,
@@ -291,6 +294,7 @@ export default function App() {
 
   const [papers, setPapers] = useState<Paper[]>([]);
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
+  const [fieldSlug, setFieldSlug] = useState<string | null>(null);
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
   const [selectedReview, setSelectedReview] = useState<AIReview | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -345,6 +349,7 @@ export default function App() {
     const syncRoute = () => {
       const route = readRoute();
       setSelectedPaperId(route.paperId);
+      setFieldSlug(route.fieldSlug);
       setShowHowItWorks(route.showHowItWorks);
       setShowSandbox(route.showSandbox);
       if (route.paperId && route.usedLegacyPaperQuery) {
@@ -719,6 +724,19 @@ export default function App() {
             Try Again
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (fieldSlug) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <FieldOverviewPage
+          slug={fieldSlug}
+          isAdmin={isAdmin}
+          onOpenPaper={(id) => { window.history.pushState({}, '', paperPath(id)); setFieldSlug(null); setSelectedPaperId(id); }}
+          onBack={() => { window.history.pushState({}, '', '/'); setFieldSlug(null); }}
+        />
       </div>
     );
   }
