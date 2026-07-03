@@ -73,7 +73,9 @@ export type ApplyOverviewInput = {
   // FAIL CLOSED (brief P0.3): if this is missing or unrecognized (e.g. a malformed adjudicator
   // response), ALL edits are held as rejected/correctness_unavailable — corrupted model output
   // must never take the permissive branch.
-  correctnessPublic?: "sound" | "contested" | "flawed" | "hidden";
+  // "fatal_unverified" (an UNVERIFIED fatal allegation) also holds all edits: contested is an
+  // EARNED state, unverified-fatal is a PENDING one — verification precedes edits (§10.6).
+  correctnessPublic?: "sound" | "contested" | "flawed" | "hidden" | "fatal_unverified";
   edits: OverviewImpactEdit[];
   claims?: ReviewClaim[]; // the review's claim table (with per-claim status) — for chip claimStatus
   createdByUserId?: string | null;
@@ -285,7 +287,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
   const results: AppliedEditResult[] = [];
   const disputedSlug = `${input.overviewSlug}-${DISPUTED_PAGE_SLUG_SUFFIX}`;
   // Fail closed (P0.3): unknown correctness → hold every edit; never default to the sound path.
-  const KNOWN_CORRECTNESS = ["sound", "contested", "flawed", "hidden"];
+  const KNOWN_CORRECTNESS = ["sound", "contested", "flawed", "hidden", "fatal_unverified"];
   const correctnessKnown = input.correctnessPublic != null && KNOWN_CORRECTNESS.includes(input.correctnessPublic);
 
   for (const edit of input.edits) {
@@ -317,6 +319,13 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
     if (!correctnessKnown) {
       const id = await recordEdit("rejected", { rejectionReason: "correctness_unavailable: missing/unrecognized correctness verdict — all edits held (fail closed)" });
       results.push({ action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "correctness_unavailable" });
+      continue;
+    }
+    // Fail closed on PENDING correctness: an unverified fatal allegation holds every edit —
+    // it must not route as contested (earned) nor touch any page until verified (§10.6).
+    if (input.correctnessPublic === "fatal_unverified") {
+      const id = await recordEdit("rejected", { rejectionReason: "fatal_unverified: unverified fatal allegation — edits held pending image-grounded verification (verification precedes edits)" });
+      results.push({ action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "fatal_unverified" });
       continue;
     }
 

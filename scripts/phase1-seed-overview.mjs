@@ -209,6 +209,15 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   ] });
   assert(held[0]?.status === "rejected" && held[0]?.rejectionReason === "correctness_unavailable", "P0.3: missing correctness verdict holds the edit (fail closed, never the sound path)");
 
+  // ---- fatal_alleged_unverified acceptance: PENDING fatal holds all edits (never contested) --
+  const pendId = await upsertPaper("Paper with a pending unverified fatal allegation");
+  const pendRv = await persistReview(pendId, { promptVersion: "synthetic", recommendedScore: 40, correctnessInternal: "fatal_alleged_unverified", correctnessPublic: "hidden", claims: [{ id: "C1", statement: "A claim whose alleged fatal flaw awaits image verification.", status: "contested" }] });
+  const pendHeld = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: pendId, reviewVersionId: pendRv, correctnessPublic: "fatal_unverified", claims: [{ id: "C1", statement: "x", status: "contested" }], edits: [
+    { action: "add_paragraph", targetPageSlug: "black-hole-mechanics", proposedMarkdown: "Should be held pending verification.", citedPaperIds: [pendId], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  assert(pendHeld[0]?.status === "rejected" && pendHeld[0]?.rejectionReason === "fatal_unverified", "fatal_alleged_unverified: ALL edits held (rejected/fatal_unverified) — pending, never routed as contested");
+  assert((await computeProminence(db, OVERVIEW_SLUG, pendId)).prominence === "not_in_overview", "fatal_alleged_unverified: paper touched no page (not in overview)");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);
@@ -278,10 +287,12 @@ async function runLive(db, upsertPaper, persistReview) {
       const correctnessValid = VALID_INTERNAL.includes(internalRaw);
       const internal = correctnessValid ? internalRaw : "unavailable";
       if (!correctnessValid) console.log("  !! CORRECTNESS UNAVAILABLE (adjudicator returned " + JSON.stringify(internalRaw ?? null) + ") — holding ALL overview edits (fail closed)");
-      // fatal_alleged_unverified routes as contested (never main-page sound, never public flawed).
+      // fatal_alleged_unverified is a PENDING state (not an earned "contested"): display stays
+      // hidden and ALL overview edits are held via the "fatal_unverified" routing value (§10.6:
+      // verification precedes edits).
       const pub = !correctnessValid ? "hidden"
         : internal === "fatal_verified" ? "flawed"
-        : (internal === "contested_defensible" || internal === "fatal_alleged_unverified") ? "contested"
+        : internal === "contested_defensible" ? "contested"
         : "hidden";
       const claims = Array.isArray(adj?.claims) ? adj.claims : [];
       const oi = adj?.overviewImpact || {};
@@ -295,8 +306,12 @@ async function runLive(db, upsertPaper, persistReview) {
       const edits = Array.isArray(oi.proposedEdits) ? oi.proposedEdits : [];
       // Equation-fidelity watch: overview equations should come verbatim from verified claims.
       const eqFlags = checkEquationFidelity(JSON.stringify(edits.map((e) => e.proposedMarkdown || "")), claims);
-      // Pass undefined correctness when the verdict was unavailable → the service holds all edits.
-      const applied = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, correctnessPublic: correctnessValid ? (pub === "hidden" ? "sound" : pub) : undefined, edits, claims });
+      // Routing value: undefined when the verdict was unavailable (service holds all edits);
+      // "fatal_unverified" for a pending fatal allegation (service holds all edits).
+      const routingCorrectness = !correctnessValid ? undefined
+        : internal === "fatal_alleged_unverified" ? "fatal_unverified"
+        : (pub === "hidden" ? "sound" : pub);
+      const applied = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, correctnessPublic: routingCorrectness, edits, claims });
       console.log("  score=" + score + " scope=" + adj?.scopeOfUpdate + " correctness=" + internal + " | " + claims.length + " claims, " + edits.length + " proposed edits");
       if (eqFlags.length) console.log("  ⚠ equation-fidelity: " + eqFlags.length + " overview eq(s) not matched to a claim: " + eqFlags.slice(0, 3).map((f) => f.equation.slice(0, 40)).join(" ; "));
       for (const r of applied) console.log("    " + r.status.padEnd(13) + " " + r.action.padEnd(16) + " -> " + (r.targetPageSlug || "-") + " [" + (r.supportStatus || "-") + "]" + (r.droppedCitations?.length ? " DROPPED-CITES:" + r.droppedCitations.length : "") + (r.rejectionReason ? " (REJECTED: " + r.rejectionReason + ")" : ""));
