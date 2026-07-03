@@ -21,7 +21,7 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import {
-  papersTable,
+  papersTable, reviewVersionsTable,
   fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable,
   pageSpansTable, proposedOverviewEditsTable,
   type ComputedProminence, type FieldPageChangeLogEntry,
@@ -568,6 +568,43 @@ export async function assembleOverviewMarkdown(db: Db, overviewSlug: string): Pr
     chunks.push(`# ${p.title}  (\`/fields/${p.slug}\`)\n\n${v?.markdownFull ?? ""}\n\n_Provenance: ${refs.length} source chip(s); spans ${sourced} sourced / ${unsourced} unsourced-explanatory._\n`);
   }
   return chunks.join("\n\n---\n\n");
+}
+
+// ---- Production write-path hook (brief P1.6) — gated by env flag, default OFF -------
+// Invoked post-review from the submission pipeline (and manually via the admin route). Reads
+// the paper's persisted B.2.1 review_versions row and applies its overviewImpact edits with the
+// FAIL-CLOSED correctness mapping (P0.3 + fatal_alleged_unverified hold, §10.6). No-ops (with a
+// reason) when the flag is off, when no review_versions row exists yet (the v19 pipeline does
+// not produce one — write-path integration completes when B.2.1 reviews land in production),
+// or when the review proposed no edits.
+export function overviewEditorEnabled(): boolean {
+  return process.env.SCIREVIEW_OVERVIEW_EDITOR_ENABLED === "true";
+}
+
+export async function runPostReviewOverviewHook(
+  db: Db, paperId: string, defaultOverviewSlug = "horizon-thermodynamics",
+): Promise<{ applied: AppliedEditResult[] | null; skipped?: string }> {
+  if (!overviewEditorEnabled()) return { applied: null, skipped: "flag_disabled" };
+  const rv = (await db.select().from(reviewVersionsTable)
+    .where(eq(reviewVersionsTable.paperId, paperId))
+    .orderBy(desc(reviewVersionsTable.createdAt)).limit(1))[0];
+  if (!rv) return { applied: null, skipped: "no_review_version" };
+  const oi = rv.overviewImpact as { overviewSlug?: string; proposedEdits?: OverviewImpactEdit[] } | null;
+  const edits = Array.isArray(oi?.proposedEdits) ? oi!.proposedEdits! : [];
+  if (edits.length === 0) return { applied: null, skipped: "no_proposed_edits" };
+  // Fail-closed mapping from the PERSISTED internal verdict; anything unrecognized routes
+  // undefined and the service holds every edit.
+  const internal = rv.correctnessInternal;
+  const routing = internal === "sound" ? "sound" as const
+    : internal === "contested_defensible" ? "contested" as const
+    : internal === "fatal_verified" ? "flawed" as const
+    : internal === "fatal_alleged_unverified" ? "fatal_unverified" as const
+    : undefined;
+  const applied = await applyOverviewImpact(db, {
+    overviewSlug: oi?.overviewSlug || defaultOverviewSlug, paperId, reviewVersionId: rv.id,
+    correctnessPublic: routing, edits, claims: (rv.claims as ReviewClaim[] | null) ?? [],
+  });
+  return { applied };
 }
 
 // ---- Corrections ledger (§3.2) — compact "what changed and why" per page, fed to the editor

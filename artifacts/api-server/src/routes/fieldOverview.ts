@@ -11,7 +11,7 @@ import {
   pageSpansTable, proposedOverviewEditsTable, ingestionQueueTable, reviewVersionsTable,
 } from "@workspace/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug } from "../lib/overviewEditor";
+import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook } from "../lib/overviewEditor";
 import { logger } from "../lib/logger";
 
 // Enrich references with the canonical paper slug + title (the model never writes slugs — §10.2a).
@@ -126,6 +126,14 @@ router.get("/overviews/:slug/edits", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const edits = await db.select().from(proposedOverviewEditsTable).where(eq(proposedOverviewEditsTable.overviewSlug, req.params.slug)).orderBy(desc(proposedOverviewEditsTable.createdAt));
   res.json({ overviewSlug: req.params.slug, edits });
+});
+
+// POST /api/admin/papers/:paperId/run-overview-editor — manual trigger of the post-review
+// hook (P1.6). Same flag gate + fail-closed correctness mapping as the pipeline call site.
+router.post("/admin/papers/:paperId/run-overview-editor", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try { res.json(await runPostReviewOverviewHook(db as any, req.params.paperId)); }
+  catch (err) { logger.error({ err }, "run-overview-editor failed"); res.status(500).json({ error: "run-overview-editor failed" }); }
 });
 
 // POST /api/admin/overviews/:slug/publish — single draft->published switch (§10.1)

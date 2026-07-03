@@ -4,6 +4,7 @@ import { eq, desc, and, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
+import { runPostReviewOverviewHook } from "../lib/overviewEditor";
 import {
   BENCHMARK_SET_VERSION,
   GEMINI_CALIBRATION_MODEL,
@@ -6366,6 +6367,16 @@ const attempt = await updateReviewAttemptProgress(attemptContext, {
     score: reviewValues.score,
   }),
 });
+
+// Post-review overview-editor hook (brief P1.6): autonomous wiki write path, gated by
+// SCIREVIEW_OVERVIEW_EDITOR_ENABLED (default off). No-ops until a B.2.1 review_versions row
+// exists for this paper; fire-and-forget — a hook failure must never break a submission.
+runPostReviewOverviewHook(db, paper.id)
+  .then((r) => {
+    if (r.applied) logger.info({ paperId: paper.id, results: r.applied.map((a) => `${a.action}:${a.status}`) }, "overview-editor hook applied");
+    else if (r.skipped && r.skipped !== "flag_disabled") logger.info({ paperId: paper.id, skipped: r.skipped }, "overview-editor hook skipped");
+  })
+  .catch((err) => logger.error({ err, paperId: paper.id }, "overview-editor hook failed"));
 
 const payload = { paper, review };
 if (resolveSubmission) resolveSubmission(payload);
