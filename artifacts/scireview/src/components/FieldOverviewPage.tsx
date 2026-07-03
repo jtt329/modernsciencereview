@@ -11,12 +11,15 @@ type Ref = {
 };
 
 // Soft, descriptive cue only — drives nothing. A light suffix; full status on hover.
+// Unknown ≠ established (P2): a chip with no claim status renders NEUTRAL grey, never in the
+// established style — the product ethos in one CSS class.
 const CHIP_CUE: Record<string, { cue: string; cls: string }> = {
   established: { cue: '', cls: 'bg-blue-50 text-blue-700 border-blue-100' },
   contested: { cue: ' · contested', cls: 'bg-amber-50 text-amber-700 border-amber-200' },
   speculative: { cue: ' · speculative', cls: 'bg-violet-50 text-violet-700 border-violet-200' },
   failed: { cue: ' · failed', cls: 'bg-rose-50 text-rose-700 border-rose-200' },
   mixed: { cue: ' · mixed', cls: 'bg-slate-100 text-slate-600 border-slate-200' },
+  unknown: { cue: '', cls: 'bg-slate-50 text-slate-500 border-slate-200' },
 };
 type Span = { id: string; text: string; supportStatus: string; referenceId: string | null };
 type Page = {
@@ -79,12 +82,12 @@ export default function FieldOverviewPage({
           <div className="mt-4 flex flex-wrap gap-2 items-center">
             <span className="text-xs text-slate-400">Sources:</span>
             {page.references.filter((r) => r.paperId).map((r) => {
-              const cue = CHIP_CUE[r.claimStatus || 'established'] || CHIP_CUE.established;
+              const cue = r.claimStatus ? (CHIP_CUE[r.claimStatus] || CHIP_CUE.unknown) : CHIP_CUE.unknown;
               const label = r.paperTitle ? (r.paperTitle.length > 42 ? r.paperTitle.slice(0, 42) + '…' : r.paperTitle) : 'source';
               return (
                 <button key={r.id} onClick={() => onOpenPaper(r.paperId!)}
                   className={`text-xs px-2 py-0.5 rounded-full border hover:brightness-95 ${cue.cls}`}
-                  title={`${r.anchorText || ''}${r.claimStatus ? `  —  cited claim: ${r.claimStatus}` : ''}`}>
+                  title={`${r.anchorText || ''}  —  cited claim: ${r.claimStatus || 'unverified'}`}>
                   {label}<span className="opacity-70">{cue.cue}</span>
                 </button>
               );

@@ -95,6 +95,9 @@ export type FieldPageVisibility = "draft" | "published" | "archived";
 export const fieldPageVersionsTable = pgTable("field_page_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   pageId: varchar("page_id").notNull().references(() => fieldPagesTable.id, { onDelete: "cascade" }),
+  // Monotonic per-page ordinal (brief P2): createdAt ties are possible in fast loops; version
+  // ordering must never depend on timestamp resolution.
+  versionNumber: integer("version_number").notNull().default(0),
   summaryOneLine: text("summary_one_line").notNull().default(""),
   summaryShort: text("summary_short").notNull().default(""),
   markdownFull: text("markdown_full").notNull().default(""),
@@ -190,8 +193,40 @@ export const proposedOverviewEditsTable = pgTable("proposed_overview_edits", {
   // rows (null on rejected, so a fixed retry isn't blocked); unique index makes re-application
   // a no-op even under concurrency.
   idempotencyKey: varchar("idempotency_key"),
+  // Equation-fidelity outcome (brief P2): equations in the edit's prose that did not match any
+  // verified review claim, plus (when the live pipeline runs it) the image-grounded verification
+  // result per equation. A WATCH stored for the admin edit list — never a gate.
+  equationFlags: jsonb("equation_flags").$type<EquationFlags | null>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [uniqueIndex("proposed_overview_edits_idem_idx").on(t.idempotencyKey)]);
+
+export type EquationFlags = {
+  unmatched: string[]; // $...$ expressions in prose not found in the review's claims
+  imageVerification?: { equation: string; verbatimFromImage: string; verdict: "matches" | "differs" | "not_found"; note?: string }[];
+};
+
+// --- AttributionCheck: mis-sourcing spot-check queue (brief P2) --------------------
+// The code enforces "a citation resolves to a real paper", not "the RIGHT paper" — attribution
+// correctness stays model judgment. This is a lightweight post-apply lexical WATCH comparing the
+// cited claim's statement to the anchored sentence; low overlap lands here for an admin glance.
+// Never a gate: the edit applies regardless.
+export type AttributionCheckStatus = "queued" | "cleared" | "confirmed_missourced";
+
+export const attributionChecksTable = pgTable("attribution_checks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  proposedOverviewEditId: varchar("proposed_overview_edit_id"),
+  referenceId: varchar("reference_id"),
+  spanId: varchar("span_id"),
+  pageId: varchar("page_id"),
+  paperId: varchar("paper_id").references(() => papersTable.id, { onDelete: "cascade" }),
+  claimIds: jsonb("claim_ids").$type<string[]>().notNull().default([]),
+  claimStatements: jsonb("claim_statements").$type<string[]>().notNull().default([]),
+  anchoredText: text("anchored_text").notNull().default(""),
+  overlapScore: integer("overlap_score").notNull().default(0), // 0-100
+  status: varchar("status").$type<AttributionCheckStatus>().notNull().default("queued"),
+  note: text("note").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // --- PageSpan: a prose span with soft support status (§3.2, explanation-first) -----
 // Every added paragraph/sentence becomes a span. Unsourced spans are legitimate (best
@@ -258,3 +293,5 @@ export type ReviewVersion = typeof reviewVersionsTable.$inferSelect;
 export type InsertReviewVersion = typeof reviewVersionsTable.$inferInsert;
 export type PageSpan = typeof pageSpansTable.$inferSelect;
 export type InsertPageSpan = typeof pageSpansTable.$inferInsert;
+export type AttributionCheck = typeof attributionChecksTable.$inferSelect;
+export type InsertAttributionCheck = typeof attributionChecksTable.$inferInsert;

@@ -9,6 +9,7 @@ import {
   db, papersTable,
   fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable,
   pageSpansTable, proposedOverviewEditsTable, ingestionQueueTable, reviewVersionsTable,
+  attributionChecksTable,
 } from "@workspace/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook } from "../lib/overviewEditor";
@@ -84,7 +85,9 @@ router.get("/papers/:paperId/overview-location", async (req, res) => {
       const page = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, locationSlug)).limit(1))[0];
       location = page ? { slug: page.slug, title: page.title } : null;
     }
-    res.json({ paperId: req.params.paperId, overviewSlug, computedProminence: prominence, location });
+    // provisional (brief P2): the prominence heuristic reads offsets, not real structure — label
+    // it so no display asserts it as measured position; keep off public pages until structural.
+    res.json({ paperId: req.params.paperId, overviewSlug, computedProminence: prominence, location, provisional: true, provisionalNote: "prominence is an offset heuristic, not structural — display as provisional only" });
   } catch (err) { logger.error({ err }, "overview-location failed"); res.status(500).json({ error: "overview-location failed" }); }
 });
 
@@ -157,6 +160,56 @@ router.get("/overviews/pages/:pageId/versions", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const versions = await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, req.params.pageId)).orderBy(desc(fieldPageVersionsTable.createdAt));
   res.json({ pageId: req.params.pageId, versions: versions.map((v) => ({ id: v.id, visibility: v.visibility, createdAt: v.createdAt, changeLog: v.changeLog })) });
+});
+
+// --- Mis-sourcing spot-check queue (P2 — a WATCH, never a gate) --------------------
+router.get("/admin/attribution-checks", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const status = String(req.query.status || "queued");
+  const items = await db.select().from(attributionChecksTable).where(eq(attributionChecksTable.status, status as any)).orderBy(desc(attributionChecksTable.createdAt));
+  res.json({ items });
+});
+router.patch("/admin/attribution-checks/:id", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const { status, note } = req.body ?? {};
+  if (!["cleared", "confirmed_missourced", "queued"].includes(status)) { res.status(400).json({ error: "status must be cleared | confirmed_missourced | queued" }); return; }
+  const [item] = await db.update(attributionChecksTable).set({ status, ...(note ? { note } : {}) }).where(eq(attributionChecksTable.id, req.params.id)).returning();
+  res.json(item);
+});
+
+// --- Publish diff view (P2): what changed per page since its last published version ---
+// The publish switch stays single and autonomous-friendly; this gives the human flipping it
+// something to look at. Minimal line diff — monitoring, not approval.
+router.get("/admin/overviews/:slug/publish-diff", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const root = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, req.params.slug)).limit(1))[0];
+    if (!root) { res.status(404).json({ error: "overview not found" }); return; }
+    const all = await db.select().from(fieldPagesTable);
+    const scope = all.filter((p) => p.id === root.id || p.parentPageId === root.id);
+    const pages = [] as any[];
+    for (const p of scope) {
+      const versions = await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, p.id)).orderBy(desc(fieldPageVersionsTable.versionNumber));
+      const latest = versions[0];
+      const lastPublished = versions.find((v) => v.visibility === "published");
+      if (!latest) continue;
+      const oldLines = (lastPublished?.markdownFull ?? "").split("\n");
+      const newLines = latest.markdownFull.split("\n");
+      const oldSet = new Set(oldLines);
+      const newSet = new Set(newLines);
+      const added = newLines.filter((l) => l.trim() && !oldSet.has(l));
+      const removed = oldLines.filter((l) => l.trim() && !newSet.has(l));
+      if (added.length || removed.length || !lastPublished) {
+        pages.push({
+          slug: p.slug, title: p.title,
+          latestVersion: { id: latest.id, versionNumber: latest.versionNumber, visibility: latest.visibility },
+          lastPublishedVersion: lastPublished ? { id: lastPublished.id, versionNumber: lastPublished.versionNumber } : null,
+          added, removed,
+        });
+      }
+    }
+    res.json({ overviewSlug: req.params.slug, changedPages: pages });
+  } catch (err) { logger.error({ err }, "publish-diff failed"); res.status(500).json({ error: "publish-diff failed" }); }
 });
 
 // --- Ingestion queue (referenced-but-unreviewed papers) ---------------------------

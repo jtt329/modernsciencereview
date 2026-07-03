@@ -23,12 +23,47 @@ import type { PgDatabase } from "drizzle-orm/pg-core";
 import {
   papersTable, reviewVersionsTable,
   fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable,
-  pageSpansTable, proposedOverviewEditsTable,
+  pageSpansTable, proposedOverviewEditsTable, attributionChecksTable,
   type ComputedProminence, type FieldPageChangeLogEntry,
   type OverviewEditAction, type OverviewEditType,
   type OverviewEditorRationale, type OverviewEditSafetyCheck, type SpanSupportStatus,
-  type ReviewClaim, type ChipClaimStatus,
+  type ReviewClaim, type ChipClaimStatus, type EquationFlags,
 } from "@workspace/db";
+
+// Independent prompt-injection screen (brief P2): a cheap pattern check on the OUTPUT prose,
+// deliberately NOT sharing fate with the model's own safetyCheck self-report — a compromised
+// model cannot un-trip a regex. Conservative patterns (physics prose legitimately says things
+// like "horizons act as thermodynamic systems", so no loose verb matching). Trip → hold.
+const INJECTION_PATTERNS: RegExp[] = [
+  /\b(ignore|disregard|forget|override)\b.{0,50}\b(instruction|prompt|rule|guideline|directive)s?\b/i,
+  /\bsystem prompt\b/i,
+  /\byou (are|'re) (now )?(an? )?(ai|llm|assistant|language model)\b/i,
+  /\b(score|rate|mark) (this|the) (paper|manuscript)\b/i,
+  /\bdo not (tell|reveal|mention).{0,30}\b(user|admin|reviewer)\b/i,
+];
+export function independentInjectionScreen(text: string): { tripped: boolean; pattern?: string } {
+  for (const re of INJECTION_PATTERNS) {
+    const m = text.match(re);
+    if (m) return { tripped: true, pattern: m[0].slice(0, 80) };
+  }
+  return { tripped: false };
+}
+
+// Attribution overlap (brief P2 mis-sourcing WATCH): content-word containment between the cited
+// claim statements and the anchored sentence, 0-100. Low overlap → admin spot-check queue.
+// Never a gate — attribution correctness stays model judgment; this only triggers a LOOK.
+export function attributionOverlapScore(claimStatements: string[], anchoredText: string): number {
+  const words = (s: string) => new Set(
+    s.toLowerCase().replace(/\$[^$]*\$/g, " ").replace(/\\[a-z]+/gi, " ").split(/[^a-z0-9]+/).filter((w) => w.length > 3),
+  );
+  const claimWords = words(claimStatements.join(" "));
+  const textWords = words(anchoredText);
+  if (claimWords.size === 0 || textWords.size === 0) return 0;
+  let hit = 0;
+  for (const w of textWords) if (claimWords.has(w)) hit += 1;
+  return Math.round((100 * hit) / Math.min(textWords.size, claimWords.size));
+}
+const ATTRIBUTION_WATCH_THRESHOLD = 20; // below → queue for a human glance
 
 // Chip claim status from the cited claims (per-claim, MIXED if they differ). Read-only surfacing.
 function chipStatusFromClaims(citedClaimIds: string[], claims?: ReviewClaim[]): ChipClaimStatus | null {
@@ -114,9 +149,10 @@ async function regenerateSections(db: Db, pageId: string, versionId: string, mar
 }
 
 async function latestVersion(db: Db, pageId: string) {
+  // versionNumber is the ordering truth (P2): createdAt ties happen in fast loops.
   const rows = await db.select().from(fieldPageVersionsTable)
     .where(eq(fieldPageVersionsTable.pageId, pageId))
-    .orderBy(desc(fieldPageVersionsTable.createdAt)).limit(1);
+    .orderBy(desc(fieldPageVersionsTable.versionNumber), desc(fieldPageVersionsTable.createdAt)).limit(1);
   return rows[0] ?? null;
 }
 
@@ -141,6 +177,7 @@ async function newDraftVersion(
   const priorLog = (prev?.changeLog as FieldPageChangeLogEntry[] | undefined) ?? [];
   const [version] = await db.insert(fieldPageVersionsTable).values({
     pageId,
+    versionNumber: (prev?.versionNumber ?? 0) + 1,
     summaryOneLine: summaries?.oneLine ?? prev?.summaryOneLine ?? "",
     summaryShort: summaries?.short ?? prev?.summaryShort ?? "",
     markdownFull: markdown,
@@ -320,6 +357,10 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
     // Each edit applies ATOMICALLY (P1.4): version + sections + carried spans/refs + new
     // span/ref + the edit record commit together or not at all.
     const applyOne = async (tx: Db): Promise<AppliedEditResult> => {
+      // Equation-fidelity WATCH (P2): equations in this edit's prose that match no review claim.
+      // Stored on the edit row for the admin list; the live pipeline adds image verification.
+      const eqUnmatched = checkEquationFidelity(edit.proposedMarkdown ?? "", input.claims ?? []).map((f) => f.equation);
+      const equationFlags: EquationFlags | null = eqUnmatched.length ? { unmatched: eqUnmatched } : null;
       const recordEdit = async (
         status: "draft_applied" | "rejected" | "no_change",
         extra: { targetPageSlug?: string | null; appliedVersionId?: string; rejectionReason?: string } = {},
@@ -336,8 +377,24 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
           status: status === "no_change" ? "draft_applied" : (status === "rejected" ? "rejected" : "draft_applied"),
           appliedVersionId: extra.appliedVersionId ?? null,
           idempotencyKey: status === "rejected" ? null : idempotencyKey,
+          equationFlags,
         }).returning();
         return row.id;
+      };
+      // Mis-sourcing WATCH (P2): queue low-overlap sourced sentences for an admin glance.
+      const recordAttributionWatch = async (args: { editId: string; refId?: string; spanId?: string; pageId: string; anchoredText: string }) => {
+        const claimIds = edit.citedClaimIds ?? [];
+        if (!args.refId || claimIds.length === 0) return;
+        const statements = claimIds.map((id) => (input.claims ?? []).find((c) => c.id === id)?.statement ?? "").filter(Boolean);
+        if (statements.length === 0) return;
+        const score = attributionOverlapScore(statements, args.anchoredText);
+        if (score >= ATTRIBUTION_WATCH_THRESHOLD) return;
+        await tx.insert(attributionChecksTable).values({
+          proposedOverviewEditId: args.editId, referenceId: args.refId, spanId: args.spanId ?? null,
+          pageId: args.pageId, paperId: input.paperId, claimIds, claimStatements: statements,
+          anchoredText: args.anchoredText.slice(0, 2000), overlapScore: score,
+          note: "low lexical overlap between cited claim(s) and anchored sentence — verify attribution",
+        });
       };
 
       if (edit.action === "no_change") {
@@ -361,6 +418,13 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
       if (sc && (sc.paperTextTreatedAsData === false || (sc.suspiciousInstructionsDetected && sc.actionTaken !== "ignored_instructions"))) {
         const id = await recordEdit("rejected", { rejectionReason: "safety: suspicious instructions held for manual_review" });
         return { action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "manual_review" };
+      }
+      // INDEPENDENT injection screen on the output prose (P2) — does not share fate with the
+      // model's self-report above; a compromised model cannot un-trip a regex. Trip → hold.
+      const screen = independentInjectionScreen(edit.proposedMarkdown ?? "");
+      if (screen.tripped) {
+        const id = await recordEdit("rejected", { rejectionReason: `injection_screen: independent pattern screen tripped ("${screen.pattern}") — held for manual_review` });
+        return { action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "injection_screen" };
       }
 
       // EXPLANATION-FIRST (§3.2): unsourced prose is allowed. The REVIEWED paper is the natural,
@@ -398,6 +462,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
           if (isSourced && sourcePaperId) { const ref = await createReference(tx, { pageId: page.id, versionId: version.id, markdown: md, anchorText: edit.anchorText || title, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
           const span = await createSpan(tx, { pageId: page.id, versionId: version.id, text: (edit.proposedMarkdown ?? title).slice(0, 400), markdown: md, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
           const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
+          await recordAttributionWatch({ editId: id, refId, spanId: span.id, pageId: page.id, anchoredText: (edit.proposedMarkdown ?? title).slice(0, 400) });
           return { action: "create_subpage", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId: span.id, supportStatus, droppedCitations: dropped };
         }
       }
@@ -436,6 +501,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
           await tx.update(pageSpansTable).set({ supportStatus: "needs_source" }).where(eq(pageSpansTable.id, match.id)); spanId = match.id; finalStatus = "needs_source";
         }
         const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
+        await recordAttributionWatch({ editId: id, refId, spanId, pageId: page.id, anchoredText: anchor });
         return { action: "add_reference", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId, supportStatus: finalStatus, droppedCitations: dropped };
       }
 
@@ -452,6 +518,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
       if (isSourced && sourcePaperId) { const ref = await createReference(tx, { pageId: page.id, versionId: version.id, markdown, anchorText: anchor, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
       const span = await createSpan(tx, { pageId: page.id, versionId: version.id, sectionSlug: edit.targetSectionSlug ?? null, text: insertedText, markdown, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
       const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
+      await recordAttributionWatch({ editId: id, refId, spanId: span.id, pageId: page.id, anchoredText: insertedText });
       return { action: edit.action, targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId: span.id, supportStatus, droppedCitations: dropped };
     };
 
@@ -625,10 +692,20 @@ export async function assembleCorrectionsLedger(db: Db, overviewSlug: string, ta
   const header = scoped.length > shown.length
     ? `(ledger truncated: showing ${shown.length} of ${scoped.length}; all reverted/held entries pinned)\n`
     : "";
-  return header + shown.map((r: any) => {
+  // Grouped PER PAGE (P2): the editor reads each page's own history, not one interleaved blob.
+  const byPage = new Map<string, any[]>();
+  for (const r of shown) {
+    const key = r.targetPageSlug ?? overviewSlug;
+    if (!byPage.has(key)) byPage.set(key, []);
+    byPage.get(key)!.push(r);
+  }
+  const line = (r: any) => {
     const why = (r.editorRationale as OverviewEditorRationale | null)?.whatThisPaperAdds || r.reason || "";
-    return `- [${r.targetPageSlug ?? overviewSlug}] ${r.action}${r.status === "reverted" ? " (reverted)" : r.status === "rejected" ? " (held)" : ""}: ${String(why).slice(0, 160)}`;
-  }).join("\n");
+    return `  - ${r.action}${r.status === "reverted" ? " (reverted)" : r.status === "rejected" ? " (held)" : ""}: ${String(why).slice(0, 160)}`;
+  };
+  return header + Array.from(byPage.entries())
+    .map(([slug, rows]) => `[${slug}]\n${rows.map(line).join("\n")}`)
+    .join("\n");
 }
 
 // ---- draft -> published (single switch, not a per-edit gate) -----------------------

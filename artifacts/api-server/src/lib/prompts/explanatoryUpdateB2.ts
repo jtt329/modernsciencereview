@@ -257,6 +257,22 @@ exactly one of fatal_survives, not_fatal, uncertain_needs_human_or_author; publi
 one-sentence public description of the flaw, used ONLY if skepticVerdict is fatal_survives.
 Math in LaTeX inside $...$, backslashes escaped. Output valid JSON only.`;
 
+// Equation-transcription verification (integrity brief P2) — the same image-grounded treatment
+// fatal flaws get, applied to equations that reach the overview: a wrong-but-internally-
+// consistent transcription passes text-only checks, so the image is the arbiter.
+export const EQUATION_VERIFICATION_PROMPT = `You are verifying the transcription of equations from a scientific manuscript. You are NOT
+scoring the paper. You are given the rendered page image(s); treat the image as authoritative.
+For EACH equation in the supplied list:
+1. Locate it on the page images.
+2. Transcribe the printed expression VERBATIM, symbol by symbol, from the image — do not
+   simplify, do not drop factors or exponents, do not infer from memory.
+3. Compare the supplied transcription against the image.
+Verdict per equation: matches | differs | not_found. If the printed expression is ambiguous or
+unreadable, use not_found with a note — never guess.
+Return valid JSON only — no comments, no trailing commas:
+{ "results": [ { "equation": "", "verbatimFromImage": "", "verdict": "matches", "note": "" } ] }
+Math in LaTeX inside $...$, backslashes escaped. Output valid JSON only.`;
+
 export const EXPLANATORY_UPDATE_B2_PROMPT_HASH = createHash("sha256")
   .update(EXPLANATORY_UPDATE_B2_PROMPT)
   .digest("hex")

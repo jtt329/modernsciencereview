@@ -21,9 +21,26 @@ CREATE TABLE "conversations" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE "attribution_checks" (
+	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"proposed_overview_edit_id" varchar,
+	"reference_id" varchar,
+	"span_id" varchar,
+	"page_id" varchar,
+	"paper_id" varchar,
+	"claim_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"claim_statements" jsonb DEFAULT '[]'::jsonb NOT NULL,
+	"anchored_text" text DEFAULT '' NOT NULL,
+	"overlap_score" integer DEFAULT 0 NOT NULL,
+	"status" varchar DEFAULT 'queued' NOT NULL,
+	"note" text DEFAULT '' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "field_page_versions" (
 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"page_id" varchar NOT NULL,
+	"version_number" integer DEFAULT 0 NOT NULL,
 	"summary_one_line" text DEFAULT '' NOT NULL,
 	"summary_short" text DEFAULT '' NOT NULL,
 	"markdown_full" text DEFAULT '' NOT NULL,
@@ -127,6 +144,7 @@ CREATE TABLE "proposed_overview_edits" (
 	"applied_version_id" varchar,
 	"reverted_from_version_id" varchar,
 	"idempotency_key" varchar,
+	"equation_flags" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -335,6 +353,7 @@ CREATE TABLE "messages" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
+ALTER TABLE "attribution_checks" ADD CONSTRAINT "attribution_checks_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "field_page_versions" ADD CONSTRAINT "field_page_versions_page_id_field_pages_id_fk" FOREIGN KEY ("page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "field_page_versions" ADD CONSTRAINT "field_page_versions_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "ingestion_queue" ADD CONSTRAINT "ingestion_queue_resolved_paper_id_papers_id_fk" FOREIGN KEY ("resolved_paper_id") REFERENCES "public"."papers"("id") ON DELETE set null ON UPDATE no action;
