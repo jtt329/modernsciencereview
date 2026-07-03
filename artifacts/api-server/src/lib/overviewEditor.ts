@@ -24,6 +24,7 @@ import {
   papersTable, reviewVersionsTable,
   fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable,
   pageSpansTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable,
+  divergenceFlagsTable,
   type ComputedProminence, type FieldPageChangeLogEntry,
   type OverviewEditAction, type OverviewEditType,
   type OverviewEditorRationale, type OverviewEditSafetyCheck, type SpanSupportStatus,
@@ -366,7 +367,20 @@ function editIdempotencyKey(input: ApplyOverviewInput, edit: OverviewImpactEdit)
   })).digest("hex").slice(0, 40);
 }
 
+// Per-field serialization (slice 6): concurrent reviews editing one field's pages would race
+// on read-modify-write (latest version -> new version) and lose updates. Serialize apply per
+// overviewSlug with an in-process promise chain. NOTE: single-server scope — if the api-server
+// ever runs multiple instances, replace with a Postgres advisory lock keyed on the slug.
+const fieldLocks = new Map<string, Promise<unknown>>();
+
 export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Promise<AppliedEditResult[]> {
+  const prev = fieldLocks.get(input.overviewSlug) ?? Promise.resolve();
+  const run = prev.then(() => applyOverviewImpactInner(db, input), () => applyOverviewImpactInner(db, input));
+  fieldLocks.set(input.overviewSlug, run.then(() => undefined, () => undefined));
+  return run;
+}
+
+async function applyOverviewImpactInner(db: Db, input: ApplyOverviewInput): Promise<AppliedEditResult[]> {
   const provenance = input.provenance ?? "model_review";
   const results: AppliedEditResult[] = [];
   const disputedSlug = `${input.overviewSlug}-${DISPUTED_PAGE_SLUG_SUFFIX}`;
@@ -737,6 +751,31 @@ export async function runPostReviewOverviewHook(
     correctnessPublic: routing, edits, claims: (rv.claims as ReviewClaim[] | null) ?? [],
   });
   return { applied };
+}
+
+// ---- Divergence signal (slice 5.4) — MONITORING ONLY, never a score/placement change ----
+// Compares the review's estimated-importance range with the realized structural position.
+// Sharp disagreement (estimate says landmark, structure says footnote — or vice versa) writes
+// a flag row for the admin surface: the trigger for a human LOOK at a stale page or a flipped
+// judgment. Nothing reads these flags to compute anything.
+export async function checkImportanceDivergence(db: Db, overviewSlug: string, paperId: string): Promise<{ flagged: boolean; note?: string }> {
+  const rv = (await db.select().from(reviewVersionsTable).where(eq(reviewVersionsTable.paperId, paperId)).orderBy(desc(reviewVersionsTable.createdAt)).limit(1))[0];
+  if (!rv || rv.estimatedImportanceLow == null || rv.estimatedImportanceHigh == null) return { flagged: false };
+  const { prominence, locationSlug } = await computeProminence(db, overviewSlug, paperId);
+  const lowProminence = ["not_in_overview", "footnote_reference", "inline_reference"].includes(prominence);
+  const highProminence = ["page_subject", "section_anchor"].includes(prominence);
+  let note: string | null = null;
+  if (rv.estimatedImportanceLow >= 80 && lowProminence) {
+    note = `estimate says landmark (~${rv.estimatedImportanceLow}-${rv.estimatedImportanceHigh}) but realized position is ${prominence} — stale page or flipped judgment; take a look`;
+  } else if (rv.estimatedImportanceHigh <= 40 && highProminence) {
+    note = `estimate says minor (~${rv.estimatedImportanceLow}-${rv.estimatedImportanceHigh}) but realized position is ${prominence} — take a look`;
+  }
+  if (!note) return { flagged: false };
+  await db.insert(divergenceFlagsTable).values({
+    paperId, overviewSlug, estimatedLow: rv.estimatedImportanceLow, estimatedHigh: rv.estimatedImportanceHigh,
+    computedProminence: prominence, locationSlug, note,
+  });
+  return { flagged: true, note };
 }
 
 // ---- Contribution transclusion (slice 3 — review<->page convergence, spec §2.1) -----

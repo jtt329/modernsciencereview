@@ -155,7 +155,7 @@ import {
   ensureOverviewSkeleton, applyOverviewImpact, assembleOverviewMarkdown,
   computeProminence, publishOverview, rollbackPage, checkEquationFidelity, assembleCorrectionsLedger,
 } from ${JSON.stringify(editorPath)};
-import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable } from "@workspace/db";
+import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable, divergenceFlagsTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 
 const MODE = ${JSON.stringify(MODE)};
@@ -196,6 +196,7 @@ async function main() {
 
   if (MODE === "synthetic") {
     await runSynthetic(db, upsertPaper, persistReview);
+    await runOrderPermutation();
   } else {
     await runLive(db, upsertPaper, persistReview);
   }
@@ -429,9 +430,91 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   const cosmoV = await latestOf(cosmoPage.id);
   assert(cosmoV.summaryOneLine === "FRW apparent horizons behave as thermodynamic systems." && cosmoV.summaryShort.length > 40, "S4: edit's maintained page summaries stored on the new version (multi-resolution layer authored)");
 
+  // ---- Slice 5 acceptance: forced estimate/position divergence writes a monitoring flag ----
+  const { checkImportanceDivergence } = await import(${JSON.stringify(editorPath)});
+  const divP = await upsertPaper("Landmark estimate with no realized presence");
+  await persistReview(divP, { promptVersion: "synthetic", recommendedScore: 92, estimatedImportanceLow: 88, estimatedImportanceHigh: 96, correctnessInternal: "sound", correctnessPublic: "sound", claims: [{ id: "C1", statement: "A landmark result.", status: "established" }] });
+  const divRes = await checkImportanceDivergence(db, OVERVIEW_SLUG, divP);
+  const divFlags = await db.select().from(divergenceFlagsTable).where(eq(divergenceFlagsTable.paperId, divP));
+  assert(divRes.flagged === true && divFlags.length === 1 && divFlags[0].status === "queued", "S5: sharp estimate/position divergence writes a monitoring flag (look-trigger only)");
+  // Non-divergent control: prominent paper with high estimate must NOT flag.
+  const divRes2 = await checkImportanceDivergence(db, OVERVIEW_SLUG, hawkingId);
+  assert(divRes2.flagged === false || (await db.select().from(divergenceFlagsTable).where(eq(divergenceFlagsTable.paperId, hawkingId))).length === 0, "S5: no false divergence flag when estimate and position agree (Hawking has no stored estimate)");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);
+}
+
+// ---- Slice 6: order-permutation + concurrency acceptance ------------------------------
+// The same paper set applied in two orders on FRESH databases must satisfy the invariants in
+// both (order-sensitivity is known; Bekenstein-first seeding is a mitigation, not a solution).
+// Also exercises the per-field lock: two concurrent applies must serialize (no duplicate
+// versionNumbers, no lost updates).
+async function runOrderPermutation() {
+  const assertPerm = (cond, msg) => { if (cond) console.log("  ✓ " + msg); else { console.log("  ✗ INVARIANT VIOLATION: " + msg); process.exitCode = 1; } };
+  const sc = { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" };
+  const UNSOURCED = "Horizon temperature ties quantum theory to spacetime geometry.";
+  const facts = [];
+  for (const order of [["good", "crank", "accrete"], ["accrete", "crank", "good"]]) {
+    const client = new PGlite();
+    await client.exec(SCHEMA_SQL);
+    const db2 = drizzle(client);
+    const [u] = await db2.insert(usersTable).values({ email: "perm@local", firstName: "Perm", lastName: "Run" }).returning();
+    await ensureOverviewSkeleton(db2, SEED_PAGES, u.id);
+    const mkPaper = async (t) => (await db2.insert(papersTable).values({ title: t, content: "(perm)", authorId: u.id, authorName: "Perm Run" }).returning())[0].id;
+    const ids = { good: await mkPaper("Good thermal-emission paper"), crank: await mkPaper("Crank paper"), accrete: await mkPaper("Accreting paper") };
+    const specs = {
+      good: { correctnessPublic: "sound", claims: [{ id: "C1", statement: "Black holes emit thermally at a temperature set by surface gravity.", status: "established" }], edits: [
+        { action: "add_paragraph", targetPageSlug: "hawking-radiation", proposedMarkdown: "Black holes emit thermal radiation; the temperature is fixed by the horizon surface gravity.", citedPaperIds: ["good"], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+        { action: "add_paragraph", targetPageSlug: "hawking-radiation", proposedMarkdown: UNSOURCED, citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+      ] },
+      crank: { correctnessPublic: "flawed", claims: [{ id: "C1", statement: "A refuted arithmetic claim.", status: "failed" }], edits: [
+        { action: "add_paragraph", targetPageSlug: "hawking-radiation", proposedMarkdown: "A claimed link fails on an order-of-magnitude arithmetic error.", citedPaperIds: ["crank"], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+      ] },
+      accrete: { correctnessPublic: "sound", claims: [{ id: "C1", statement: "Horizon temperature connects quantum theory and gravity.", status: "established" }], edits: [
+        { action: "add_reference", targetPageSlug: "hawking-radiation", anchorText: UNSOURCED, citedPaperIds: ["accrete"], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+      ] },
+    };
+    for (const key of order) {
+      const spec = specs[key];
+      await applyOverviewImpact(db2, { overviewSlug: OVERVIEW_SLUG, paperId: ids[key], reviewVersionId: null,
+        correctnessPublic: spec.correctnessPublic, claims: spec.claims,
+        edits: spec.edits.map((e) => ({ ...e, citedPaperIds: (e.citedPaperIds || []).map((k) => ids[k] ?? k) })) });
+    }
+    // Invariants per order.
+    const pagesAll = await db2.select().from(fieldPagesTable);
+    const crankProm = await computeProminence(db2, OVERVIEW_SLUG, ids.crank);
+    let refsOk = true, liveSourced = 0;
+    for (const p of pagesAll) {
+      const v = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, p.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+      if (!v) continue;
+      const spans = (await db2.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, v.id))).filter((s) => !s.superseded);
+      const refIds = new Set((await db2.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, v.id))).map((r) => r.id));
+      for (const s of spans) if (s.supportStatus === "sourced") { liveSourced += 1; if (!s.referenceId || !refIds.has(s.referenceId)) refsOk = false; }
+    }
+    const pub2 = await publishOverview(db2, OVERVIEW_SLUG);
+    facts.push({ order: order.join(">"), slugs: pagesAll.map((p) => p.slug).sort().join(","), crankOnDisputed: (crankProm.locationSlug || "").includes("disputed"), refsOk, liveSourced, published: pub2.publishedVersions });
+    // Concurrency (per-field lock): two simultaneous applies on the same page must serialize.
+    if (order[0] === "good") {
+      await Promise.all([
+        applyOverviewImpact(db2, { overviewSlug: OVERVIEW_SLUG, paperId: ids.good, reviewVersionId: null, correctnessPublic: "sound", edits: [{ action: "add_paragraph", targetPageSlug: "black-hole-entropy", proposedMarkdown: "Concurrent paragraph one.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc }] }),
+        applyOverviewImpact(db2, { overviewSlug: OVERVIEW_SLUG, paperId: ids.accrete, reviewVersionId: null, correctnessPublic: "sound", edits: [{ action: "add_paragraph", targetPageSlug: "black-hole-entropy", proposedMarkdown: "Concurrent paragraph two.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc }] }),
+      ]);
+      const bhe = pagesAll.find((p) => p.slug === "black-hole-entropy");
+      const vers = await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, bhe.id));
+      const vnums = vers.map((v) => v.versionNumber);
+      const latest = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, bhe.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+      assertPerm(new Set(vnums).size === vnums.length, "S6: concurrent applies serialized — no duplicate versionNumbers (per-field lock)");
+      assertPerm(latest.markdownFull.includes("Concurrent paragraph one.") && latest.markdownFull.includes("Concurrent paragraph two."), "S6: concurrent applies both landed — no lost update");
+    }
+  }
+  const [a, b] = facts;
+  assertPerm(a.crankOnDisputed && b.crankOnDisputed, "S6: crank routed to disputed page in BOTH orders");
+  assertPerm(a.refsOk && b.refsOk, "S6: every live sourced span resolves to a same-version reference in BOTH orders");
+  assertPerm(a.slugs === b.slugs, "S6: final page set identical across orders");
+  assertPerm(a.liveSourced === b.liveSourced, "S6: live sourced-span count identical across orders (" + a.liveSourced + ")");
+  assertPerm(a.published > 0 && b.published > 0, "S6: publish works in both orders");
 }
 
 async function runLive(db, upsertPaper, persistReview) {

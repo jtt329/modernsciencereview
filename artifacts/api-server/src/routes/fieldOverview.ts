@@ -9,7 +9,7 @@ import {
   db, papersTable,
   fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable,
   pageSpansTable, proposedOverviewEditsTable, ingestionQueueTable, reviewVersionsTable,
-  attributionChecksTable, pageLinksTable,
+  attributionChecksTable, pageLinksTable, divergenceFlagsTable,
 } from "@workspace/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook, getContributionTransclusion } from "../lib/overviewEditor";
@@ -178,6 +178,35 @@ router.get("/overviews/pages/:pageId/versions", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   const versions = await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, req.params.pageId)).orderBy(desc(fieldPageVersionsTable.createdAt));
   res.json({ pageId: req.params.pageId, versions: versions.map((v) => ({ id: v.id, visibility: v.visibility, createdAt: v.createdAt, changeLog: v.changeLog })) });
+});
+
+// --- Public change view (slice 5.3): what changed, when, triggered by which paper ---
+// Visible change is the quality mechanism and the product's proof of life.
+router.get("/overviews/:slug/changes", async (req, res) => {
+  try {
+    const edits = (await db.select().from(proposedOverviewEditsTable)
+      .where(eq(proposedOverviewEditsTable.overviewSlug, req.params.slug))
+      .orderBy(desc(proposedOverviewEditsTable.createdAt)).limit(50))
+      .filter((e) => e.status === "draft_applied" || e.status === "published");
+    const paperIds = Array.from(new Set(edits.map((e) => e.paperId).filter(Boolean))) as string[];
+    const papers = paperIds.length ? await db.select({ id: papersTable.id, title: papersTable.title }).from(papersTable).where(inArray(papersTable.id, paperIds)) : [];
+    const byId = new Map(papers.map((p) => [p.id, p.title]));
+    res.json({
+      overviewSlug: req.params.slug,
+      changes: edits.map((e) => ({
+        at: e.createdAt, action: e.action, pageSlug: e.targetPageSlug,
+        paperId: e.paperId, paperTitle: e.paperId ? byId.get(e.paperId) ?? null : null,
+        paperSlug: e.paperId ? canonicalPaperSlug(e.paperId, byId.get(e.paperId)) : null,
+      })),
+    });
+  } catch (err) { logger.error({ err }, "changes view failed"); res.status(500).json({ error: "changes failed" }); }
+});
+
+// --- Divergence flags (slice 5.4) — monitoring list; nothing consumes these ---------
+router.get("/admin/divergence-flags", async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const items = await db.select().from(divergenceFlagsTable).orderBy(desc(divergenceFlagsTable.createdAt));
+  res.json({ items });
 });
 
 // --- Mis-sourcing spot-check queue (P2 — a WATCH, never a gate) --------------------

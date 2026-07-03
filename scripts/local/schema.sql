@@ -37,6 +37,19 @@ CREATE TABLE "attribution_checks" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE "divergence_flags" (
+	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"paper_id" varchar,
+	"overview_slug" varchar NOT NULL,
+	"estimated_low" integer,
+	"estimated_high" integer,
+	"computed_prominence" varchar,
+	"location_slug" varchar,
+	"note" text DEFAULT '' NOT NULL,
+	"status" varchar DEFAULT 'queued' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "field_page_versions" (
 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"page_id" varchar NOT NULL,
@@ -369,6 +382,7 @@ CREATE TABLE "messages" (
 );
 
 ALTER TABLE "attribution_checks" ADD CONSTRAINT "attribution_checks_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "divergence_flags" ADD CONSTRAINT "divergence_flags_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "field_page_versions" ADD CONSTRAINT "field_page_versions_page_id_field_pages_id_fk" FOREIGN KEY ("page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "field_page_versions" ADD CONSTRAINT "field_page_versions_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "ingestion_queue" ADD CONSTRAINT "ingestion_queue_resolved_paper_id_papers_id_fk" FOREIGN KEY ("resolved_paper_id") REFERENCES "public"."papers"("id") ON DELETE set null ON UPDATE no action;

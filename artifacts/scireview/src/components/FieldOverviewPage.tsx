@@ -32,10 +32,58 @@ type Page = {
 
 const LEVELS = ['one-line', 'short', 'full'] as const;
 
+type Change = { at: string; action: string; pageSlug: string | null; paperId: string | null; paperTitle: string | null };
+
+// Sentence-anchored rendering (slice 5.1/5.2): split the page body at span offsets so each
+// sourced sentence carries its chip INLINE (click-a-sentence-see-why) and unsourced
+// explanatory prose is visibly distinct (dotted underline). Display only — spans/chips are
+// provenance surfacing, never inputs to anything.
+function SegmentedBody({ body, spans, references, onOpenPaper }: {
+  body: string; spans: Span[]; references: Ref[]; onOpenPaper: (paperId: string) => void;
+}) {
+  const anchored = (spans || [])
+    .filter((s) => s.startOffset != null && s.endOffset != null && s.endOffset! <= body.length && body.slice(s.startOffset!, s.endOffset!) === s.text)
+    .sort((a, b) => (a.startOffset! - b.startOffset!));
+  const chosen: Span[] = []; let cursor = 0;
+  for (const s of anchored) { if (s.startOffset! >= cursor) { chosen.push(s); cursor = s.endOffset!; } }
+  const refById = new Map(references.map((r) => [r.id, r]));
+  const segs: { text: string; span?: Span }[] = []; let pos = 0;
+  for (const s of chosen) {
+    if (s.startOffset! > pos) segs.push({ text: body.slice(pos, s.startOffset!) });
+    segs.push({ text: s.text, span: s });
+    pos = s.endOffset!;
+  }
+  if (pos < body.length) segs.push({ text: body.slice(pos) });
+  return (
+    <>
+      {segs.map((seg, i) => {
+        if (!seg.span) return <span key={i}><LatexText>{seg.text}</LatexText></span>;
+        const ref = seg.span.referenceId ? refById.get(seg.span.referenceId) : null;
+        const isSourced = seg.span.supportStatus === 'sourced' && !!ref?.paperId;
+        const cue = ref?.claimStatus ? (CHIP_CUE[ref.claimStatus] || CHIP_CUE.unknown) : CHIP_CUE.unknown;
+        return (
+          <span key={i} className={isSourced ? '' : 'border-b border-dotted border-slate-300'}
+            title={isSourced ? undefined : `${seg.span.supportStatus.replace(/_/g, ' ')} — best-explanation prose awaiting a source`}>
+            <LatexText>{seg.text}</LatexText>
+            {isSourced && ref && (
+              <button onClick={() => onOpenPaper(ref.paperId!)}
+                className={`align-super text-[10px] px-1 ml-0.5 rounded-full border ${cue.cls}`}
+                title={`${ref.paperTitle || 'source'} — cited claim: ${ref.claimStatus || 'unverified'}`}>
+                ●{cue.cue}
+              </button>
+            )}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
 export default function FieldOverviewPage({
   slug, isAdmin, onOpenPaper, onOpenPage, onBack,
 }: { slug: string; isAdmin: boolean; onOpenPaper: (paperId: string) => void; onOpenPage: (slug: string) => void; onBack: () => void }) {
   const [pages, setPages] = useState<Page[] | null>(null);
+  const [changes, setChanges] = useState<Change[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [level, setLevel] = useState<Record<string, number>>({});
 
@@ -44,6 +92,10 @@ export default function FieldOverviewPage({
       .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e))))
       .then((d) => setPages(d.pages || []))
       .catch((e) => setErr(e?.error || 'failed to load overview'));
+    fetch(`/api/overviews/${encodeURIComponent(slug)}/changes`, { credentials: 'include' })
+      .then((r) => (r.ok ? r.json() : { changes: [] }))
+      .then((d) => setChanges(d.changes || []))
+      .catch(() => {});
   }, [slug, isAdmin]);
 
   if (err) return <div className="max-w-3xl mx-auto p-8 text-slate-600"><button onClick={onBack} className="text-sm text-blue-600 mb-4">← Back</button><p>Overview not available: {err}</p><p className="text-xs mt-2 text-slate-400">The schema must be pushed and the overview seeded in the connected database.</p></div>;
@@ -77,7 +129,9 @@ export default function FieldOverviewPage({
         </div>
         {page.scopeStatement && lvl > 0 && <p className="text-sm text-slate-400 italic mt-1">{page.scopeStatement}</p>}
         <div className="prose prose-slate max-w-none mt-3 text-slate-700 leading-relaxed">
-          <LatexText>{body || '_(stub — no content yet)_'}</LatexText>
+          {lvl === 2 && body
+            ? <SegmentedBody body={body} spans={page.spans || []} references={page.references || []} onOpenPaper={onOpenPaper} />
+            : <LatexText>{body || '_(stub — no content yet)_'}</LatexText>}
         </div>
         {page.references.length > 0 && (
           <div className="mt-4 flex flex-wrap gap-2 items-center">
@@ -120,8 +174,24 @@ export default function FieldOverviewPage({
       <p className="text-xs uppercase tracking-widest text-slate-400 mb-1">Field overview {isAdmin ? '(draft)' : ''}</p>
       {root && renderPage(root, true)}
       {subpages.map((p) => renderPage(p, false))}
-      <p className="text-xs text-slate-400 mt-10 border-t border-slate-200 pt-4">
-        Read-only draft. Prominence is derived from structure; unsourced sentences are best-explanation prose awaiting a source (citations accrete as papers are reviewed).
+      {changes.length > 0 && (
+        <section className="mt-10 border-t border-slate-200 pt-4">
+          <h3 className="text-sm font-semibold text-slate-600 mb-2">Recent changes</h3>
+          <ul className="space-y-1">
+            {changes.slice(0, 15).map((c, i) => (
+              <li key={i} className="text-xs text-slate-500">
+                <span className="text-slate-400">{new Date(c.at).toLocaleDateString()}</span>
+                {' — '}<span className="font-medium">{c.pageSlug || slug}</span> {c.action.replace(/_/g, ' ')}
+                {c.paperId && c.paperTitle && (
+                  <> triggered by <button onClick={() => onOpenPaper(c.paperId!)} className="text-blue-600 hover:underline">{c.paperTitle.length > 48 ? c.paperTitle.slice(0, 48) + '…' : c.paperTitle}</button></>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <p className="text-xs text-slate-400 mt-6 border-t border-slate-200 pt-4">
+        Read-only draft. Prominence is derived from structure; dotted-underlined sentences are best-explanation prose awaiting a source (citations accrete as papers are reviewed).
       </p>
     </div>
   );

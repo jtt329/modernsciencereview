@@ -279,6 +279,25 @@ export const pageLinksTable = pgTable("page_links", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// --- DivergenceFlag: estimate vs realized-position disagreement (slice 5.4) --------
+// The review's estimated-importance range and the realized structural position are the same
+// qualitative judgment at two different times; sharp divergence means a stale page or a flipped
+// judgment. MONITORING ONLY — a flag triggers a human look, never a score or placement change.
+export type DivergenceFlagStatus = "queued" | "reviewed";
+
+export const divergenceFlagsTable = pgTable("divergence_flags", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  paperId: varchar("paper_id").references(() => papersTable.id, { onDelete: "cascade" }),
+  overviewSlug: varchar("overview_slug").notNull(),
+  estimatedLow: integer("estimated_low"),
+  estimatedHigh: integer("estimated_high"),
+  computedProminence: varchar("computed_prominence"),
+  locationSlug: varchar("location_slug"),
+  note: text("note").notNull().default(""),
+  status: varchar("status").$type<DivergenceFlagStatus>().notNull().default("queued"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // --- IngestionQueue: referenced-but-unreviewed papers (placeholder targets) -------
 export type IngestionQueueStatus = "queued" | "ingesting" | "reviewed" | "skipped" | "failed";
 
@@ -323,3 +342,5 @@ export type AttributionCheck = typeof attributionChecksTable.$inferSelect;
 export type InsertAttributionCheck = typeof attributionChecksTable.$inferInsert;
 export type PageLink = typeof pageLinksTable.$inferSelect;
 export type InsertPageLink = typeof pageLinksTable.$inferInsert;
+export type DivergenceFlag = typeof divergenceFlagsTable.$inferSelect;
+export type InsertDivergenceFlag = typeof divergenceFlagsTable.$inferInsert;
