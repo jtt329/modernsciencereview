@@ -126,6 +126,7 @@ CREATE TABLE "proposed_overview_edits" (
 	"status" varchar DEFAULT 'draft_applied' NOT NULL,
 	"applied_version_id" varchar,
 	"reverted_from_version_id" varchar,
+	"idempotency_key" varchar,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
@@ -358,3 +359,4 @@ ALTER TABLE "sandbox_reviews" ADD CONSTRAINT "sandbox_reviews_paper_id_papers_id
 ALTER TABLE "session_papers" ADD CONSTRAINT "session_papers_session_id_review_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."review_sessions"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "messages" ADD CONSTRAINT "messages_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;
 CREATE INDEX "IDX_session_expire" ON "sessions" USING btree ("expire");
+CREATE UNIQUE INDEX "proposed_overview_edits_idem_idx" ON "proposed_overview_edits" USING btree ("idempotency_key");

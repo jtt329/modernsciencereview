@@ -17,6 +17,7 @@
 //   - inline citation links are rendered from the DB paperId via canonicalPaperSlug — the
 //     model never writes slugs.
 
+import { createHash } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { PgDatabase } from "drizzle-orm/pg-core";
 import {
@@ -85,7 +86,7 @@ export type ApplyOverviewInput = {
 export type AppliedEditResult = {
   action: OverviewEditAction;
   targetPageSlug: string | null;
-  status: "draft_applied" | "rejected" | "no_change";
+  status: "draft_applied" | "rejected" | "no_change" | "skipped_idempotent";
   proposedOverviewEditId?: string;
   appliedVersionId?: string;
   referenceId?: string;
@@ -287,6 +288,16 @@ async function createSpan(
 }
 
 // ---- Public: apply a review's overviewImpact edits to the draft overview ----------
+// Deterministic key for one edit within one review — the idempotency unit (P1.4).
+function editIdempotencyKey(input: ApplyOverviewInput, edit: OverviewImpactEdit): string {
+  return createHash("sha256").update(JSON.stringify({
+    rv: input.reviewVersionId ?? null, paper: input.paperId, overview: input.overviewSlug,
+    action: edit.action, target: edit.targetPageSlug ?? null, section: edit.targetSectionSlug ?? null,
+    anchor: edit.anchorText ?? null, md: edit.proposedMarkdown ?? "",
+    cp: edit.citedPaperIds ?? [], cc: edit.citedClaimIds ?? [],
+  })).digest("hex").slice(0, 40);
+}
+
 export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Promise<AppliedEditResult[]> {
   const provenance = input.provenance ?? "model_review";
   const results: AppliedEditResult[] = [];
@@ -296,139 +307,170 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
   const correctnessKnown = input.correctnessPublic != null && KNOWN_CORRECTNESS.includes(input.correctnessPublic);
 
   for (const edit of input.edits) {
-    const recordEdit = async (
-      status: "draft_applied" | "rejected" | "no_change",
-      extra: { targetPageSlug?: string | null; appliedVersionId?: string; rejectionReason?: string } = {},
-    ) => {
+    // Idempotency (P1.4): re-applying the same review's edit is a no-op — an autonomous editor
+    // that duplicates paragraphs on retry is not autonomous, it's unattended. (Rejected rows
+    // carry no key, so a fixed retry of a previously-failed edit is not blocked.)
+    const idempotencyKey = editIdempotencyKey(input, edit);
+    const dup = (await db.select().from(proposedOverviewEditsTable).where(eq(proposedOverviewEditsTable.idempotencyKey, idempotencyKey)).limit(1))[0];
+    if (dup && (dup.status === "draft_applied" || dup.status === "published")) {
+      results.push({ action: edit.action, targetPageSlug: dup.targetPageSlug ?? null, status: "skipped_idempotent", proposedOverviewEditId: dup.id, appliedVersionId: dup.appliedVersionId ?? undefined });
+      continue;
+    }
+
+    // Each edit applies ATOMICALLY (P1.4): version + sections + carried spans/refs + new
+    // span/ref + the edit record commit together or not at all.
+    const applyOne = async (tx: Db): Promise<AppliedEditResult> => {
+      const recordEdit = async (
+        status: "draft_applied" | "rejected" | "no_change",
+        extra: { targetPageSlug?: string | null; appliedVersionId?: string; rejectionReason?: string } = {},
+      ) => {
+        const [row] = await tx.insert(proposedOverviewEditsTable).values({
+          reviewVersionId: input.reviewVersionId ?? null, paperId: input.paperId,
+          overviewSlug: input.overviewSlug, action: edit.action, editType: edit.editType ?? null,
+          targetPageSlug: extra.targetPageSlug ?? edit.targetPageSlug ?? null,
+          targetSectionSlug: edit.targetSectionSlug ?? null,
+          proposedMarkdown: edit.proposedMarkdown ?? "",
+          citedPaperIds: edit.citedPaperIds ?? [], citedClaimIds: edit.citedClaimIds ?? [],
+          editorRationale: edit.editorRationale ?? null, safetyCheck: edit.safetyCheck ?? null,
+          reason: extra.rejectionReason ? `${edit.reason ?? ""} [${extra.rejectionReason}]` : (edit.reason ?? ""),
+          status: status === "no_change" ? "draft_applied" : (status === "rejected" ? "rejected" : "draft_applied"),
+          appliedVersionId: extra.appliedVersionId ?? null,
+          idempotencyKey: status === "rejected" ? null : idempotencyKey,
+        }).returning();
+        return row.id;
+      };
+
+      if (edit.action === "no_change") {
+        return { action: edit.action, targetPageSlug: null, status: "no_change", proposedOverviewEditId: await recordEdit("no_change") };
+      }
+
+      // Fail closed (P0.3): without a valid correctness verdict, no edit touches a page.
+      if (!correctnessKnown) {
+        const id = await recordEdit("rejected", { rejectionReason: "correctness_unavailable: missing/unrecognized correctness verdict — all edits held (fail closed)" });
+        return { action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "correctness_unavailable" };
+      }
+      // Fail closed on PENDING correctness: an unverified fatal allegation holds every edit —
+      // it must not route as contested (earned) nor touch any page until verified (§10.6).
+      if (input.correctnessPublic === "fatal_unverified") {
+        const id = await recordEdit("rejected", { rejectionReason: "fatal_unverified: unverified fatal allegation — edits held pending image-grounded verification (verification precedes edits)" });
+        return { action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "fatal_unverified" };
+      }
+
+      // Integrity: paper text is data. A live instruction the model did not neutralize => manual review.
+      const sc = edit.safetyCheck;
+      if (sc && (sc.paperTextTreatedAsData === false || (sc.suspiciousInstructionsDetected && sc.actionTaken !== "ignored_instructions"))) {
+        const id = await recordEdit("rejected", { rejectionReason: "safety: suspicious instructions held for manual_review" });
+        return { action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "manual_review" };
+      }
+
+      // EXPLANATION-FIRST (§3.2): unsourced prose is allowed. The REVIEWED paper is the natural,
+      // always-resolvable source of its own claims — the model need not (and cannot) know DB ids, so
+      // a span it marks sourced / backs with its own claims is sourced by input.paperId. Any OTHER
+      // cited paper ids are resolved against the DB (accretion / multi-source); unresolved ones are
+      // ignored, never stored as dangling or mis-attributed references (§10.2 / §10.2a item 2).
+      const { dropped } = await resolveCitedPapers(tx, (edit.citedPaperIds ?? []).filter((x) => x !== input.paperId));
+      const wantsSource = edit.supportStatus === "sourced" || (edit.citedClaimIds?.length ?? 0) > 0
+        || (edit.citedPaperIds ?? []).some((x) => x === input.paperId) || edit.action === "add_reference";
+      const isSourced = wantsSource;
+      const sourcePaperId = isSourced ? input.paperId : null;
+      const claimIds = edit.citedClaimIds ?? [];
+      const supportStatus: SpanSupportStatus = isSourced ? "sourced" : (edit.supportStatus ?? "unsourced_explanatory");
+      // Chip claim status (soft, per-claim; separate axis from supportStatus) — drives NOTHING.
+      const claimStatus = chipStatusFromClaims(claimIds, input.claims);
+
+      // Fatal routing: a flawed paper may only touch the disputed page.
+      const targetSlug = input.correctnessPublic === "flawed"
+        ? disputedSlug
+        : (edit.action === "create_subpage" ? (edit.targetPageSlug || slugify(edit.proposedMarkdown?.split("\n")[0] ?? "new-page")) : (edit.targetPageSlug || input.overviewSlug));
+
+      // create_subpage: make a new page under the overview root, seed its first draft version.
+      if (edit.action === "create_subpage" && input.correctnessPublic !== "flawed") {
+        const existing = await getPageBySlug(tx, targetSlug);
+        if (existing) {
+          edit.action = "add_paragraph"; // slug exists — improve it, don't duplicate
+        } else {
+          const root = await getPageBySlug(tx, input.overviewSlug);
+          const title = (edit.proposedMarkdown?.match(/^#+\s*(.+)/)?.[1] || targetSlug.replace(/-/g, " ")).slice(0, 120);
+          const [page] = await tx.insert(fieldPagesTable).values({ slug: targetSlug, title, parentPageId: root?.id ?? null, scopeStatement: edit.reason ?? "", summary: "" }).returning();
+          const md = edit.proposedMarkdown ?? `## ${title}\n`;
+          const version = await newDraftVersion(tx, page.id, md, [{ at: new Date().toISOString(), action: `create_subpage from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+          let refId: string | undefined;
+          if (isSourced && sourcePaperId) { const ref = await createReference(tx, { pageId: page.id, versionId: version.id, markdown: md, anchorText: edit.anchorText || title, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
+          const span = await createSpan(tx, { pageId: page.id, versionId: version.id, text: (edit.proposedMarkdown ?? title).slice(0, 400), markdown: md, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
+          const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
+          return { action: "create_subpage", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId: span.id, supportStatus, droppedCitations: dropped };
+        }
+      }
+
+      // Resolve the target page. SLUG DISCIPLINE (P1.5): only create_subpage may create a page;
+      // the disputed page is a SYSTEM slug (computed here, never model-written) and may be
+      // auto-created; any other unknown slug is a model typo and must not fork the wiki.
+      let page = await getPageBySlug(tx, targetSlug);
+      if (!page) {
+        if (targetSlug !== disputedSlug) {
+          const id = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: "unknown_target_slug: page does not exist (only create_subpage creates pages)" });
+          return { action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: "unknown_target_slug" };
+        }
+        const root = await getPageBySlug(tx, input.overviewSlug);
+        const [created] = await tx.insert(fieldPagesTable).values({ slug: targetSlug, title: "Disputed & failed claims", parentPageId: root?.id ?? null, scopeStatement: "Disputed and failed claims." }).returning();
+        page = created;
+        await newDraftVersion(tx, page.id, `## ${page.title}\n`, [{ at: new Date().toISOString(), action: "auto-created disputed page (system slug)" }], input.createdByUserId);
+      }
+      const current = (await latestVersion(tx, page.id))?.markdownFull ?? `## ${page.title}\n`;
+
+      if (edit.action === "add_reference") {
+        // Accretion-as-query (§3.2 / item 4): SOURCE an existing (unsourced) span with this paper.
+        // Create the new version FIRST (carry-forward copies every span onto it), then match and
+        // update the NEW version's copy — updating the old version's row would be lost (P0.1).
+        const anchor = edit.anchorText?.trim() || current.slice(0, 80);
+        const version = await newDraftVersion(tx, page.id, current, [{ at: new Date().toISOString(), action: `add_reference (source span) from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+        const spans = (await tx.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, version.id))).filter((s: any) => !s.superseded);
+        const match = spans.find((s: any) => s.text && (s.text.includes(anchor) || (anchor.length > 20 && anchor.includes(s.text.slice(0, 40)))));
+        let refId: string | undefined, spanId: string | undefined, finalStatus: SpanSupportStatus = supportStatus;
+        if (isSourced && sourcePaperId) {
+          const ref = await createReference(tx, { pageId: page.id, versionId: version.id, markdown: current, anchorText: anchor, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance });
+          refId = ref.id;
+          if (match) { await tx.update(pageSpansTable).set({ supportStatus: "sourced", referenceId: ref.id }).where(eq(pageSpansTable.id, match.id)); spanId = match.id; finalStatus = "sourced"; }
+          else { const sp = await createSpan(tx, { pageId: page.id, versionId: version.id, text: anchor, markdown: current, supportStatus: "sourced", referenceId: ref.id, reviewVersionId: input.reviewVersionId, paperId: input.paperId }); spanId = sp.id; }
+        } else if (match) {
+          await tx.update(pageSpansTable).set({ supportStatus: "needs_source" }).where(eq(pageSpansTable.id, match.id)); spanId = match.id; finalStatus = "needs_source";
+        }
+        const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
+        return { action: "add_reference", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId, supportStatus: finalStatus, droppedCitations: dropped };
+      }
+
+      // Prose edits (add_paragraph / add_subsection / edit_existing_text / merge_or_reorganize).
+      const { markdown, anchor, failure } = applyToMarkdown(current, edit);
+      if (failure) {
+        // Loud failure, never a silent append (P1.1) — the model can retry with a fresh anchor.
+        const id = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: failure });
+        return { action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: failure };
+      }
+      const insertedText = (edit.proposedMarkdown ?? anchor).trim();
+      const version = await newDraftVersion(tx, page.id, markdown, [{ at: new Date().toISOString(), action: `${edit.action} from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+      let refId: string | undefined;
+      if (isSourced && sourcePaperId) { const ref = await createReference(tx, { pageId: page.id, versionId: version.id, markdown, anchorText: anchor, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
+      const span = await createSpan(tx, { pageId: page.id, versionId: version.id, sectionSlug: edit.targetSectionSlug ?? null, text: insertedText, markdown, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
+      const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
+      return { action: edit.action, targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId: span.id, supportStatus, droppedCitations: dropped };
+    };
+
+    try {
+      results.push(await (db as any).transaction(async (tx: Db) => applyOne(tx)));
+    } catch (e) {
+      // The transaction rolled back — record the failure OUTSIDE it (auditable, loud, retryable:
+      // no idempotency key on failure rows).
       const [row] = await db.insert(proposedOverviewEditsTable).values({
         reviewVersionId: input.reviewVersionId ?? null, paperId: input.paperId,
         overviewSlug: input.overviewSlug, action: edit.action, editType: edit.editType ?? null,
-        targetPageSlug: extra.targetPageSlug ?? edit.targetPageSlug ?? null,
-        targetSectionSlug: edit.targetSectionSlug ?? null,
+        targetPageSlug: edit.targetPageSlug ?? null, targetSectionSlug: edit.targetSectionSlug ?? null,
         proposedMarkdown: edit.proposedMarkdown ?? "",
         citedPaperIds: edit.citedPaperIds ?? [], citedClaimIds: edit.citedClaimIds ?? [],
-        editorRationale: edit.editorRationale ?? null, safetyCheck: edit.safetyCheck ?? null,
-        reason: extra.rejectionReason ? `${edit.reason ?? ""} [${extra.rejectionReason}]` : (edit.reason ?? ""),
-        status: status === "no_change" ? "draft_applied" : (status === "rejected" ? "rejected" : "draft_applied"),
-        appliedVersionId: extra.appliedVersionId ?? null,
+        reason: `${edit.reason ?? ""} [apply_failed: ${String((e as Error)?.message ?? e).slice(0, 300)}]`,
+        status: "rejected",
       }).returning();
-      return row.id;
-    };
-
-    if (edit.action === "no_change") {
-      results.push({ action: edit.action, targetPageSlug: null, status: "no_change", proposedOverviewEditId: await recordEdit("no_change") });
-      continue;
+      results.push({ action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: row.id, rejectionReason: "apply_failed" });
     }
-
-    // Fail closed (P0.3): without a valid correctness verdict, no edit touches a page.
-    if (!correctnessKnown) {
-      const id = await recordEdit("rejected", { rejectionReason: "correctness_unavailable: missing/unrecognized correctness verdict — all edits held (fail closed)" });
-      results.push({ action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "correctness_unavailable" });
-      continue;
-    }
-    // Fail closed on PENDING correctness: an unverified fatal allegation holds every edit —
-    // it must not route as contested (earned) nor touch any page until verified (§10.6).
-    if (input.correctnessPublic === "fatal_unverified") {
-      const id = await recordEdit("rejected", { rejectionReason: "fatal_unverified: unverified fatal allegation — edits held pending image-grounded verification (verification precedes edits)" });
-      results.push({ action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "fatal_unverified" });
-      continue;
-    }
-
-    // Integrity: paper text is data. A live instruction the model did not neutralize => manual review.
-    const sc = edit.safetyCheck;
-    if (sc && (sc.paperTextTreatedAsData === false || (sc.suspiciousInstructionsDetected && sc.actionTaken !== "ignored_instructions"))) {
-      const id = await recordEdit("rejected", { rejectionReason: "safety: suspicious instructions held for manual_review" });
-      results.push({ action: edit.action, targetPageSlug: edit.targetPageSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "manual_review" });
-      continue;
-    }
-
-    // EXPLANATION-FIRST (§3.2): unsourced prose is allowed. The REVIEWED paper is the natural,
-    // always-resolvable source of its own claims — the model need not (and cannot) know DB ids, so
-    // a span it marks sourced / backs with its own claims is sourced by input.paperId. Any OTHER
-    // cited paper ids are resolved against the DB (accretion / multi-source); unresolved ones are
-    // ignored, never stored as dangling or mis-attributed references (§10.2 / §10.2a item 2).
-    const { dropped } = await resolveCitedPapers(db, (edit.citedPaperIds ?? []).filter((x) => x !== input.paperId));
-    const wantsSource = edit.supportStatus === "sourced" || (edit.citedClaimIds?.length ?? 0) > 0
-      || (edit.citedPaperIds ?? []).some((x) => x === input.paperId) || edit.action === "add_reference";
-    const isSourced = wantsSource;
-    const sourcePaperId = isSourced ? input.paperId : null;
-    const claimIds = edit.citedClaimIds ?? [];
-    const supportStatus: SpanSupportStatus = isSourced ? "sourced" : (edit.supportStatus ?? "unsourced_explanatory");
-    // Chip claim status (soft, per-claim; separate axis from supportStatus) — drives NOTHING.
-    const claimStatus = chipStatusFromClaims(claimIds, input.claims);
-
-    // Fatal routing: a flawed paper may only touch the disputed page.
-    const targetSlug = input.correctnessPublic === "flawed"
-      ? disputedSlug
-      : (edit.action === "create_subpage" ? (edit.targetPageSlug || slugify(edit.proposedMarkdown?.split("\n")[0] ?? "new-page")) : (edit.targetPageSlug || input.overviewSlug));
-
-    // create_subpage: make a new page under the overview root, seed its first draft version.
-    if (edit.action === "create_subpage" && input.correctnessPublic !== "flawed") {
-      const existing = await getPageBySlug(db, targetSlug);
-      if (existing) {
-        edit.action = "add_paragraph"; // slug exists — improve it, don't duplicate
-      } else {
-        const root = await getPageBySlug(db, input.overviewSlug);
-        const title = (edit.proposedMarkdown?.match(/^#+\s*(.+)/)?.[1] || targetSlug.replace(/-/g, " ")).slice(0, 120);
-        const [page] = await db.insert(fieldPagesTable).values({ slug: targetSlug, title, parentPageId: root?.id ?? null, scopeStatement: edit.reason ?? "", summary: "" }).returning();
-        const md = edit.proposedMarkdown ?? `## ${title}\n`;
-        const version = await newDraftVersion(db, page.id, md, [{ at: new Date().toISOString(), action: `create_subpage from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
-        let refId: string | undefined;
-        if (isSourced && sourcePaperId) { const ref = await createReference(db, { pageId: page.id, versionId: version.id, markdown: md, anchorText: edit.anchorText || title, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
-        const span = await createSpan(db, { pageId: page.id, versionId: version.id, text: (edit.proposedMarkdown ?? title).slice(0, 400), markdown: md, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
-        const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
-        results.push({ action: "create_subpage", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId: span.id, supportStatus, droppedCitations: dropped });
-        continue;
-      }
-    }
-
-    // Resolve (or auto-create) the target page.
-    let page = await getPageBySlug(db, targetSlug);
-    if (!page) {
-      const root = await getPageBySlug(db, input.overviewSlug);
-      const [created] = await db.insert(fieldPagesTable).values({ slug: targetSlug, title: targetSlug.replace(/-/g, " "), parentPageId: root?.id ?? null, scopeStatement: input.correctnessPublic === "flawed" ? "Disputed and failed claims." : "" }).returning();
-      page = created;
-      await newDraftVersion(db, page.id, `## ${page.title}\n`, [{ at: new Date().toISOString(), action: "auto-created target page" }], input.createdByUserId);
-    }
-    const current = (await latestVersion(db, page.id))?.markdownFull ?? `## ${page.title}\n`;
-
-    if (edit.action === "add_reference") {
-      // Accretion-as-query (§3.2 / item 4): SOURCE an existing (unsourced) span with this paper.
-      // Create the new version FIRST (carry-forward copies every span onto it), then match and
-      // update the NEW version's copy — updating the old version's row would be lost (P0.1).
-      const anchor = edit.anchorText?.trim() || current.slice(0, 80);
-      const version = await newDraftVersion(db, page.id, current, [{ at: new Date().toISOString(), action: `add_reference (source span) from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
-      const spans = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, version.id))).filter((s: any) => !s.superseded);
-      const match = spans.find((s: any) => s.text && (s.text.includes(anchor) || (anchor.length > 20 && anchor.includes(s.text.slice(0, 40)))));
-      let refId: string | undefined, spanId: string | undefined, finalStatus: SpanSupportStatus = supportStatus;
-      if (isSourced && sourcePaperId) {
-        const ref = await createReference(db, { pageId: page.id, versionId: version.id, markdown: current, anchorText: anchor, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance });
-        refId = ref.id;
-        if (match) { await db.update(pageSpansTable).set({ supportStatus: "sourced", referenceId: ref.id }).where(eq(pageSpansTable.id, match.id)); spanId = match.id; finalStatus = "sourced"; }
-        else { const sp = await createSpan(db, { pageId: page.id, versionId: version.id, text: anchor, markdown: current, supportStatus: "sourced", referenceId: ref.id, reviewVersionId: input.reviewVersionId, paperId: input.paperId }); spanId = sp.id; }
-      } else if (match) {
-        await db.update(pageSpansTable).set({ supportStatus: "needs_source" }).where(eq(pageSpansTable.id, match.id)); spanId = match.id; finalStatus = "needs_source";
-      }
-      const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
-      results.push({ action: "add_reference", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId, supportStatus: finalStatus, droppedCitations: dropped });
-      continue;
-    }
-
-    // Prose edits (add_paragraph / add_subsection / edit_existing_text / merge_or_reorganize).
-    const { markdown, anchor, failure } = applyToMarkdown(current, edit);
-    if (failure) {
-      // Loud failure, never a silent append (P1.1) — the model can retry with a fresh anchor.
-      const id = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: failure });
-      results.push({ action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: failure });
-      continue;
-    }
-    const insertedText = (edit.proposedMarkdown ?? anchor).trim();
-    const version = await newDraftVersion(db, page.id, markdown, [{ at: new Date().toISOString(), action: `${edit.action} from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
-    let refId: string | undefined;
-    if (isSourced && sourcePaperId) { const ref = await createReference(db, { pageId: page.id, versionId: version.id, markdown, anchorText: anchor, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance }); refId = ref.id; }
-    const span = await createSpan(db, { pageId: page.id, versionId: version.id, sectionSlug: edit.targetSectionSlug ?? null, text: insertedText, markdown, supportStatus, referenceId: refId ?? null, reviewVersionId: input.reviewVersionId, paperId: input.paperId });
-    const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
-    results.push({ action: edit.action, targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId: span.id, supportStatus, droppedCitations: dropped });
   }
   return results;
 }

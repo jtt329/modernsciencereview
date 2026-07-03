@@ -12,8 +12,8 @@
 //   MODE=live PAPERS=3,10,8 NODE_ENV=production AI_INTEGRATIONS_GEMINI_BASE_URL=... \
 //     node --env-file=.env scripts/phase1-seed-overview.mjs
 import { pathToFileURL } from "node:url";
-import { join } from "node:path";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync } from "node:fs";
+import { join, relative } from "node:path";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { renderBlindPages } from "./lib/renderBlindPages.mjs";
 
@@ -25,6 +25,9 @@ const editorPath = join(ROOT, "artifacts/api-server/src/lib/overviewEditor.ts");
 const b21Path = join(ROOT, "artifacts/api-server/src/lib/prompts/explanatoryUpdateB21.ts");
 const schemaSqlPath = join(ROOT, "scripts/local/schema.sql");
 const MODE = process.env.MODE || "synthetic";
+// Synthetic mode runs on in-memory pglite and never connects — @workspace/db only needs the
+// env var to exist at import time, so default it for the `pnpm test:wiki-invariants` entry.
+if (MODE === "synthetic" && !process.env.DATABASE_URL) process.env.DATABASE_URL = "postgresql://invariant:check@localhost:5432/synthetic";
 const OVERVIEW_SLUG = "horizon-thermodynamics";
 const DPI = parseInt(process.env.DPI || "150", 10);
 const TEMPERATURE = process.env.TEMPERATURE ? parseFloat(process.env.TEMPERATURE) : 0.2;
@@ -57,6 +60,59 @@ const SEED_PAGES = [
   { slug: "holography", parentSlug: OVERVIEW_SLUG, title: "Holography & entanglement entropy", scopeStatement: "Holographic bounds and the geometric computation of entanglement entropy connecting horizons to information." },
   { slug: `${OVERVIEW_SLUG}-disputed-and-failed-claims`, parentSlug: OVERVIEW_SLUG, title: "Disputed & failed claims", scopeStatement: "Claims that are contested or fatally flawed — routed here so the main account stays sound. Correctness is a separate axis from magnitude." },
 ];
+
+// ---- STATIC soft-status invariant check (brief P1.3 — replaces the vacuous assert(true)) ----
+// The hard rule: no code path derives score, prominence, placement, publication, or routing
+// from a soft chip/claim status (only correctnessPublic === "flawed" -> disputed page).
+// Enforced two ways: (1) files reading claimStatus/supportStatus must be in the surfacing
+// allowlist; (2) the decision surfaces in overviewEditor.ts (publishOverview,
+// computeProminence, the targetSlug computation) must not mention either token.
+function staticSoftStatusCheck() {
+  const violations = [];
+  const ALLOW = new Set([
+    "lib/db/src/schema/fieldOverview.ts",
+    "artifacts/api-server/src/lib/overviewEditor.ts",
+    "artifacts/api-server/src/routes/fieldOverview.ts",
+    "artifacts/api-server/src/lib/prompts/explanatoryUpdateB21.ts",
+    "artifacts/scireview/src/components/FieldOverviewPage.tsx",
+  ]);
+  const walk = (dir) => readdirSync(dir).flatMap((name) => {
+    const p = join(dir, name);
+    if (name === "node_modules" || name.startsWith(".")) return [];
+    const st = statSync(p);
+    return st.isDirectory() ? walk(p) : (/\.(ts|tsx|mjs)$/.test(name) ? [p] : []);
+  });
+  for (const dir of [join(ROOT, "artifacts/api-server/src"), join(ROOT, "artifacts/scireview/src"), join(ROOT, "lib/db/src")]) {
+    for (const file of walk(dir)) {
+      const src = readFileSync(file, "utf8");
+      if (/\bclaimStatus\b|\bsupportStatus\b/.test(src) && !ALLOW.has(relative(ROOT, file))) {
+        violations.push("soft status referenced outside surfacing allowlist: " + relative(ROOT, file));
+      }
+    }
+  }
+  const editorSrc = readFileSync(editorPath, "utf8");
+  const fnBody = (marker) => {
+    const start = editorSrc.indexOf(marker);
+    if (start < 0) return "";
+    const next = editorSrc.indexOf("\nexport ", start + marker.length);
+    return editorSrc.slice(start, next > 0 ? next : undefined);
+  };
+  for (const [label, body] of [
+    ["publishOverview", fnBody("export async function publishOverview")],
+    ["computeProminence", fnBody("export async function computeProminence")],
+    ["targetSlug computation", (editorSrc.match(/const targetSlug =[^;]+;/) ?? [""])[0]],
+  ]) {
+    if (/\bclaimStatus\b|\bsupportStatus\b/.test(body)) violations.push("soft status read inside decision surface: " + label);
+    if (!body) violations.push("static check could not locate: " + label);
+  }
+  if (violations.length) {
+    for (const v of violations) console.log("  ✗ STATIC INVARIANT VIOLATION: " + v);
+    process.exit(1);
+  }
+  console.log("  ✓ static: soft chip/claim status is read only in the surfacing layer (allowlist clean)");
+  console.log("  ✓ static: publishOverview / computeProminence / targetSlug computation are free of soft-status reads");
+}
+if (MODE === "synthetic") staticSoftStatusCheck();
 
 const entry = `
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -135,10 +191,13 @@ async function runSynthetic(db, upsertPaper, persistReview) {
     { action: "add_reference", editType: "reference_only", targetPageSlug: "local-quasilocal-horizons", anchorText: "Local & quasilocal horizon thermodynamics", proposedMarkdown: "", citedPaperIds: [frodId], citedClaimIds: ["C1"], safetyCheck: { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" }, reason: "attach source" },
     { action: "add_paragraph", editType: "prose", targetPageSlug: "local-quasilocal-horizons", proposedMarkdown: "For an observer hovering at fixed proper distance near the horizon, the first law collapses to the strikingly simple local form $\\\\delta E=(\\\\bar\\\\kappa/8\\\\pi)\\\\,\\\\delta A$, relocating horizon thermodynamics from a global bookkeeping statement to something a local observer measures.", citedPaperIds: [frodId], citedClaimIds: ["C1"], safetyCheck: { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" }, reason: "local form" },
   ] }));
-  // Integrity test: an UNCITED edit must be rejected.
-  results.push(...await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: frodId, reviewVersionId: frodRv, correctnessPublic: "sound", edits: [
-    { action: "add_paragraph", targetPageSlug: "black-hole-entropy", proposedMarkdown: "An uncited sentence that should be rejected.", citedPaperIds: [], citedClaimIds: [] },
-  ] }));
+  // EXPLANATION-FIRST (§3.2): an uncited edit APPLIES as unsourced explanatory prose — unsourced
+  // is a designed state, not a defect. (This fixture previously asserted rejection under the
+  // old provenance gate; that contradicted the design and was fixed per brief P1.3.)
+  const uncited = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: frodId, reviewVersionId: frodRv, correctnessPublic: "sound", edits: [
+    { action: "add_paragraph", targetPageSlug: "black-hole-entropy", proposedMarkdown: "Connective explanatory prose with no citation yet.", citedPaperIds: [], citedClaimIds: [] },
+  ] });
+  results.push(...uncited);
   // Fatal routing test: a flawed paper's edit must land on the disputed page, not the main account.
   results.push(...await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: crankId, reviewVersionId: crankRv, correctnessPublic: "flawed", edits: [
     { action: "add_paragraph", editType: "prose", targetPageSlug: "cosmological-horizons", proposedMarkdown: "A claimed link between maximal acceleration and the cosmological constant fails on a ~34-order-of-magnitude arithmetic error in its central estimate.", citedPaperIds: [crankId], citedClaimIds: ["C1"], safetyCheck: { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" }, reason: "record failed claim" },
@@ -154,6 +213,18 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   console.log("[synthetic] prominence(Hawking) =", (await computeProminence(db, OVERVIEW_SLUG, hawkingId)));
   console.log("[synthetic] prominence(crank)  =", (await computeProminence(db, OVERVIEW_SLUG, crankId)), "(should not be in main account)");
 
+  // Explanation-first assertions on the uncited fixture (P1.3 fixture fix).
+  {
+    const u = uncited[0];
+    const uSpan = u?.spanId ? (await db.select().from(pageSpansTable).where(eq(pageSpansTable.id, u.spanId)))[0] : null;
+    if (!(u?.status === "draft_applied" && uSpan?.supportStatus === "unsourced_explanatory" && !uSpan?.referenceId)) {
+      console.log("  ✗ INVARIANT VIOLATION: uncited prose must APPLY as unsourced_explanatory with no PageReference");
+      process.exitCode = 1;
+    } else {
+      console.log("  ✓ explanation-first: uncited prose applies as unsourced_explanatory with no PageReference");
+    }
+  }
+
   // ---- CI INVARIANT (§3.2 / §3.2 hard rule): a SOFT chip/claim status must drive NOTHING —
   // no placement, prominence, routing, or publication. ONLY fatal_verified routes to disputed.
   let invOk = true;
@@ -165,9 +236,9 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   assert(conApplied[0]?.targetPageSlug === "gravity-as-thermodynamics", "contested-claim span placed on its NORMAL page (soft status did not route it to disputed)");
   // (b) the fatal_verified crank DID route to disputed (the one allowed correctness gate).
   assert((results.find((r) => r.action === "add_paragraph" && r.targetPageSlug?.includes("disputed"))) != null, "fatal_verified paper routed to the disputed page (the only status-based routing allowed)");
-  // (c) prominence is computable without any claim-status input (it reads structure/offsets only).
-  await computeProminence(db, OVERVIEW_SLUG, conId);
-  assert(true, "prominence computed from structure, not from claim status");
+  // (c) is a STATIC check run by the outer script before this harness (P1.3): no soft-status
+  // token may appear in publishOverview, computeProminence, or the targetSlug computation, and
+  // soft-status reads are allowlisted to the surfacing layer. (Previously a vacuous assert(true).)
 
   // ---- P0.1 acceptance: provenance survives edits and rollback -----------------------
   const holo = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, "holography")))[0];
@@ -230,6 +301,22 @@ async function runSynthetic(db, upsertPaper, persistReview) {
     { action: "add_paragraph", targetPageSlug: "holography", targetSectionSlug: "no-such-section", proposedMarkdown: "Paragraph for a section that does not exist.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
   ] });
   assert(badSection[0]?.status === "rejected" && badSection[0]?.rejectionReason === "section_not_found", "P1.1: add_paragraph with missing target section is REJECTED (section_not_found)");
+
+  // ---- P1.4 acceptance: idempotency — re-applying the same review's edit is a no-op ----
+  const idemEdit = { action: "add_paragraph", targetPageSlug: "holography", proposedMarkdown: "An idempotency-test paragraph about bulk minimal surfaces.", citedPaperIds: [rtId], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc };
+  const first = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", claims: [{ id: "C1", statement: "x", status: "established" }], edits: [idemEdit] });
+  const vAfterFirst = await latestOf(holo.id);
+  const second = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", claims: [{ id: "C1", statement: "x", status: "established" }], edits: [idemEdit] });
+  const vAfterSecond = await latestOf(holo.id);
+  assert(first[0]?.status === "draft_applied" && second[0]?.status === "skipped_idempotent", "P1.4: re-applying the same edit payload is skipped_idempotent");
+  assert(vAfterFirst.id === vAfterSecond.id, "P1.4: idempotent re-apply created no new page version (no duplicated paragraphs)");
+
+  // ---- P1.5 acceptance: unknown target slug must not fork the wiki --------------------
+  const badSlug = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "add_paragraph", targetPageSlug: "totally-invented-page-slug", proposedMarkdown: "Should not create a page.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  assert(badSlug[0]?.status === "rejected" && badSlug[0]?.rejectionReason === "unknown_target_slug", "P1.5: unknown targetPageSlug rejected (only create_subpage creates pages)");
+  assert(!(await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, "totally-invented-page-slug")))[0], "P1.5: no page was auto-created for the typo'd slug");
 
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 

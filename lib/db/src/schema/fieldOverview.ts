@@ -25,7 +25,7 @@
 // only ever creating references/edits from B.2.1 reviews (v19.1.0 excluded by promptVersion).
 
 import { sql } from "drizzle-orm";
-import { boolean, integer, jsonb, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
 import { papersTable } from "./papers";
 import { usersTable } from "./auth";
 
@@ -186,8 +186,12 @@ export const proposedOverviewEditsTable = pgTable("proposed_overview_edits", {
   status: varchar("status").$type<OverviewEditStatus>().notNull().default("draft_applied"),
   appliedVersionId: varchar("applied_version_id"), // the FieldPageVersion this edit produced
   revertedFromVersionId: varchar("reverted_from_version_id"),
+  // Idempotency (brief P1.4): sha256 of (reviewVersionId + edit payload). Set only on applied
+  // rows (null on rejected, so a fixed retry isn't blocked); unique index makes re-application
+  // a no-op even under concurrency.
+  idempotencyKey: varchar("idempotency_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [uniqueIndex("proposed_overview_edits_idem_idx").on(t.idempotencyKey)]);
 
 // --- PageSpan: a prose span with soft support status (§3.2, explanation-first) -----
 // Every added paragraph/sentence becomes a span. Unsourced spans are legitimate (best
