@@ -101,6 +101,7 @@ CREATE TABLE "page_spans" (
 	"start_offset" integer,
 	"end_offset" integer,
 	"support_status" varchar DEFAULT 'unsourced_explanatory' NOT NULL,
+	"superseded" boolean DEFAULT false NOT NULL,
 	"reference_id" varchar,
 	"created_by_review_version_id" varchar,
 	"created_by_paper_id" varchar,

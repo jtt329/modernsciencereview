@@ -66,7 +66,7 @@ import {
   ensureOverviewSkeleton, applyOverviewImpact, assembleOverviewMarkdown,
   computeProminence, publishOverview, rollbackPage, checkEquationFidelity, assembleCorrectionsLedger,
 } from ${JSON.stringify(editorPath)};
-import { fieldPagesTable, fieldPageVersionsTable, pageSpansTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable } from "@workspace/db";
+import { fieldPagesTable, fieldPageVersionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 
 const MODE = ${JSON.stringify(MODE)};
@@ -168,6 +168,47 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   // (c) prominence is computable without any claim-status input (it reads structure/offsets only).
   await computeProminence(db, OVERVIEW_SLUG, conId);
   assert(true, "prominence computed from structure, not from claim status");
+
+  // ---- P0.1 acceptance: provenance survives edits and rollback -----------------------
+  const holo = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, "holography")))[0];
+  const latestOf = async (pageId) => (await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, pageId)).orderBy(desc(fieldPageVersionsTable.createdAt)))[0];
+  const liveSpans = async (verId) => (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, verId))).filter((s) => !s.superseded);
+  const liveRefs = async (verId) => (await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, verId))).filter((r) => r.status === "approved");
+  const T1 = "The Ryu-Takayanagi prescription computes entanglement entropy as the area of a minimal bulk surface.";
+  const T2 = "Holography links bulk geometry to boundary information content.";
+  const T3 = "Holographic duality identifies bulk geometry with the information content of the boundary theory.";
+  const rtId = await upsertPaper("Holographic Derivation of Entanglement Entropy");
+  const rtRv = await persistReview(rtId, { promptVersion: "synthetic", recommendedScore: 93, correctnessInternal: "sound", correctnessPublic: "sound", claims: [{ id: "C1", statement: "Entanglement entropy equals a minimal-surface area.", status: "established" }] });
+  const sc = { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" };
+  await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "add_paragraph", targetPageSlug: "holography", proposedMarkdown: T1, citedPaperIds: [rtId], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  const v1 = await latestOf(holo.id);
+  await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "add_paragraph", targetPageSlug: "holography", proposedMarkdown: T2, citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "edit_existing_text", targetPageSlug: "holography", anchorText: T2, proposedMarkdown: T3, citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  const v3 = await latestOf(holo.id);
+  const v3spans = await liveSpans(v3.id);
+  const t1span = v3spans.find((s) => s.text === T1);
+  assert(!!t1span && t1span.supportStatus === "sourced", "P0.1: sourced span survives an unrelated rewrite (carried forward, still sourced)");
+  assert(!!t1span && v3.markdownFull.slice(t1span.startOffset, t1span.endOffset) === T1, "P0.1: carried span re-anchored with correct offsets in newest version");
+  const t2all = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, v3.id))).filter((s) => s.text === T2);
+  assert(t2all.length === 1 && t2all[0].superseded === true, "P0.1: rewritten region's old span kept as superseded history, not deleted");
+  assert((await liveRefs(v3.id)).length === 1, "P0.1: reference carried forward across versions (chip count cumulative)");
+  const restored = await rollbackPage(db, holo.id, v1.id);
+  const rSpans = await liveSpans(restored.id); const rRefs = await liveRefs(restored.id);
+  assert(rSpans.some((s) => s.text === T1 && s.supportStatus === "sourced") && rRefs.length === 1, "P0.1: rollback restores target version's spans + references (chips reappear)");
+  assert(!v3.markdownFull.includes(T2) || !restored.markdownFull.includes(T3), "P0.1: rollback restored target markdown");
+
+  // ---- P0.3 acceptance: missing correctness verdict fails CLOSED --------------------
+  const held = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: undefined, edits: [
+    { action: "add_paragraph", targetPageSlug: "holography", proposedMarkdown: "Should never apply.", citedPaperIds: [rtId], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  assert(held[0]?.status === "rejected" && held[0]?.rejectionReason === "correctness_unavailable", "P0.3: missing correctness verdict holds the edit (fail closed, never the sound path)");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);
@@ -213,7 +254,12 @@ async function runLive(db, upsertPaper, persistReview) {
     // Inject the LIVE draft overview + its unsourced spans so the editor edits against current
     // state and can SOURCE existing unsourced sentences this paper establishes (accretion).
     const currentOverviewMd = (await assembleOverviewMarkdown(db, OVERVIEW_SLUG)).slice(0, 14000);
-    const unsourced = await db.select().from(pageSpansTable).where(inArray(pageSpansTable.supportStatus, ["unsourced_explanatory", "needs_source"]));
+    // Accretion query reads LIVE spans of each page's LATEST version only (P0.1 — per-version
+    // carry-forward copies mean an unscoped query would surface stale duplicates).
+    const allUnsourced = await db.select().from(pageSpansTable).where(inArray(pageSpansTable.supportStatus, ["unsourced_explanatory", "needs_source"]));
+    const latestVerByPage = new Map();
+    for (const pg of await db.select().from(fieldPagesTable)) latestVerByPage.set(pg.id, pg.currentVersionId);
+    const unsourced = allUnsourced.filter((s) => !s.superseded && s.versionId === latestVerByPage.get(s.pageId));
     const unsourcedText = unsourced.length
       ? "UNSOURCED sentences currently in the overview — if THIS paper genuinely establishes one, propose add_reference with anchorText = that phrase:\\n" + unsourced.slice(0, 30).map((s) => "- " + (s.text || "").slice(0, 150)).join("\\n")
       : "(no unsourced sentences yet)";

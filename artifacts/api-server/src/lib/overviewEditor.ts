@@ -123,10 +123,16 @@ async function getPageBySlug(db: Db, slug: string) {
 }
 
 // Create a new DRAFT version carrying `markdown`, point the page at it, log the change.
+// PROVENANCE CARRY-FORWARD (brief P0.1 — this is what makes accretion possible): every span
+// and reference from the source version (default: the previous latest; rollback passes the
+// restore target) is copied onto the new version. Re-anchoring is by text search in the new
+// markdown: found -> live copy with updated offsets; not found -> superseded copy (references
+// get status "superseded"). History is never deleted; the accretion ledger survives rewrites.
 async function newDraftVersion(
   db: Db, pageId: string, markdown: string,
   changeLog: FieldPageChangeLogEntry[], createdByUserId?: string | null,
   summaries?: { oneLine?: string; short?: string },
+  carryFromVersionId?: string,
 ) {
   const prev = await latestVersion(db, pageId);
   const priorLog = (prev?.changeLog as FieldPageChangeLogEntry[] | undefined) ?? [];
@@ -143,6 +149,42 @@ async function newDraftVersion(
     .set({ currentVersionId: version.id, updatedAt: new Date() })
     .where(eq(fieldPagesTable.id, pageId));
   await regenerateSections(db, pageId, version.id, markdown);
+
+  const sourceVersionId = carryFromVersionId ?? prev?.id ?? null;
+  if (sourceVersionId) {
+    // 1. References first (spans point at them) — build old->new id map.
+    const prevRefs = await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, sourceVersionId));
+    const refIdMap = new Map<string, string>();
+    for (const r of prevRefs) {
+      const anchor = r.anchorText ?? "";
+      const idx = anchor ? markdown.indexOf(anchor) : -1;
+      const [copy] = await db.insert(pageReferencesTable).values({
+        pageId, versionId: version.id, sectionId: r.sectionId,
+        anchorText: r.anchorText,
+        anchorStartOffset: idx >= 0 ? idx : null,
+        anchorEndOffset: idx >= 0 ? idx + anchor.length : null,
+        paperId: r.paperId, reviewVersionId: r.reviewVersionId, externalReferenceId: r.externalReferenceId,
+        claimIds: r.claimIds, claimStatus: r.claimStatus, note: r.note,
+        status: idx >= 0 ? (r.status === "superseded" ? "superseded" : r.status) : "superseded",
+        provenance: r.provenance,
+      }).returning();
+      refIdMap.set(r.id, copy.id);
+    }
+    // 2. Spans, re-anchored; superseded reflects presence in THIS version's markdown.
+    const prevSpans = await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, sourceVersionId));
+    for (const s of prevSpans) {
+      const idx = s.text ? markdown.indexOf(s.text) : -1;
+      await db.insert(pageSpansTable).values({
+        pageId, versionId: version.id, sectionSlug: s.sectionSlug, text: s.text,
+        startOffset: idx >= 0 ? idx : null,
+        endOffset: idx >= 0 ? idx + s.text.length : null,
+        supportStatus: s.supportStatus,
+        superseded: idx < 0,
+        referenceId: s.referenceId ? (refIdMap.get(s.referenceId) ?? s.referenceId) : null,
+        createdByReviewVersionId: s.createdByReviewVersionId, createdByPaperId: s.createdByPaperId,
+      });
+    }
+  }
   return version;
 }
 
@@ -338,10 +380,12 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
 
     if (edit.action === "add_reference") {
       // Accretion-as-query (§3.2 / item 4): SOURCE an existing (unsourced) span with this paper.
+      // Create the new version FIRST (carry-forward copies every span onto it), then match and
+      // update the NEW version's copy — updating the old version's row would be lost (P0.1).
       const anchor = edit.anchorText?.trim() || current.slice(0, 80);
-      const spans = await db.select().from(pageSpansTable).where(eq(pageSpansTable.pageId, page.id));
-      const match = spans.find((s: any) => s.text && (s.text.includes(anchor) || (anchor.length > 20 && anchor.includes(s.text.slice(0, 40)))));
       const version = await newDraftVersion(db, page.id, current, [{ at: new Date().toISOString(), action: `add_reference (source span) from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+      const spans = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, version.id))).filter((s: any) => !s.superseded);
+      const match = spans.find((s: any) => s.text && (s.text.includes(anchor) || (anchor.length > 20 && anchor.includes(s.text.slice(0, 40)))));
       let refId: string | undefined, spanId: string | undefined, finalStatus: SpanSupportStatus = supportStatus;
       if (isSourced && sourcePaperId) {
         const ref = await createReference(db, { pageId: page.id, versionId: version.id, markdown: current, anchorText: anchor, paperId: sourcePaperId, reviewVersionId: input.reviewVersionId, claimIds, claimStatus, provenance });
@@ -418,7 +462,16 @@ export async function ensureOverviewSkeleton(db: Db, pages: SeedPageSpec[], crea
 
 // ---- Renderer-computed prominence (§10.5) — never model-assigned -------------------
 export async function computeProminence(db: Db, overviewSlug: string, paperId: string): Promise<{ prominence: ComputedProminence; locationSlug: string | null }> {
-  const refs = await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.paperId, paperId));
+  // References are keyed per-version (carry-forward copies) — only the LATEST version of each
+  // page counts, and only live (approved) refs; superseded copies are history, not position.
+  const allRefs = await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.paperId, paperId));
+  const refs: typeof allRefs = [];
+  const latestByPage = new Map<string, string | null>();
+  for (const ref of allRefs) {
+    if (ref.status !== "approved") continue;
+    if (!latestByPage.has(ref.pageId)) latestByPage.set(ref.pageId, (await latestVersion(db, ref.pageId))?.id ?? null);
+    if (ref.versionId && ref.versionId === latestByPage.get(ref.pageId)) refs.push(ref);
+  }
   if (refs.length === 0) return { prominence: "not_in_overview", locationSlug: null };
   // Is the paper the SUBJECT of a page (its slug carries the paper) or the anchor of a section?
   let best: ComputedProminence = "footnote_reference";
@@ -445,8 +498,9 @@ export async function assembleOverviewMarkdown(db: Db, overviewSlug: string): Pr
   const chunks: string[] = [];
   for (const p of [root, ...ordered.filter((x: any) => x.id !== root?.id)].filter(Boolean) as any[]) {
     const v = await latestVersion(db, p.id);
-    const refs = await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.pageId, p.id));
-    const spans = v ? await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, v.id)) : [];
+    // Per-version reads: the served version's live refs/spans (carry-forward makes these cumulative).
+    const refs = v ? (await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, v.id))).filter((r: any) => r.status === "approved") : [];
+    const spans = v ? (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, v.id))).filter((s: any) => !s.superseded) : [];
     const sourced = spans.filter((s: any) => s.supportStatus === "sourced").length;
     const unsourced = spans.length - sourced;
     chunks.push(`# ${p.title}  (\`/fields/${p.slug}\`)\n\n${v?.markdownFull ?? ""}\n\n_Provenance: ${refs.length} source chip(s); spans ${sourced} sourced / ${unsourced} unsourced-explanatory._\n`);
@@ -490,11 +544,14 @@ export async function publishOverview(db: Db, overviewSlug: string) {
 }
 
 // ---- rollback a page to a prior version (preserves history) ------------------------
+// Restores the target version's SPANS and REFERENCES too (brief P0.1), by carrying forward
+// from the rollback TARGET rather than from the (bad) latest version — chips reappear.
 export async function rollbackPage(db: Db, pageId: string, toVersionId: string) {
   const target = (await db.select().from(fieldPageVersionsTable).where(and(eq(fieldPageVersionsTable.id, toVersionId), eq(fieldPageVersionsTable.pageId, pageId))).limit(1))[0];
   if (!target) throw new Error("rollback target version not found for page");
   const restored = await newDraftVersion(db, pageId, target.markdownFull,
     [{ at: new Date().toISOString(), action: `rolled back to version ${toVersionId}` }], null,
-    { oneLine: target.summaryOneLine, short: target.summaryShort });
+    { oneLine: target.summaryOneLine, short: target.summaryShort },
+    toVersionId);
   return restored;
 }

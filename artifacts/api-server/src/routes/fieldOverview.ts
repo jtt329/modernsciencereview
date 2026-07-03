@@ -59,8 +59,10 @@ router.get("/overviews/:slug", async (req, res) => {
       const version = await latestVersion(p.id, wantDraft ? undefined : "published");
       if (!version) continue; // unpublished page hidden from public
       const sections = await db.select().from(pageSectionsTable).where(eq(pageSectionsTable.versionId, version.id)).orderBy(pageSectionsTable.order);
-      const refs = await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.pageId, p.id));
-      const spans = await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, version.id));
+      // Per-version reads (P0.1): the served version's LIVE refs/spans — carry-forward makes
+      // these cumulative across edits; superseded copies are history, not display.
+      const refs = (await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, version.id))).filter((r) => r.status === "approved");
+      const spans = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, version.id))).filter((s) => !s.superseded);
       out.push({
         id: p.id, slug: p.slug, title: p.title, parentPageId: p.parentPageId, scopeStatement: p.scopeStatement,
         version: { id: version.id, visibility: version.visibility, summaryOneLine: version.summaryOneLine, summaryShort: version.summaryShort, markdownFull: version.markdownFull },

@@ -25,7 +25,7 @@
 // only ever creating references/edits from B.2.1 reviews (v19.1.0 excluded by promptVersion).
 
 import { sql } from "drizzle-orm";
-import { integer, jsonb, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import { boolean, integer, jsonb, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
 import { papersTable } from "./papers";
 import { usersTable } from "./auth";
 
@@ -204,6 +204,10 @@ export const pageSpansTable = pgTable("page_spans", {
   startOffset: integer("start_offset"),
   endOffset: integer("end_offset"),
   supportStatus: varchar("support_status").$type<SpanSupportStatus>().notNull().default("unsourced_explanatory"),
+  // Lifecycle flag (SEPARATE from the epistemic supportStatus axis): spans are carried forward
+  // to every new page version; a span whose text no longer appears in the version's markdown is
+  // kept as a superseded copy — history is never deleted (brief P0.1).
+  superseded: boolean("superseded").notNull().default(false),
   referenceId: varchar("reference_id"), // -> page_references.id when sourced (soft)
   createdByReviewVersionId: varchar("created_by_review_version_id"),
   createdByPaperId: varchar("created_by_paper_id"),
