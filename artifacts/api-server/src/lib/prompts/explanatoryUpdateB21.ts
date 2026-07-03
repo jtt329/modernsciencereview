@@ -77,6 +77,15 @@ Choose the action that expresses the rewrite:
   - create_subpage     : new subpage — ONLY when no existing page/section is the right home
                          (editorial judgment). Prefer improving the most specific existing page;
                          never create a page that merely restates an existing one.
+  - add_link           : link an existing phrase on a page to another page. Give targetPageSlug
+                         (the page containing the phrase), anchorText (the exact phrase, verbatim
+                         from the current prose), and linkTargetSlug (the destination page,
+                         chosen FROM THE SUPPLIED INDEX — existing slugs only, or a subpage you
+                         create in this same batch). When a passage first mentions a concept
+                         that has its own page, propose add_link on that phrase — links are part
+                         of the best explanation (a reader must be able to descend). Judgment-
+                         driven, not exhaustive: link first mentions and load-bearing concepts,
+                         not every repetition.
   - merge_or_reorganize: restructure existing material.
 
 CONFIDENCE-CALIBRATED PROSE — the stability fixed point. Write every region at its TRUE epistemic
@@ -158,6 +167,7 @@ valid JSON, no comments, no trailing commas):
         "editType": "prose",
         "targetPageSlug": "",
         "targetSectionSlug": "",
+        "linkTargetSlug": "",
         "anchorText": "",
         "proposedMarkdown": "",
         "citedPaperIds": [],
@@ -171,8 +181,10 @@ valid JSON, no comments, no trailing commas):
     "overviewChangeSummary": ""
   }
 Field-rule reminders (do not echo): action is exactly one of no_change | add_reference |
-edit_existing_text | add_paragraph | add_subsection | create_subpage | merge_or_reorganize;
-editType is exactly one of prose | reference_only | new_section | new_subpage | reorganization;
+edit_existing_text | add_paragraph | add_subsection | create_subpage | merge_or_reorganize |
+add_link; editType is exactly one of prose | reference_only | new_section | new_subpage |
+reorganization | link_only; linkTargetSlug is used ONLY with add_link and must be a slug from
+the supplied index (never invented, never a URL);
 each claim's status is exactly one of established | contested | speculative | failed;
 citedClaimIds reference ids from your claims array; supportStatus is exactly one of sourced |
 unsourced_explanatory | needs_source | source_disputed (use unsourced_explanatory for connective

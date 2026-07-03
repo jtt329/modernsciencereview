@@ -154,8 +154,8 @@ export const pageReferencesTable = pgTable("page_references", {
 // (§10.4) so the injection-defense outcome and the "why" are auditable, not just prompted.
 export type OverviewEditAction =
   | "no_change" | "add_reference" | "edit_existing_text" | "add_paragraph"
-  | "add_subsection" | "create_subpage" | "merge_or_reorganize";
-export type OverviewEditType = "prose" | "reference_only" | "new_section" | "new_subpage" | "reorganization";
+  | "add_subsection" | "create_subpage" | "merge_or_reorganize" | "add_link";
+export type OverviewEditType = "prose" | "reference_only" | "new_section" | "new_subpage" | "reorganization" | "link_only";
 export type OverviewEditStatus = "draft_applied" | "published" | "reverted" | "superseded" | "rejected";
 
 export type OverviewEditorRationale = {
@@ -180,6 +180,7 @@ export const proposedOverviewEditsTable = pgTable("proposed_overview_edits", {
   editType: varchar("edit_type").$type<OverviewEditType>(),
   targetPageSlug: varchar("target_page_slug"),
   targetSectionSlug: varchar("target_section_slug"),
+  linkTargetSlug: varchar("link_target_slug"), // add_link destination (validated against the index; model never writes URLs)
   proposedMarkdown: text("proposed_markdown").notNull().default(""),
   citedPaperIds: jsonb("cited_paper_ids").$type<string[]>().notNull().default([]),
   citedClaimIds: jsonb("cited_claim_ids").$type<string[]>().notNull().default([]),
@@ -253,6 +254,27 @@ export const pageSpansTable = pgTable("page_spans", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// --- PageLink: an inter-page link — how the graph emerges (Phase 1.5 slice 1) ------
+// UNTYPED, UNWEIGHTED, carries no judgment: Wikipedia's graph, not the dropped concept graph
+// (which demanded typed classification as input to a computation). HARD INVARIANT: the link
+// graph may be READ (navigation, [+] descent, editor retrieval, orphan detection, search) but
+// no code path may derive score, prominence, placement, publication, or routing from link
+// structure — enforced by the same static CI check as soft statuses. Links carry provenance
+// and version like everything else and are carried forward across versions like spans
+// (phrase re-anchored; orphaned -> superseded copy).
+export const pageLinksTable = pgTable("page_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  fromPageId: varchar("from_page_id").notNull().references(() => fieldPagesTable.id, { onDelete: "cascade" }),
+  toPageId: varchar("to_page_id").notNull().references(() => fieldPagesTable.id, { onDelete: "cascade" }),
+  phrase: text("phrase").notNull(),
+  versionId: varchar("version_id").references(() => fieldPageVersionsTable.id, { onDelete: "cascade" }),
+  anchorStartOffset: integer("anchor_start_offset"),
+  anchorEndOffset: integer("anchor_end_offset"),
+  superseded: boolean("superseded").notNull().default(false),
+  createdByReviewVersionId: varchar("created_by_review_version_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // --- IngestionQueue: referenced-but-unreviewed papers (placeholder targets) -------
 export type IngestionQueueStatus = "queued" | "ingesting" | "reviewed" | "skipped" | "failed";
 
@@ -295,3 +317,5 @@ export type PageSpan = typeof pageSpansTable.$inferSelect;
 export type InsertPageSpan = typeof pageSpansTable.$inferInsert;
 export type AttributionCheck = typeof attributionChecksTable.$inferSelect;
 export type InsertAttributionCheck = typeof attributionChecksTable.$inferInsert;
+export type PageLink = typeof pageLinksTable.$inferSelect;
+export type InsertPageLink = typeof pageLinksTable.$inferInsert;

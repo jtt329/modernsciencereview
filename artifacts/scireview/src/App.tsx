@@ -732,9 +732,11 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50">
         <FieldOverviewPage
+          key={fieldSlug}
           slug={fieldSlug}
           isAdmin={isAdmin}
           onOpenPaper={(id) => { window.history.pushState({}, '', paperPath(id)); setFieldSlug(null); setSelectedPaperId(id); }}
+          onOpenPage={(slug) => { window.history.pushState({}, '', `/fields/${encodeURIComponent(slug)}`); setFieldSlug(slug); }}
           onBack={() => { window.history.pushState({}, '', '/'); setFieldSlug(null); }}
         />
       </div>

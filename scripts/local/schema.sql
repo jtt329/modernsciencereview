@@ -77,6 +77,19 @@ CREATE TABLE "ingestion_queue" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE "page_links" (
+	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"from_page_id" varchar NOT NULL,
+	"to_page_id" varchar NOT NULL,
+	"phrase" text NOT NULL,
+	"version_id" varchar,
+	"anchor_start_offset" integer,
+	"anchor_end_offset" integer,
+	"superseded" boolean DEFAULT false NOT NULL,
+	"created_by_review_version_id" varchar,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "page_references" (
 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"page_id" varchar NOT NULL,
@@ -134,6 +147,7 @@ CREATE TABLE "proposed_overview_edits" (
 	"edit_type" varchar,
 	"target_page_slug" varchar,
 	"target_section_slug" varchar,
+	"link_target_slug" varchar,
 	"proposed_markdown" text DEFAULT '' NOT NULL,
 	"cited_paper_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"cited_claim_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
@@ -357,6 +371,9 @@ ALTER TABLE "attribution_checks" ADD CONSTRAINT "attribution_checks_paper_id_pap
 ALTER TABLE "field_page_versions" ADD CONSTRAINT "field_page_versions_page_id_field_pages_id_fk" FOREIGN KEY ("page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "field_page_versions" ADD CONSTRAINT "field_page_versions_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "ingestion_queue" ADD CONSTRAINT "ingestion_queue_resolved_paper_id_papers_id_fk" FOREIGN KEY ("resolved_paper_id") REFERENCES "public"."papers"("id") ON DELETE set null ON UPDATE no action;
+ALTER TABLE "page_links" ADD CONSTRAINT "page_links_from_page_id_field_pages_id_fk" FOREIGN KEY ("from_page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "page_links" ADD CONSTRAINT "page_links_to_page_id_field_pages_id_fk" FOREIGN KEY ("to_page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "page_links" ADD CONSTRAINT "page_links_version_id_field_page_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."field_page_versions"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "page_references" ADD CONSTRAINT "page_references_page_id_field_pages_id_fk" FOREIGN KEY ("page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "page_references" ADD CONSTRAINT "page_references_version_id_field_page_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."field_page_versions"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "page_references" ADD CONSTRAINT "page_references_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE set null ON UPDATE no action;

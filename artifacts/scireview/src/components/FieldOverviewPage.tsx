@@ -21,19 +21,20 @@ const CHIP_CUE: Record<string, { cue: string; cls: string }> = {
   mixed: { cue: ' · mixed', cls: 'bg-slate-100 text-slate-600 border-slate-200' },
   unknown: { cue: '', cls: 'bg-slate-50 text-slate-500 border-slate-200' },
 };
-type Span = { id: string; text: string; supportStatus: string; referenceId: string | null };
+type Span = { id: string; text: string; startOffset: number | null; endOffset: number | null; supportStatus: string; referenceId: string | null };
+type PageLink = { id: string; phrase: string; startOffset: number | null; endOffset: number | null; toPageSlug: string; toPageTitle: string };
 type Page = {
   id: string; slug: string; title: string; parentPageId: string | null; scopeStatement: string;
   version: { summaryOneLine: string; summaryShort: string; markdownFull: string; visibility: string };
   sections: { id: string; slug: string; title: string }[];
-  references: Ref[]; spans: Span[];
+  references: Ref[]; spans: Span[]; links: PageLink[];
 };
 
 const LEVELS = ['one-line', 'short', 'full'] as const;
 
 export default function FieldOverviewPage({
-  slug, isAdmin, onOpenPaper, onBack,
-}: { slug: string; isAdmin: boolean; onOpenPaper: (paperId: string) => void; onBack: () => void }) {
+  slug, isAdmin, onOpenPaper, onOpenPage, onBack,
+}: { slug: string; isAdmin: boolean; onOpenPaper: (paperId: string) => void; onOpenPage: (slug: string) => void; onBack: () => void }) {
   const [pages, setPages] = useState<Page[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [level, setLevel] = useState<Record<string, number>>({});
@@ -92,6 +93,18 @@ export default function FieldOverviewPage({
                 </button>
               );
             })}
+          </div>
+        )}
+        {page.links && page.links.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2 items-center">
+            <span className="text-xs text-slate-400">Related pages:</span>
+            {page.links.map((l) => (
+              <button key={l.id} onClick={() => onOpenPage(l.toPageSlug)}
+                className="text-xs px-2 py-0.5 rounded border border-slate-200 text-slate-600 hover:bg-slate-100"
+                title={`"${l.phrase}" → ${l.toPageTitle}`}>
+                {l.phrase.length > 36 ? l.phrase.slice(0, 36) + '…' : l.phrase} →
+              </button>
+            ))}
           </div>
         )}
         {page.spans.length > 0 && (

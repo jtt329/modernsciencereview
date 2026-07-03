@@ -9,7 +9,7 @@ import {
   db, papersTable,
   fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable,
   pageSpansTable, proposedOverviewEditsTable, ingestionQueueTable, reviewVersionsTable,
-  attributionChecksTable,
+  attributionChecksTable, pageLinksTable,
 } from "@workspace/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook } from "../lib/overviewEditor";
@@ -64,11 +64,20 @@ router.get("/overviews/:slug", async (req, res) => {
       // these cumulative across edits; superseded copies are history, not display.
       const refs = (await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, version.id))).filter((r) => r.status === "approved");
       const spans = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, version.id))).filter((s) => !s.superseded);
+      // Inter-page links (slice 1): live links of the served version, resolved to slugs for
+      // NAVIGATION only — the link graph drives nothing.
+      const rawLinks = (await db.select().from(pageLinksTable).where(eq(pageLinksTable.versionId, version.id))).filter((l) => !l.superseded);
+      const links = [] as any[];
+      for (const l of rawLinks) {
+        const target = all.find((pg) => pg.id === l.toPageId);
+        if (target) links.push({ id: l.id, phrase: l.phrase, startOffset: l.anchorStartOffset, endOffset: l.anchorEndOffset, toPageSlug: target.slug, toPageTitle: target.title });
+      }
       out.push({
         id: p.id, slug: p.slug, title: p.title, parentPageId: p.parentPageId, scopeStatement: p.scopeStatement,
         version: { id: version.id, visibility: version.visibility, summaryOneLine: version.summaryOneLine, summaryShort: version.summaryShort, markdownFull: version.markdownFull },
         sections, references: await enrichReferences(refs),
         spans: spans.map((s) => ({ id: s.id, text: s.text, startOffset: s.startOffset, endOffset: s.endOffset, supportStatus: s.supportStatus, referenceId: s.referenceId })),
+        links,
       });
     }
     res.json({ overviewSlug: root.slug, isDraft: wantDraft, pages: out });

@@ -105,14 +105,31 @@ function staticSoftStatusCheck() {
     ["targetSlug computation", (editorSrc.match(/const targetSlug =[^;]+;/) ?? [""])[0]],
   ]) {
     if (/\bclaimStatus\b|\bsupportStatus\b/.test(body)) violations.push("soft status read inside decision surface: " + label);
+    // Slice 1 HARD INVARIANT: the link graph may be read for navigation/retrieval but must
+    // never feed score, prominence, placement, publication, or routing.
+    if (/\bpageLinksTable\b|\bpage_links\b/.test(body)) violations.push("link graph read inside decision surface: " + label);
     if (!body) violations.push("static check could not locate: " + label);
   }
   if (violations.length) {
     for (const v of violations) console.log("  ✗ STATIC INVARIANT VIOLATION: " + v);
     process.exit(1);
   }
+  // Slice 1: pageLinksTable reads must also stay in the surfacing/navigation layer.
+  for (const dir of [join(ROOT, "artifacts/api-server/src"), join(ROOT, "artifacts/scireview/src"), join(ROOT, "lib/db/src")]) {
+    for (const file of walk(dir)) {
+      const src = readFileSync(file, "utf8");
+      if (/\bpageLinksTable\b/.test(src) && !ALLOW.has(relative(ROOT, file))) {
+        violations.push("page_links referenced outside surfacing allowlist: " + relative(ROOT, file));
+      }
+    }
+  }
+  if (violations.length) {
+    for (const v of violations) console.log("  ✗ STATIC INVARIANT VIOLATION: " + v);
+    process.exit(1);
+  }
   console.log("  ✓ static: soft chip/claim status is read only in the surfacing layer (allowlist clean)");
-  console.log("  ✓ static: publishOverview / computeProminence / targetSlug computation are free of soft-status reads");
+  console.log("  ✓ static: publishOverview / computeProminence / targetSlug computation are free of soft-status + link-graph reads");
+  console.log("  ✓ static: page_links read only in the surfacing/navigation layer");
 }
 
 // ---- Schema-drift check (P2): the committed pglite DDL must match a fresh drizzle-kit export —
@@ -138,7 +155,7 @@ import {
   ensureOverviewSkeleton, applyOverviewImpact, assembleOverviewMarkdown,
   computeProminence, publishOverview, rollbackPage, checkEquationFidelity, assembleCorrectionsLedger,
 } from ${JSON.stringify(editorPath)};
-import { fieldPagesTable, fieldPageVersionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable } from "@workspace/db";
+import { fieldPagesTable, fieldPageVersionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 
 const MODE = ${JSON.stringify(MODE)};
@@ -356,6 +373,28 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   const holoVersions = await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, holo.id));
   const nums = holoVersions.map((v) => v.versionNumber).sort((a, b) => a - b);
   assert(nums.length > 1 && nums.every((n, i) => i === 0 || n > nums[i - 1]), "P2: versionNumber strictly increases per page (no duplicates, no timestamp ties)");
+
+  // ---- Slice 1 acceptance: inter-page links --------------------------------------------
+  // (a) add_link with a valid target applies and stores the link with offsets.
+  const linkRes = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "add_link", targetPageSlug: "holography", anchorText: T1, linkTargetSlug: "black-hole-entropy", citedPaperIds: [], citedClaimIds: [], safetyCheck: sc, reason: "concept has its own page" },
+  ] });
+  assert(linkRes[0]?.status === "draft_applied", "S1: add_link with a valid index target applies");
+  const holoLatest1 = await latestOf(holo.id);
+  const liveLinks1 = (await db.select().from(pageLinksTable).where(eq(pageLinksTable.versionId, holoLatest1.id))).filter((l) => !l.superseded);
+  assert(liveLinks1.length === 1 && holoLatest1.markdownFull.slice(liveLinks1[0].anchorStartOffset, liveLinks1[0].anchorEndOffset) === T1, "S1: link stored on the live version with correct phrase offsets");
+  // (b) the link survives an unrelated rewrite (carried + re-anchored).
+  await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "add_paragraph", targetPageSlug: "holography", proposedMarkdown: "An unrelated additional paragraph after the link was created.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  const holoLatest2 = await latestOf(holo.id);
+  const liveLinks2 = (await db.select().from(pageLinksTable).where(eq(pageLinksTable.versionId, holoLatest2.id))).filter((l) => !l.superseded);
+  assert(liveLinks2.length === 1 && holoLatest2.markdownFull.slice(liveLinks2[0].anchorStartOffset, liveLinks2[0].anchorEndOffset) === T1, "S1: link carried forward and re-anchored across an unrelated rewrite");
+  // (c) unknown link target is rejected — a link can never invent a page.
+  const badLink = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "add_link", targetPageSlug: "holography", anchorText: T1, linkTargetSlug: "no-such-target-page", citedPaperIds: [], citedClaimIds: [], safetyCheck: sc },
+  ] });
+  assert(badLink[0]?.status === "rejected" && badLink[0]?.rejectionReason === "unknown_link_target", "S1: unknown link target rejected (slugs come from the index, never invented)");
 
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 

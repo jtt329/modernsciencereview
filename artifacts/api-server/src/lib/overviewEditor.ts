@@ -23,7 +23,7 @@ import type { PgDatabase } from "drizzle-orm/pg-core";
 import {
   papersTable, reviewVersionsTable,
   fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable,
-  pageSpansTable, proposedOverviewEditsTable, attributionChecksTable,
+  pageSpansTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable,
   type ComputedProminence, type FieldPageChangeLogEntry,
   type OverviewEditAction, type OverviewEditType,
   type OverviewEditorRationale, type OverviewEditSafetyCheck, type SpanSupportStatus,
@@ -91,6 +91,7 @@ export type OverviewImpactEdit = {
   editType?: OverviewEditType | null;
   targetPageSlug?: string;
   targetSectionSlug?: string;
+  linkTargetSlug?: string; // add_link: destination page slug, chosen FROM THE INDEX (slice 1)
   anchorText?: string;
   proposedMarkdown?: string;
   citedPaperIds?: string[];
@@ -224,6 +225,19 @@ async function newDraftVersion(
         createdByReviewVersionId: s.createdByReviewVersionId, createdByPaperId: s.createdByPaperId,
       });
     }
+    // 3. Inter-page links (slice 1), re-anchored by phrase; orphaned -> superseded copy.
+    const prevLinks = await db.select().from(pageLinksTable).where(eq(pageLinksTable.versionId, sourceVersionId));
+    for (const l of prevLinks) {
+      const idx = l.phrase ? markdown.indexOf(l.phrase) : -1;
+      await db.insert(pageLinksTable).values({
+        fromPageId: pageId, toPageId: l.toPageId, phrase: l.phrase,
+        versionId: version.id,
+        anchorStartOffset: idx >= 0 ? idx : null,
+        anchorEndOffset: idx >= 0 ? idx + l.phrase.length : null,
+        superseded: idx < 0,
+        createdByReviewVersionId: l.createdByReviewVersionId,
+      });
+    }
   }
   return version;
 }
@@ -330,6 +344,7 @@ function editIdempotencyKey(input: ApplyOverviewInput, edit: OverviewImpactEdit)
   return createHash("sha256").update(JSON.stringify({
     rv: input.reviewVersionId ?? null, paper: input.paperId, overview: input.overviewSlug,
     action: edit.action, target: edit.targetPageSlug ?? null, section: edit.targetSectionSlug ?? null,
+    linkTarget: edit.linkTargetSlug ?? null,
     anchor: edit.anchorText ?? null, md: edit.proposedMarkdown ?? "",
     cp: edit.citedPaperIds ?? [], cc: edit.citedClaimIds ?? [],
   })).digest("hex").slice(0, 40);
@@ -370,6 +385,7 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
           overviewSlug: input.overviewSlug, action: edit.action, editType: edit.editType ?? null,
           targetPageSlug: extra.targetPageSlug ?? edit.targetPageSlug ?? null,
           targetSectionSlug: edit.targetSectionSlug ?? null,
+          linkTargetSlug: edit.linkTargetSlug ?? null,
           proposedMarkdown: edit.proposedMarkdown ?? "",
           citedPaperIds: edit.citedPaperIds ?? [], citedClaimIds: edit.citedClaimIds ?? [],
           editorRationale: edit.editorRationale ?? null, safetyCheck: edit.safetyCheck ?? null,
@@ -482,6 +498,32 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
         await newDraftVersion(tx, page.id, `## ${page.title}\n`, [{ at: new Date().toISOString(), action: "auto-created disputed page (system slug)" }], input.createdByUserId);
       }
       const current = (await latestVersion(tx, page.id))?.markdownFull ?? `## ${page.title}\n`;
+
+      if (edit.action === "add_link") {
+        // Inter-page link (slice 1): the model proposes { phrase, linkTargetSlug } with the
+        // target chosen FROM THE INDEX it was given — the application validates the slug and
+        // stores the link; the model never writes URLs. Unknown target -> reject; a link whose
+        // phrase is not on the page is an anchor miss -> reject (loud, P1.1 discipline).
+        const linkTarget = edit.linkTargetSlug ? await getPageBySlug(tx, edit.linkTargetSlug) : null;
+        if (!linkTarget) {
+          const id = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: "unknown_link_target: link destination slug does not exist (choose from the supplied index)" });
+          return { action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: "unknown_link_target" };
+        }
+        const phrase = edit.anchorText?.trim() ?? "";
+        if (!phrase || !current.includes(phrase)) {
+          const id = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: "anchor_not_found: link phrase not present on the page" });
+          return { action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: "anchor_not_found" };
+        }
+        const version = await newDraftVersion(tx, page.id, current, [{ at: new Date().toISOString(), action: `add_link "${phrase.slice(0, 40)}" -> ${edit.linkTargetSlug} from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
+        const idx = current.indexOf(phrase);
+        await tx.insert(pageLinksTable).values({
+          fromPageId: page.id, toPageId: linkTarget.id, phrase, versionId: version.id,
+          anchorStartOffset: idx, anchorEndOffset: idx + phrase.length,
+          createdByReviewVersionId: input.reviewVersionId ?? null,
+        });
+        const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
+        return { action: "add_link", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id };
+      }
 
       if (edit.action === "add_reference") {
         // Accretion-as-query (§3.2 / item 4): SOURCE an existing (unsourced) span with this paper.
