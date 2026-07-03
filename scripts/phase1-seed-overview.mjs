@@ -441,6 +441,15 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   const divRes2 = await checkImportanceDivergence(db, OVERVIEW_SLUG, hawkingId);
   assert(divRes2.flagged === false || (await db.select().from(divergenceFlagsTable).where(eq(divergenceFlagsTable.paperId, hawkingId))).length === 0, "S5: no false divergence flag when estimate and position agree (Hawking has no stored estimate)");
 
+  // Equation-checker $$-pairing regression (Frodden spot run): prose between a display block
+  // and an inline equation must never be flagged as an "equation".
+  const { checkEquationFidelity } = await import(${JSON.stringify(editorPath)});
+  const eqPairFlags = checkEquationFidelity(
+    "The law reads: $$ \\\\delta E = \\\\kappa \\\\delta A / 8\\\\pi $$ Integrating this relation yields a canonical energy $E = A/(8\\\\pi \\\\ell)$ for the horizon.",
+    [{ statement: "The local first law $$ \\\\delta E = \\\\kappa \\\\delta A / 8\\\\pi $$ integrates to $E = A/(8\\\\pi \\\\ell)$." }],
+  );
+  assert(eqPairFlags.length === 0, "S5-fix: display-block $$ pairing — prose between equations is never flagged, real equations match claims");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);

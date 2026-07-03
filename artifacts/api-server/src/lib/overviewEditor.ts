@@ -629,8 +629,17 @@ export function checkEquationFidelity(prose: string, claims: { statement: string
   // Only check REAL equations — a relation (=, <, >), a fraction, or several tokens. Lone inline
   // symbols ($\kappa$, $m$, $\Delta x$) are not equations and are not worth flagging.
   const isEquation = (m: string) => /[=<>]|\\frac|\\sim|\\propto/.test(m) || m.replace(/[$\\{}\s]/g, "").length >= 6;
-  const claimMath = claims.flatMap((c) => (c.statement.match(/\$[^$]+\$/g) ?? []).map(norm));
-  const proseMath = Array.from(new Set((prose.match(/\$[^$]+\$/g) ?? []).filter(isEquation)));
+  // Extract display $$...$$ blocks FIRST, then inline $...$ on the remainder — a naive single
+  // regex mispairs the closing $ of a display block with the opening $ of the next inline math
+  // and "verifies" the prose fragment between them (seen in the Frodden spot run).
+  const extractMath = (s: string) => {
+    const display = s.match(/\$\$[^$]+\$\$/g) ?? [];
+    const rest = s.replace(/\$\$[^$]+\$\$/g, " ");
+    const inline = rest.match(/\$[^$\n]+\$/g) ?? [];
+    return [...display, ...inline];
+  };
+  const claimMath = claims.flatMap((c) => extractMath(c.statement).map(norm));
+  const proseMath = Array.from(new Set(extractMath(prose).filter(isEquation)));
   return proseMath.map((eq) => {
     const n = norm(eq);
     return { equation: eq, foundInClaims: claimMath.some((cm) => cm.includes(n) || n.includes(cm)) };
