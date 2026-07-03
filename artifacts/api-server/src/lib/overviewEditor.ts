@@ -190,8 +190,11 @@ async function newDraftVersion(
   return version;
 }
 
-// Insert prose into the markdown per the edit action. Returns { markdown, anchorText }.
-function applyToMarkdown(current: string, edit: OverviewImpactEdit): { markdown: string; anchor: string } {
+// Insert prose into the markdown per the edit action. Returns { markdown, anchor } or a
+// FAILURE — never a silent append (brief P1.1): a rewrite whose anchor is missing must not be
+// appended alongside the old text (that produces a page asserting both the wrong and the right
+// thing); a paragraph targeting a missing section must not land somewhere else.
+function applyToMarkdown(current: string, edit: OverviewImpactEdit): { markdown: string; anchor: string; failure?: "anchor_not_found" | "section_not_found" } {
   const para = (edit.proposedMarkdown ?? "").trim();
   const anchor = edit.anchorText?.trim() || para.split(/(?<=[.!?])\s/)[0]?.slice(0, 120) || para.slice(0, 80);
   if (!para) return { markdown: current, anchor };
@@ -214,7 +217,9 @@ function applyToMarkdown(current: string, edit: OverviewImpactEdit): { markdown:
             break;
           }
         }
-        if (insertAt >= 0) { lines.splice(insertAt, 0, "", para, ""); return { markdown: lines.join("\n"), anchor }; }
+        if (insertAt < 0) return { markdown: current, anchor, failure: "section_not_found" };
+        lines.splice(insertAt, 0, "", para, "");
+        return { markdown: lines.join("\n"), anchor };
       }
       return { markdown: `${current.trimEnd()}\n\n${para}\n`, anchor };
     }
@@ -222,7 +227,7 @@ function applyToMarkdown(current: string, edit: OverviewImpactEdit): { markdown:
       if (edit.anchorText && current.includes(edit.anchorText)) {
         return { markdown: current.replace(edit.anchorText, para), anchor: para.slice(0, 120) };
       }
-      return { markdown: `${current.trimEnd()}\n\n${para}\n`, anchor };
+      return { markdown: current, anchor, failure: "anchor_not_found" };
     }
     case "merge_or_reorganize":
       return { markdown: `${current.trimEnd()}\n\n${para}\n`, anchor };
@@ -410,7 +415,13 @@ export async function applyOverviewImpact(db: Db, input: ApplyOverviewInput): Pr
     }
 
     // Prose edits (add_paragraph / add_subsection / edit_existing_text / merge_or_reorganize).
-    const { markdown, anchor } = applyToMarkdown(current, edit);
+    const { markdown, anchor, failure } = applyToMarkdown(current, edit);
+    if (failure) {
+      // Loud failure, never a silent append (P1.1) — the model can retry with a fresh anchor.
+      const id = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: failure });
+      results.push({ action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: failure });
+      continue;
+    }
     const insertedText = (edit.proposedMarkdown ?? anchor).trim();
     const version = await newDraftVersion(db, page.id, markdown, [{ at: new Date().toISOString(), action: `${edit.action} from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId);
     let refId: string | undefined;
@@ -523,12 +534,21 @@ export async function assembleOverviewMarkdown(db: Db, overviewSlug: string): Pr
 export async function assembleCorrectionsLedger(db: Db, overviewSlug: string, targetPageSlug?: string): Promise<string> {
   const rows = await db.select().from(proposedOverviewEditsTable)
     .where(eq(proposedOverviewEditsTable.overviewSlug, overviewSlug))
-    .orderBy(desc(proposedOverviewEditsTable.createdAt)).limit(60);
+    .orderBy(desc(proposedOverviewEditsTable.createdAt));
   const scoped = targetPageSlug ? rows.filter((r: any) => r.targetPageSlug === targetPageSlug) : rows;
   if (scoped.length === 0) return "(no prior corrections)";
-  return scoped.slice(0, 30).map((r: any) => {
+  // Truncation is ANNOTATED, never silent (P1.2); reverted/rejected entries are pinned so a
+  // settled correction can't age out of view and get re-introduced.
+  const CAP = 40;
+  const pinned = scoped.filter((r: any) => r.status === "reverted" || r.status === "rejected");
+  const rest = scoped.filter((r: any) => r.status !== "reverted" && r.status !== "rejected");
+  const shown = [...pinned, ...rest.slice(0, Math.max(0, CAP - pinned.length))];
+  const header = scoped.length > shown.length
+    ? `(ledger truncated: showing ${shown.length} of ${scoped.length}; all reverted/held entries pinned)\n`
+    : "";
+  return header + shown.map((r: any) => {
     const why = (r.editorRationale as OverviewEditorRationale | null)?.whatThisPaperAdds || r.reason || "";
-    return `- [${r.targetPageSlug ?? overviewSlug}] ${r.action}${r.status === "reverted" ? " (reverted)" : ""}: ${String(why).slice(0, 160)}`;
+    return `- [${r.targetPageSlug ?? overviewSlug}] ${r.action}${r.status === "reverted" ? " (reverted)" : r.status === "rejected" ? " (held)" : ""}: ${String(why).slice(0, 160)}`;
   }).join("\n");
 }
 

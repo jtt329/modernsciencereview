@@ -218,6 +218,19 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   assert(pendHeld[0]?.status === "rejected" && pendHeld[0]?.rejectionReason === "fatal_unverified", "fatal_alleged_unverified: ALL edits held (rejected/fatal_unverified) — pending, never routed as contested");
   assert((await computeProminence(db, OVERVIEW_SLUG, pendId)).prominence === "not_in_overview", "fatal_alleged_unverified: paper touched no page (not in overview)");
 
+  // ---- P1.1 acceptance: loud failures, never silent appends --------------------------
+  const preV = await latestOf(holo.id);
+  const badAnchor = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "edit_existing_text", targetPageSlug: "holography", anchorText: "text that does not exist anywhere on the page", proposedMarkdown: "A correction that must NOT be appended.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  const postV = await latestOf(holo.id);
+  assert(badAnchor[0]?.status === "rejected" && badAnchor[0]?.rejectionReason === "anchor_not_found", "P1.1: edit_existing_text with missing anchor is REJECTED (anchor_not_found)");
+  assert(postV.id === preV.id && !postV.markdownFull.includes("must NOT be appended"), "P1.1: rejected rewrite created no version and appended nothing (no self-contradicting page)");
+  const badSection = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "add_paragraph", targetPageSlug: "holography", targetSectionSlug: "no-such-section", proposedMarkdown: "Paragraph for a section that does not exist.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  assert(badSection[0]?.status === "rejected" && badSection[0]?.rejectionReason === "section_not_found", "P1.1: add_paragraph with missing target section is REJECTED (section_not_found)");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);
@@ -262,15 +275,23 @@ async function runLive(db, upsertPaper, persistReview) {
     const advisory = blindManuscriptText(readFileSync(paper.textPath, "utf8")).slice(0, 30000);
     // Inject the LIVE draft overview + its unsourced spans so the editor edits against current
     // state and can SOURCE existing unsourced sentences this paper establishes (accretion).
-    const currentOverviewMd = (await assembleOverviewMarkdown(db, OVERVIEW_SLUG)).slice(0, 14000);
+    // NEVER truncate the editor's view silently (P1.2 — same failure class as the Ong dropped-ε:
+    // a model reasoning correctly on corrupted input). Fail loudly if it outgrows the budget;
+    // the fix at scale is retrieval-scoped editing (brief §C), not slicing.
+    const currentOverviewMd = await assembleOverviewMarkdown(db, OVERVIEW_SLUG);
+    const OVERVIEW_CHAR_BUDGET = 180000; // ~45k tokens; generous for the Phase-1 corpus
+    if (currentOverviewMd.length > OVERVIEW_CHAR_BUDGET) {
+      throw new Error("overview (" + currentOverviewMd.length + " chars) exceeds the editor context budget — refusing to truncate silently; implement retrieval-scoped editing (brief P1.2/§C)");
+    }
     // Accretion query reads LIVE spans of each page's LATEST version only (P0.1 — per-version
     // carry-forward copies mean an unscoped query would surface stale duplicates).
     const allUnsourced = await db.select().from(pageSpansTable).where(inArray(pageSpansTable.supportStatus, ["unsourced_explanatory", "needs_source"]));
     const latestVerByPage = new Map();
     for (const pg of await db.select().from(fieldPagesTable)) latestVerByPage.set(pg.id, pg.currentVersionId);
     const unsourced = allUnsourced.filter((s) => !s.superseded && s.versionId === latestVerByPage.get(s.pageId));
+    // Complete list — no silent cap (P1.2). If this ever grows unwieldy, scope per page loudly.
     const unsourcedText = unsourced.length
-      ? "UNSOURCED sentences currently in the overview — if THIS paper genuinely establishes one, propose add_reference with anchorText = that phrase:\\n" + unsourced.slice(0, 30).map((s) => "- " + (s.text || "").slice(0, 150)).join("\\n")
+      ? "UNSOURCED sentences currently in the overview (" + unsourced.length + " total) — if THIS paper genuinely establishes one, propose add_reference with anchorText = that phrase:\\n" + unsourced.map((s) => "- " + (s.text || "").slice(0, 200)).join("\\n")
       : "(no unsourced sentences yet)";
     const correctionsLedger = await assembleCorrectionsLedger(db, OVERVIEW_SLUG);
     const passText = ["reviewContext: " + JSON.stringify(ctx), "", overviewIndexText, "", "CURRENT DRAFT OVERVIEW (rewrite the affected region to be optimal; do not duplicate or re-litigate what is already written):", currentOverviewMd, "", unsourcedText, "", "CORRECTIONS LEDGER (what changed and why — do not re-introduce fixed mistakes):", correctionsLedger, "", "Manuscript is the PAGE IMAGES below (authoritative). Advisory text follows (secondary).", "", "[advisory]", advisory, "", "Produce your review, claims (each with status), and overviewImpact."].join("\\n");
