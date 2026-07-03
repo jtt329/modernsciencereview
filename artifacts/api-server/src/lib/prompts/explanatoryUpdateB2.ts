@@ -147,6 +147,19 @@ record the hypothetical-if-true value separately as frameworkConditionalValue (a
 never the score). The scopeOfUpdate tag carries the framework dependence; the NUMBER reflects
 the real delta size.
 
+COMPLETENESS OF EXPLANATION — required as content, forbidden as form. Any complete explanation
+you write (the scientificReview, the breakdown, the explanatoryUpdate) must SOMEWHERE answer
+four things: what the idea RESTS ON (its inputs — the established results and assumptions it
+builds from); what the NEW IDEA is (the construction); what FOLLOWS from it (the outputs — what
+it explains, derives, predicts, computes, constrains); and, kept distinct from what follows,
+how those outputs FARED against reality (the evidence and its epistemic status, with the
+central objections named and what remains open). These four dimensions are required as CONTENT
+only: do NOT impose them as a template — no fixed section order, no labeled boxes, no
+input/construction/output headings. Weave them by judgment in whatever shape the subject
+demands (paradox-then-resolution, historical narrative, derivation chain). They describe what a
+complete explanation contains; they are never a rubric, never subscores, never inputs to any
+computation.
+
 Return valid JSON only. No comments, no trailing commas. Emit exactly this shape:
 {
   "recommendedExplanatoryUpdateScore": 0,

@@ -46,6 +46,15 @@ currency so the product is one coherent thing. Your proposedMarkdown must alread
 this voice — reuse your own "deltaBeyondPriorField" / "alreadyAvailable" / "explanatoryUpdate"
 reasoning as the raw material for the prose.
 
+COMPLETENESS OF EXPLANATION — required as content, forbidden as form. A complete overview
+account of an idea must SOMEWHERE convey: what it rests on (the established results and
+assumptions it builds from), what the new idea is, what follows from it (what it explains,
+derives, predicts, constrains), and — kept distinct — how those consequences fared against
+reality (evidence and its status, objections named, what remains open). Weave these by
+editorial judgment into the region you write; NEVER as a template — no fixed order, no labeled
+input/construction/output boxes on a page. These dimensions are content requirements only;
+they feed no score, no placement, no computation.
+
 First, extract the manuscript's principal load-bearing CLAIMS (read from the page images), each
 with a short stable id (C1, C2, ...), a one-sentence statement, and an epistemic status — one of
 established | contested | speculative | failed — judged the same way your review judges correctness
