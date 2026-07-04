@@ -196,8 +196,10 @@ async function main() {
     console.log("[seed] pglite up, schema applied. mode=" + MODE);
   }
 
-  // Minimal fixtures: a user (FK target) + skeleton pages.
-  const [user] = await db.insert(usersTable).values({ email: "seed@local", firstName: "Seed", lastName: "Bot" }).returning();
+  // Minimal fixtures: a user (FK target) + skeleton pages. Select-or-insert: the persisted
+  // seed DB is reused across rounds (resumable seeding).
+  let user = (await db.select().from(usersTable).where(eq(usersTable.email, "seed@local")))[0];
+  if (!user) [user] = await db.insert(usersTable).values({ email: "seed@local", firstName: "Seed", lastName: "Bot" }).returning();
   await ensureOverviewSkeleton(db, SEED_PAGES, user.id);
   console.log("[seed] skeleton: " + SEED_PAGES.length + " pages");
 

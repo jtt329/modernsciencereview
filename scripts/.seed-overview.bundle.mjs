@@ -82268,7 +82268,7 @@ overviewImpact.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-ukqySE/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-IjT02q/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82512,7 +82512,7 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-ukqySE/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-IjT02q/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
@@ -82541,7 +82541,8 @@ async function main() {
     db2 = drizzle(client);
     console.log("[seed] pglite up, schema applied. mode=" + MODE);
   }
-  const [user] = await db2.insert(usersTable).values({ email: "seed@local", firstName: "Seed", lastName: "Bot" }).returning();
+  let user = (await db2.select().from(usersTable).where(eq(usersTable.email, "seed@local")))[0];
+  if (!user) [user] = await db2.insert(usersTable).values({ email: "seed@local", firstName: "Seed", lastName: "Bot" }).returning();
   await ensureOverviewSkeleton(db2, SEED_PAGES, user.id);
   console.log("[seed] skeleton: " + SEED_PAGES.length + " pages");
   async function upsertPaper(title) {
