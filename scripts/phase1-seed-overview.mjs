@@ -642,6 +642,13 @@ async function runLive(db, upsertPaper, persistReview) {
 
   for (const paper of MANIFEST) {
     const ctx = { mode: paper.mode, reviewEpoch: paper.reviewEpoch };
+    // Resumability guard: a paper whose edits already applied is skipped entirely — a re-run
+    // must never re-review it under a fresh review id (which would defeat edit idempotency).
+    const priorPaper = (await db.select().from(papersTable).where(eq(papersTable.title, paper.id)))[0];
+    if (priorPaper) {
+      const priorEdits = (await db.select().from(proposedOverviewEditsTable).where(eq(proposedOverviewEditsTable.paperId, priorPaper.id))).filter((e) => e.status === "draft_applied" || e.status === "published");
+      if (priorEdits.length > 0) { console.log("\n### LIVE " + paper.id + " — already seeded (" + priorEdits.length + " applied edits), skipping"); continue; }
+    }
     const imageParts = paper.pages.map((pg) => ({ inlineData: { mimeType: "image/png", data: readFileSync(pg.path).toString("base64") } }));
     const advisory = blindManuscriptText(readFileSync(paper.textPath, "utf8")).slice(0, 30000);
     console.log("\\n### LIVE " + paper.id + " (" + paper.pages.length + "pp)");
