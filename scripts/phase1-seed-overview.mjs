@@ -44,6 +44,14 @@ const PAPERS_ALL = {
   "7":  { id: "07_Ong", file: "46_Ong__A_Maximum_Force_Perspective_on_Black_Hole_Thermodynamics.pdf", mode: "historical_benchmark", reviewEpoch: "late 2010s" },
   "8":  { id: "08_Verlinde", file: "43_Verlinde__On_the_Origin_of_Gravity_and_the_Laws_of_Newton.pdf", mode: "historical_benchmark", reviewEpoch: "early 2010s" },
   "6":  { id: "06_viXra", file: "vixra_2606.0093_Causal_Horizons_Maximal_Acceleration.pdf", mode: "new_submission", reviewEpoch: "current" },
+  // Extended foundational set for the full seed (ids match the phase0 render cache where present).
+  "4":  { id: "04_Wald", file: "07_Wald__Black_Hole_Entropy_is_Noether_Charge.pdf", mode: "historical_benchmark", reviewEpoch: "early 1990s" },
+  "11": { id: "11_Gibbons_Hawking", file: "04_gibbons_Cosmological_horizons.pdf", mode: "historical_benchmark", reviewEpoch: "late 1970s" },
+  "9":  { id: "09_Ryu_Takayanagi", file: "25_Ryu__Takayanagi__Holographic_Derivation_of_Entanglement_Entropy_from_AdSCFT.pdf", mode: "historical_benchmark", reviewEpoch: "mid 2000s" },
+  "u":  { id: "12_Unruh", file: "05_unruh_black_hole_evaporation.pdf", mode: "historical_benchmark", reviewEpoch: "mid 1970s" },
+  "j":  { id: "13_Jacobson_EoS", file: "06_Jacobson__Thermodynamics_of_Spacetime_The_Einstein_Equation_of_State.pdf", mode: "historical_benchmark", reviewEpoch: "mid 1990s" },
+  "b":  { id: "14_Bousso", file: "24_Bousso__A_Covariant_Entropy_Conjecture.pdf", mode: "historical_benchmark", reviewEpoch: "late 1990s" },
+  "pw": { id: "15_Parikh_Wilczek", file: "34_Parikh__Wilczek__Hawking_Radiation_as_Tunneling.pdf", mode: "historical_benchmark", reviewEpoch: "early 2000s" },
 };
 // Re-validation default: Bekenstein FIRST (so the GSL/entropy sentence anchors correctly, not
 // mis-attributed to Hawking), then Hawking, Frodden, Verlinde.
@@ -174,6 +182,13 @@ async function main() {
     const { drizzle: pgDrizzle } = await import("drizzle-orm/node-postgres");
     db = pgDrizzle(new pg.Pool({ connectionString: process.env.SEED_DATABASE_URL }));
     console.log("[seed] using SEED_DATABASE_URL (schema assumed already pushed). mode=" + MODE);
+  } else if (process.env.PGLITE_DIR) {
+    // File-backed pglite: the DRAFT seed persists for JT's review/export. Still not the live DB.
+    const client = new PGlite(process.env.PGLITE_DIR);
+    const probe = await client.query("SELECT to_regclass('public.field_pages') AS t");
+    if (!probe.rows[0]?.t) await client.exec(SCHEMA_SQL);
+    db = drizzle(client);
+    console.log("[seed] persistent pglite at " + process.env.PGLITE_DIR + ". mode=" + MODE);
   } else {
     const client = new PGlite();               // in-memory embedded Postgres
     await client.exec(SCHEMA_SQL);
@@ -187,6 +202,8 @@ async function main() {
   console.log("[seed] skeleton: " + SEED_PAGES.length + " pages");
 
   async function upsertPaper(title) {
+    const existing = (await db.select().from(papersTable).where(eq(papersTable.title, title)))[0];
+    if (existing) return existing.id;
     const [p] = await db.insert(papersTable).values({ title, content: "(seed)", authorId: user.id, authorName: "Seed Bot" }).returning();
     return p.id;
   }
