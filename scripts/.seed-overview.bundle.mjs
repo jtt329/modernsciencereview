@@ -82268,7 +82268,7 @@ overviewImpact.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-aG0lB0/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-ukqySE/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82512,7 +82512,7 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-aG0lB0/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-ukqySE/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
@@ -82972,6 +82972,14 @@ async function runLive(db2, upsertPaper, persistReview) {
   }
   for (const paper of MANIFEST) {
     const ctx = { mode: paper.mode, reviewEpoch: paper.reviewEpoch };
+    const priorPaper = (await db2.select().from(papersTable).where(eq(papersTable.title, paper.id)))[0];
+    if (priorPaper) {
+      const priorEdits = (await db2.select().from(proposedOverviewEditsTable).where(eq(proposedOverviewEditsTable.paperId, priorPaper.id))).filter((e3) => e3.status === "draft_applied" || e3.status === "published");
+      if (priorEdits.length > 0) {
+        console.log("\n### LIVE " + paper.id + " \u2014 already seeded (" + priorEdits.length + " applied edits), skipping");
+        continue;
+      }
+    }
     const imageParts = paper.pages.map((pg2) => ({ inlineData: { mimeType: "image/png", data: readFileSync(pg2.path).toString("base64") } }));
     const advisory = blindManuscriptText2(readFileSync(paper.textPath, "utf8")).slice(0, 3e4);
     console.log("\n### LIVE " + paper.id + " (" + paper.pages.length + "pp)");
