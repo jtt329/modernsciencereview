@@ -12,7 +12,7 @@ import {
   attributionChecksTable, pageLinksTable, divergenceFlagsTable,
 } from "@workspace/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook, getContributionTransclusion } from "../lib/overviewEditor";
+import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook, getContributionTransclusion, liveProvenanceForVersion } from "../lib/overviewEditor";
 import { logger } from "../lib/logger";
 
 // Enrich references with the canonical paper slug + title (the model never writes slugs — §10.2a).
@@ -60,17 +60,20 @@ router.get("/overviews/:slug", async (req, res) => {
       const version = await latestVersion(p.id, wantDraft ? undefined : "published");
       if (!version) continue; // unpublished page hidden from public
       const sections = await db.select().from(pageSectionsTable).where(eq(pageSectionsTable.versionId, version.id)).orderBy(pageSectionsTable.order);
-      // Per-version reads (P0.1): the served version's LIVE refs/spans — carry-forward makes
-      // these cumulative across edits; superseded copies are history, not display.
-      const refs = (await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, version.id))).filter((r) => r.status === "approved");
-      const spans = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, version.id))).filter((s) => !s.superseded);
-      // Inter-page links (slice 1): live links of the served version, resolved to slugs for
-      // NAVIGATION only — the link graph drives nothing.
-      const rawLinks = (await db.select().from(pageLinksTable).where(eq(pageLinksTable.versionId, version.id))).filter((l) => !l.superseded);
+      // Block substrate: provenance by block membership with ABSOLUTE offsets computed against
+      // the render cache (falls back to frozen per-version rows for unmigrated pages).
+      const prov = await liveProvenanceForVersion(db as any, version.id);
+      const refs = prov.refs as any[];
+      const spans = prov.spans as any[];
+      // Inter-page links: NAVIGATION only — the link graph drives nothing.
       const links = [] as any[];
-      for (const l of rawLinks) {
+      for (const l of prov.links as any[]) {
         const target = all.find((pg) => pg.id === l.toPageId);
-        if (target) links.push({ id: l.id, phrase: l.phrase, startOffset: l.anchorStartOffset, endOffset: l.anchorEndOffset, toPageSlug: target.slug, toPageTitle: target.title });
+        if (!target) continue;
+        // Hover preview card = the target page's maintained one-line summary (multi-resolution
+        // layer working for free; the term-level [+] is retired in favor of plain links).
+        const tv = (await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, target.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)).limit(1))[0];
+        links.push({ id: l.id, phrase: l.phrase, startOffset: l.anchorStartOffset, endOffset: l.anchorEndOffset, toPageSlug: target.slug, toPageTitle: target.title, toPageSummary: tv?.summaryOneLine || target.scopeStatement || "" });
       }
       out.push({
         id: p.id, slug: p.slug, title: p.title, parentPageId: p.parentPageId, scopeStatement: p.scopeStatement,

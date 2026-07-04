@@ -154,8 +154,9 @@ import { drizzle } from "drizzle-orm/pglite";
 import {
   ensureOverviewSkeleton, applyOverviewImpact, assembleOverviewMarkdown,
   computeProminence, publishOverview, rollbackPage, checkEquationFidelity, assembleCorrectionsLedger,
+  blocksOfVersion, migrateToBlocks,
 } from ${JSON.stringify(editorPath)};
-import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable, divergenceFlagsTable } from "@workspace/db";
+import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable, divergenceFlagsTable, pageBlocksTable, pageVersionBlocksTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 
 const MODE = ${JSON.stringify(MODE)};
@@ -276,9 +277,13 @@ async function runSynthetic(db, upsertPaper, persistReview) {
 
   // ---- P0.1 acceptance: provenance survives edits and rollback -----------------------
   const holo = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, "holography")))[0];
-  const latestOf = async (pageId) => (await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, pageId)).orderBy(desc(fieldPageVersionsTable.createdAt)))[0];
-  const liveSpans = async (verId) => (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, verId))).filter((s) => !s.superseded);
-  const liveRefs = async (verId) => (await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, verId))).filter((r) => r.status === "approved");
+  const latestOf = async (pageId) => (await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, pageId)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  // BLOCK SUBSTRATE: liveness = block membership of the version (design §5 — an untouched
+  // block's provenance rows are literally the same rows in the next version).
+  const blockIdsOf = async (verId) => (await db.select().from(pageVersionBlocksTable).where(eq(pageVersionBlocksTable.versionId, verId))).map((j) => j.blockId);
+  const liveSpans = async (verId) => { const ids = await blockIdsOf(verId); return ids.length ? await db.select().from(pageSpansTable).where(inArray(pageSpansTable.blockId, ids)) : []; };
+  const liveRefs = async (verId) => { const ids = await blockIdsOf(verId); return ids.length ? (await db.select().from(pageReferencesTable).where(inArray(pageReferencesTable.blockId, ids))).filter((r) => r.status === "approved") : []; };
+  const liveLinks = async (verId) => { const ids = await blockIdsOf(verId); return ids.length ? await db.select().from(pageLinksTable).where(inArray(pageLinksTable.blockId, ids)) : []; };
   const T1 = "The Ryu-Takayanagi prescription computes entanglement entropy as the area of a minimal bulk surface.";
   const T2 = "Holography links bulk geometry to boundary information content.";
   const T3 = "Holographic duality identifies bulk geometry with the information content of the boundary theory.";
@@ -296,17 +301,22 @@ async function runSynthetic(db, upsertPaper, persistReview) {
     { action: "edit_existing_text", targetPageSlug: "holography", anchorText: T2, proposedMarkdown: T3, citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
   ] });
   const v3 = await latestOf(holo.id);
+  const v1spans = await liveSpans(v1.id);
+  const t1spanAtV1 = v1spans.find((s) => s.text === T1);
   const v3spans = await liveSpans(v3.id);
   const t1span = v3spans.find((s) => s.text === T1);
-  assert(!!t1span && t1span.supportStatus === "sourced", "P0.1: sourced span survives an unrelated rewrite (carried forward, still sourced)");
-  assert(!!t1span && v3.markdownFull.slice(t1span.startOffset, t1span.endOffset) === T1, "P0.1: carried span re-anchored with correct offsets in newest version");
-  const t2all = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, v3.id))).filter((s) => s.text === T2);
-  assert(t2all.length === 1 && t2all[0].superseded === true, "P0.1: rewritten region's old span kept as superseded history, not deleted");
-  assert((await liveRefs(v3.id)).length === 1, "P0.1: reference carried forward across versions (chip count cumulative)");
+  assert(!!t1span && t1span.supportStatus === "sourced" && !!t1spanAtV1 && t1span.id === t1spanAtV1.id, "P0.1: sourced span survives an unrelated rewrite (SAME row via block membership, still sourced)");
+  const t1block = t1span ? (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, t1span.blockId)))[0] : null;
+  assert(!!t1block && t1block.markdown.slice(t1span.startOffsetInBlock, t1span.endOffsetInBlock) === T1, "P0.1: span block-local offsets slice to the exact text in the newest version");
+  const t2block = (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.markdown, T2)))[0];
+  const t3block = (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.markdown, T3)))[0];
+  const v3blockIds = new Set(await blockIdsOf(v3.id));
+  assert(!!t2block && !v3blockIds.has(t2block.id) && !!t3block && t3block.supersedesBlockId === t2block.id, "P0.1: rewritten block kept as history with supersedesBlockId lineage, not deleted");
+  assert((await liveRefs(v3.id)).length === 1, "P0.1: reference visible across versions via block membership (chip count cumulative)");
   const restored = await rollbackPage(db, holo.id, v1.id);
   const rSpans = await liveSpans(restored.id); const rRefs = await liveRefs(restored.id);
-  assert(rSpans.some((s) => s.text === T1 && s.supportStatus === "sourced") && rRefs.length === 1, "P0.1: rollback restores target version's spans + references (chips reappear)");
-  assert(!v3.markdownFull.includes(T2) || !restored.markdownFull.includes(T3), "P0.1: rollback restored target markdown");
+  assert(rSpans.some((s) => s.text === T1 && s.supportStatus === "sourced") && rRefs.length === 1, "P0.1: rollback repoints to target block set — spans + references reappear");
+  assert(!restored.markdownFull.includes(T3), "P0.1: rollback restored target markdown (render cache from target blocks)");
 
   // ---- P0.3 acceptance: missing correctness verdict fails CLOSED --------------------
   const held = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: undefined, edits: [
@@ -382,15 +392,16 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   ] });
   assert(linkRes[0]?.status === "draft_applied", "S1: add_link with a valid index target applies");
   const holoLatest1 = await latestOf(holo.id);
-  const liveLinks1 = (await db.select().from(pageLinksTable).where(eq(pageLinksTable.versionId, holoLatest1.id))).filter((l) => !l.superseded);
-  assert(liveLinks1.length === 1 && holoLatest1.markdownFull.slice(liveLinks1[0].anchorStartOffset, liveLinks1[0].anchorEndOffset) === T1, "S1: link stored on the live version with correct phrase offsets");
+  const liveLinks1 = await liveLinks(holoLatest1.id);
+  const l1block = liveLinks1.length ? (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, liveLinks1[0].blockId)))[0] : null;
+  assert(liveLinks1.length === 1 && !!l1block && l1block.markdown.slice(liveLinks1[0].startOffsetInBlock, liveLinks1[0].endOffsetInBlock) === T1, "S1: link stored on the live block with correct phrase offsets");
   // (b) the link survives an unrelated rewrite (carried + re-anchored).
   await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
     { action: "add_paragraph", targetPageSlug: "holography", proposedMarkdown: "An unrelated additional paragraph after the link was created.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
   ] });
   const holoLatest2 = await latestOf(holo.id);
-  const liveLinks2 = (await db.select().from(pageLinksTable).where(eq(pageLinksTable.versionId, holoLatest2.id))).filter((l) => !l.superseded);
-  assert(liveLinks2.length === 1 && holoLatest2.markdownFull.slice(liveLinks2[0].anchorStartOffset, liveLinks2[0].anchorEndOffset) === T1, "S1: link carried forward and re-anchored across an unrelated rewrite");
+  const liveLinks2 = await liveLinks(holoLatest2.id);
+  assert(liveLinks2.length === 1 && liveLinks2[0].id === liveLinks1[0].id, "S1: link survives an unrelated rewrite (SAME row via block membership — no copying)");
   // (c) unknown link target is rejected — a link can never invent a page.
   const badLink = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
     { action: "add_link", targetPageSlug: "holography", anchorText: T1, linkTargetSlug: "no-such-target-page", citedPaperIds: [], citedClaimIds: [], safetyCheck: sc },
@@ -450,6 +461,31 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   );
   assert(eqPairFlags.length === 0, "S5-fix: display-block $$ pairing — prose between equations is never flagged, real equations match claims");
 
+  // ---- Block-substrate migration acceptance (DESIGN §4): fabricate a LEGACY string-store
+  // page (markdownFull + absolute-offset span, no blocks) and migrate it.
+  const LEGT = "Legacy sentence about horizon entropy that carries a source chip.";
+  const [legacyPage] = await db.insert(fieldPagesTable).values({ slug: "legacy-string-page", title: "Legacy string page", scopeStatement: "fabricated pre-block page" }).returning();
+  const legacyMd = "## Legacy string page\\n\\n" + LEGT + "\\n\\nA second legacy paragraph with no provenance.";
+  const [legacyVer] = await db.insert(fieldPageVersionsTable).values({ pageId: legacyPage.id, versionNumber: 1, markdownFull: legacyMd, visibility: "draft", changeLog: [] }).returning();
+  await db.update(fieldPagesTable).set({ currentVersionId: legacyVer.id }).where(eq(fieldPagesTable.id, legacyPage.id));
+  const [legacyRef] = await db.insert(pageReferencesTable).values({ pageId: legacyPage.id, versionId: legacyVer.id, anchorText: LEGT, anchorStartOffset: legacyMd.indexOf(LEGT), anchorEndOffset: legacyMd.indexOf(LEGT) + LEGT.length, paperId: rtId, claimIds: ["C1"], status: "approved", provenance: "model_review" }).returning();
+  await db.insert(pageSpansTable).values({ pageId: legacyPage.id, versionId: legacyVer.id, text: LEGT, startOffset: legacyMd.indexOf(LEGT), endOffset: legacyMd.indexOf(LEGT) + LEGT.length, supportStatus: "sourced", referenceId: legacyRef.id });
+  const mig = await migrateToBlocks(db, legacyPage.id);
+  const migVer = await latestOf(legacyPage.id);
+  const migBlocks = await blocksOfVersion(db, migVer.id);
+  assert(mig.migrated === 1 && migBlocks.length === 3, "MIG: legacy page migrated to blocks (heading + 2 paragraphs)");
+  const migSpans = await liveSpans(migVer.id);
+  const migSpan = migSpans.find((s) => s.text === LEGT);
+  const migBlock = migSpan ? migBlocks.find((b) => b.id === migSpan.blockId) : null;
+  assert(!!migSpan && migSpan.supportStatus === "sourced" && !!migBlock && migBlock.markdown.slice(migSpan.startOffsetInBlock, migSpan.endOffsetInBlock) === LEGT, "MIG: legacy span mapped to its block by offset containment with exact slice");
+  assert((await liveRefs(migVer.id)).length === 1, "MIG: legacy reference mapped to block membership");
+  const migAgain = await migrateToBlocks(db, legacyPage.id);
+  assert(migAgain.migrated === 0 && migAgain.skipped === 1, "MIG: migration is idempotent (already-migrated page skipped)");
+  const postMig = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: rtId, reviewVersionId: rtRv, correctnessPublic: "sound", edits: [
+    { action: "add_paragraph", targetPageSlug: "legacy-string-page", proposedMarkdown: "A post-migration paragraph applied on the block substrate.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  assert(postMig[0]?.status === "draft_applied", "MIG: post-migration edits apply block-natively");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);
@@ -464,6 +500,8 @@ async function runOrderPermutation() {
   const assertPerm = (cond, msg) => { if (cond) console.log("  ✓ " + msg); else { console.log("  ✗ INVARIANT VIOLATION: " + msg); process.exitCode = 1; } };
   const sc = { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" };
   const UNSOURCED = "Horizon temperature ties quantum theory to spacetime geometry.";
+  // Accretion anchors a phrase from the SEED STUB (always present regardless of order).
+  const STUB_PHRASE = "the step that made horizon thermodynamics physically real";
   const facts = [];
   for (const order of [["good", "crank", "accrete"], ["accrete", "crank", "good"]]) {
     const client = new PGlite();
@@ -482,7 +520,7 @@ async function runOrderPermutation() {
         { action: "add_paragraph", targetPageSlug: "hawking-radiation", proposedMarkdown: "A claimed link fails on an order-of-magnitude arithmetic error.", citedPaperIds: ["crank"], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
       ] },
       accrete: { correctnessPublic: "sound", claims: [{ id: "C1", statement: "Horizon temperature connects quantum theory and gravity.", status: "established" }], edits: [
-        { action: "add_reference", targetPageSlug: "hawking-radiation", anchorText: UNSOURCED, citedPaperIds: ["accrete"], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+        { action: "add_reference", targetPageSlug: "hawking-radiation", anchorText: STUB_PHRASE, citedPaperIds: ["accrete"], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
       ] },
     };
     for (const key of order) {
@@ -498,8 +536,10 @@ async function runOrderPermutation() {
     for (const p of pagesAll) {
       const v = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, p.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
       if (!v) continue;
-      const spans = (await db2.select().from(pageSpansTable).where(eq(pageSpansTable.versionId, v.id))).filter((s) => !s.superseded);
-      const refIds = new Set((await db2.select().from(pageReferencesTable).where(eq(pageReferencesTable.versionId, v.id))).map((r) => r.id));
+      const joins = await db2.select().from(pageVersionBlocksTable).where(eq(pageVersionBlocksTable.versionId, v.id));
+      const bIds = joins.map((j) => j.blockId);
+      const spans = bIds.length ? await db2.select().from(pageSpansTable).where(inArray(pageSpansTable.blockId, bIds)) : [];
+      const refIds = new Set(bIds.length ? (await db2.select().from(pageReferencesTable).where(inArray(pageReferencesTable.blockId, bIds))).map((r) => r.id) : []);
       for (const s of spans) if (s.supportStatus === "sourced") { liveSourced += 1; if (!s.referenceId || !refIds.has(s.referenceId)) refsOk = false; }
     }
     const pub2 = await publishOverview(db2, OVERVIEW_SLUG);
@@ -639,14 +679,18 @@ async function runLive(db, upsertPaper, persistReview) {
             const p = bySlug.get(slug);
             const v = await latestVer(p.id);
             const ledger = await assembleCorrectionsLedger(db, OVERVIEW_SLUG, slug);
-            pagesBlock += "\\n\\n=== PAGE " + slug + " (full current text) ===\\n" + (v?.markdownFull ?? "") + "\\n[corrections ledger for this page]\\n" + ledger;
+            const vb = v ? await blocksOfVersion(db, v.id) : [];
+            const blockListing = vb.length
+              ? vb.map((b) => "[block " + b.id + " | " + b.kind + "]\\n" + b.markdown).join("\\n\\n")
+              : (v?.markdownFull ?? "");
+            pagesBlock += "\\n\\n=== PAGE " + slug + " (blocks — target precisely with targetBlockId) ===\\n" + blockListing + "\\n[corrections ledger for this page]\\n" + ledger;
           }
           const PAGE_BUDGET = 180000;
           if (pagesBlock.length > PAGE_BUDGET) throw new Error("selected pages (" + pagesBlock.length + " chars) exceed the refinement budget — refusing to truncate silently");
           const selUnsourced = await liveUnsourcedForPages(selectedIds);
           const selUnsourcedText = selUnsourced.length ? "Unsourced sentences on the selected pages:\\n" + selUnsourced.map((s) => "- " + (s.text || "").slice(0, 200)).join("\\n") : "(none)";
           console.log("  [step2] refining against full text of " + selectedSlugs.length + " selected page(s): " + selectedSlugs.join(", ") + " (" + pagesBlock.length + " chars)");
-          const refineText = ["REFINEMENT STEP: below are your adjudicated review and the FULL current text of the pages you selected. Emit the FINAL review JSON (same schema) with overviewImpact refined against the real prose: exact anchorText for rewrites/links/sourcing, final proposedMarkdown, and maintained pageSummaryOneLine + pageSummaryShort for every page you touch. Do not change your correctness verdict or claims.",
+          const refineText = ["REFINEMENT STEP: below are your adjudicated review and the FULL current content of the pages you selected, listed as BLOCKS with ids. Emit the FINAL review JSON (same schema) with overviewImpact refined against the real prose: set targetBlockId to the exact block a rewrite/sourcing/link targets (preferred; anchorText remains the fallback), final proposedMarkdown, and maintained pageSummaryOneLine + pageSummaryShort for every page you touch. Do not change your correctness verdict or claims.",
             "", "ADJUDICATED REVIEW:", JSON.stringify(adj, null, 2), pagesBlock, "", selUnsourcedText, "", "Page images follow."].join("\\n");
           const refined = extractJson(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, refineText, imageParts));
           const refinedEdits = refined?.overviewImpact?.proposedEdits;

@@ -22,7 +22,7 @@ const CHIP_CUE: Record<string, { cue: string; cls: string }> = {
   unknown: { cue: '', cls: 'bg-slate-50 text-slate-500 border-slate-200' },
 };
 type Span = { id: string; text: string; startOffset: number | null; endOffset: number | null; supportStatus: string; referenceId: string | null };
-type PageLink = { id: string; phrase: string; startOffset: number | null; endOffset: number | null; toPageSlug: string; toPageTitle: string };
+type PageLink = { id: string; phrase: string; startOffset: number | null; endOffset: number | null; toPageSlug: string; toPageTitle: string; toPageSummary?: string };
 type Page = {
   id: string; slug: string; title: string; parentPageId: string | null; scopeStatement: string;
   version: { summaryOneLine: string; summaryShort: string; markdownFull: string; visibility: string };
@@ -38,25 +38,46 @@ type Change = { at: string; action: string; pageSlug: string | null; paperId: st
 // sourced sentence carries its chip INLINE (click-a-sentence-see-why) and unsourced
 // explanatory prose is visibly distinct (dotted underline). Display only — spans/chips are
 // provenance surfacing, never inputs to anything.
-function SegmentedBody({ body, spans, references, onOpenPaper }: {
-  body: string; spans: Span[]; references: Ref[]; onOpenPaper: (paperId: string) => void;
+function SegmentedBody({ body, spans, references, links, onOpenPaper, onOpenPage }: {
+  body: string; spans: Span[]; references: Ref[]; links: PageLink[]; onOpenPaper: (paperId: string) => void; onOpenPage: (slug: string) => void;
 }) {
-  const anchored = (spans || [])
-    .filter((s) => s.startOffset != null && s.endOffset != null && s.endOffset! <= body.length && body.slice(s.startOffset!, s.endOffset!) === s.text)
-    .sort((a, b) => (a.startOffset! - b.startOffset!));
-  const chosen: Span[] = []; let cursor = 0;
-  for (const s of anchored) { if (s.startOffset! >= cursor) { chosen.push(s); cursor = s.endOffset!; } }
+  // Overlays: provenance spans (chips) + inline vocabulary links (retired term-[+] — plain
+  // links with the target's one-line summary as hover preview). Non-overlapping, spans win.
+  type Overlay = { start: number; end: number; span?: Span; link?: PageLink };
+  const overlays: Overlay[] = [];
+  for (const s of spans || []) {
+    if (s.startOffset != null && s.endOffset != null && s.endOffset <= body.length && body.slice(s.startOffset, s.endOffset) === s.text) {
+      overlays.push({ start: s.startOffset, end: s.endOffset, span: s });
+    }
+  }
+  for (const l of links || []) {
+    if (l.startOffset != null && l.endOffset != null && l.endOffset <= body.length && body.slice(l.startOffset, l.endOffset) === l.phrase) {
+      overlays.push({ start: l.startOffset, end: l.endOffset, link: l });
+    }
+  }
+  overlays.sort((a, b) => a.start - b.start || (a.span ? -1 : 1));
+  const chosen: Overlay[] = []; let cursor = 0;
+  for (const o of overlays) { if (o.start >= cursor) { chosen.push(o); cursor = o.end; } }
   const refById = new Map(references.map((r) => [r.id, r]));
-  const segs: { text: string; span?: Span }[] = []; let pos = 0;
-  for (const s of chosen) {
-    if (s.startOffset! > pos) segs.push({ text: body.slice(pos, s.startOffset!) });
-    segs.push({ text: s.text, span: s });
-    pos = s.endOffset!;
+  const segs: { text: string; span?: Span; link?: PageLink }[] = []; let pos = 0;
+  for (const o of chosen) {
+    if (o.start > pos) segs.push({ text: body.slice(pos, o.start) });
+    segs.push({ text: body.slice(o.start, o.end), span: o.span, link: o.link });
+    pos = o.end;
   }
   if (pos < body.length) segs.push({ text: body.slice(pos) });
   return (
     <>
       {segs.map((seg, i) => {
+        if (seg.link) {
+          return (
+            <button key={i} onClick={() => onOpenPage(seg.link!.toPageSlug)}
+              className="text-blue-700 hover:underline decoration-blue-300 underline-offset-2"
+              title={`${seg.link!.toPageTitle}${seg.link!.toPageSummary ? ` — ${seg.link!.toPageSummary}` : ''}`}>
+              {seg.text}
+            </button>
+          );
+        }
         if (!seg.span) return <span key={i}><LatexText>{seg.text}</LatexText></span>;
         const ref = seg.span.referenceId ? refById.get(seg.span.referenceId) : null;
         const isSourced = seg.span.supportStatus === 'sourced' && !!ref?.paperId;
@@ -130,7 +151,7 @@ export default function FieldOverviewPage({
         {page.scopeStatement && lvl > 0 && <p className="text-sm text-slate-400 italic mt-1">{page.scopeStatement}</p>}
         <div className="prose prose-slate max-w-none mt-3 text-slate-700 leading-relaxed">
           {lvl === 2 && body
-            ? <SegmentedBody body={body} spans={page.spans || []} references={page.references || []} onOpenPaper={onOpenPaper} />
+            ? <SegmentedBody body={body} spans={page.spans || []} references={page.references || []} links={page.links || []} onOpenPaper={onOpenPaper} onOpenPage={onOpenPage} />
             : <LatexText>{body || '_(stub — no content yet)_'}</LatexText>}
         </div>
         {page.references.length > 0 && (

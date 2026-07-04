@@ -37,6 +37,16 @@ CREATE TABLE "attribution_checks" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE "block_expansions" (
+	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"block_id" varchar NOT NULL,
+	"type" varchar NOT NULL,
+	"markdown" text DEFAULT '' NOT NULL,
+	"generated_from_block_hash" varchar,
+	"created_by_review_version_id" varchar,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "divergence_flags" (
 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"paper_id" varchar,
@@ -90,11 +100,25 @@ CREATE TABLE "ingestion_queue" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE "page_blocks" (
+	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"page_id" varchar NOT NULL,
+	"kind" varchar DEFAULT 'paragraph' NOT NULL,
+	"markdown" text DEFAULT '' NOT NULL,
+	"created_by_review_version_id" varchar,
+	"created_by_paper_id" varchar,
+	"supersedes_block_id" varchar,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "page_links" (
 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"from_page_id" varchar NOT NULL,
 	"to_page_id" varchar NOT NULL,
 	"phrase" text NOT NULL,
+	"block_id" varchar,
+	"start_offset_in_block" integer,
+	"end_offset_in_block" integer,
 	"version_id" varchar,
 	"anchor_start_offset" integer,
 	"anchor_end_offset" integer,
@@ -107,6 +131,9 @@ CREATE TABLE "page_references" (
 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"page_id" varchar NOT NULL,
 	"version_id" varchar,
+	"block_id" varchar,
+	"start_offset_in_block" integer,
+	"end_offset_in_block" integer,
 	"section_id" varchar,
 	"anchor_text" text,
 	"anchor_start_offset" integer,
@@ -139,6 +166,9 @@ CREATE TABLE "page_spans" (
 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"page_id" varchar NOT NULL,
 	"version_id" varchar NOT NULL,
+	"block_id" varchar,
+	"start_offset_in_block" integer,
+	"end_offset_in_block" integer,
 	"section_slug" varchar,
 	"text" text DEFAULT '' NOT NULL,
 	"start_offset" integer,
@@ -150,6 +180,13 @@ CREATE TABLE "page_spans" (
 	"created_by_review_version_id" varchar,
 	"created_by_paper_id" varchar,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE "page_version_blocks" (
+	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"version_id" varchar NOT NULL,
+	"block_id" varchar NOT NULL,
+	"order_key" double precision DEFAULT 0 NOT NULL
 );
 
 CREATE TABLE "proposed_overview_edits" (
@@ -382,10 +419,12 @@ CREATE TABLE "messages" (
 );
 
 ALTER TABLE "attribution_checks" ADD CONSTRAINT "attribution_checks_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "block_expansions" ADD CONSTRAINT "block_expansions_block_id_page_blocks_id_fk" FOREIGN KEY ("block_id") REFERENCES "public"."page_blocks"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "divergence_flags" ADD CONSTRAINT "divergence_flags_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "field_page_versions" ADD CONSTRAINT "field_page_versions_page_id_field_pages_id_fk" FOREIGN KEY ("page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "field_page_versions" ADD CONSTRAINT "field_page_versions_created_by_user_id_users_id_fk" FOREIGN KEY ("created_by_user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "ingestion_queue" ADD CONSTRAINT "ingestion_queue_resolved_paper_id_papers_id_fk" FOREIGN KEY ("resolved_paper_id") REFERENCES "public"."papers"("id") ON DELETE set null ON UPDATE no action;
+ALTER TABLE "page_blocks" ADD CONSTRAINT "page_blocks_page_id_field_pages_id_fk" FOREIGN KEY ("page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "page_links" ADD CONSTRAINT "page_links_from_page_id_field_pages_id_fk" FOREIGN KEY ("from_page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "page_links" ADD CONSTRAINT "page_links_to_page_id_field_pages_id_fk" FOREIGN KEY ("to_page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "page_links" ADD CONSTRAINT "page_links_version_id_field_page_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."field_page_versions"("id") ON DELETE cascade ON UPDATE no action;
@@ -396,6 +435,8 @@ ALTER TABLE "page_sections" ADD CONSTRAINT "page_sections_page_id_field_pages_id
 ALTER TABLE "page_sections" ADD CONSTRAINT "page_sections_version_id_field_page_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."field_page_versions"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "page_spans" ADD CONSTRAINT "page_spans_page_id_field_pages_id_fk" FOREIGN KEY ("page_id") REFERENCES "public"."field_pages"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "page_spans" ADD CONSTRAINT "page_spans_version_id_field_page_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."field_page_versions"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "page_version_blocks" ADD CONSTRAINT "page_version_blocks_version_id_field_page_versions_id_fk" FOREIGN KEY ("version_id") REFERENCES "public"."field_page_versions"("id") ON DELETE cascade ON UPDATE no action;
+ALTER TABLE "page_version_blocks" ADD CONSTRAINT "page_version_blocks_block_id_page_blocks_id_fk" FOREIGN KEY ("block_id") REFERENCES "public"."page_blocks"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "proposed_overview_edits" ADD CONSTRAINT "proposed_overview_edits_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "review_versions" ADD CONSTRAINT "review_versions_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "comments" ADD CONSTRAINT "comments_paper_id_papers_id_fk" FOREIGN KEY ("paper_id") REFERENCES "public"."papers"("id") ON DELETE cascade ON UPDATE no action;
@@ -410,4 +451,5 @@ ALTER TABLE "sandbox_reviews" ADD CONSTRAINT "sandbox_reviews_paper_id_papers_id
 ALTER TABLE "session_papers" ADD CONSTRAINT "session_papers_session_id_review_sessions_id_fk" FOREIGN KEY ("session_id") REFERENCES "public"."review_sessions"("id") ON DELETE cascade ON UPDATE no action;
 ALTER TABLE "messages" ADD CONSTRAINT "messages_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;
 CREATE INDEX "IDX_session_expire" ON "sessions" USING btree ("expire");
+CREATE UNIQUE INDEX "page_version_blocks_version_block_idx" ON "page_version_blocks" USING btree ("version_id","block_id");
 CREATE UNIQUE INDEX "proposed_overview_edits_idem_idx" ON "proposed_overview_edits" USING btree ("idempotency_key");
