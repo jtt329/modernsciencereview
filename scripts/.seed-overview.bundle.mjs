@@ -82268,7 +82268,7 @@ overviewImpact.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-SISnWk/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-UnsEeG/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82512,7 +82512,7 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-SISnWk/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-UnsEeG/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
@@ -82565,6 +82565,7 @@ async function main() {
   writeFileSync(OUT + "/overview_draft_" + MODE + ".md", md);
   console.log("[seed] wrote overview_draft_" + MODE + ".md (" + md.length + " chars)");
   console.log("[seed] DONE");
+  process.exit(0);
 }
 async function runSynthetic(db2, upsertPaper, persistReview) {
   const hawkingId = await upsertPaper("Particle Creation by Black Holes");

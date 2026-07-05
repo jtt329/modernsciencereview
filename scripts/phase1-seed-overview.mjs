@@ -226,6 +226,7 @@ async function main() {
   writeFileSync(OUT + "/overview_draft_" + MODE + ".md", md);
   console.log("[seed] wrote overview_draft_" + MODE + ".md (" + md.length + " chars)");
   console.log("[seed] DONE");
+  process.exit(0); // file-backed pglite keeps the event loop alive; exit explicitly
 }
 
 async function runSynthetic(db, upsertPaper, persistReview) {
