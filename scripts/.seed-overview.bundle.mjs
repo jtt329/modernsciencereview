@@ -82268,7 +82268,7 @@ overviewImpact.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-IjT02q/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-SISnWk/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82512,7 +82512,7 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-IjT02q/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-SISnWk/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
@@ -83008,6 +83008,23 @@ async function runLive(db2, upsertPaper, persistReview) {
       const adjInput = JSON.stringify({ adjudicatorInputNote: "Use the page images, reviewContext, field index, and the two reviews. Resolve; never average. Output the same schema incl. claims + (provisional) overviewImpact.", reviewContext: ctx, independentReviewPasses: [p1, p2] }, null, 2);
       const adj = extractJson2(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, adjInput + "\n\n" + index2 + "\n\nPage images follow.", imageParts));
       const score = num2(adj?.recommendedExplanatoryUpdateScore);
+      let evidencePackets = [];
+      if (adj?.correctnessAssessment?.internalStatusProposed === "fatal_alleged") {
+        const candidates = Array.isArray(adj.correctnessAssessment.fatalFlawCandidates) ? adj.correctnessAssessment.fatalFlawCandidates : [];
+        for (const cand of candidates) {
+          const vText = ["Alleged fatal flaw to verify (do NOT score the paper):", "claim: " + (cand.claim || ""), "allegation: " + (cand.modelAllegation || ""), "location: " + JSON.stringify(cand.locationInPaper || {}), "", "The rendered page images follow (authoritative)."].join("\n");
+          try {
+            const v2 = extractJson2(await callMM(B2.FATAL_FLAW_VERIFICATION_PROMPT, vText, imageParts));
+            evidencePackets.push({ ...cand, verificationDerivation: v2?.reDerivation || "", verbatimExpression: v2?.verbatimExpression || "", possibleAuthorDefense: v2?.possibleAuthorDefense || "", skepticVerdict: v2?.skepticVerdict || "uncertain_needs_human_or_author", publicWording: v2?.publicWording || "" });
+          } catch (e3) {
+            evidencePackets.push({ ...cand, skepticVerdict: "uncertain_needs_human_or_author", publicWording: "", note: "verification call failed: " + (e3?.message ?? e3) });
+          }
+        }
+        const survives = evidencePackets.some((x3) => x3.skepticVerdict === "fatal_survives");
+        const uncertain = evidencePackets.some((x3) => x3.skepticVerdict === "uncertain_needs_human_or_author");
+        adj.correctnessAssessment.internalStatusProposed = survives ? "fatal_verified" : uncertain ? "fatal_alleged_unverified" : "contested_defensible";
+        console.log("  [verify] " + evidencePackets.length + " fatal candidate(s): " + evidencePackets.map((x3) => x3.skepticVerdict).join(",") + " -> " + adj.correctnessAssessment.internalStatusProposed);
+      }
       const VALID_INTERNAL = ["sound", "contested_defensible", "fatal_verified", "fatal_alleged_unverified"];
       const internalRaw = adj?.correctnessAssessment?.internalStatusProposed;
       const correctnessValid = VALID_INTERNAL.includes(internalRaw);
@@ -83027,6 +83044,7 @@ async function runLive(db2, upsertPaper, persistReview) {
         correctnessInternal: correctnessValid ? internal : null,
         correctnessPublic: pub,
         claims,
+        evidencePackets,
         overviewImpact: oi,
         contributionPassage: adj?.deltaBeyondPriorField || adj?.explanatoryUpdate || "",
         adjudicatedJson: adj

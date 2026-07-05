@@ -668,6 +668,25 @@ async function runLive(db, upsertPaper, persistReview) {
       const adjInput = JSON.stringify({ adjudicatorInputNote: "Use the page images, reviewContext, field index, and the two reviews. Resolve; never average. Output the same schema incl. claims + (provisional) overviewImpact.", reviewContext: ctx, independentReviewPasses: [p1, p2] }, null, 2);
       const adj = extractJson(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, adjInput + "\\n\\n" + index + "\\n\\nPage images follow.", imageParts));
       const score = num(adj?.recommendedExplanatoryUpdateScore);
+      // FATAL-FLAW VERIFICATION (Phase-0 machinery, §10.6: verification precedes edits): a
+      // fatal_alleged verdict is a PROPOSAL — verify each candidate against the page images.
+      // survives -> fatal_verified (routes to disputed); uncertain -> fatal_alleged_unverified
+      // (all edits held); all not_fatal -> contested_defensible (conservative).
+      let evidencePackets = [];
+      if (adj?.correctnessAssessment?.internalStatusProposed === "fatal_alleged") {
+        const candidates = Array.isArray(adj.correctnessAssessment.fatalFlawCandidates) ? adj.correctnessAssessment.fatalFlawCandidates : [];
+        for (const cand of candidates) {
+          const vText = ["Alleged fatal flaw to verify (do NOT score the paper):", "claim: " + (cand.claim || ""), "allegation: " + (cand.modelAllegation || ""), "location: " + JSON.stringify(cand.locationInPaper || {}), "", "The rendered page images follow (authoritative)."].join("\\n");
+          try {
+            const v = extractJson(await callMM(B2.FATAL_FLAW_VERIFICATION_PROMPT, vText, imageParts));
+            evidencePackets.push({ ...cand, verificationDerivation: v?.reDerivation || "", verbatimExpression: v?.verbatimExpression || "", possibleAuthorDefense: v?.possibleAuthorDefense || "", skepticVerdict: v?.skepticVerdict || "uncertain_needs_human_or_author", publicWording: v?.publicWording || "" });
+          } catch (e) { evidencePackets.push({ ...cand, skepticVerdict: "uncertain_needs_human_or_author", publicWording: "", note: "verification call failed: " + (e?.message ?? e) }); }
+        }
+        const survives = evidencePackets.some((x) => x.skepticVerdict === "fatal_survives");
+        const uncertain = evidencePackets.some((x) => x.skepticVerdict === "uncertain_needs_human_or_author");
+        adj.correctnessAssessment.internalStatusProposed = survives ? "fatal_verified" : uncertain ? "fatal_alleged_unverified" : "contested_defensible";
+        console.log("  [verify] " + evidencePackets.length + " fatal candidate(s): " + evidencePackets.map((x) => x.skepticVerdict).join(",") + " -> " + adj.correctnessAssessment.internalStatusProposed);
+      }
       // FAIL CLOSED (brief P0.3): a missing/unrecognized correctness verdict must never take the
       // permissive branch. Persist the review, but hold every overview edit.
       const VALID_INTERNAL = ["sound", "contested_defensible", "fatal_verified", "fatal_alleged_unverified"];
@@ -689,7 +708,7 @@ async function runLive(db, upsertPaper, persistReview) {
         promptVersion: B21.EXPLANATORY_UPDATE_B21_PROMPT_VERSION, promptHash: B21.EXPLANATORY_UPDATE_B21_PROMPT_HASH,
         recommendedScore: score, estimatedImportanceLow: score != null ? Math.max(0, score - 5) : null, estimatedImportanceHigh: score != null ? Math.min(100, score + 5) : null,
         scope: adj?.scopeOfUpdate, correctnessInternal: correctnessValid ? internal : null, correctnessPublic: pub,
-        claims, overviewImpact: oi, contributionPassage: adj?.deltaBeyondPriorField || adj?.explanatoryUpdate || "", adjudicatedJson: adj,
+        claims, evidencePackets, overviewImpact: oi, contributionPassage: adj?.deltaBeyondPriorField || adj?.explanatoryUpdate || "", adjudicatedJson: adj,
       });
       let edits = Array.isArray(oi.proposedEdits) ? oi.proposedEdits : [];
       // ---- STEP 2 (refinement, slice 4): full text of ONLY the selected pages. ----
