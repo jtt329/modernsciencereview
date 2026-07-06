@@ -52,6 +52,8 @@ const PAPERS_ALL = {
   "j":  { id: "13_Jacobson_EoS", file: "06_Jacobson__Thermodynamics_of_Spacetime_The_Einstein_Equation_of_State.pdf", mode: "historical_benchmark", reviewEpoch: "mid 1990s" },
   "b":  { id: "14_Bousso", file: "24_Bousso__A_Covariant_Entropy_Conjecture.pdf", mode: "historical_benchmark", reviewEpoch: "late 1990s" },
   "pw": { id: "15_Parikh_Wilczek", file: "34_Parikh__Wilczek__Hawking_Radiation_as_Tunneling.pdf", mode: "historical_benchmark", reviewEpoch: "early 2000s" },
+  // The meta-review: MSR's self-description run as a normal submission (JT). No special-casing.
+  "meta": { id: "META_ModernScienceReview", file: "meta_modern_science_review.pdf", mode: "new_submission", reviewEpoch: "current" },
 };
 // Re-validation default: Bekenstein FIRST (so the GSL/entropy sentence anchors correctly, not
 // mis-attributed to Hawking), then Hawking, Frodden, Verlinde.
@@ -767,6 +769,9 @@ async function runLive(db, upsertPaper, persistReview) {
         : internal === "fatal_alleged_unverified" ? "fatal_unverified"
         : (pub === "hidden" ? "sound" : pub);
       const applied = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, correctnessPublic: routingCorrectness, edits, claims });
+      // Verbatim record to disk (the db may be ephemeral in fresh-run mode).
+      mkdirSync(OUT + "/records_live", { recursive: true });
+      writeFileSync(OUT + "/records_live/" + paper.id + ".json", JSON.stringify({ paper: paper.id, reviewContext: ctx, score, internal, claims, evidencePackets, adjudicated: adj }, null, 2));
       console.log("  score=" + score + " scope=" + adj?.scopeOfUpdate + " correctness=" + internal + " | " + claims.length + " claims, " + edits.length + " proposed edits");
       for (const r of applied) console.log("    " + r.status.padEnd(13) + " " + r.action.padEnd(16) + " -> " + (r.targetPageSlug || "-") + " [" + (r.supportStatus || "-") + "]" + (r.droppedCitations?.length ? " DROPPED-CITES:" + r.droppedCitations.length : "") + (r.rejectionReason ? " (REJECTED: " + r.rejectionReason + ")" : ""));
 

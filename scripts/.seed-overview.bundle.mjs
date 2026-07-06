@@ -82268,7 +82268,7 @@ overviewImpact.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-afqV1o/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-iuukXP/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82512,11 +82512,11 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-afqV1o/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-iuukXP/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
-var MODE = "synthetic";
+var MODE = "live";
 var OVERVIEW_SLUG = "horizon-thermodynamics";
 var OUT = "/Users/jttyler/Desktop/Top 55/phase1_overview";
 var SEED_PAGES = [{ "slug": "horizon-thermodynamics", "title": "Horizon Thermodynamics", "summaryOneLine": "Why horizons are thermodynamic objects \u2014 the deep link between gravity, thermodynamics, information, and spacetime.", "scopeStatement": "The overarching explanatory structure: that causal horizons behave as thermodynamic systems (temperature, entropy, a first law), revealing a deep link between gravity, quantum theory, information, and spacetime. This root page frames why the structure matters and links the subpages." }, { "slug": "black-hole-mechanics", "parentSlug": "horizon-thermodynamics", "title": "The laws of black-hole mechanics", "scopeStatement": "The zeroth/first/second/third laws relating mass, horizon area, surface gravity, angular momentum and charge \u2014 the mechanical skeleton later read as thermodynamics." }, { "slug": "hawking-radiation", "parentSlug": "horizon-thermodynamics", "title": "Hawking radiation", "scopeStatement": "Particle creation by black holes and the horizon temperature; the step that made horizon thermodynamics physically real rather than analogy." }, { "slug": "black-hole-entropy", "parentSlug": "horizon-thermodynamics", "title": "Black-hole entropy", "scopeStatement": "Area-proportional entropy of horizons and its generalizations; what the entropy counts." }, { "slug": "cosmological-horizons", "parentSlug": "horizon-thermodynamics", "title": "Cosmological & FRW apparent horizons", "scopeStatement": "Thermodynamics of de Sitter and FRW apparent/trapping horizons, including deriving cosmological dynamics from a horizon first law." }, { "slug": "local-quasilocal-horizons", "parentSlug": "horizon-thermodynamics", "title": "Local & quasilocal horizon thermodynamics", "scopeStatement": "Local-observer and quasilocal formulations of the first law; making horizon thermodynamics a statement about local physics." }, { "slug": "gravity-as-thermodynamics", "parentSlug": "horizon-thermodynamics", "title": "Gravity as thermodynamics", "scopeStatement": "Deriving gravitational field equations themselves from horizon thermodynamics (equation-of-state / entropic arguments)." }, { "slug": "holography", "parentSlug": "horizon-thermodynamics", "title": "Holography & entanglement entropy", "scopeStatement": "Holographic bounds and the geometric computation of entanglement entropy connecting horizons to information." }, { "slug": "horizon-thermodynamics-disputed-and-failed-claims", "parentSlug": "horizon-thermodynamics", "title": "Disputed & failed claims", "scopeStatement": "Claims that are contested or fatally flawed \u2014 routed here so the main account stays sound. Correctness is a separate axis from magnitude." }];
@@ -83103,6 +83103,8 @@ async function runLive(db2, upsertPaper, persistReview) {
       }
       const routingCorrectness = !correctnessValid ? void 0 : internal === "fatal_alleged_unverified" ? "fatal_unverified" : pub === "hidden" ? "sound" : pub;
       const applied = await applyOverviewImpact(db2, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, correctnessPublic: routingCorrectness, edits, claims });
+      mkdirSync(OUT + "/records_live", { recursive: true });
+      writeFileSync(OUT + "/records_live/" + paper.id + ".json", JSON.stringify({ paper: paper.id, reviewContext: ctx, score, internal, claims, evidencePackets, adjudicated: adj }, null, 2));
       console.log("  score=" + score + " scope=" + adj?.scopeOfUpdate + " correctness=" + internal + " | " + claims.length + " claims, " + edits.length + " proposed edits");
       for (const r3 of applied) console.log("    " + r3.status.padEnd(13) + " " + r3.action.padEnd(16) + " -> " + (r3.targetPageSlug || "-") + " [" + (r3.supportStatus || "-") + "]" + (r3.droppedCitations?.length ? " DROPPED-CITES:" + r3.droppedCitations.length : "") + (r3.rejectionReason ? " (REJECTED: " + r3.rejectionReason + ")" : ""));
       const flaggedEdits = [];
