@@ -14987,8 +14987,8 @@ async function checkImportanceDivergence(db2, overviewSlug, paperId) {
   let note = null;
   if (rv.estimatedImportanceLow >= 80 && lowProminence) {
     note = `estimate says landmark (~${rv.estimatedImportanceLow}-${rv.estimatedImportanceHigh}) but realized position is ${prominence} \u2014 stale page or flipped judgment; take a look`;
-  } else if (rv.estimatedImportanceHigh <= 40 && highProminence) {
-    note = `estimate says minor (~${rv.estimatedImportanceLow}-${rv.estimatedImportanceHigh}) but realized position is ${prominence} \u2014 take a look`;
+  } else if (rv.estimatedImportanceHigh <= 55 && highProminence) {
+    note = `estimate says minor/solid (~${rv.estimatedImportanceLow}-${rv.estimatedImportanceHigh}) but realized position is ${prominence} \u2014 displacement candidate or over-prominence; take a look`;
   }
   if (!note) return { flagged: false };
   await db2.insert(divergenceFlagsTable).values({
@@ -82268,7 +82268,7 @@ overviewImpact.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-UnsEeG/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-afqV1o/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82512,7 +82512,7 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-UnsEeG/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-afqV1o/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
@@ -82787,6 +82787,18 @@ async function runSynthetic(db2, upsertPaper, persistReview) {
     [{ statement: "The local first law $$ \\delta E = \\kappa \\delta A / 8\\pi $$ integrates to $E = A/(8\\pi \\ell)$." }]
   );
   assert(eqPairFlags.length === 0, "S5-fix: display-block $$ pairing \u2014 prose between equations is never flagged, real equations match claims");
+  const ineqFlags = checkEquationFidelity3(
+    "The generalized law states $Delta(S_a + S_b) > 0$ for all processes.",
+    [{ statement: "The sum never decreases: $Delta(S_a + S_b) ge 0$ (reversible processes saturate it)." }]
+  );
+  assert(ineqFlags.length === 1, "GSL regression: strict > in prose vs ge in claim is flagged as an unmatched equation");
+  const ongLikeId = await upsertPaper("Modest paper holding a root section anchor");
+  const ongLikeRv = await persistReview(ongLikeId, { promptVersion: "synthetic", recommendedScore: 42, estimatedImportanceLow: 37, estimatedImportanceHigh: 47, correctnessInternal: "sound", correctnessPublic: "sound", claims: [{ id: "C1", statement: "A modest but real claim.", status: "established" }] });
+  await applyOverviewImpact(db2, { overviewSlug: OVERVIEW_SLUG, paperId: ongLikeId, reviewVersionId: ongLikeRv, correctnessPublic: "sound", edits: [
+    { action: "add_subsection", targetPageSlug: OVERVIEW_SLUG, targetSectionSlug: "a-modest-topic", proposedMarkdown: "A modest subsection on the root page.", citedPaperIds: [ongLikeId], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc }
+  ] });
+  const ongLikeDiv = await checkImportanceDivergence2(db2, OVERVIEW_SLUG, ongLikeId);
+  assert(ongLikeDiv.flagged === true, "divergence recalibration: est ~37-47 with a root section anchor FIRES (the Ong-shaped case the old threshold missed)");
   const LEGT = "Legacy sentence about horizon entropy that carries a source chip.";
   const [legacyPage] = await db2.insert(fieldPagesTable).values({ slug: "legacy-string-page", title: "Legacy string page", scopeStatement: "fabricated pre-block page" }).returning();
   const legacyMd = "## Legacy string page\n\n" + LEGT + "\n\nA second legacy paragraph with no provenance.";

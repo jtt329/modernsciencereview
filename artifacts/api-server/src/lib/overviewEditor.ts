@@ -1015,10 +1015,16 @@ export async function checkImportanceDivergence(db: Db, overviewSlug: string, pa
   const lowProminence = ["not_in_overview", "footnote_reference", "inline_reference"].includes(prominence);
   const highProminence = ["page_subject", "section_anchor"].includes(prominence);
   let note: string | null = null;
+  // Thresholds RECALIBRATED from the 15-paper seed (2026-07-04): the modest-estimate side was
+  // estHigh<=40 and missed the exact designed case — Ong (est 37-47) holding a root-page
+  // section anchor. Seed distribution: Ong hi=47, next-lowest hi=77 (Verlinde) — 55 sits in
+  // the gap with margin both ways. Landmark side unchanged (lowest landmark lo in seed = 85;
+  // Parikh-Wilczek 79-89 stays under it by design). Advisory-only, still monitoring not
+  // placement; re-recalibrate as the corpus grows.
   if (rv.estimatedImportanceLow >= 80 && lowProminence) {
     note = `estimate says landmark (~${rv.estimatedImportanceLow}-${rv.estimatedImportanceHigh}) but realized position is ${prominence} — stale page or flipped judgment; take a look`;
-  } else if (rv.estimatedImportanceHigh <= 40 && highProminence) {
-    note = `estimate says minor (~${rv.estimatedImportanceLow}-${rv.estimatedImportanceHigh}) but realized position is ${prominence} — take a look`;
+  } else if (rv.estimatedImportanceHigh <= 55 && highProminence) {
+    note = `estimate says minor/solid (~${rv.estimatedImportanceLow}-${rv.estimatedImportanceHigh}) but realized position is ${prominence} — displacement candidate or over-prominence; take a look`;
   }
   if (!note) return { flagged: false };
   await db.insert(divergenceFlagsTable).values({

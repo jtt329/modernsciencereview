@@ -480,6 +480,23 @@ async function runSynthetic(db, upsertPaper, persistReview) {
     [{ statement: "The local first law $$ \\\\delta E = \\\\kappa \\\\delta A / 8\\\\pi $$ integrates to $E = A/(8\\\\pi \\\\ell)$." }],
   );
   assert(eqPairFlags.length === 0, "S5-fix: display-block $$ pairing — prose between equations is never flagged, real equations match claims");
+  // GSL regression (JT review pass): the checker must DISTINGUISH >= from > when the claim is
+  // correct — an editor downgrading an inequality must be flagged. (The seed's actual failure —
+  // claim AND prose consistently wrong — is only catchable by image verification of claim
+  // equations, the known P2 item.)
+  const ineqFlags = checkEquationFidelity(
+    "The generalized law states $\\Delta(S_a + S_b) > 0$ for all processes.",
+    [{ statement: "The sum never decreases: $\\Delta(S_a + S_b) \\ge 0$ (reversible processes saturate it)." }],
+  );
+  assert(ineqFlags.length === 1, "GSL regression: strict > in prose vs \\ge in claim is flagged as an unmatched equation");
+  // Divergence recalibration regression (Ong-shaped): modest estimate + root section anchor fires.
+  const ongLikeId = await upsertPaper("Modest paper holding a root section anchor");
+  const ongLikeRv = await persistReview(ongLikeId, { promptVersion: "synthetic", recommendedScore: 42, estimatedImportanceLow: 37, estimatedImportanceHigh: 47, correctnessInternal: "sound", correctnessPublic: "sound", claims: [{ id: "C1", statement: "A modest but real claim.", status: "established" }] });
+  await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: ongLikeId, reviewVersionId: ongLikeRv, correctnessPublic: "sound", edits: [
+    { action: "add_subsection", targetPageSlug: OVERVIEW_SLUG, targetSectionSlug: "a-modest-topic", proposedMarkdown: "A modest subsection on the root page.", citedPaperIds: [ongLikeId], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  const ongLikeDiv = await checkImportanceDivergence(db, OVERVIEW_SLUG, ongLikeId);
+  assert(ongLikeDiv.flagged === true, "divergence recalibration: est ~37-47 with a root section anchor FIRES (the Ong-shaped case the old threshold missed)");
 
   // ---- Block-substrate migration acceptance (DESIGN §4): fabricate a LEGACY string-store
   // page (markdownFull + absolute-offset span, no blocks) and migrate it.
