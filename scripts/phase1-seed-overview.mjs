@@ -164,7 +164,7 @@ import { drizzle } from "drizzle-orm/pglite";
 import {
   ensureOverviewSkeleton, applyOverviewImpact, assembleOverviewMarkdown,
   computeProminence, publishOverview, rollbackPage, checkEquationFidelity, assembleCorrectionsLedger,
-  blocksOfVersion, migrateToBlocks,
+  blocksOfVersion, migrateToBlocks, rollbackReorganize, pagesInScope,
 } from ${JSON.stringify(editorPath)};
 import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable, divergenceFlagsTable, pageBlocksTable, pageVersionBlocksTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
@@ -202,8 +202,15 @@ async function main() {
   // seed DB is reused across rounds (resumable seeding).
   let user = (await db.select().from(usersTable).where(eq(usersTable.email, "seed@local")))[0];
   if (!user) [user] = await db.insert(usersTable).values({ email: "seed@local", firstName: "Seed", lastName: "Bot" }).returning();
-  await ensureOverviewSkeleton(db, SEED_PAGES, user.id);
-  console.log("[seed] skeleton: " + SEED_PAGES.length + " pages");
+  // S3: SKELETON=none — the field starts EMPTY; every page (including whatever parent the
+  // system decides the field needs) emerges from the papers. The hand-built skeleton remains
+  // available only for legacy comparison runs.
+  if (process.env.SKELETON === "none") {
+    console.log("[seed] SKELETON=none — field starts empty; structure emerges from papers");
+  } else {
+    await ensureOverviewSkeleton(db, SEED_PAGES, user.id);
+    console.log("[seed] skeleton: " + SEED_PAGES.length + " pages");
+  }
 
   async function upsertPaper(title) {
     const existing = (await db.select().from(papersTable).where(eq(papersTable.title, title)))[0];
@@ -219,6 +226,7 @@ async function main() {
   if (MODE === "synthetic") {
     await runSynthetic(db, upsertPaper, persistReview);
     await runOrderPermutation();
+    await runEmergenceAcceptance();
   } else {
     await runLive(db, upsertPaper, persistReview);
   }
@@ -603,6 +611,68 @@ async function runOrderPermutation() {
   assertPerm(a.slugs === b.slugs, "S6: final page set identical across orders");
   assertPerm(a.liveSourced === b.liveSourced, "S6: live sourced-span count identical across orders (" + a.liveSourced + ")");
   assertPerm(a.published > 0 && b.published > 0, "S6: publish works in both orders");
+}
+
+// ---- S2+S3 acceptance: emergent hierarchy from an EMPTY field -------------------------
+async function runEmergenceAcceptance() {
+  const A = (cond, msg) => { if (cond) console.log("  ✓ " + msg); else { console.log("  ✗ INVARIANT VIOLATION: " + msg); process.exitCode = 1; } };
+  const sc = { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" };
+  const client = new PGlite();
+  await client.exec(SCHEMA_SQL);
+  const db2 = drizzle(client);
+  const [u] = await db2.insert(usersTable).values({ email: "emerge@local", firstName: "E", lastName: "R" }).returning();
+  const mkPaper = async (t) => (await db2.insert(papersTable).values({ title: t, content: "(em)", authorId: u.id, authorName: "E R" }).returning())[0].id;
+  const OV = "field"; // neutral namespace — no pre-declared root, no skeleton (S3)
+  // Paper 1: no page exists for its target -> creates its topic page AND a scaffolded parent
+  // (parent proposed FIRST in the same batch), exactly the structure-discovery flow.
+  const p1 = await mkPaper("Emergence paper one");
+  const r1 = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p1, reviewVersionId: null, correctnessPublic: "sound", claims: [{ id: "C1", statement: "A thermal spectrum arises from mode mixing.", status: "established" }], edits: [
+    { action: "create_page", targetPageSlug: "radiative-processes", parentSlug: "", proposedMarkdown: "## Radiative processes\\n\\nRadiative processes matter because they connect microphysics to what we observe; this scaffold awaits sources.", citedPaperIds: [], citedClaimIds: [], supportStatus: "needs_source", safetyCheck: sc, reason: "scaffolded parent for broader context" },
+    { action: "create_page", targetPageSlug: "thermal-emission", parentSlug: "radiative-processes", proposedMarkdown: "## Thermal emission\\n\\nA thermal spectrum arises when boundary conditions mix positive and negative frequency modes.", citedPaperIds: [p1], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc, reason: "the paper's own topic" },
+  ] });
+  A(r1.every((x) => x.status === "draft_applied"), "S2: empty field — paper creates its topic page AND a scaffolded parent (parent first, same batch)");
+  const pages1 = await db2.select().from(fieldPagesTable);
+  const parentPage = pages1.find((p) => p.slug === "radiative-processes");
+  const childPage = pages1.find((p) => p.slug === "thermal-emission");
+  A(!!parentPage && !!childPage && childPage.parentPageId === parentPage.id && parentPage.parentPageId === null, "S2: emergent hierarchy recorded (child under scaffolded top-level parent)");
+  const parentVer = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, parentPage.id)))[0];
+  const parentJoins = await db2.select().from(pageVersionBlocksTable).where(eq(pageVersionBlocksTable.versionId, parentVer.id));
+  const parentSpans = parentJoins.length ? await db2.select().from(pageSpansTable).where(inArray(pageSpansTable.blockId, parentJoins.map((j) => j.blockId))) : [];
+  A(parentSpans.some((s) => s.supportStatus === "needs_source"), "S3: scaffolded parent's unsourced scientific claim is visibly marked (needs_source)");
+  // Paper 2 (different topic, same broader subject): attaches under the EXISTING parent.
+  const p2 = await mkPaper("Emergence paper two");
+  const r2 = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", claims: [{ id: "C1", statement: "Discrete spectral lines encode level structure.", status: "established" }], edits: [
+    { action: "create_page", targetPageSlug: "spectral-lines", parentSlug: "radiative-processes", proposedMarkdown: "## Spectral lines\\n\\nDiscrete lines encode the level structure of the emitter.", citedPaperIds: [p2], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  const dupParents = (await db2.select().from(fieldPagesTable)).filter((p) => p.slug === "radiative-processes");
+  A(r2[0].status === "draft_applied" && dupParents.length === 1, "S2: second paper attaches under the SAME emergent parent (no duplication)");
+  // Unknown parent is a loud reject (slug discipline holds upward too).
+  const bad = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "create_page", targetPageSlug: "orphan-topic", parentSlug: "no-such-parent", proposedMarkdown: "x", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  A(bad[0].status === "rejected" && bad[0].rejectionReason === "unknown_parent_slug", "S2: unknown parentSlug rejected (index or same batch only)");
+  // reorganize_parent: versioned structural edit, cleanly reversible.
+  await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "create_page", targetPageSlug: "emission-mechanisms", parentSlug: "", proposedMarkdown: "## Emission mechanisms\\n\\nA broader scaffold.", citedPaperIds: [], citedClaimIds: [], supportStatus: "needs_source", safetyCheck: sc },
+  ] });
+  const reorg = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "reorganize_parent", linkTargetSlug: "emission-mechanisms", reorganizeChildSlugs: ["thermal-emission", "spectral-lines"], citedPaperIds: [], citedClaimIds: [], safetyCheck: sc, reason: "better parent" },
+  ] });
+  const afterReorg = await db2.select().from(fieldPagesTable);
+  const em = afterReorg.find((p) => p.slug === "emission-mechanisms");
+  A(reorg[0].status === "draft_applied" && afterReorg.filter((p) => p.parentPageId === em.id).length === 2, "S2: reorganize_parent re-parents existing pages (versioned structural edit)");
+  await rollbackReorganize(db2, reorg[0].proposedOverviewEditId);
+  const afterRb = await db2.select().from(fieldPagesTable);
+  const rp = afterRb.find((p) => p.slug === "radiative-processes");
+  A(afterRb.filter((p) => p.parentPageId === rp.id).length === 2, "S2: reorganize_parent rolled back cleanly (children restored to prior parent)");
+  // Zero pages no paper motivated (S3): every page traces to an applied edit.
+  const allPages = await db2.select().from(fieldPagesTable);
+  const editRows = await db2.select().from(proposedOverviewEditsTable);
+  const motivated = new Set(editRows.filter((e) => e.status !== "rejected").map((e) => e.targetPageSlug));
+  A(allPages.every((p) => motivated.has(p.slug)), "S3: zero pages that no paper motivated (every page traces to an applied edit)");
+  // Scope: with no pre-declared root, the namespace serves ALL pages.
+  const scope = await pagesInScope(db2, OV);
+  A(scope.length === allPages.length, "S3: pagesInScope covers the whole emergent tree when no root page exists");
 }
 
 async function runLive(db, upsertPaper, persistReview) {

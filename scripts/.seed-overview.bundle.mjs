@@ -13807,7 +13807,7 @@ var init_sessions = __esm({
 });
 
 // lib/db/src/schema/fieldOverview.ts
-var reviewVersionsTable, fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable, proposedOverviewEditsTable, attributionChecksTable, pageBlocksTable, pageVersionBlocksTable, blockExpansionsTable, pageSpansTable, pageLinksTable, divergenceFlagsTable, ingestionQueueTable;
+var reviewVersionsTable, fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable, proposedOverviewEditsTable, attributionChecksTable, pageBlocksTable, pageVersionBlocksTable, blockExpansionsTable, pageSpansTable, pageLinksTable, consistencyFindingsTable, divergenceFlagsTable, ingestionQueueTable;
 var init_fieldOverview = __esm({
   "lib/db/src/schema/fieldOverview.ts"() {
     "use strict";
@@ -13916,7 +13916,11 @@ var init_fieldOverview = __esm({
       targetPageSlug: varchar("target_page_slug"),
       targetSectionSlug: varchar("target_section_slug"),
       linkTargetSlug: varchar("link_target_slug"),
-      // add_link destination (validated against the index; model never writes URLs)
+      // add_link destination / reorganize_parent new parent (validated against the index)
+      parentSlug: varchar("parent_slug"),
+      // create_page: parent chosen from index or same batch (emergent hierarchy, S2)
+      // reorganize_parent reversibility: the children moved and their previous parents.
+      structuralChange: jsonb("structural_change").$type(),
       proposedMarkdown: text("proposed_markdown").notNull().default(""),
       citedPaperIds: jsonb("cited_paper_ids").$type().notNull().default([]),
       citedClaimIds: jsonb("cited_claim_ids").$type().notNull().default([]),
@@ -14025,6 +14029,16 @@ var init_fieldOverview = __esm({
       createdByReviewVersionId: varchar("created_by_review_version_id"),
       createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
     });
+    consistencyFindingsTable = pgTable("consistency_findings", {
+      id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+      proposedOverviewEditId: varchar("proposed_overview_edit_id"),
+      blockId: varchar("block_id"),
+      pageId: varchar("page_id"),
+      paperId: varchar("paper_id").references(() => papersTable.id, { onDelete: "cascade" }),
+      findings: jsonb("findings").$type().notNull().default([]),
+      status: varchar("status").$type().notNull().default("queued"),
+      createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+    });
     divergenceFlagsTable = pgTable("divergence_flags", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       paperId: varchar("paper_id").references(() => papersTable.id, { onDelete: "cascade" }),
@@ -14062,6 +14076,7 @@ __export(schema_exports, {
   blockExpansionsTable: () => blockExpansionsTable,
   calibrationPairsTable: () => calibrationPairsTable,
   commentsTable: () => commentsTable,
+  consistencyFindingsTable: () => consistencyFindingsTable,
   divergenceFlagsTable: () => divergenceFlagsTable,
   fieldPageVersionsTable: () => fieldPageVersionsTable,
   fieldPagesTable: () => fieldPagesTable,
@@ -14148,9 +14163,11 @@ __export(overviewEditor_exports, {
   liveProvenanceForVersion: () => liveProvenanceForVersion,
   migrateToBlocks: () => migrateToBlocks,
   overviewEditorEnabled: () => overviewEditorEnabled,
+  pagesInScope: () => pagesInScope,
   publishOverview: () => publishOverview,
   renderBlocksToMarkdown: () => renderBlocksToMarkdown,
   rollbackPage: () => rollbackPage,
+  rollbackReorganize: () => rollbackReorganize,
   runPostReviewOverviewHook: () => runPostReviewOverviewHook,
   splitMarkdownIntoBlocks: () => splitMarkdownIntoBlocks
 });
@@ -14430,6 +14447,8 @@ function editIdempotencyKey(input, edit) {
     section: edit.targetSectionSlug ?? null,
     linkTarget: edit.linkTargetSlug ?? null,
     block: edit.targetBlockId ?? null,
+    parent: edit.parentSlug ?? null,
+    reorg: edit.reorganizeChildSlugs ?? [],
     anchor: edit.anchorText ?? null,
     md: edit.proposedMarkdown ?? "",
     cp: edit.citedPaperIds ?? [],
@@ -14469,6 +14488,8 @@ async function applyOverviewImpactInner(db2, input) {
           targetPageSlug: extra.targetPageSlug ?? edit.targetPageSlug ?? null,
           targetSectionSlug: edit.targetSectionSlug ?? null,
           linkTargetSlug: edit.linkTargetSlug ?? null,
+          parentSlug: edit.parentSlug ?? null,
+          structuralChange: extra.structuralChange ?? null,
           proposedMarkdown: edit.proposedMarkdown ?? "",
           citedPaperIds: edit.citedPaperIds ?? [],
           citedClaimIds: edit.citedClaimIds ?? [],
@@ -14532,15 +14553,50 @@ async function applyOverviewImpactInner(db2, input) {
       const claimStatus = chipStatusFromClaims(claimIds, input.claims);
       const provIds = { reviewVersionId: input.reviewVersionId ?? null, paperId: input.paperId };
       const summaries = { oneLine: edit.pageSummaryOneLine, short: edit.pageSummaryShort };
-      const targetSlug = input.correctnessPublic === "flawed" ? disputedSlug : edit.action === "create_subpage" ? edit.targetPageSlug || slugify(edit.proposedMarkdown?.split("\n")[0] ?? "new-page") : edit.targetPageSlug || input.overviewSlug;
-      if (edit.action === "create_subpage" && input.correctnessPublic !== "flawed") {
+      const isCreatePage = edit.action === "create_page" || edit.action === "create_subpage";
+      const targetSlug = input.correctnessPublic === "flawed" ? disputedSlug : isCreatePage ? edit.targetPageSlug || slugify(edit.proposedMarkdown?.split("\n")[0] ?? "new-page") : edit.targetPageSlug || input.overviewSlug;
+      if (edit.action === "reorganize_parent") {
+        const newParent = edit.linkTargetSlug ? await getPageBySlug(tx, edit.linkTargetSlug) : null;
+        if (!newParent) {
+          const id3 = await recordEdit("rejected", { rejectionReason: "unknown_parent_slug: reorganize_parent target does not exist" });
+          return { action: edit.action, targetPageSlug: edit.linkTargetSlug ?? null, status: "rejected", proposedOverviewEditId: id3, rejectionReason: "unknown_parent_slug" };
+        }
+        const childSlugs = (edit.reorganizeChildSlugs ?? []).filter((s3) => s3 && s3 !== edit.linkTargetSlug);
+        const children = [];
+        for (const cs of childSlugs) {
+          const child = await getPageBySlug(tx, cs);
+          if (!child) {
+            const id3 = await recordEdit("rejected", { rejectionReason: `unknown_target_slug: reorganize child "${cs}" does not exist` });
+            return { action: edit.action, targetPageSlug: edit.linkTargetSlug ?? null, status: "rejected", proposedOverviewEditId: id3, rejectionReason: "unknown_target_slug" };
+          }
+          const oldParent = child.parentPageId ? (await tx.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, child.parentPageId)))[0] : null;
+          children.push({ slug: cs, oldParentSlug: oldParent?.slug ?? null, id: child.id });
+        }
+        if (children.length === 0) {
+          const id3 = await recordEdit("rejected", { rejectionReason: "empty_edit: reorganize_parent with no children" });
+          return { action: edit.action, targetPageSlug: edit.linkTargetSlug ?? null, status: "rejected", proposedOverviewEditId: id3, rejectionReason: "empty_edit" };
+        }
+        for (const c2 of children) await tx.update(fieldPagesTable).set({ parentPageId: newParent.id, updatedAt: /* @__PURE__ */ new Date() }).where(eq(fieldPagesTable.id, c2.id));
+        const id2 = await recordEdit("draft_applied", { targetPageSlug: edit.linkTargetSlug, structuralChange: { newParentSlug: edit.linkTargetSlug, children: children.map(({ slug, oldParentSlug }) => ({ slug, oldParentSlug })) } });
+        return { action: "reorganize_parent", targetPageSlug: edit.linkTargetSlug ?? null, status: "draft_applied", proposedOverviewEditId: id2 };
+      }
+      if (isCreatePage && input.correctnessPublic !== "flawed") {
         const existing = await getPageBySlug(tx, targetSlug);
         if (existing) {
           edit.action = "add_paragraph";
         } else {
-          const root = await getPageBySlug(tx, input.overviewSlug);
+          let parent = null;
+          if (edit.parentSlug) {
+            parent = await getPageBySlug(tx, edit.parentSlug);
+            if (!parent) {
+              const id3 = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: "unknown_parent_slug: create_page parent does not exist (use the index or create it earlier in this batch)" });
+              return { action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id3, rejectionReason: "unknown_parent_slug" };
+            }
+          } else if (edit.action === "create_subpage") {
+            parent = await getPageBySlug(tx, input.overviewSlug);
+          }
           const title = (edit.proposedMarkdown?.match(/^#+\s*(.+)/)?.[1] || targetSlug.replace(/-/g, " ")).slice(0, 120);
-          const [page2] = await tx.insert(fieldPagesTable).values({ slug: targetSlug, title, parentPageId: root?.id ?? null, scopeStatement: edit.reason ?? "", summary: "" }).returning();
+          const [page2] = await tx.insert(fieldPagesTable).values({ slug: targetSlug, title, parentPageId: parent?.id ?? null, scopeStatement: edit.reason ?? "", summary: "" }).returning();
           const md = edit.proposedMarkdown ?? `## ${title}
 `;
           const version3 = await newDraftVersion(tx, page2.id, md, [{ at: (/* @__PURE__ */ new Date()).toISOString(), action: `create_subpage from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId, summaries, provIds);
@@ -14558,7 +14614,7 @@ async function applyOverviewImpactInner(db2, input) {
           }
           const id2 = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version3.id });
           if (firstContent) await recordAttributionWatch({ editId: id2, refId: refId2, spanId, pageId: page2.id, anchoredText: firstContent.markdown.slice(0, 400) });
-          return { action: "create_subpage", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id2, appliedVersionId: version3.id, referenceId: refId2, spanId, supportStatus, droppedCitations: dropped };
+          return { action: edit.action, targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id2, appliedVersionId: version3.id, referenceId: refId2, spanId, supportStatus, droppedCitations: dropped };
         }
       }
       let page = await getPageBySlug(tx, targetSlug);
@@ -14839,11 +14895,9 @@ async function computeProminence(db2, overviewSlug, paperId) {
   return { prominence: best, locationSlug };
 }
 async function assembleOverviewMarkdown(db2, overviewSlug) {
-  const root = await getPageBySlug(db2, overviewSlug);
-  const pages = await db2.select().from(fieldPagesTable);
-  const ordered = pages.filter((p2) => p2.slug === overviewSlug || p2.parentPageId === (root?.id ?? "__none__"));
+  const ordered = await pagesInScope(db2, overviewSlug);
   const chunks = [];
-  for (const p2 of [root, ...ordered.filter((x3) => x3.id !== root?.id)].filter(Boolean)) {
+  for (const p2 of ordered) {
     const v2 = await latestVersion(db2, p2.id);
     const prov = v2 ? await liveProvenanceForVersion(db2, v2.id) : { spans: [], refs: [], links: [] };
     const sourced = prov.spans.filter((s3) => s3.supportStatus === "sourced").length;
@@ -15069,9 +15123,7 @@ async function assembleCorrectionsLedger(db2, overviewSlug, targetPageSlug) {
 ${rows2.map(line2).join("\n")}`).join("\n");
 }
 async function publishOverview(db2, overviewSlug) {
-  const root = await getPageBySlug(db2, overviewSlug);
-  const pages = await db2.select().from(fieldPagesTable);
-  const scope = pages.filter((p2) => p2.slug === overviewSlug || p2.parentPageId === (root?.id ?? "__none__"));
+  const scope = await pagesInScope(db2, overviewSlug);
   let published = 0;
   for (const p2 of scope) {
     const v2 = await latestVersion(db2, p2.id);
@@ -15082,6 +15134,40 @@ async function publishOverview(db2, overviewSlug) {
   }
   await db2.update(proposedOverviewEditsTable).set({ status: "published" }).where(and(eq(proposedOverviewEditsTable.overviewSlug, overviewSlug), eq(proposedOverviewEditsTable.status, "draft_applied")));
   return { publishedVersions: published };
+}
+async function rollbackReorganize(db2, editId) {
+  const edit = (await db2.select().from(proposedOverviewEditsTable).where(eq(proposedOverviewEditsTable.id, editId)))[0];
+  const change = edit?.structuralChange;
+  if (!edit || edit.action !== "reorganize_parent" || !change) throw new Error("not a reversible reorganize_parent edit");
+  for (const c2 of change.children) {
+    const child = await getPageBySlug(db2, c2.slug);
+    if (!child) continue;
+    const oldParent = c2.oldParentSlug ? await getPageBySlug(db2, c2.oldParentSlug) : null;
+    await db2.update(fieldPagesTable).set({ parentPageId: oldParent?.id ?? null, updatedAt: /* @__PURE__ */ new Date() }).where(eq(fieldPagesTable.id, child.id));
+  }
+  await db2.update(proposedOverviewEditsTable).set({ status: "reverted" }).where(eq(proposedOverviewEditsTable.id, editId));
+  return { reverted: change.children.length };
+}
+async function pagesInScope(db2, overviewSlug) {
+  const all = await db2.select().from(fieldPagesTable);
+  const root = all.find((p2) => p2.slug === overviewSlug);
+  if (!root) return all;
+  const byParent = /* @__PURE__ */ new Map();
+  for (const p2 of all) {
+    const key = p2.parentPageId ?? "__top__";
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(p2);
+  }
+  const out = [];
+  const stack = [root];
+  while (stack.length) {
+    const cur = stack.pop();
+    out.push(cur);
+    for (const child of byParent.get(cur.id) ?? []) stack.push(child);
+  }
+  const disputed = all.find((p2) => p2.slug === `${overviewSlug}-${DISPUTED_PAGE_SLUG_SUFFIX}`);
+  if (disputed && !out.some((p2) => p2.id === disputed.id)) out.push(disputed);
+  return out;
 }
 async function rollbackPage(db2, pageId, toVersionId) {
   const target = (await db2.select().from(fieldPageVersionsTable).where(and(eq(fieldPageVersionsTable.id, toVersionId), eq(fieldPageVersionsTable.pageId, pageId))).limit(1))[0];
@@ -82086,9 +82172,9 @@ optional polish). The overview is NOT neutral encyclopedia prose and NOT flat de
 every passage through the SAME lens the review uses to score papers \u2014 explanatory update. A
 passage must convey: why this piece of the field matters, what was understood BEFORE, what this
 paper changed or added in our understanding of nature, and (for a result) why it was a genuine
-update beyond prior work. The overview as a whole opens by framing WHY horizon thermodynamics is
-a significant explanatory structure at all \u2014 the deep link it reveals between gravity,
-thermodynamics, information, and spacetime \u2014 not with a dictionary definition. A paper's framing
+update beyond prior work. A page opens by framing WHY its subject matters as explanatory
+structure \u2014 what it lets us explain, derive, or constrain that we otherwise could not \u2014 never
+with a dictionary definition. A paper's framing
 and prominence in the overview must be CONSISTENT with its review verdict: the review scores
 explanatory update, the overview narrates the field's explanatory structure, and they share the
 currency so the product is one coherent thing. Your proposedMarkdown must already be written in
@@ -82132,9 +82218,17 @@ Choose the action that expresses the rewrite:
                          = the existing phrase) \u2014 the lightest touch.
   - add_paragraph      : add genuinely new material to an existing section.
   - add_subsection     : add a new subsection for genuinely new material.
-  - create_subpage     : new subpage \u2014 ONLY when no existing page/section is the right home
-                         (editorial judgment). Prefer improving the most specific existing page;
-                         never create a page that merely restates an existing one.
+  - create_page        : create a new topic page. Give targetPageSlug (the new slug) + a first
+                         proposedMarkdown, and parentSlug \u2014 an EXISTING slug from the index, OR a
+                         page you create earlier in this same batch (propose the parent first),
+                         OR empty for a top-level page. Create a page ONLY when no existing page
+                         is the right home (editorial judgment); never a page that merely
+                         restates an existing one. Parents you create as broader context are
+                         SCAFFOLDS: mark every unsourced scientific claim in them.
+  - reorganize_parent  : re-parent existing pages under a better parent. Give linkTargetSlug =
+                         the new parent (existing, or created earlier in this batch) and
+                         reorganizeChildSlugs = the existing pages to move. A versioned
+                         structural edit, reversible like everything else.
   - add_link           : link an existing phrase on a page to another page. Give targetPageSlug
                          (the page containing the phrase), anchorText (the exact phrase, verbatim
                          from the current prose), and linkTargetSlug (the destination page,
@@ -82150,24 +82244,41 @@ CONFIDENCE-CALIBRATED PROSE \u2014 the stability fixed point. Write every region
 strength: state established understanding as established; state a contested point explicitly as
 contested AND name the central objection; state speculative content as speculative; state a failed
 claim as failed with the reason. Surfacing a contested status is PART of the best explanation, not
-a bolt-on caveat \u2014 presenting a contested idea (e.g. entropic gravity, which carries a live
-circularity objection) as if it were established is simply a WORSE explanation. Prose that already
-says "X is contested for reasons A and B" is a stable fixed point: it gives a future editor nothing
-to flip. (Regression watch: an earlier seed presented entropic gravity as straightforwardly
-yielding the Einstein equations, dropping Verlinde's objection \u2014 that must not recur; keep the
-objection in the prose.) You are also given a CORRECTIONS LEDGER (what changed on each page and
-why) \u2014 honor it: do not re-introduce a fixed mistake or re-litigate a settled point.
-GROWTH MODEL \u2014 the overview grows FROM this paper (soft heuristics, not rules). After the review,
-consider two moves: (a) is there \u2014 or should there be \u2014 a page/section about what THIS paper does?
-If it warrants one and none exists, create it and write the best explanation of its idea. (b) Would
-the field ONE LEVEL UP be improved by an edit that references this paper? Default to one level up
-(e.g. a Hawking-radiation result improves "Horizon Thermodynamics", not "physics"); go further
-up/down only when clearly warranted. The improvement may be: add a subsection, edit existing text,
-or simply SOURCE a sentence that is already there but unsourced (this paper being its source \u2014 see
-accretion below).
+a bolt-on caveat \u2014 presenting a contested research program as if it were established is simply a
+WORSE explanation. Announce a contested, speculative, or model-heuristic status IN THE FIRST
+SENTENCE of the affected region, with the central objection named. Prose that already says "X is
+contested for reasons A and B" is a stable fixed point: it gives a future editor nothing to flip.
+You are also given a CORRECTIONS LEDGER (what changed on each page and why) \u2014 honor it: do not
+re-introduce a fixed mistake or re-litigate a settled point.
 
-For each edit give: targetPageSlug (an EXISTING slug where applicable; for create_subpage, a
-proposed new slug + title), targetSectionSlug (if applicable), the exact proposedMarkdown (real
+PAGE SCOPE. For any page you create or rewrite, write at that page's natural scope. Explain why
+the subject matters, what was understood before, what this paper changed, and how the subject
+sits inside broader and narrower pages. PAGE-SCOPE RULE: a paper may dominate its own topic page.
+It must not dominate a parent page unless your review establishes a genuinely field-level update.
+A parent page synthesizes everything it contains; it is not the latest paper wearing a bigger
+title.
+
+Do not assume the target page exists. If broader context is needed to understand this paper and
+no adequate parent page exists, create it \u2014 as scaffolded explanation with every unsourced
+scientific claim visibly marked (needs_source / unsourced_explanatory). Later papers will source,
+broaden, rewrite, or displace that scaffold. If the contribution needs narrower detail pages,
+create those. The goal is never to insert the paper into a page; the goal is to improve the
+explanatory structure.
+
+STRUCTURE DISCOVERY \u2014 do this before proposing edits:
+1. Identify the paper's central explanatory target.
+2. Find existing pages explaining this target or its parent subjects (from the index).
+3. If no adequate page exists, propose the smallest useful topic page.
+4. If broader context is needed, propose the necessary parent page (scaffolded).
+5. If narrower detail is needed, propose child pages.
+6. Rewrite only the regions the best explanation requires, at the right scope.
+The default reach is ONE level up from the paper's own topic \u2014 a result on a specific mechanism
+improves the page on its immediate subject area, not a page on "science" \u2014 but go further up or
+down when the explanation clearly warrants it. An improvement may also simply SOURCE a sentence
+that is already there but unsourced (this paper being its source \u2014 see accretion below).
+
+For each edit give: targetPageSlug (an EXISTING slug where applicable; for create_page, the
+proposed new slug), parentSlug (create_page only), targetSectionSlug (if applicable), the exact proposedMarkdown (real
 prose in the explanatory-update voice), citedPaperIds (the papers whose claims genuinely establish
 this sentence \u2014 usually THIS manuscript; may be empty for connective/background prose), citedClaimIds
 (from your claims list, for the papers cited), a supportStatus for the span, anchorText (for
@@ -82232,6 +82343,8 @@ valid JSON, no comments, no trailing commas):
         "targetPageSlug": "",
         "targetSectionSlug": "",
         "linkTargetSlug": "",
+        "parentSlug": "",
+        "reorganizeChildSlugs": [],
         "anchorText": "",
         "proposedMarkdown": "",
         "pageSummaryOneLine": "",
@@ -82247,8 +82360,9 @@ valid JSON, no comments, no trailing commas):
     "overviewChangeSummary": ""
   }
 Field-rule reminders (do not echo): action is exactly one of no_change | add_reference |
-edit_existing_text | add_paragraph | add_subsection | create_subpage | merge_or_reorganize |
-add_link; editType is exactly one of prose | reference_only | new_section | new_subpage |
+edit_existing_text | add_paragraph | add_subsection | create_page | merge_or_reorganize |
+add_link | reorganize_parent; parentSlug (create_page) and reorganizeChildSlugs (reorganize_parent)
+name slugs from the index or from pages created earlier in this same batch \u2014 never invented; editType is exactly one of prose | reference_only | new_section | new_subpage |
 reorganization | link_only; linkTargetSlug is used ONLY with add_link and must be a slug from
 the supplied index (never invented, never a URL);
 each claim's status is exactly one of established | contested | speculative | failed;
@@ -82268,7 +82382,7 @@ overviewImpact.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-iuukXP/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-CnwGL4/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82512,11 +82626,11 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-iuukXP/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-CnwGL4/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
-var MODE = "live";
+var MODE = "synthetic";
 var OVERVIEW_SLUG = "horizon-thermodynamics";
 var OUT = "/Users/jttyler/Desktop/Top 55/phase1_overview";
 var SEED_PAGES = [{ "slug": "horizon-thermodynamics", "title": "Horizon Thermodynamics", "summaryOneLine": "Why horizons are thermodynamic objects \u2014 the deep link between gravity, thermodynamics, information, and spacetime.", "scopeStatement": "The overarching explanatory structure: that causal horizons behave as thermodynamic systems (temperature, entropy, a first law), revealing a deep link between gravity, quantum theory, information, and spacetime. This root page frames why the structure matters and links the subpages." }, { "slug": "black-hole-mechanics", "parentSlug": "horizon-thermodynamics", "title": "The laws of black-hole mechanics", "scopeStatement": "The zeroth/first/second/third laws relating mass, horizon area, surface gravity, angular momentum and charge \u2014 the mechanical skeleton later read as thermodynamics." }, { "slug": "hawking-radiation", "parentSlug": "horizon-thermodynamics", "title": "Hawking radiation", "scopeStatement": "Particle creation by black holes and the horizon temperature; the step that made horizon thermodynamics physically real rather than analogy." }, { "slug": "black-hole-entropy", "parentSlug": "horizon-thermodynamics", "title": "Black-hole entropy", "scopeStatement": "Area-proportional entropy of horizons and its generalizations; what the entropy counts." }, { "slug": "cosmological-horizons", "parentSlug": "horizon-thermodynamics", "title": "Cosmological & FRW apparent horizons", "scopeStatement": "Thermodynamics of de Sitter and FRW apparent/trapping horizons, including deriving cosmological dynamics from a horizon first law." }, { "slug": "local-quasilocal-horizons", "parentSlug": "horizon-thermodynamics", "title": "Local & quasilocal horizon thermodynamics", "scopeStatement": "Local-observer and quasilocal formulations of the first law; making horizon thermodynamics a statement about local physics." }, { "slug": "gravity-as-thermodynamics", "parentSlug": "horizon-thermodynamics", "title": "Gravity as thermodynamics", "scopeStatement": "Deriving gravitational field equations themselves from horizon thermodynamics (equation-of-state / entropic arguments)." }, { "slug": "holography", "parentSlug": "horizon-thermodynamics", "title": "Holography & entanglement entropy", "scopeStatement": "Holographic bounds and the geometric computation of entanglement entropy connecting horizons to information." }, { "slug": "horizon-thermodynamics-disputed-and-failed-claims", "parentSlug": "horizon-thermodynamics", "title": "Disputed & failed claims", "scopeStatement": "Claims that are contested or fatally flawed \u2014 routed here so the main account stays sound. Correctness is a separate axis from magnitude." }];
@@ -82543,8 +82657,12 @@ async function main() {
   }
   let user = (await db2.select().from(usersTable).where(eq(usersTable.email, "seed@local")))[0];
   if (!user) [user] = await db2.insert(usersTable).values({ email: "seed@local", firstName: "Seed", lastName: "Bot" }).returning();
-  await ensureOverviewSkeleton(db2, SEED_PAGES, user.id);
-  console.log("[seed] skeleton: " + SEED_PAGES.length + " pages");
+  if (process.env.SKELETON === "none") {
+    console.log("[seed] SKELETON=none \u2014 field starts empty; structure emerges from papers");
+  } else {
+    await ensureOverviewSkeleton(db2, SEED_PAGES, user.id);
+    console.log("[seed] skeleton: " + SEED_PAGES.length + " pages");
+  }
   async function upsertPaper(title) {
     const existing = (await db2.select().from(papersTable).where(eq(papersTable.title, title)))[0];
     if (existing) return existing.id;
@@ -82558,6 +82676,7 @@ async function main() {
   if (MODE === "synthetic") {
     await runSynthetic(db2, upsertPaper, persistReview);
     await runOrderPermutation();
+    await runEmergenceAcceptance();
   } else {
     await runLive(db2, upsertPaper, persistReview);
   }
@@ -82907,6 +83026,65 @@ async function runOrderPermutation() {
   assertPerm(a2.slugs === b2.slugs, "S6: final page set identical across orders");
   assertPerm(a2.liveSourced === b2.liveSourced, "S6: live sourced-span count identical across orders (" + a2.liveSourced + ")");
   assertPerm(a2.published > 0 && b2.published > 0, "S6: publish works in both orders");
+}
+async function runEmergenceAcceptance() {
+  const A3 = (cond, msg) => {
+    if (cond) console.log("  \u2713 " + msg);
+    else {
+      console.log("  \u2717 INVARIANT VIOLATION: " + msg);
+      process.exitCode = 1;
+    }
+  };
+  const sc = { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" };
+  const client = new PGlite2();
+  await client.exec(SCHEMA_SQL);
+  const db2 = drizzle(client);
+  const [u2] = await db2.insert(usersTable).values({ email: "emerge@local", firstName: "E", lastName: "R" }).returning();
+  const mkPaper = async (t3) => (await db2.insert(papersTable).values({ title: t3, content: "(em)", authorId: u2.id, authorName: "E R" }).returning())[0].id;
+  const OV = "field";
+  const p1 = await mkPaper("Emergence paper one");
+  const r1 = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p1, reviewVersionId: null, correctnessPublic: "sound", claims: [{ id: "C1", statement: "A thermal spectrum arises from mode mixing.", status: "established" }], edits: [
+    { action: "create_page", targetPageSlug: "radiative-processes", parentSlug: "", proposedMarkdown: "## Radiative processes\n\nRadiative processes matter because they connect microphysics to what we observe; this scaffold awaits sources.", citedPaperIds: [], citedClaimIds: [], supportStatus: "needs_source", safetyCheck: sc, reason: "scaffolded parent for broader context" },
+    { action: "create_page", targetPageSlug: "thermal-emission", parentSlug: "radiative-processes", proposedMarkdown: "## Thermal emission\n\nA thermal spectrum arises when boundary conditions mix positive and negative frequency modes.", citedPaperIds: [p1], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc, reason: "the paper's own topic" }
+  ] });
+  A3(r1.every((x3) => x3.status === "draft_applied"), "S2: empty field \u2014 paper creates its topic page AND a scaffolded parent (parent first, same batch)");
+  const pages1 = await db2.select().from(fieldPagesTable);
+  const parentPage = pages1.find((p3) => p3.slug === "radiative-processes");
+  const childPage = pages1.find((p3) => p3.slug === "thermal-emission");
+  A3(!!parentPage && !!childPage && childPage.parentPageId === parentPage.id && parentPage.parentPageId === null, "S2: emergent hierarchy recorded (child under scaffolded top-level parent)");
+  const parentVer = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, parentPage.id)))[0];
+  const parentJoins = await db2.select().from(pageVersionBlocksTable).where(eq(pageVersionBlocksTable.versionId, parentVer.id));
+  const parentSpans = parentJoins.length ? await db2.select().from(pageSpansTable).where(inArray(pageSpansTable.blockId, parentJoins.map((j2) => j2.blockId))) : [];
+  A3(parentSpans.some((s3) => s3.supportStatus === "needs_source"), "S3: scaffolded parent's unsourced scientific claim is visibly marked (needs_source)");
+  const p2 = await mkPaper("Emergence paper two");
+  const r22 = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", claims: [{ id: "C1", statement: "Discrete spectral lines encode level structure.", status: "established" }], edits: [
+    { action: "create_page", targetPageSlug: "spectral-lines", parentSlug: "radiative-processes", proposedMarkdown: "## Spectral lines\n\nDiscrete lines encode the level structure of the emitter.", citedPaperIds: [p2], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc }
+  ] });
+  const dupParents = (await db2.select().from(fieldPagesTable)).filter((p3) => p3.slug === "radiative-processes");
+  A3(r22[0].status === "draft_applied" && dupParents.length === 1, "S2: second paper attaches under the SAME emergent parent (no duplication)");
+  const bad = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "create_page", targetPageSlug: "orphan-topic", parentSlug: "no-such-parent", proposedMarkdown: "x", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc }
+  ] });
+  A3(bad[0].status === "rejected" && bad[0].rejectionReason === "unknown_parent_slug", "S2: unknown parentSlug rejected (index or same batch only)");
+  await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "create_page", targetPageSlug: "emission-mechanisms", parentSlug: "", proposedMarkdown: "## Emission mechanisms\n\nA broader scaffold.", citedPaperIds: [], citedClaimIds: [], supportStatus: "needs_source", safetyCheck: sc }
+  ] });
+  const reorg = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "reorganize_parent", linkTargetSlug: "emission-mechanisms", reorganizeChildSlugs: ["thermal-emission", "spectral-lines"], citedPaperIds: [], citedClaimIds: [], safetyCheck: sc, reason: "better parent" }
+  ] });
+  const afterReorg = await db2.select().from(fieldPagesTable);
+  const em = afterReorg.find((p3) => p3.slug === "emission-mechanisms");
+  A3(reorg[0].status === "draft_applied" && afterReorg.filter((p3) => p3.parentPageId === em.id).length === 2, "S2: reorganize_parent re-parents existing pages (versioned structural edit)");
+  await rollbackReorganize(db2, reorg[0].proposedOverviewEditId);
+  const afterRb = await db2.select().from(fieldPagesTable);
+  const rp = afterRb.find((p3) => p3.slug === "radiative-processes");
+  A3(afterRb.filter((p3) => p3.parentPageId === rp.id).length === 2, "S2: reorganize_parent rolled back cleanly (children restored to prior parent)");
+  const allPages = await db2.select().from(fieldPagesTable);
+  const editRows = await db2.select().from(proposedOverviewEditsTable);
+  const motivated = new Set(editRows.filter((e3) => e3.status !== "rejected").map((e3) => e3.targetPageSlug));
+  A3(allPages.every((p3) => motivated.has(p3.slug)), "S3: zero pages that no paper motivated (every page traces to an applied edit)");
+  const scope = await pagesInScope(db2, OV);
+  A3(scope.length === allPages.length, "S3: pagesInScope covers the whole emergent tree when no root page exists");
 }
 async function runLive(db2, upsertPaper, persistReview) {
   const { ai: geminiAI } = await Promise.resolve().then(() => (init_src3(), src_exports2));

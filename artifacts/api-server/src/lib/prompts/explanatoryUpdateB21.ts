@@ -37,9 +37,9 @@ optional polish). The overview is NOT neutral encyclopedia prose and NOT flat de
 every passage through the SAME lens the review uses to score papers — explanatory update. A
 passage must convey: why this piece of the field matters, what was understood BEFORE, what this
 paper changed or added in our understanding of nature, and (for a result) why it was a genuine
-update beyond prior work. The overview as a whole opens by framing WHY horizon thermodynamics is
-a significant explanatory structure at all — the deep link it reveals between gravity,
-thermodynamics, information, and spacetime — not with a dictionary definition. A paper's framing
+update beyond prior work. A page opens by framing WHY its subject matters as explanatory
+structure — what it lets us explain, derive, or constrain that we otherwise could not — never
+with a dictionary definition. A paper's framing
 and prominence in the overview must be CONSISTENT with its review verdict: the review scores
 explanatory update, the overview narrates the field's explanatory structure, and they share the
 currency so the product is one coherent thing. Your proposedMarkdown must already be written in
@@ -83,9 +83,17 @@ Choose the action that expresses the rewrite:
                          = the existing phrase) — the lightest touch.
   - add_paragraph      : add genuinely new material to an existing section.
   - add_subsection     : add a new subsection for genuinely new material.
-  - create_subpage     : new subpage — ONLY when no existing page/section is the right home
-                         (editorial judgment). Prefer improving the most specific existing page;
-                         never create a page that merely restates an existing one.
+  - create_page        : create a new topic page. Give targetPageSlug (the new slug) + a first
+                         proposedMarkdown, and parentSlug — an EXISTING slug from the index, OR a
+                         page you create earlier in this same batch (propose the parent first),
+                         OR empty for a top-level page. Create a page ONLY when no existing page
+                         is the right home (editorial judgment); never a page that merely
+                         restates an existing one. Parents you create as broader context are
+                         SCAFFOLDS: mark every unsourced scientific claim in them.
+  - reorganize_parent  : re-parent existing pages under a better parent. Give linkTargetSlug =
+                         the new parent (existing, or created earlier in this batch) and
+                         reorganizeChildSlugs = the existing pages to move. A versioned
+                         structural edit, reversible like everything else.
   - add_link           : link an existing phrase on a page to another page. Give targetPageSlug
                          (the page containing the phrase), anchorText (the exact phrase, verbatim
                          from the current prose), and linkTargetSlug (the destination page,
@@ -101,24 +109,41 @@ CONFIDENCE-CALIBRATED PROSE — the stability fixed point. Write every region at
 strength: state established understanding as established; state a contested point explicitly as
 contested AND name the central objection; state speculative content as speculative; state a failed
 claim as failed with the reason. Surfacing a contested status is PART of the best explanation, not
-a bolt-on caveat — presenting a contested idea (e.g. entropic gravity, which carries a live
-circularity objection) as if it were established is simply a WORSE explanation. Prose that already
-says "X is contested for reasons A and B" is a stable fixed point: it gives a future editor nothing
-to flip. (Regression watch: an earlier seed presented entropic gravity as straightforwardly
-yielding the Einstein equations, dropping Verlinde's objection — that must not recur; keep the
-objection in the prose.) You are also given a CORRECTIONS LEDGER (what changed on each page and
-why) — honor it: do not re-introduce a fixed mistake or re-litigate a settled point.
-GROWTH MODEL — the overview grows FROM this paper (soft heuristics, not rules). After the review,
-consider two moves: (a) is there — or should there be — a page/section about what THIS paper does?
-If it warrants one and none exists, create it and write the best explanation of its idea. (b) Would
-the field ONE LEVEL UP be improved by an edit that references this paper? Default to one level up
-(e.g. a Hawking-radiation result improves "Horizon Thermodynamics", not "physics"); go further
-up/down only when clearly warranted. The improvement may be: add a subsection, edit existing text,
-or simply SOURCE a sentence that is already there but unsourced (this paper being its source — see
-accretion below).
+a bolt-on caveat — presenting a contested research program as if it were established is simply a
+WORSE explanation. Announce a contested, speculative, or model-heuristic status IN THE FIRST
+SENTENCE of the affected region, with the central objection named. Prose that already says "X is
+contested for reasons A and B" is a stable fixed point: it gives a future editor nothing to flip.
+You are also given a CORRECTIONS LEDGER (what changed on each page and why) — honor it: do not
+re-introduce a fixed mistake or re-litigate a settled point.
 
-For each edit give: targetPageSlug (an EXISTING slug where applicable; for create_subpage, a
-proposed new slug + title), targetSectionSlug (if applicable), the exact proposedMarkdown (real
+PAGE SCOPE. For any page you create or rewrite, write at that page's natural scope. Explain why
+the subject matters, what was understood before, what this paper changed, and how the subject
+sits inside broader and narrower pages. PAGE-SCOPE RULE: a paper may dominate its own topic page.
+It must not dominate a parent page unless your review establishes a genuinely field-level update.
+A parent page synthesizes everything it contains; it is not the latest paper wearing a bigger
+title.
+
+Do not assume the target page exists. If broader context is needed to understand this paper and
+no adequate parent page exists, create it — as scaffolded explanation with every unsourced
+scientific claim visibly marked (needs_source / unsourced_explanatory). Later papers will source,
+broaden, rewrite, or displace that scaffold. If the contribution needs narrower detail pages,
+create those. The goal is never to insert the paper into a page; the goal is to improve the
+explanatory structure.
+
+STRUCTURE DISCOVERY — do this before proposing edits:
+1. Identify the paper's central explanatory target.
+2. Find existing pages explaining this target or its parent subjects (from the index).
+3. If no adequate page exists, propose the smallest useful topic page.
+4. If broader context is needed, propose the necessary parent page (scaffolded).
+5. If narrower detail is needed, propose child pages.
+6. Rewrite only the regions the best explanation requires, at the right scope.
+The default reach is ONE level up from the paper's own topic — a result on a specific mechanism
+improves the page on its immediate subject area, not a page on "science" — but go further up or
+down when the explanation clearly warrants it. An improvement may also simply SOURCE a sentence
+that is already there but unsourced (this paper being its source — see accretion below).
+
+For each edit give: targetPageSlug (an EXISTING slug where applicable; for create_page, the
+proposed new slug), parentSlug (create_page only), targetSectionSlug (if applicable), the exact proposedMarkdown (real
 prose in the explanatory-update voice), citedPaperIds (the papers whose claims genuinely establish
 this sentence — usually THIS manuscript; may be empty for connective/background prose), citedClaimIds
 (from your claims list, for the papers cited), a supportStatus for the span, anchorText (for
@@ -183,6 +208,8 @@ valid JSON, no comments, no trailing commas):
         "targetPageSlug": "",
         "targetSectionSlug": "",
         "linkTargetSlug": "",
+        "parentSlug": "",
+        "reorganizeChildSlugs": [],
         "anchorText": "",
         "proposedMarkdown": "",
         "pageSummaryOneLine": "",
@@ -198,8 +225,9 @@ valid JSON, no comments, no trailing commas):
     "overviewChangeSummary": ""
   }
 Field-rule reminders (do not echo): action is exactly one of no_change | add_reference |
-edit_existing_text | add_paragraph | add_subsection | create_subpage | merge_or_reorganize |
-add_link; editType is exactly one of prose | reference_only | new_section | new_subpage |
+edit_existing_text | add_paragraph | add_subsection | create_page | merge_or_reorganize |
+add_link | reorganize_parent; parentSlug (create_page) and reorganizeChildSlugs (reorganize_parent)
+name slugs from the index or from pages created earlier in this same batch — never invented; editType is exactly one of prose | reference_only | new_section | new_subpage |
 reorganization | link_only; linkTargetSlug is used ONLY with add_link and must be a slug from
 the supplied index (never invented, never a URL);
 each claim's status is exactly one of established | contested | speculative | failed;

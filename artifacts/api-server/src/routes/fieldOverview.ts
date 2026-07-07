@@ -12,7 +12,7 @@ import {
   attributionChecksTable, pageLinksTable, divergenceFlagsTable,
 } from "@workspace/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook, getContributionTransclusion, liveProvenanceForVersion } from "../lib/overviewEditor";
+import { computeProminence, publishOverview, rollbackPage, canonicalPaperSlug, runPostReviewOverviewHook, getContributionTransclusion, liveProvenanceForVersion, pagesInScope } from "../lib/overviewEditor";
 import { logger } from "../lib/logger";
 
 // Enrich references with the canonical paper slug + title (the model never writes slugs — §10.2a).
@@ -51,10 +51,9 @@ router.get("/overviews/:slug", async (req, res) => {
   const wantDraft = req.query.draft === "1";
   if (wantDraft && !requireAdmin(req, res)) return;
   try {
-    const root = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, req.params.slug)).limit(1))[0];
-    if (!root) { res.status(404).json({ error: "overview not found" }); return; }
     const all = await db.select().from(fieldPagesTable);
-    const pages = all.filter((p) => p.id === root.id || p.parentPageId === root.id);
+    const pages = await pagesInScope(db as any, req.params.slug);
+    if (pages.length === 0) { res.status(404).json({ error: "overview not found" }); return; }
     const out = [] as any[];
     for (const p of pages) {
       const version = await latestVersion(p.id, wantDraft ? undefined : "published");
@@ -83,7 +82,7 @@ router.get("/overviews/:slug", async (req, res) => {
         links,
       });
     }
-    res.json({ overviewSlug: root.slug, isDraft: wantDraft, pages: out });
+    res.json({ overviewSlug: req.params.slug, isDraft: wantDraft, pages: out });
   } catch (err) { logger.error({ err }, "overview fetch failed"); res.status(500).json({ error: "overview fetch failed" }); }
 });
 
@@ -233,10 +232,8 @@ router.patch("/admin/attribution-checks/:id", async (req, res) => {
 router.get("/admin/overviews/:slug/publish-diff", async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
-    const root = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.slug, req.params.slug)).limit(1))[0];
-    if (!root) { res.status(404).json({ error: "overview not found" }); return; }
-    const all = await db.select().from(fieldPagesTable);
-    const scope = all.filter((p) => p.id === root.id || p.parentPageId === root.id);
+    const scope = await pagesInScope(db as any, req.params.slug);
+    if (scope.length === 0) { res.status(404).json({ error: "overview not found" }); return; }
     const pages = [] as any[];
     for (const p of scope) {
       const versions = await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, p.id)).orderBy(desc(fieldPageVersionsTable.versionNumber));

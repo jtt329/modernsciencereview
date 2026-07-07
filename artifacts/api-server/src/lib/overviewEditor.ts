@@ -93,7 +93,9 @@ export type OverviewImpactEdit = {
   editType?: OverviewEditType | null;
   targetPageSlug?: string;
   targetSectionSlug?: string;
-  linkTargetSlug?: string; // add_link: destination page slug, chosen FROM THE INDEX (slice 1)
+  linkTargetSlug?: string; // add_link destination / reorganize_parent new parent (from the index)
+  parentSlug?: string; // create_page: parent from the index or created earlier in this batch (S2)
+  reorganizeChildSlugs?: string[]; // reorganize_parent: existing pages to move (S2)
   targetBlockId?: string; // block substrate: precise block targeting (ids from the STEP-2 block listing)
   anchorText?: string;
   proposedMarkdown?: string;
@@ -417,6 +419,7 @@ function editIdempotencyKey(input: ApplyOverviewInput, edit: OverviewImpactEdit)
     rv: input.reviewVersionId ?? null, paper: input.paperId, overview: input.overviewSlug,
     action: edit.action, target: edit.targetPageSlug ?? null, section: edit.targetSectionSlug ?? null,
     linkTarget: edit.linkTargetSlug ?? null, block: edit.targetBlockId ?? null,
+    parent: edit.parentSlug ?? null, reorg: edit.reorganizeChildSlugs ?? [],
     anchor: edit.anchorText ?? null, md: edit.proposedMarkdown ?? "",
     cp: edit.citedPaperIds ?? [], cc: edit.citedClaimIds ?? [],
   })).digest("hex").slice(0, 40);
@@ -462,7 +465,7 @@ async function applyOverviewImpactInner(db: Db, input: ApplyOverviewInput): Prom
       const equationFlags: EquationFlags | null = eqUnmatched.length ? { unmatched: eqUnmatched } : null;
       const recordEdit = async (
         status: "draft_applied" | "rejected" | "no_change",
-        extra: { targetPageSlug?: string | null; appliedVersionId?: string; rejectionReason?: string } = {},
+        extra: { targetPageSlug?: string | null; appliedVersionId?: string; rejectionReason?: string; structuralChange?: { newParentSlug: string; children: { slug: string; oldParentSlug: string | null }[] } } = {},
       ) => {
         const [row] = await tx.insert(proposedOverviewEditsTable).values({
           reviewVersionId: input.reviewVersionId ?? null, paperId: input.paperId,
@@ -470,6 +473,8 @@ async function applyOverviewImpactInner(db: Db, input: ApplyOverviewInput): Prom
           targetPageSlug: extra.targetPageSlug ?? edit.targetPageSlug ?? null,
           targetSectionSlug: edit.targetSectionSlug ?? null,
           linkTargetSlug: edit.linkTargetSlug ?? null,
+          parentSlug: edit.parentSlug ?? null,
+          structuralChange: extra.structuralChange ?? null,
           proposedMarkdown: edit.proposedMarkdown ?? "",
           citedPaperIds: edit.citedPaperIds ?? [], citedClaimIds: edit.citedClaimIds ?? [],
           editorRationale: edit.editorRationale ?? null, safetyCheck: edit.safetyCheck ?? null,
@@ -536,19 +541,59 @@ async function applyOverviewImpactInner(db: Db, input: ApplyOverviewInput): Prom
       const summaries = { oneLine: edit.pageSummaryOneLine, short: edit.pageSummaryShort };
 
       // Fatal routing: a flawed paper may only touch the disputed page.
+      const isCreatePage = edit.action === "create_page" || edit.action === "create_subpage"; // create_subpage = legacy alias
       const targetSlug = input.correctnessPublic === "flawed"
         ? disputedSlug
-        : (edit.action === "create_subpage" ? (edit.targetPageSlug || slugify(edit.proposedMarkdown?.split("\n")[0] ?? "new-page")) : (edit.targetPageSlug || input.overviewSlug));
+        : (isCreatePage ? (edit.targetPageSlug || slugify(edit.proposedMarkdown?.split("\n")[0] ?? "new-page")) : (edit.targetPageSlug || input.overviewSlug));
 
-      // create_subpage: brand-new page -> all-new blocks via the block-native creator.
-      if (edit.action === "create_subpage" && input.correctnessPublic !== "flawed") {
+      // reorganize_parent (S2): a versioned, reversible STRUCTURAL edit — re-parent existing
+      // pages under a better parent. Slug discipline holds: parent + children from the index
+      // (or created earlier in this batch); never invented.
+      if (edit.action === "reorganize_parent") {
+        const newParent = edit.linkTargetSlug ? await getPageBySlug(tx, edit.linkTargetSlug) : null;
+        if (!newParent) {
+          const id = await recordEdit("rejected", { rejectionReason: "unknown_parent_slug: reorganize_parent target does not exist" });
+          return { action: edit.action, targetPageSlug: edit.linkTargetSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "unknown_parent_slug" };
+        }
+        const childSlugs = (edit.reorganizeChildSlugs ?? []).filter((s) => s && s !== edit.linkTargetSlug);
+        const children: { slug: string; oldParentSlug: string | null; id: string }[] = [];
+        for (const cs of childSlugs) {
+          const child = await getPageBySlug(tx, cs);
+          if (!child) {
+            const id = await recordEdit("rejected", { rejectionReason: `unknown_target_slug: reorganize child "${cs}" does not exist` });
+            return { action: edit.action, targetPageSlug: edit.linkTargetSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "unknown_target_slug" };
+          }
+          const oldParent = child.parentPageId ? (await tx.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, child.parentPageId)))[0] : null;
+          children.push({ slug: cs, oldParentSlug: oldParent?.slug ?? null, id: child.id });
+        }
+        if (children.length === 0) {
+          const id = await recordEdit("rejected", { rejectionReason: "empty_edit: reorganize_parent with no children" });
+          return { action: edit.action, targetPageSlug: edit.linkTargetSlug ?? null, status: "rejected", proposedOverviewEditId: id, rejectionReason: "empty_edit" };
+        }
+        for (const c of children) await tx.update(fieldPagesTable).set({ parentPageId: newParent.id, updatedAt: new Date() }).where(eq(fieldPagesTable.id, c.id));
+        const id = await recordEdit("draft_applied", { targetPageSlug: edit.linkTargetSlug, structuralChange: { newParentSlug: edit.linkTargetSlug!, children: children.map(({ slug, oldParentSlug }) => ({ slug, oldParentSlug })) } });
+        return { action: "reorganize_parent", targetPageSlug: edit.linkTargetSlug ?? null, status: "draft_applied", proposedOverviewEditId: id };
+      }
+
+      // create_page (S2; create_subpage is the legacy alias): brand-new page with an EMERGENT
+      // parent — parentSlug from the index or created earlier in this batch; empty = top level.
+      if (isCreatePage && input.correctnessPublic !== "flawed") {
         const existing = await getPageBySlug(tx, targetSlug);
         if (existing) {
           edit.action = "add_paragraph"; // slug exists — improve it, don't duplicate
         } else {
-          const root = await getPageBySlug(tx, input.overviewSlug);
+          let parent = null as any;
+          if (edit.parentSlug) {
+            parent = await getPageBySlug(tx, edit.parentSlug);
+            if (!parent) {
+              const id = await recordEdit("rejected", { targetPageSlug: targetSlug, rejectionReason: "unknown_parent_slug: create_page parent does not exist (use the index or create it earlier in this batch)" });
+              return { action: edit.action, targetPageSlug: targetSlug, status: "rejected", proposedOverviewEditId: id, rejectionReason: "unknown_parent_slug" };
+            }
+          } else if (edit.action === "create_subpage") {
+            parent = await getPageBySlug(tx, input.overviewSlug); // legacy alias default
+          }
           const title = (edit.proposedMarkdown?.match(/^#+\s*(.+)/)?.[1] || targetSlug.replace(/-/g, " ")).slice(0, 120);
-          const [page] = await tx.insert(fieldPagesTable).values({ slug: targetSlug, title, parentPageId: root?.id ?? null, scopeStatement: edit.reason ?? "", summary: "" }).returning();
+          const [page] = await tx.insert(fieldPagesTable).values({ slug: targetSlug, title, parentPageId: parent?.id ?? null, scopeStatement: edit.reason ?? "", summary: "" }).returning();
           const md = edit.proposedMarkdown ?? `## ${title}\n`;
           const version = await newDraftVersion(tx, page.id, md, [{ at: new Date().toISOString(), action: `create_subpage from paper ${input.paperId}`, note: edit.reason }], input.createdByUserId, summaries, provIds);
           const vBlocks = await blocksOfVersion(tx, version.id);
@@ -564,7 +609,7 @@ async function applyOverviewImpactInner(db: Db, input: ApplyOverviewInput): Prom
           }
           const id = await recordEdit("draft_applied", { targetPageSlug: targetSlug, appliedVersionId: version.id });
           if (firstContent) await recordAttributionWatch({ editId: id, refId, spanId, pageId: page.id, anchoredText: firstContent.markdown.slice(0, 400) });
-          return { action: "create_subpage", targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId, supportStatus, droppedCitations: dropped };
+          return { action: edit.action, targetPageSlug: targetSlug, status: "draft_applied", proposedOverviewEditId: id, appliedVersionId: version.id, referenceId: refId, spanId, supportStatus, droppedCitations: dropped };
         }
       }
 
@@ -837,11 +882,9 @@ export async function computeProminence(db: Db, overviewSlug: string, paperId: s
 // ---- Assemble the draft overview into markdown (for review / export) ---------------
 // markdownFull is the maintained render cache; provenance counts come from block membership.
 export async function assembleOverviewMarkdown(db: Db, overviewSlug: string): Promise<string> {
-  const root = await getPageBySlug(db, overviewSlug);
-  const pages = await db.select().from(fieldPagesTable);
-  const ordered = pages.filter((p: any) => p.slug === overviewSlug || p.parentPageId === (root?.id ?? "__none__"));
+  const ordered = await pagesInScope(db, overviewSlug);
   const chunks: string[] = [];
-  for (const p of [root, ...ordered.filter((x: any) => x.id !== root?.id)].filter(Boolean) as any[]) {
+  for (const p of ordered) {
     const v = await latestVersion(db, p.id);
     const prov = v ? await liveProvenanceForVersion(db, v.id) : { spans: [], refs: [], links: [] };
     const sourced = prov.spans.filter((s: any) => s.supportStatus === "sourced").length;
@@ -1124,9 +1167,7 @@ export async function assembleCorrectionsLedger(db: Db, overviewSlug: string, ta
 
 // ---- draft -> published (single switch, not a per-edit gate) -----------------------
 export async function publishOverview(db: Db, overviewSlug: string) {
-  const root = await getPageBySlug(db, overviewSlug);
-  const pages = await db.select().from(fieldPagesTable);
-  const scope = pages.filter((p: any) => p.slug === overviewSlug || p.parentPageId === (root?.id ?? "__none__"));
+  const scope = await pagesInScope(db, overviewSlug);
   let published = 0;
   for (const p of scope) {
     const v = await latestVersion(db, p.id);
@@ -1140,6 +1181,47 @@ export async function publishOverview(db: Db, overviewSlug: string) {
   await db.update(proposedOverviewEditsTable).set({ status: "published" })
     .where(and(eq(proposedOverviewEditsTable.overviewSlug, overviewSlug), eq(proposedOverviewEditsTable.status, "draft_applied")));
   return { publishedVersions: published };
+}
+
+// ---- reverse a reorganize_parent edit (S2 reversibility) ----------------------------
+export async function rollbackReorganize(db: Db, editId: string) {
+  const edit = (await db.select().from(proposedOverviewEditsTable).where(eq(proposedOverviewEditsTable.id, editId)))[0];
+  const change = edit?.structuralChange as { newParentSlug: string; children: { slug: string; oldParentSlug: string | null }[] } | null;
+  if (!edit || edit.action !== "reorganize_parent" || !change) throw new Error("not a reversible reorganize_parent edit");
+  for (const c of change.children) {
+    const child = await getPageBySlug(db, c.slug);
+    if (!child) continue;
+    const oldParent = c.oldParentSlug ? await getPageBySlug(db, c.oldParentSlug) : null;
+    await db.update(fieldPagesTable).set({ parentPageId: oldParent?.id ?? null, updatedAt: new Date() }).where(eq(fieldPagesTable.id, child.id));
+  }
+  await db.update(proposedOverviewEditsTable).set({ status: "reverted" }).where(eq(proposedOverviewEditsTable.id, editId));
+  return { reverted: change.children.length };
+}
+
+// ---- Emergent-hierarchy scope (S3): the namespace is the whole page tree ------------
+// With emergence there is no pre-declared root: if a page named by the namespace slug exists,
+// scope = it + all descendants; otherwise scope = every page (single-field deployments).
+export async function pagesInScope(db: Db, overviewSlug: string) {
+  const all = await db.select().from(fieldPagesTable);
+  const root = all.find((p: any) => p.slug === overviewSlug);
+  if (!root) return all;
+  const byParent = new Map<string, any[]>();
+  for (const p of all) {
+    const key = p.parentPageId ?? "__top__";
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key)!.push(p);
+  }
+  const out: any[] = [];
+  const stack = [root];
+  while (stack.length) {
+    const cur = stack.pop()!;
+    out.push(cur);
+    for (const child of byParent.get(cur.id) ?? []) stack.push(child);
+  }
+  // The disputed page is namespace machinery even when parentless.
+  const disputed = all.find((p: any) => p.slug === `${overviewSlug}-${DISPUTED_PAGE_SLUG_SUFFIX}`);
+  if (disputed && !out.some((p) => p.id === disputed.id)) out.push(disputed);
+  return out;
 }
 
 // ---- rollback a page to a prior version (preserves history) ------------------------

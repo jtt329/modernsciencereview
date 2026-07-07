@@ -160,7 +160,8 @@ export const pageReferencesTable = pgTable("page_references", {
 // (§10.4) so the injection-defense outcome and the "why" are auditable, not just prompted.
 export type OverviewEditAction =
   | "no_change" | "add_reference" | "edit_existing_text" | "add_paragraph"
-  | "add_subsection" | "create_subpage" | "merge_or_reorganize" | "add_link";
+  | "add_subsection" | "create_subpage" /* legacy alias of create_page */ | "create_page"
+  | "reorganize_parent" | "merge_or_reorganize" | "add_link";
 export type OverviewEditType = "prose" | "reference_only" | "new_section" | "new_subpage" | "reorganization" | "link_only";
 export type OverviewEditStatus = "draft_applied" | "published" | "reverted" | "superseded" | "rejected";
 
@@ -186,7 +187,10 @@ export const proposedOverviewEditsTable = pgTable("proposed_overview_edits", {
   editType: varchar("edit_type").$type<OverviewEditType>(),
   targetPageSlug: varchar("target_page_slug"),
   targetSectionSlug: varchar("target_section_slug"),
-  linkTargetSlug: varchar("link_target_slug"), // add_link destination (validated against the index; model never writes URLs)
+  linkTargetSlug: varchar("link_target_slug"), // add_link destination / reorganize_parent new parent (validated against the index)
+  parentSlug: varchar("parent_slug"), // create_page: parent chosen from index or same batch (emergent hierarchy, S2)
+  // reorganize_parent reversibility: the children moved and their previous parents.
+  structuralChange: jsonb("structural_change").$type<{ newParentSlug: string; children: { slug: string; oldParentSlug: string | null }[] } | null>(),
   proposedMarkdown: text("proposed_markdown").notNull().default(""),
   citedPaperIds: jsonb("cited_paper_ids").$type<string[]>().notNull().default([]),
   citedClaimIds: jsonb("cited_claim_ids").$type<string[]>().notNull().default([]),
@@ -340,6 +344,22 @@ export const pageLinksTable = pgTable("page_links", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// --- ConsistencyFinding: review<->overview consistency pass residue (Phase 2a S4) ----
+// A sourced region that failed the consistency checks TWICE (original + one regeneration with
+// findings in context) lands here for the auditor. Watch + generator-feedback, never a gate.
+export type ConsistencyFindingStatus = "queued" | "resolved";
+
+export const consistencyFindingsTable = pgTable("consistency_findings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  proposedOverviewEditId: varchar("proposed_overview_edit_id"),
+  blockId: varchar("block_id"),
+  pageId: varchar("page_id"),
+  paperId: varchar("paper_id").references(() => papersTable.id, { onDelete: "cascade" }),
+  findings: jsonb("findings").$type<{ check: string; detail: string }[]>().notNull().default([]),
+  status: varchar("status").$type<ConsistencyFindingStatus>().notNull().default("queued"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // --- DivergenceFlag: estimate vs realized-position disagreement (slice 5.4) --------
 // The review's estimated-importance range and the realized structural position are the same
 // qualitative judgment at two different times; sharp divergence means a stale page or a flipped
@@ -403,6 +423,8 @@ export type AttributionCheck = typeof attributionChecksTable.$inferSelect;
 export type InsertAttributionCheck = typeof attributionChecksTable.$inferInsert;
 export type PageLink = typeof pageLinksTable.$inferSelect;
 export type InsertPageLink = typeof pageLinksTable.$inferInsert;
+export type ConsistencyFinding = typeof consistencyFindingsTable.$inferSelect;
+export type InsertConsistencyFinding = typeof consistencyFindingsTable.$inferInsert;
 export type DivergenceFlag = typeof divergenceFlagsTable.$inferSelect;
 export type InsertDivergenceFlag = typeof divergenceFlagsTable.$inferInsert;
 export type PageBlock = typeof pageBlocksTable.$inferSelect;
