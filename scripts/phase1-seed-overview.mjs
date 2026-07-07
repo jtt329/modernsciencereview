@@ -774,22 +774,27 @@ async function runAudit(db) {
   for (const c of pageChunks) { if (curLen + c.length > CHUNK_BUDGET && cur.length) { groups.push(cur); cur = []; curLen = 0; } cur.push(c); curLen += c.length; }
   if (cur.length) groups.push(cur);
   const merged = {};
+  let failedParts = 0;
   for (let gi = 0; gi < groups.length; gi += 1) {
     const input = ["REVIEW VERDICTS (all papers in the corpus):", reviewLines, "", "GENERATED PAGES" + (groups.length > 1 ? " (part " + (gi + 1) + "/" + groups.length + ")" : "") + ":", groups[gi].join(NL + NL)].join(NL);
     console.log("[audit] part " + (gi + 1) + "/" + groups.length + " (" + input.length + " chars, " + groups[gi].length + " pages)");
     const report = parse(await call(AUDITOR_PROMPT, input));
-    if (!report) { console.log("  ! unparseable auditor output for part " + (gi + 1)); continue; }
+    if (!report) { failedParts += 1; console.log("  ! unparseable auditor output for part " + (gi + 1)); continue; }
     for (const [k, vArr] of Object.entries(report)) {
       if (!Array.isArray(vArr)) continue;
       if (!merged[k]) merged[k] = [];
       merged[k].push(...vArr);
     }
   }
+  // A parse failure must be LOUD: an all-parts-failed audit otherwise writes an empty report
+  // that reads as "no findings" (false green — happened on run-bperm). Fail the process; a
+  // partial failure is recorded in the JSON so the report can't be mistaken for complete.
+  if (failedParts === groups.length) { console.error("[audit] FAILED: all " + groups.length + " part(s) unparseable — no report written"); process.exit(1); }
   const label = process.env.AUDIT_LABEL || "audit";
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   mkdirSync(OUT + "/audits", { recursive: true });
   const outJson = OUT + "/audits/" + label + "_" + ts + ".json";
-  writeFileSync(outJson, JSON.stringify({ label, promptHash: AUDITOR_PROMPT_HASH, overviewSlug: OVERVIEW_SLUG, pages: pages.length, reviews: reviews.length, report: merged }, null, 2));
+  writeFileSync(outJson, JSON.stringify({ label, promptHash: AUDITOR_PROMPT_HASH, overviewSlug: OVERVIEW_SLUG, pages: pages.length, reviews: reviews.length, failedParts, totalParts: groups.length, report: merged }, null, 2));
   const md = ["# Auditor report — " + label + " (" + ts + ")", ""];
   for (const [k, vArr] of Object.entries(merged)) {
     md.push("## " + k + " (" + vArr.length + ")");
