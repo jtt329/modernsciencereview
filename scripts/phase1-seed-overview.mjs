@@ -13,7 +13,7 @@
 //     node --env-file=.env scripts/phase1-seed-overview.mjs
 import { pathToFileURL } from "node:url";
 import { join, relative } from "node:path";
-import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { renderBlindPages } from "./lib/renderBlindPages.mjs";
@@ -168,6 +168,7 @@ if (MODE === "synthetic") { staticSoftStatusCheck(); schemaDriftCheck(); }
 
 const entry = `
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { basename } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import {
@@ -245,10 +246,14 @@ async function main() {
     await runLive(db, upsertPaper, persistReview);
   }
 
-  // Assemble + dump the draft overview for review.
+  // Assemble + dump the draft overview for review. Per-DB suffix so experiment runs
+  // (run-*-db dirs) never overwrite each other's export or the seed-15 baseline
+  // overview_draft_live.md (which run-a/run-b rounds clobbered before this fix).
+  const dbBase = process.env.PGLITE_DIR ? basename(process.env.PGLITE_DIR) : "";
+  const draftName = "overview_draft_" + (dbBase.startsWith("run-") ? dbBase : MODE) + ".md";
   const md = await assembleOverviewMarkdown(db, OVERVIEW_SLUG);
-  writeFileSync(OUT + "/overview_draft_" + MODE + ".md", md);
-  console.log("[seed] wrote overview_draft_" + MODE + ".md (" + md.length + " chars)");
+  writeFileSync(OUT + "/" + draftName, md);
+  console.log("[seed] wrote " + draftName + " (" + md.length + " chars)");
   console.log("[seed] DONE");
   process.exit(0); // file-backed pglite keeps the event loop alive; exit explicitly
 }
@@ -1050,7 +1055,15 @@ const dir = mkdtempSync(join(tmpdir(), "seed-overview-"));
 const entryFile = join(dir, "entry.ts");
 // Output INTO scripts/ so Node resolves the external pglite (with its .wasm) from
 // scripts/node_modules at runtime; bundling pglite breaks its wasm URL.
-const outFile = join(ROOT, "scripts", ".seed-overview.bundle.mjs");
+// Pid-unique name: concurrent invocations (experiment runner rounds + ad-hoc suite/audit
+// runs) must not rebuild each other's bundle between build and import.
+const outFile = join(ROOT, "scripts", ".seed-overview.bundle." + process.pid + ".mjs");
+// Sweep bundles from dead invocations (process.exit at DONE skips any post-import cleanup).
+for (const f of readdirSync(join(ROOT, "scripts"))) {
+  if (/^\.seed-overview\.bundle\..+\.mjs$/.test(f) && Date.now() - statSync(join(ROOT, "scripts", f)).mtimeMs > 24 * 3600 * 1000) {
+    try { unlinkSync(join(ROOT, "scripts", f)); } catch {}
+  }
+}
 writeFileSync(entryFile, entry);
 await build({
   entryPoints: [entryFile], outfile: outFile, bundle: true, platform: "node", format: "esm",
