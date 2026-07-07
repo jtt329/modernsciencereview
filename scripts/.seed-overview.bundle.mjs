@@ -15291,6 +15291,79 @@ var init_overviewEditor = __esm({
   }
 });
 
+// artifacts/api-server/src/lib/prompts/auditor.ts
+var auditor_exports = {};
+__export(auditor_exports, {
+  AUDITOR_PROMPT: () => AUDITOR_PROMPT,
+  AUDITOR_PROMPT_HASH: () => AUDITOR_PROMPT_HASH
+});
+import { createHash as createHash2 } from "node:crypto";
+var AUDITOR_PROMPT, AUDITOR_PROMPT_HASH;
+var init_auditor = __esm({
+  "artifacts/api-server/src/lib/prompts/auditor.ts"() {
+    "use strict";
+    AUDITOR_PROMPT = `You are auditing an automatically generated, source-grounded explanation of a scientific field.
+You are a SKEPTICAL scientific editor. You are NOT scoring, NOT rewriting, and NOT editing \u2014
+you produce an engineering report about where the GENERATOR (prompts/pipeline) fell short, so
+the system can be fixed and regenerate. Your output is advisory only; nothing is computed from
+it.
+
+You are given: every page (slug, parent, full prose, per-sentence support statuses), the
+citations (which paper backs which sentence), and each paper's review verdict (score range,
+correctness, scope). Judge the pages AGAINST the reviews and against the corpus as a whole.
+
+Look for exactly these problem classes:
+1. pageScopeIssues \u2014 a parent page written at the wrong scope: overfit to one paper (often the
+   first-ingested), or reading like "the latest paper wearing a bigger title" instead of a
+   synthesis of everything beneath it; also ingestion-order artifacts in the opening framing.
+2. reviewOverviewMismatches \u2014 prose confidence that does not match the review verdict or scope:
+   a contested/speculative/model-heuristic result written more settled than its review; an
+   established result hedged into mush; a speculative region whose FIRST sentence does not
+   announce its status.
+3. overprominenceFlags \u2014 niche results structurally more central than the corpus justifies
+   (e.g. a modest-scored paper anchoring a top-level section while landmark work sits deeper).
+4. missingParentPages \u2014 subjects that need a broader page to be understandable, none exists.
+5. missingChildPages \u2014 pages carrying detail that deserves its own narrower page.
+6. unsupportedScientificClaims \u2014 scientific claims presented without source AND without a
+   visible unsourced/needs-source marking; or connective prose smuggling a new claim.
+7. misattributionOrCitationIssues \u2014 a sentence citing a paper whose claims do not establish it.
+8. equationConcerns \u2014 equations that look wrong, inconsistent between pages, or stated with the
+   wrong strictness/coefficients relative to what the cited review claims say.
+9. suggestedPromptChanges \u2014 concrete, GENERAL prompt-language changes (principles, not recipes;
+   never field-specific).
+10. suggestedPipelineChanges \u2014 concrete engine/check changes.
+11. suggestedRegressionTests \u2014 for each accepted-looking finding, the test that would lock it in.
+
+Calibration for tone and precision (real examples of the standard expected):
+- "physically equivalent" where the honest phrase is "formally parallel" is a
+  reviewOverviewMismatch \u2014 precision about the strength of an analogy is part of correctness.
+- "validated the Generalized Second Law" where the honest phrase is "made the GSL
+  quantitatively consistent in semiclassical gravity" is an overclaim \u2014 name it.
+- A model-heuristic section whose first sentence does not announce its status is a mismatch
+  even if a caveat appears later.
+
+Report only what you can ground in the provided pages/reviews; for each finding give the page
+slug (and quote the offending phrase when short). Be terse and specific. Empty arrays are fine
+\u2014 do not invent findings to fill categories.
+
+Return valid JSON only \u2014 no comments, no trailing commas:
+{
+  "pageScopeIssues": [ { "pageSlug": "", "detail": "" } ],
+  "reviewOverviewMismatches": [ { "pageSlug": "", "paper": "", "detail": "" } ],
+  "overprominenceFlags": [ { "pageSlug": "", "paper": "", "detail": "" } ],
+  "missingParentPages": [ { "suggestedSubject": "", "detail": "" } ],
+  "missingChildPages": [ { "pageSlug": "", "suggestedSubject": "", "detail": "" } ],
+  "unsupportedScientificClaims": [ { "pageSlug": "", "quote": "", "detail": "" } ],
+  "misattributionOrCitationIssues": [ { "pageSlug": "", "paper": "", "detail": "" } ],
+  "equationConcerns": [ { "pageSlug": "", "equation": "", "detail": "" } ],
+  "suggestedPromptChanges": [ "" ],
+  "suggestedPipelineChanges": [ "" ],
+  "suggestedRegressionTests": [ "" ]
+}`;
+    AUDITOR_PROMPT_HASH = createHash2("sha256").update(AUDITOR_PROMPT).digest("hex").slice(0, 16);
+  }
+});
+
 // node_modules/.pnpm/retry@0.13.1/node_modules/retry/lib/retry_operation.js
 var require_retry_operation = __commonJS({
   "node_modules/.pnpm/retry@0.13.1/node_modules/retry/lib/retry_operation.js"(exports, module) {
@@ -35867,7 +35940,7 @@ var require_websocket = __commonJS({
     var http3 = __require("http");
     var net = __require("net");
     var tls = __require("tls");
-    var { randomBytes, createHash: createHash5 } = __require("crypto");
+    var { randomBytes, createHash: createHash6 } = __require("crypto");
     var { Duplex, Readable: Readable3 } = __require("stream");
     var { URL: URL2 } = __require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -36527,7 +36600,7 @@ var require_websocket = __commonJS({
           abortHandshake(websocket, socket, "Invalid Upgrade header");
           return;
         }
-        const digest = createHash5("sha1").update(key + GUID).digest("base64");
+        const digest = createHash6("sha1").update(key + GUID).digest("base64");
         if (res.headers["sec-websocket-accept"] !== digest) {
           abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
           return;
@@ -36894,7 +36967,7 @@ var require_websocket_server = __commonJS({
     var EventEmitter = __require("events");
     var http3 = __require("http");
     var { Duplex } = __require("stream");
-    var { createHash: createHash5 } = __require("crypto");
+    var { createHash: createHash6 } = __require("crypto");
     var extension2 = require_extension();
     var PerMessageDeflate2 = require_permessage_deflate();
     var subprotocol2 = require_subprotocol();
@@ -37195,7 +37268,7 @@ var require_websocket_server = __commonJS({
           );
         }
         if (this._state > RUNNING) return abortHandshake(socket, 503);
-        const digest = createHash5("sha1").update(key + GUID).digest("base64");
+        const digest = createHash6("sha1").update(key + GUID).digest("base64");
         const headers = [
           "HTTP/1.1 101 Switching Protocols",
           "Upgrade: websocket",
@@ -75277,7 +75350,7 @@ __export(reviewEngineCompat_exports, {
   scoringModelId: () => scoringModelId,
   v15ComparatorCalibrationForStorage: () => v15ComparatorCalibrationForStorage
 });
-import { createHash as createHash2, randomUUID } from "crypto";
+import { createHash as createHash3, randomUUID } from "crypto";
 function normalizeReviewPipelineMode(value) {
   return value === "normal-review" ? "normal-review" : "benchmark-ingestion";
 }
@@ -75732,7 +75805,7 @@ function approximateTokenCount(text2) {
   return Math.ceil((text2 || "").length / 4);
 }
 function sha256Text(text2) {
-  return createHash2("sha256").update(text2 || "").digest("hex");
+  return createHash3("sha256").update(text2 || "").digest("hex");
 }
 function textSnippetFirst(text2, length = 2e3) {
   return (text2 || "").slice(0, length);
@@ -77728,8 +77801,8 @@ function reviewInputAuditHashes(input) {
   const text2 = reviewInputText(input);
   const pdfBase64 = typeof input === "string" ? "" : input.pdfBase64;
   return {
-    textHash: createHash2("sha256").update(text2).digest("hex"),
-    pdfHash: pdfBase64 ? createHash2("sha256").update(pdfBase64).digest("hex") : null
+    textHash: createHash3("sha256").update(text2).digest("hex"),
+    pdfHash: pdfBase64 ? createHash3("sha256").update(pdfBase64).digest("hex") : null
   };
 }
 function reviewExtractionMethod(input) {
@@ -81068,7 +81141,7 @@ ${ACTIVE_PROMPT_DELTAS.join("\n\n")}` : base;
     REVIEW_FULL_PROMPT_SYSTEM = withLatexMarkdownFormatting(ACTIVE_FULL_PROMPT);
     REVIEW_PROMPT_NAME = ASSESSMENT_DEPTH_ENABLED ? "v19.1.0 computed ICO half-point" : INPUT_COHERENCE_ENABLED ? "v19.0.9 computed ICO half-point" : CONDITIONAL_COHERENCE_ENABLED ? "v19.0.8 computed ICO half-point" : FIRMNESS_RUNG_ENABLED ? "v19.0.7 computed ICO half-point" : DEDUCTION_FIRST_PRINCIPLES_ENABLED ? "v19.0.6 computed ICO half-point" : CENTRALITY_TRANSFERABILITY_ENABLED ? "v19.0.5 computed ICO half-point" : ASSUMPTION_CONDITIONALS_ENABLED ? "v19.0.4 computed ICO half-point" : LINKED_INPUT_JUSTIFICATION_ENABLED ? "v19.0.3 computed ICO half-point" : "v19.0.2 computed ICO half-point";
     REVIEW_PROMPT_DATE = ASSESSMENT_DEPTH_ENABLED ? "2026-06-27" : INPUT_COHERENCE_ENABLED ? "2026-06-25" : CONDITIONAL_COHERENCE_ENABLED ? "2026-06-25" : FIRMNESS_RUNG_ENABLED ? "2026-06-20" : DEDUCTION_FIRST_PRINCIPLES_ENABLED ? "2026-06-20" : CENTRALITY_TRANSFERABILITY_ENABLED ? "2026-06-19" : ASSUMPTION_CONDITIONALS_ENABLED ? "2026-06-16" : LINKED_INPUT_JUSTIFICATION_ENABLED ? "2026-06-14" : "2026-06-12";
-    REVIEW_PROMPT_HASH = createHash2("sha256").update(REVIEW_SYSTEM_INSTRUCTION).digest("hex").slice(0, 16);
+    REVIEW_PROMPT_HASH = createHash3("sha256").update(REVIEW_SYSTEM_INSTRUCTION).digest("hex").slice(0, 16);
     ADJUDICATOR_PROMPT_DELTAS = [
       ASSUMPTION_CONDITIONALS_ENABLED ? ASSUMPTION_CONDITIONALS_DELTA : null,
       DEDUCTION_FIRST_PRINCIPLES_ENABLED ? DEDUCTION_FIRST_PRINCIPLES_DELTA : null,
@@ -81145,7 +81218,7 @@ Return exactly this JSON object:
   ]
 }
 `);
-    DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT_HASH = createHash2("sha256").update(DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT).digest("hex").slice(0, 16);
+    DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT_HASH = createHash3("sha256").update(DIAGNOSTIC_COMPARATOR_CALIBRATION_PROMPT).digest("hex").slice(0, 16);
     METADATA_PROMPT = `${DATE_METADATA_EXTRACTION_V15_PROMPT}
 
 Extract the exact manuscript title and paper authors from the scientific paper provided.
@@ -81959,7 +82032,7 @@ __export(explanatoryUpdateB2_exports, {
   FATAL_FLAW_VERIFICATION_PROMPT: () => FATAL_FLAW_VERIFICATION_PROMPT,
   FATAL_FLAW_VERIFICATION_PROMPT_HASH: () => FATAL_FLAW_VERIFICATION_PROMPT_HASH
 });
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 var EXPLANATORY_UPDATE_B2_PROMPT_NAME, EXPLANATORY_UPDATE_B2_PROMPT_VERSION, EXPLANATORY_UPDATE_B2_PROMPT, EXPLANATORY_UPDATE_B2_ADJUDICATOR_ADDENDUM, EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT, FATAL_FLAW_VERIFICATION_PROMPT, EQUATION_VERIFICATION_PROMPT, EXPLANATORY_UPDATE_B2_PROMPT_HASH, EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT_HASH, FATAL_FLAW_VERIFICATION_PROMPT_HASH;
 var init_explanatoryUpdateB2 = __esm({
   "artifacts/api-server/src/lib/prompts/explanatoryUpdateB2.ts"() {
@@ -82222,9 +82295,9 @@ unreadable, use not_found with a note \u2014 never guess.
 Return valid JSON only \u2014 no comments, no trailing commas:
 { "results": [ { "equation": "", "verbatimFromImage": "", "verdict": "matches", "note": "" } ] }
 Math in LaTeX inside $...$, backslashes escaped. Output valid JSON only.`;
-    EXPLANATORY_UPDATE_B2_PROMPT_HASH = createHash3("sha256").update(EXPLANATORY_UPDATE_B2_PROMPT).digest("hex").slice(0, 16);
-    EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT_HASH = createHash3("sha256").update(EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT).digest("hex").slice(0, 16);
-    FATAL_FLAW_VERIFICATION_PROMPT_HASH = createHash3("sha256").update(FATAL_FLAW_VERIFICATION_PROMPT).digest("hex").slice(0, 16);
+    EXPLANATORY_UPDATE_B2_PROMPT_HASH = createHash4("sha256").update(EXPLANATORY_UPDATE_B2_PROMPT).digest("hex").slice(0, 16);
+    EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT_HASH = createHash4("sha256").update(EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT).digest("hex").slice(0, 16);
+    FATAL_FLAW_VERIFICATION_PROMPT_HASH = createHash4("sha256").update(FATAL_FLAW_VERIFICATION_PROMPT).digest("hex").slice(0, 16);
   }
 });
 
@@ -82239,7 +82312,7 @@ __export(explanatoryUpdateB21_exports, {
   EXPLANATORY_UPDATE_B21_PROMPT_NAME: () => EXPLANATORY_UPDATE_B21_PROMPT_NAME,
   EXPLANATORY_UPDATE_B21_PROMPT_VERSION: () => EXPLANATORY_UPDATE_B21_PROMPT_VERSION
 });
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 var EXPLANATORY_UPDATE_B21_PROMPT_NAME, EXPLANATORY_UPDATE_B21_PROMPT_VERSION, OVERVIEW_EDITOR_ADDENDUM, EXPLANATORY_UPDATE_B21_PROMPT, EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, EXPLANATORY_UPDATE_B21_PROMPT_HASH, EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH, CONSISTENCY_CHECK_PROMPT;
 var init_explanatoryUpdateB21 = __esm({
   "artifacts/api-server/src/lib/prompts/explanatoryUpdateB21.ts"() {
@@ -82468,8 +82541,8 @@ no_change and empty markdown. Do not output any importance/role/prominence categ
 overviewImpact.`;
     EXPLANATORY_UPDATE_B21_PROMPT = [EXPLANATORY_UPDATE_B2_PROMPT, OVERVIEW_EDITOR_ADDENDUM].join("\n\n");
     EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT = [EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT, OVERVIEW_EDITOR_ADDENDUM].join("\n\n");
-    EXPLANATORY_UPDATE_B21_PROMPT_HASH = createHash4("sha256").update(EXPLANATORY_UPDATE_B21_PROMPT).digest("hex").slice(0, 16);
-    EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH = createHash4("sha256").update(EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT).digest("hex").slice(0, 16);
+    EXPLANATORY_UPDATE_B21_PROMPT_HASH = createHash5("sha256").update(EXPLANATORY_UPDATE_B21_PROMPT).digest("hex").slice(0, 16);
+    EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH = createHash5("sha256").update(EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT).digest("hex").slice(0, 16);
     CONSISTENCY_CHECK_PROMPT = `You are verifying that overview prose is consistent with the review that sourced it. You are
 given a prose region, the cited claims (with per-claim epistemic status), and the review scope.
 Check ONLY these five things and report findings:
@@ -82488,7 +82561,7 @@ single regeneration of the region, not a score.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-cKi0Z3/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-vBaBNP/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82732,7 +82805,7 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-cKi0Z3/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-vBaBNP/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
@@ -82763,7 +82836,8 @@ async function main() {
   }
   let user = (await db2.select().from(usersTable).where(eq(usersTable.email, "seed@local")))[0];
   if (!user) [user] = await db2.insert(usersTable).values({ email: "seed@local", firstName: "Seed", lastName: "Bot" }).returning();
-  if (process.env.SKELETON === "none") {
+  if (MODE === "audit") {
+  } else if (process.env.SKELETON === "none") {
     console.log("[seed] SKELETON=none \u2014 field starts empty; structure emerges from papers");
   } else {
     await ensureOverviewSkeleton(db2, SEED_PAGES, user.id);
@@ -82783,6 +82857,8 @@ async function main() {
     await runSynthetic(db2, upsertPaper, persistReview);
     await runOrderPermutation();
     await runEmergenceAcceptance();
+  } else if (MODE === "audit") {
+    await runAudit(db2);
   } else {
     await runLive(db2, upsertPaper, persistReview);
   }
@@ -83230,6 +83306,97 @@ async function runEmergenceAcceptance() {
   A3(allPages.every((p3) => motivated.has(p3.slug)), "S3: zero pages that no paper motivated (every page traces to an applied edit)");
   const scope = await pagesInScope(db2, OV);
   A3(scope.length === allPages.length, "S3: pagesInScope covers the whole emergent tree when no root page exists");
+}
+async function runAudit(db2) {
+  const NL = String.fromCharCode(10);
+  const { AUDITOR_PROMPT: AUDITOR_PROMPT2, AUDITOR_PROMPT_HASH: AUDITOR_PROMPT_HASH2 } = await Promise.resolve().then(() => (init_auditor(), auditor_exports));
+  const { ai: geminiAI } = await Promise.resolve().then(() => (init_src3(), src_exports2));
+  const { parseGeminiJsonResponse: parseGeminiJsonResponse2, GEMINI_PASS_MODEL: GEMINI_PASS_MODEL2 } = await Promise.resolve().then(() => (init_reviewEngineCompat(), reviewEngineCompat_exports));
+  const usage = { in: 0, out: 0, calls: 0 };
+  const call = async (sys, text2) => {
+    let lastErr;
+    for (let a2 = 0; a2 < 5; a2 += 1) {
+      try {
+        const resp = await geminiAI.models.generateContent({ model: GEMINI_PASS_MODEL2, contents: [{ role: "user", parts: [{ text: text2 }] }], config: { systemInstruction: sys, responseMimeType: "application/json", temperature: 0.2, maxOutputTokens: 65536 } });
+        const u2 = resp.usageMetadata || {};
+        usage.in += u2.promptTokenCount || 0;
+        usage.out += u2.candidatesTokenCount || 0;
+        usage.calls += 1;
+        if (!resp.text) throw new Error("empty");
+        return resp.text;
+      } catch (e3) {
+        lastErr = e3;
+        await new Promise((r3) => setTimeout(r3, Math.min(45e3, 6e3 * (a2 + 1))));
+      }
+    }
+    throw lastErr;
+  };
+  const parse = (t3) => {
+    try {
+      return parseGeminiJsonResponse2(t3);
+    } catch (e3) {
+      return null;
+    }
+  };
+  const pages = await pagesInScope(db2, OVERVIEW_SLUG);
+  const paperTitles = new Map((await db2.select().from(papersTable)).map((pp) => [pp.id, pp.title]));
+  const pageChunks = [];
+  for (const p2 of pages) {
+    const v2 = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, p2.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+    if (!v2) continue;
+    const parent = p2.parentPageId ? (await db2.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, p2.parentPageId)))[0] : null;
+    const joins = await db2.select().from(pageVersionBlocksTable).where(eq(pageVersionBlocksTable.versionId, v2.id));
+    const bIds = joins.map((j2) => j2.blockId);
+    const spans = bIds.length ? await db2.select().from(pageSpansTable).where(inArray(pageSpansTable.blockId, bIds)) : [];
+    const refs = bIds.length ? (await db2.select().from(pageReferencesTable).where(inArray(pageReferencesTable.blockId, bIds))).filter((r3) => r3.status === "approved") : [];
+    const provLines = spans.map((s3) => "  - [" + s3.supportStatus + "] " + (s3.text || "").slice(0, 100)).join(NL);
+    const refLines = refs.map((r3) => "  - cites " + (paperTitles.get(r3.paperId) || "?") + " (claims " + JSON.stringify(r3.claimIds) + ", status " + (r3.claimStatus || "?") + ")").join(NL);
+    pageChunks.push(["=== PAGE " + p2.slug + (parent ? " (child of " + parent.slug + ")" : " (top-level)") + " ===", v2.markdownFull, "[sentence support statuses]", provLines || "  (none)", "[citations]", refLines || "  (none)"].join(NL));
+  }
+  const reviews = (await db2.select().from(reviewVersionsTable)).sort((a2, b2) => new Date(a2.createdAt) - new Date(b2.createdAt));
+  const reviewLines = reviews.map((rv, i3) => "- ingested #" + (i3 + 1) + ": " + (paperTitles.get(rv.paperId) || "?") + ": score " + rv.recommendedScore + " (est " + rv.estimatedImportanceLow + "-" + rv.estimatedImportanceHigh + "), correctness " + rv.correctnessInternal + ", scope " + rv.scope).join(NL);
+  const CHUNK_BUDGET = 12e4;
+  const groups = [];
+  let cur = [], curLen = 0;
+  for (const c2 of pageChunks) {
+    if (curLen + c2.length > CHUNK_BUDGET && cur.length) {
+      groups.push(cur);
+      cur = [];
+      curLen = 0;
+    }
+    cur.push(c2);
+    curLen += c2.length;
+  }
+  if (cur.length) groups.push(cur);
+  const merged = {};
+  for (let gi = 0; gi < groups.length; gi += 1) {
+    const input = ["REVIEW VERDICTS (all papers in the corpus):", reviewLines, "", "GENERATED PAGES" + (groups.length > 1 ? " (part " + (gi + 1) + "/" + groups.length + ")" : "") + ":", groups[gi].join(NL + NL)].join(NL);
+    console.log("[audit] part " + (gi + 1) + "/" + groups.length + " (" + input.length + " chars, " + groups[gi].length + " pages)");
+    const report = parse(await call(AUDITOR_PROMPT2, input));
+    if (!report) {
+      console.log("  ! unparseable auditor output for part " + (gi + 1));
+      continue;
+    }
+    for (const [k2, vArr] of Object.entries(report)) {
+      if (!Array.isArray(vArr)) continue;
+      if (!merged[k2]) merged[k2] = [];
+      merged[k2].push(...vArr);
+    }
+  }
+  const label = process.env.AUDIT_LABEL || "audit";
+  const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  mkdirSync(OUT + "/audits", { recursive: true });
+  const outJson = OUT + "/audits/" + label + "_" + ts + ".json";
+  writeFileSync(outJson, JSON.stringify({ label, promptHash: AUDITOR_PROMPT_HASH2, overviewSlug: OVERVIEW_SLUG, pages: pages.length, reviews: reviews.length, report: merged }, null, 2));
+  const md = ["# Auditor report \u2014 " + label + " (" + ts + ")", ""];
+  for (const [k2, vArr] of Object.entries(merged)) {
+    md.push("## " + k2 + " (" + vArr.length + ")");
+    for (const item of vArr) md.push("- " + (typeof item === "string" ? item : JSON.stringify(item)));
+    md.push("");
+  }
+  writeFileSync(OUT + "/audits/" + label + "_" + ts + ".md", md.join(NL));
+  console.log("[audit] wrote " + outJson + " | usage: " + usage.calls + " calls, " + usage.in + " in + " + usage.out + " out");
+  for (const [k2, vArr] of Object.entries(merged)) if (vArr.length) console.log("  " + k2 + ": " + vArr.length);
 }
 async function runLive(db2, upsertPaper, persistReview) {
   const { ai: geminiAI } = await Promise.resolve().then(() => (init_src3(), src_exports2));

@@ -25,12 +25,13 @@ const enginePath = join(ROOT, "artifacts/api-server/src/lib/reviewEngineCompat.t
 const editorPath = join(ROOT, "artifacts/api-server/src/lib/overviewEditor.ts");
 const b21Path = join(ROOT, "artifacts/api-server/src/lib/prompts/explanatoryUpdateB21.ts");
 const b2Path = join(ROOT, "artifacts/api-server/src/lib/prompts/explanatoryUpdateB2.ts");
+const auditorPath = join(ROOT, "artifacts/api-server/src/lib/prompts/auditor.ts");
 const schemaSqlPath = join(ROOT, "scripts/local/schema.sql");
 const MODE = process.env.MODE || "synthetic";
 // Synthetic mode runs on in-memory pglite and never connects — @workspace/db only needs the
 // env var to exist at import time, so default it for the `pnpm test:wiki-invariants` entry.
 if (MODE === "synthetic" && !process.env.DATABASE_URL) process.env.DATABASE_URL = "postgresql://invariant:check@localhost:5432/synthetic";
-const OVERVIEW_SLUG = "horizon-thermodynamics";
+const OVERVIEW_SLUG = process.env.OVERVIEW_SLUG || "horizon-thermodynamics";
 const DPI = parseInt(process.env.DPI || "150", 10);
 const TEMPERATURE = process.env.TEMPERATURE ? parseFloat(process.env.TEMPERATURE) : 0.2;
 
@@ -206,7 +207,9 @@ async function main() {
   // S3: SKELETON=none — the field starts EMPTY; every page (including whatever parent the
   // system decides the field needs) emerges from the papers. The hand-built skeleton remains
   // available only for legacy comparison runs.
-  if (process.env.SKELETON === "none") {
+  if (MODE === "audit") {
+    // audit is READ-ONLY: no skeleton, no writes beyond the report files.
+  } else if (process.env.SKELETON === "none") {
     console.log("[seed] SKELETON=none — field starts empty; structure emerges from papers");
   } else {
     await ensureOverviewSkeleton(db, SEED_PAGES, user.id);
@@ -228,6 +231,8 @@ async function main() {
     await runSynthetic(db, upsertPaper, persistReview);
     await runOrderPermutation();
     await runEmergenceAcceptance();
+  } else if (MODE === "audit") {
+    await runAudit(db);
   } else {
     await runLive(db, upsertPaper, persistReview);
   }
@@ -703,6 +708,81 @@ async function runEmergenceAcceptance() {
   A(scope.length === allPages.length, "S3: pagesInScope covers the whole emergent tree when no root page exists");
 }
 
+// ---- S5: the model-auditor loop. Advisory only: never edits pages, nothing is computed
+// from its output. Report goes to disk for JT; accepted findings become system changes +
+// regression tests through the normal process.
+async function runAudit(db) {
+  const NL = String.fromCharCode(10);
+  const { AUDITOR_PROMPT, AUDITOR_PROMPT_HASH } = await import(${JSON.stringify(auditorPath)});
+  const { ai: geminiAI } = await import("@workspace/integrations-gemini-ai");
+  const { parseGeminiJsonResponse, GEMINI_PASS_MODEL } = await import(${JSON.stringify(enginePath)});
+  const usage = { in: 0, out: 0, calls: 0 };
+  const call = async (sys, text) => {
+    let lastErr;
+    for (let a = 0; a < 5; a += 1) {
+      try {
+        const resp = await geminiAI.models.generateContent({ model: GEMINI_PASS_MODEL, contents: [{ role: "user", parts: [{ text }] }], config: { systemInstruction: sys, responseMimeType: "application/json", temperature: ${TEMPERATURE}, maxOutputTokens: 65536 } });
+        const u = resp.usageMetadata || {}; usage.in += u.promptTokenCount || 0; usage.out += u.candidatesTokenCount || 0; usage.calls += 1;
+        if (!resp.text) throw new Error("empty");
+        return resp.text;
+      } catch (e) { lastErr = e; await new Promise((r) => setTimeout(r, Math.min(45000, 6000 * (a + 1)))); }
+    }
+    throw lastErr;
+  };
+  const parse = (t) => { try { return parseGeminiJsonResponse(t); } catch (e) { return null; } };
+
+  const pages = await pagesInScope(db, OVERVIEW_SLUG);
+  const paperTitles = new Map((await db.select().from(papersTable)).map((pp) => [pp.id, pp.title]));
+  const pageChunks = [];
+  for (const p of pages) {
+    const v = (await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, p.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+    if (!v) continue;
+    const parent = p.parentPageId ? (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, p.parentPageId)))[0] : null;
+    const joins = await db.select().from(pageVersionBlocksTable).where(eq(pageVersionBlocksTable.versionId, v.id));
+    const bIds = joins.map((j) => j.blockId);
+    const spans = bIds.length ? await db.select().from(pageSpansTable).where(inArray(pageSpansTable.blockId, bIds)) : [];
+    const refs = bIds.length ? (await db.select().from(pageReferencesTable).where(inArray(pageReferencesTable.blockId, bIds))).filter((r) => r.status === "approved") : [];
+    const provLines = spans.map((s) => "  - [" + s.supportStatus + "] " + (s.text || "").slice(0, 100)).join(NL);
+    const refLines = refs.map((r) => "  - cites " + (paperTitles.get(r.paperId) || "?") + " (claims " + JSON.stringify(r.claimIds) + ", status " + (r.claimStatus || "?") + ")").join(NL);
+    pageChunks.push(["=== PAGE " + p.slug + (parent ? " (child of " + parent.slug + ")" : " (top-level)") + " ===", v.markdownFull, "[sentence support statuses]", provLines || "  (none)", "[citations]", refLines || "  (none)"].join(NL));
+  }
+  const reviews = (await db.select().from(reviewVersionsTable)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  const reviewLines = reviews.map((rv, i) => "- ingested #" + (i + 1) + ": " + (paperTitles.get(rv.paperId) || "?") + ": score " + rv.recommendedScore + " (est " + rv.estimatedImportanceLow + "-" + rv.estimatedImportanceHigh + "), correctness " + rv.correctnessInternal + ", scope " + rv.scope).join(NL);
+
+  // Chunk pages if the corpus outgrows one call; merge reports by concatenating arrays.
+  const CHUNK_BUDGET = 120000;
+  const groups = [];
+  let cur = [], curLen = 0;
+  for (const c of pageChunks) { if (curLen + c.length > CHUNK_BUDGET && cur.length) { groups.push(cur); cur = []; curLen = 0; } cur.push(c); curLen += c.length; }
+  if (cur.length) groups.push(cur);
+  const merged = {};
+  for (let gi = 0; gi < groups.length; gi += 1) {
+    const input = ["REVIEW VERDICTS (all papers in the corpus):", reviewLines, "", "GENERATED PAGES" + (groups.length > 1 ? " (part " + (gi + 1) + "/" + groups.length + ")" : "") + ":", groups[gi].join(NL + NL)].join(NL);
+    console.log("[audit] part " + (gi + 1) + "/" + groups.length + " (" + input.length + " chars, " + groups[gi].length + " pages)");
+    const report = parse(await call(AUDITOR_PROMPT, input));
+    if (!report) { console.log("  ! unparseable auditor output for part " + (gi + 1)); continue; }
+    for (const [k, vArr] of Object.entries(report)) {
+      if (!Array.isArray(vArr)) continue;
+      if (!merged[k]) merged[k] = [];
+      merged[k].push(...vArr);
+    }
+  }
+  const label = process.env.AUDIT_LABEL || "audit";
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  mkdirSync(OUT + "/audits", { recursive: true });
+  const outJson = OUT + "/audits/" + label + "_" + ts + ".json";
+  writeFileSync(outJson, JSON.stringify({ label, promptHash: AUDITOR_PROMPT_HASH, overviewSlug: OVERVIEW_SLUG, pages: pages.length, reviews: reviews.length, report: merged }, null, 2));
+  const md = ["# Auditor report — " + label + " (" + ts + ")", ""];
+  for (const [k, vArr] of Object.entries(merged)) {
+    md.push("## " + k + " (" + vArr.length + ")");
+    for (const item of vArr) md.push("- " + (typeof item === "string" ? item : JSON.stringify(item)));
+    md.push("");
+  }
+  writeFileSync(OUT + "/audits/" + label + "_" + ts + ".md", md.join(NL));
+  console.log("[audit] wrote " + outJson + " | usage: " + usage.calls + " calls, " + usage.in + " in + " + usage.out + " out");
+  for (const [k, vArr] of Object.entries(merged)) if (vArr.length) console.log("  " + k + ": " + vArr.length);
+}
+
 async function runLive(db, upsertPaper, persistReview) {
   const { ai: geminiAI } = await import("@workspace/integrations-gemini-ai");
   const { blindManuscriptText, parseGeminiJsonResponse, GEMINI_PASS_MODEL } = await import(${JSON.stringify(enginePath)});
@@ -938,7 +1018,7 @@ main().catch((e) => { console.error(e); process.exit(1); });
 `;
 
 // Outer: for live mode, render the papers first (cached), write a manifest the entry reads.
-if (MODE !== "synthetic") {
+if (MODE !== "synthetic" && MODE !== "audit") {
   mkdirSync(OUT, { recursive: true });
   const manifest = [];
   for (const key of livePapers) {
