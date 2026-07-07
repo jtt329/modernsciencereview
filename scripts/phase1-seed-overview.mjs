@@ -749,9 +749,14 @@ async function runAudit(db) {
     const joins = await db.select().from(pageVersionBlocksTable).where(eq(pageVersionBlocksTable.versionId, v.id));
     const bIds = joins.map((j) => j.blockId);
     const spans = bIds.length ? await db.select().from(pageSpansTable).where(inArray(pageSpansTable.blockId, bIds)) : [];
-    const refs = bIds.length ? (await db.select().from(pageReferencesTable).where(inArray(pageReferencesTable.blockId, bIds))).filter((r) => r.status === "approved") : [];
+    // References are fetched by PAGE, not by live-block membership: a citation whose anchor
+    // block was later superseded by edit_existing_text is still a citation of this page —
+    // filtering by blockId silently dropped it and produced false "fails to cite" findings
+    // (run-a audit, Bekenstein). Liveness is annotated instead of used as a filter.
+    const liveB = new Set(bIds);
+    const refs = (await db.select().from(pageReferencesTable).where(eq(pageReferencesTable.pageId, p.id))).filter((r) => r.status === "approved");
     const provLines = spans.map((s) => "  - [" + s.supportStatus + "] " + (s.text || "").slice(0, 100)).join(NL);
-    const refLines = refs.map((r) => "  - cites " + (paperTitles.get(r.paperId) || "?") + " (claims " + JSON.stringify(r.claimIds) + ", status " + (r.claimStatus || "?") + ")").join(NL);
+    const refLines = refs.map((r) => "  - cites " + (paperTitles.get(r.paperId) || "?") + " (claims " + JSON.stringify(r.claimIds) + ", status " + (r.claimStatus || "?") + (r.blockId && !liveB.has(r.blockId) ? ", anchor block since rewritten" : "") + ")").join(NL);
     pageChunks.push(["=== PAGE " + p.slug + (parent ? " (child of " + parent.slug + ")" : " (top-level)") + " ===", v.markdownFull, "[sentence support statuses]", provLines || "  (none)", "[citations]", refLines || "  (none)"].join(NL));
   }
   const reviews = (await db.select().from(reviewVersionsTable)).sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
