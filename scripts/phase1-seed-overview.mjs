@@ -56,6 +56,14 @@ const PAPERS_ALL = {
   // The meta-review: MSR's self-description run as a normal submission (JT). No special-casing.
   "meta": { id: "META_ModernScienceReview", file: "meta_modern_science_review.pdf", mode: "new_submission", reviewEpoch: "current" },
 };
+// S6: extra corpus entries loaded from JSON ({key,id,file,mode,reviewEpoch}[]) so large runs
+// (e.g. the full-folder Run C) don't require hand-editing this map. Keys must not collide.
+if (process.env.PAPERS_FILE) {
+  for (const e of JSON.parse(readFileSync(process.env.PAPERS_FILE, "utf8"))) {
+    if (PAPERS_ALL[e.key]) throw new Error(`PAPERS_FILE key collision: ${e.key}`);
+    PAPERS_ALL[e.key] = { id: e.id, file: e.file, mode: e.mode, reviewEpoch: e.reviewEpoch };
+  }
+}
 // Re-validation default: Bekenstein FIRST (so the GSL/entropy sentence anchors correctly, not
 // mis-attributed to Hawking), then Hawking, Frodden, Verlinde.
 const livePapers = (process.env.PAPERS || "02,3,10,8").split(",").map((s) => s.trim()).filter(Boolean);
