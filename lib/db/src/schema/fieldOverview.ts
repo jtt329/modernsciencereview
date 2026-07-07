@@ -61,6 +61,9 @@ export const reviewVersionsTable = pgTable("review_versions", {
   claims: jsonb("claims").$type<ReviewClaim[]>().notNull().default([]),
   evidencePackets: jsonb("evidence_packets").$type<unknown[]>().notNull().default([]),
   overviewImpact: jsonb("overview_impact").$type<unknown>(),
+  // S8: image verification of ALL claim-table equations at review time (per-equation verdicts
+  // + deterministic internal-contradiction flags). Watch + auditor input, never a gate.
+  claimEquationChecks: jsonb("claim_equation_checks").$type<unknown>(),
   contributionPassage: text("contribution_passage").notNull().default(""),
   adjudicatedJson: jsonb("adjudicated_json").$type<unknown>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -165,8 +165,9 @@ import {
   ensureOverviewSkeleton, applyOverviewImpact, assembleOverviewMarkdown,
   computeProminence, publishOverview, rollbackPage, checkEquationFidelity, assembleCorrectionsLedger,
   blocksOfVersion, migrateToBlocks, rollbackReorganize, pagesInScope,
+  checkClaimInternalConsistency, runConsistencyPass, heuristicConsistencyChecker,
 } from ${JSON.stringify(editorPath)};
-import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable, divergenceFlagsTable, pageBlocksTable, pageVersionBlocksTable } from "@workspace/db";
+import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable, divergenceFlagsTable, pageBlocksTable, pageVersionBlocksTable, consistencyFindingsTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
 
 const MODE = ${JSON.stringify(MODE)};
@@ -533,6 +534,33 @@ async function runSynthetic(db, upsertPaper, persistReview) {
   ] });
   assert(postMig[0]?.status === "draft_applied", "MIG: post-migration edits apply block-natively");
 
+  // ---- S8 acceptance: claim formula contradicting its own statement prose is flagged ----
+  const gslFlags = checkClaimInternalConsistency([
+    { id: "C2", status: "established", statement: "The Generalized Second Law: the sum never decreases, $\\Delta(S_{bh} + S_c) > 0$." },
+    { id: "C1", status: "established", statement: "Entropy is proportional to area, $S = \\eta A$." },
+  ]);
+  assert(gslFlags.length === 1 && gslFlags[0].claimId === "C2", "S8: claim whose formula (strict >) contradicts its statement prose (never decreases) fails internal verification — the Bekenstein GSL named regression");
+
+  // ---- S4 acceptance: consistency pass catches, regenerates, and stores residue ----------
+  const s4Paper = await upsertPaper("Contested framework paper for S4");
+  const s4Claims = [{ id: "C1", statement: "Gravity emerges as an entropic force.", status: "contested" }];
+  const s4Rv = await persistReview(s4Paper, { promptVersion: "synthetic", recommendedScore: 70, correctnessInternal: "contested_defensible", correctnessPublic: "contested", claims: s4Claims });
+  const s4Applied = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: s4Paper, reviewVersionId: s4Rv, correctnessPublic: "contested", claims: s4Claims, edits: [
+    { action: "add_paragraph", targetPageSlug: "gravity-as-thermodynamics", proposedMarkdown: "Gravity is an entropic force arising from information on holographic screens.", citedPaperIds: [s4Paper], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  // (a) caught + regenerated with the caveat (stub regenerate adds the objection).
+  const s4a = await runConsistencyPass(db, { overviewSlug: OVERVIEW_SLUG, paperId: s4Paper, reviewVersionId: s4Rv, claims: s4Claims, scope: "model_heuristic", correctnessPublic: "contested", applied: s4Applied, checker: heuristicConsistencyChecker,
+    regenerate: async (md, findings) => "This proposal is contested — critics dispute its circularity — and is a model-heuristic reorganization: " + md });
+  assert(s4a.checked === 1 && s4a.regenerated === 1 && s4a.findingsStored === 0, "S4: contested claim stated as established is caught and regenerates WITH the caveat (no residue)");
+  // (b) a still-bad regeneration stores a finding row for the auditor.
+  const s4bApplied = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId: s4Paper, reviewVersionId: s4Rv, correctnessPublic: "contested", claims: s4Claims, edits: [
+    { action: "add_paragraph", targetPageSlug: "gravity-as-thermodynamics", proposedMarkdown: "This framework definitively shows that gravity is entropic in origin.", citedPaperIds: [s4Paper], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc },
+  ] });
+  const s4b = await runConsistencyPass(db, { overviewSlug: OVERVIEW_SLUG, paperId: s4Paper, reviewVersionId: s4Rv, claims: s4Claims, scope: "model_heuristic", correctnessPublic: "contested", applied: s4bApplied, checker: heuristicConsistencyChecker,
+    regenerate: async (md) => md + " (still asserted without caveat)" });
+  const s4Rows = await db.select().from(consistencyFindingsTable);
+  assert(s4b.findingsStored >= 1 && s4Rows.length >= 1 && s4Rows[0].status === "queued", "S4: a second consistency failure stores a queued finding row for the auditor (overreach flagged)");
+
   if (!invOk) { console.log("[synthetic] CI INVARIANT FAILED"); process.exitCode = 1; }
 
   const pub = await publishOverview(db, OVERVIEW_SLUG); console.log("[synthetic] publish:", pub);
@@ -800,6 +828,24 @@ async function runLive(db, upsertPaper, persistReview) {
         scope: adj?.scopeOfUpdate, correctnessInternal: correctnessValid ? internal : null, correctnessPublic: pub,
         claims, evidencePackets, overviewImpact: oi, contributionPassage: adj?.deltaBeyondPriorField || adj?.explanatoryUpdate || "", adjudicatedJson: adj,
       });
+      // ---- S8: systematic claim-equation provenance (image-verify ALL claim equations). ----
+      const internalFlags = checkClaimInternalConsistency(claims);
+      for (const f of internalFlags) console.log("  ⚠ claim internal contradiction [" + f.claimId + "]: " + f.detail.slice(0, 100));
+      const claimEqs = [...new Set(claims.flatMap((c) => (c.statement.match(/\\$\\$[^$]+\\$\\$|\\$[^$\\n]+\\$/g) ?? [])))];
+      let claimEquationChecks = null;
+      if (claimEqs.length) {
+        try {
+          const vq = "Equations from the review's claim table (verify EACH against the page images):\\n" + claimEqs.map((q, i) => (i + 1) + ". " + q).join("\\n");
+          const vres = extractJson(await callMM(B2.EQUATION_VERIFICATION_PROMPT, vq, imageParts));
+          const results = Array.isArray(vres?.results) ? vres.results : [];
+          claimEquationChecks = { internalFlags, results };
+          const differs = results.filter((x) => x.verdict === "differs");
+          if (differs.length) console.log("  ✗ CLAIM EQUATION DIFFERS FROM IMAGE: " + differs.map((d) => (d.equation || "").slice(0, 50)).join(" ; "));
+          else console.log("  [S8] " + results.length + " claim equation(s) image-verified (" + results.map((x) => x.verdict).join(",") + ")");
+        } catch (e) { console.log("  ⚠ claim-equation verification failed: " + (e?.message ?? e)); claimEquationChecks = { internalFlags, results: [], error: String(e?.message ?? e) }; }
+      } else if (internalFlags.length) { claimEquationChecks = { internalFlags, results: [] }; }
+      if (claimEquationChecks) await db.update(reviewVersionsTable).set({ claimEquationChecks }).where(eq(reviewVersionsTable.id, rvId));
+
       let edits = Array.isArray(oi.proposedEdits) ? oi.proposedEdits : [];
       // ---- STEP 2 (refinement, slice 4): full text of ONLY the selected pages. ----
       const wantsPages = edits.some((e) => e.action !== "no_change");
@@ -844,6 +890,21 @@ async function runLive(db, upsertPaper, persistReview) {
       writeFileSync(OUT + "/records_live/" + paper.id + ".json", JSON.stringify({ paper: paper.id, reviewContext: ctx, score, internal, claims, evidencePackets, adjudicated: adj }, null, 2));
       console.log("  score=" + score + " scope=" + adj?.scopeOfUpdate + " correctness=" + internal + " | " + claims.length + " claims, " + edits.length + " proposed edits");
       for (const r of applied) console.log("    " + r.status.padEnd(13) + " " + r.action.padEnd(16) + " -> " + (r.targetPageSlug || "-") + " [" + (r.supportStatus || "-") + "]" + (r.droppedCitations?.length ? " DROPPED-CITES:" + r.droppedCitations.length : "") + (r.rejectionReason ? " (REJECTED: " + r.rejectionReason + ")" : ""));
+
+      // ---- S4: review<->overview consistency pass (model checker; one regeneration). ----
+      const modelChecker = async ({ blockMarkdown, claims: ck, scope: sk }) => {
+        const inTxt = ["PROSE REGION:", blockMarkdown, "", "CITED CLAIMS (with status):", JSON.stringify(ck), "", "REVIEW SCOPE: " + (sk ?? "unknown"), "", "Report findings per the five checks."].join("\\n");
+        try { const out = extractJson(await callMM(B21.CONSISTENCY_CHECK_PROMPT, inTxt, [])); return Array.isArray(out?.findings) ? out.findings : []; }
+        catch (e) { console.log("  ⚠ consistency check failed: " + (e?.message ?? e)); return []; }
+      };
+      const modelRegenerate = async (blockMarkdown, findings) => {
+        const inTxt = ["Rewrite the prose region below to RESOLVE these consistency findings while keeping everything that is right. Same voice, same completeness discipline, contested/speculative status in the FIRST sentence where applicable. Return JSON only: { \\"markdown\\": \\"...\\" }", "", "FINDINGS:", JSON.stringify(findings), "", "REGION:", blockMarkdown].join("\\n");
+        try { const out = extractJson(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, inTxt, imageParts)); return typeof out?.markdown === "string" ? out.markdown : null; }
+        catch (e) { console.log("  ⚠ regeneration failed: " + (e?.message ?? e)); return null; }
+      };
+      const combinedChecker = async (x) => [...await heuristicConsistencyChecker(x), ...await modelChecker(x)];
+      const cons = await runConsistencyPass(db, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, claims, scope: adj?.scopeOfUpdate, correctnessPublic: routingCorrectness === "fatal_unverified" ? "sound" : (routingCorrectness ?? "sound"), applied, checker: combinedChecker, regenerate: modelRegenerate });
+      if (cons.checked) console.log("  [S4] consistency: checked=" + cons.checked + " regenerated=" + cons.regenerated + " findingsStored=" + cons.findingsStored);
 
       // Image-grounded equation verification (P2): equations that reached the overview but
       // matched no verified claim get the SAME image treatment fatal flaws get. Watch, not gate:

@@ -252,3 +252,20 @@ export const EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH = createHash("sha256
   .update(EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT)
   .digest("hex")
   .slice(0, 16);
+
+// S4 — review<->overview consistency verifier (post-edit; findings feed ONE regeneration).
+export const CONSISTENCY_CHECK_PROMPT = `You are verifying that overview prose is consistent with the review that sourced it. You are
+given a prose region, the cited claims (with per-claim epistemic status), and the review scope.
+Check ONLY these five things and report findings:
+1. status_mismatch — does the prose match the cited claim's status? (contested stated as
+   contested; speculative/model-heuristic announced as such IN THE FIRST SENTENCE of the
+   region; established not hedged into mush.)
+2. scope_mismatch — does the prose match the review's scope? (a subfield/model-heuristic
+   result must not read as a general law.)
+3. overreach — does any sentence say MORE than the cited claim establishes?
+4. misattribution — is the claim attributed to the right work, as far as the given claims show?
+5. hidden_claim — is any NEW scientific claim hiding as connective prose?
+Return valid JSON only — no comments, no trailing commas:
+{ "findings": [ { "check": "status_mismatch", "detail": "" } ] }
+An empty findings array means the region is consistent. Be precise and terse; findings feed a
+single regeneration of the region, not a score.`;

@@ -13830,6 +13830,9 @@ var init_fieldOverview = __esm({
       claims: jsonb("claims").$type().notNull().default([]),
       evidencePackets: jsonb("evidence_packets").$type().notNull().default([]),
       overviewImpact: jsonb("overview_impact").$type(),
+      // S8: image verification of ALL claim-table equations at review time (per-equation verdicts
+      // + deterministic internal-contradiction flags). Watch + auditor input, never a gate.
+      claimEquationChecks: jsonb("claim_equation_checks").$type(),
       contributionPassage: text("contribution_passage").notNull().default(""),
       adjudicatedJson: jsonb("adjudicated_json").$type(),
       createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
@@ -14154,11 +14157,13 @@ __export(overviewEditor_exports, {
   attributionOverlapScore: () => attributionOverlapScore,
   blocksOfVersion: () => blocksOfVersion,
   canonicalPaperSlug: () => canonicalPaperSlug,
+  checkClaimInternalConsistency: () => checkClaimInternalConsistency,
   checkEquationFidelity: () => checkEquationFidelity,
   checkImportanceDivergence: () => checkImportanceDivergence,
   computeProminence: () => computeProminence,
   ensureOverviewSkeleton: () => ensureOverviewSkeleton,
   getContributionTransclusion: () => getContributionTransclusion,
+  heuristicConsistencyChecker: () => heuristicConsistencyChecker,
   independentInjectionScreen: () => independentInjectionScreen,
   liveProvenanceForVersion: () => liveProvenanceForVersion,
   migrateToBlocks: () => migrateToBlocks,
@@ -14168,6 +14173,7 @@ __export(overviewEditor_exports, {
   renderBlocksToMarkdown: () => renderBlocksToMarkdown,
   rollbackPage: () => rollbackPage,
   rollbackReorganize: () => rollbackReorganize,
+  runConsistencyPass: () => runConsistencyPass,
   runPostReviewOverviewHook: () => runPostReviewOverviewHook,
   splitMarkdownIntoBlocks: () => splitMarkdownIntoBlocks
 });
@@ -15099,6 +15105,75 @@ async function getContributionTransclusion(db2, paperId) {
   const rv = (await db2.select().from(reviewVersionsTable).where(eq(reviewVersionsTable.paperId, paperId)).orderBy(desc(reviewVersionsTable.createdAt)).limit(1))[0];
   return { regions, fallbackPassage: regions.length ? null : rv?.contributionPassage || null };
 }
+function checkClaimInternalConsistency(claims) {
+  const out = [];
+  for (const c2 of claims ?? []) {
+    const s3 = c2.statement ?? "";
+    const math = (s3.match(/\$[^$]+\$/g) ?? []).join(" ");
+    if (!math) continue;
+    const hasStrictGt = /(^|[^=\\])>(?!=)/.test(math.replace(/\\g[et]q?\b/g, "")) && !/\\ge|\\geq|>=/.test(math);
+    const hasStrictLt = /(^|[^=\\])<(?!=)/.test(math.replace(/\\l[et]q?\b/g, "")) && !/\\le|\\leq|<=/.test(math);
+    const proseNonStrictLower = /never decreases|non-?decreasing|at least|greater than or equal/i.test(s3);
+    const proseNonStrictUpper = /never increases|non-?increasing|at most|less than or equal/i.test(s3);
+    if (proseNonStrictLower && hasStrictGt) out.push({ claimId: c2.id, detail: `statement prose says a NON-STRICT bound ("never decreases"/"at least") but the formula uses strict ">" \u2014 reversible/saturating cases contradict it: ${math.slice(0, 80)}` });
+    if (proseNonStrictUpper && hasStrictLt) out.push({ claimId: c2.id, detail: `statement prose says a NON-STRICT bound ("never increases"/"at most") but the formula uses strict "<": ${math.slice(0, 80)}` });
+  }
+  return out;
+}
+async function runConsistencyPass(db2, opts) {
+  let checked = 0, regenerated = 0, findingsStored = 0;
+  for (const r3 of opts.applied) {
+    if (r3.status !== "draft_applied" || !r3.spanId) continue;
+    const span = (await db2.select().from(pageSpansTable).where(eq(pageSpansTable.id, r3.spanId)))[0];
+    if (!span?.blockId || span.supportStatus !== "sourced") continue;
+    const block = (await db2.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, span.blockId)))[0];
+    if (!block) continue;
+    checked += 1;
+    const findings = await opts.checker({ blockMarkdown: block.markdown, claims: opts.claims, scope: opts.scope ?? null });
+    if (findings.length === 0) continue;
+    let residual = findings;
+    if (opts.regenerate) {
+      const newMd = await opts.regenerate(block.markdown, findings);
+      if (newMd && newMd.trim() && newMd.trim() !== block.markdown.trim()) {
+        const reapplied = await applyOverviewImpact(db2, {
+          overviewSlug: opts.overviewSlug,
+          paperId: opts.paperId,
+          reviewVersionId: opts.reviewVersionId,
+          correctnessPublic: opts.correctnessPublic ?? "sound",
+          claims: opts.claims,
+          provenance: "model_review",
+          edits: [{
+            action: "edit_existing_text",
+            targetPageSlug: r3.targetPageSlug ?? opts.overviewSlug,
+            targetBlockId: block.id,
+            anchorText: block.markdown.slice(0, 120),
+            proposedMarkdown: newMd.trim(),
+            citedPaperIds: [opts.paperId],
+            citedClaimIds: (opts.claims ?? []).map((c2) => c2.id),
+            supportStatus: "sourced",
+            safetyCheck: { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" },
+            reason: `consistency regeneration: ${findings.map((f4) => f4.check).join(",")}`
+          }]
+        });
+        const newSpanId = reapplied[0]?.spanId;
+        if (reapplied[0]?.status === "draft_applied" && newSpanId) {
+          regenerated += 1;
+          const newSpan = (await db2.select().from(pageSpansTable).where(eq(pageSpansTable.id, newSpanId)))[0];
+          const newBlock = newSpan?.blockId ? (await db2.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, newSpan.blockId)))[0] : null;
+          residual = newBlock ? await opts.checker({ blockMarkdown: newBlock.markdown, claims: opts.claims, scope: opts.scope ?? null }) : findings;
+          if (residual.length && newBlock) {
+            await db2.insert(consistencyFindingsTable).values({ proposedOverviewEditId: reapplied[0].proposedOverviewEditId ?? null, blockId: newBlock.id, pageId: newBlock.pageId, paperId: opts.paperId, findings: residual });
+            findingsStored += 1;
+          }
+          continue;
+        }
+      }
+    }
+    await db2.insert(consistencyFindingsTable).values({ proposedOverviewEditId: r3.proposedOverviewEditId ?? null, blockId: block.id, pageId: block.pageId, paperId: opts.paperId, findings: residual });
+    findingsStored += 1;
+  }
+  return { checked, regenerated, findingsStored };
+}
 async function assembleCorrectionsLedger(db2, overviewSlug, targetPageSlug) {
   const rows = await db2.select().from(proposedOverviewEditsTable).where(eq(proposedOverviewEditsTable.overviewSlug, overviewSlug)).orderBy(desc(proposedOverviewEditsTable.createdAt));
   const scoped = targetPageSlug ? rows.filter((r3) => r3.targetPageSlug === targetPageSlug) : rows;
@@ -15180,7 +15255,7 @@ async function rollbackPage(db2, pageId, toVersionId) {
   }
   return newDraftVersion(db2, pageId, target.markdownFull, log, null, summaries);
 }
-var INJECTION_PATTERNS, ATTRIBUTION_WATCH_THRESHOLD, DISPUTED_PAGE_SLUG_SUFFIX, slugify, ORDER_STEP, fieldLocks;
+var INJECTION_PATTERNS, ATTRIBUTION_WATCH_THRESHOLD, DISPUTED_PAGE_SLUG_SUFFIX, slugify, ORDER_STEP, fieldLocks, heuristicConsistencyChecker;
 var init_overviewEditor = __esm({
   "artifacts/api-server/src/lib/overviewEditor.ts"() {
     "use strict";
@@ -15198,6 +15273,21 @@ var init_overviewEditor = __esm({
     slugify = (s3) => s3.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 80) || "section";
     ORDER_STEP = 1024;
     fieldLocks = /* @__PURE__ */ new Map();
+    heuristicConsistencyChecker = async ({ blockMarkdown, claims, scope }) => {
+      const findings = [];
+      const contested = (claims ?? []).filter((c2) => c2.status === "contested");
+      if (contested.length && !/contest|debat|disput|object|criticiz|circular/i.test(blockMarkdown)) {
+        findings.push({ check: "status_mismatch", detail: "cites contested claim(s) but the prose never states the dispute or its central objection" });
+      }
+      const firstSentence = blockMarkdown.replace(/^#+[^\n]*\n+/, "").split(/(?<=[.!?])\s/)[0] ?? "";
+      if ((scope === "speculative_interpretation" || scope === "model_heuristic" || (claims ?? []).some((c2) => c2.status === "speculative")) && !/speculat|heuristic|model-dependent|conjectur|proposal/i.test(firstSentence)) {
+        findings.push({ check: "scope_announcement", detail: "speculative/model-heuristic content must announce its status in the FIRST sentence of the region" });
+      }
+      if ((claims ?? []).some((c2) => c2.status !== "established") && /\b(proves?|proved|establishes? conclusively|definitively (shows?|established))\b/i.test(blockMarkdown)) {
+        findings.push({ check: "overreach", detail: "prose asserts proof/conclusive establishment while a cited claim is not status=established" });
+      }
+      return findings;
+    };
   }
 });
 
@@ -82141,6 +82231,7 @@ Math in LaTeX inside $...$, backslashes escaped. Output valid JSON only.`;
 // artifacts/api-server/src/lib/prompts/explanatoryUpdateB21.ts
 var explanatoryUpdateB21_exports = {};
 __export(explanatoryUpdateB21_exports, {
+  CONSISTENCY_CHECK_PROMPT: () => CONSISTENCY_CHECK_PROMPT,
   EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT: () => EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT,
   EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH: () => EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH,
   EXPLANATORY_UPDATE_B21_PROMPT: () => EXPLANATORY_UPDATE_B21_PROMPT,
@@ -82149,7 +82240,7 @@ __export(explanatoryUpdateB21_exports, {
   EXPLANATORY_UPDATE_B21_PROMPT_VERSION: () => EXPLANATORY_UPDATE_B21_PROMPT_VERSION
 });
 import { createHash as createHash4 } from "node:crypto";
-var EXPLANATORY_UPDATE_B21_PROMPT_NAME, EXPLANATORY_UPDATE_B21_PROMPT_VERSION, OVERVIEW_EDITOR_ADDENDUM, EXPLANATORY_UPDATE_B21_PROMPT, EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, EXPLANATORY_UPDATE_B21_PROMPT_HASH, EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH;
+var EXPLANATORY_UPDATE_B21_PROMPT_NAME, EXPLANATORY_UPDATE_B21_PROMPT_VERSION, OVERVIEW_EDITOR_ADDENDUM, EXPLANATORY_UPDATE_B21_PROMPT, EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, EXPLANATORY_UPDATE_B21_PROMPT_HASH, EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH, CONSISTENCY_CHECK_PROMPT;
 var init_explanatoryUpdateB21 = __esm({
   "artifacts/api-server/src/lib/prompts/explanatoryUpdateB21.ts"() {
     "use strict";
@@ -82379,10 +82470,25 @@ overviewImpact.`;
     EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT = [EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT, OVERVIEW_EDITOR_ADDENDUM].join("\n\n");
     EXPLANATORY_UPDATE_B21_PROMPT_HASH = createHash4("sha256").update(EXPLANATORY_UPDATE_B21_PROMPT).digest("hex").slice(0, 16);
     EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT_HASH = createHash4("sha256").update(EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT).digest("hex").slice(0, 16);
+    CONSISTENCY_CHECK_PROMPT = `You are verifying that overview prose is consistent with the review that sourced it. You are
+given a prose region, the cited claims (with per-claim epistemic status), and the review scope.
+Check ONLY these five things and report findings:
+1. status_mismatch \u2014 does the prose match the cited claim's status? (contested stated as
+   contested; speculative/model-heuristic announced as such IN THE FIRST SENTENCE of the
+   region; established not hedged into mush.)
+2. scope_mismatch \u2014 does the prose match the review's scope? (a subfield/model-heuristic
+   result must not read as a general law.)
+3. overreach \u2014 does any sentence say MORE than the cited claim establishes?
+4. misattribution \u2014 is the claim attributed to the right work, as far as the given claims show?
+5. hidden_claim \u2014 is any NEW scientific claim hiding as connective prose?
+Return valid JSON only \u2014 no comments, no trailing commas:
+{ "findings": [ { "check": "status_mismatch", "detail": "" } ] }
+An empty findings array means the region is consistent. Be precise and terse; findings feed a
+single regeneration of the region, not a score.`;
   }
 });
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-CnwGL4/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-cKi0Z3/entry.ts
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { PGlite as PGlite2 } from "@electric-sql/pglite";
 
@@ -82626,7 +82732,7 @@ function drizzle(...params) {
   drizzle22.mock = mock;
 })(drizzle || (drizzle = {}));
 
-// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-CnwGL4/entry.ts
+// ../../../../private/var/folders/kz/vhpr1nks0qn9t0d3_cdqp5rw0000gn/T/seed-overview-cKi0Z3/entry.ts
 init_overviewEditor();
 init_src();
 init_drizzle_orm();
@@ -82940,6 +83046,45 @@ async function runSynthetic(db2, upsertPaper, persistReview) {
     { action: "add_paragraph", targetPageSlug: "legacy-string-page", proposedMarkdown: "A post-migration paragraph applied on the block substrate.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc }
   ] });
   assert(postMig[0]?.status === "draft_applied", "MIG: post-migration edits apply block-natively");
+  const gslFlags = checkClaimInternalConsistency([
+    { id: "C2", status: "established", statement: "The Generalized Second Law: the sum never decreases, $Delta(S_{bh} + S_c) > 0$." },
+    { id: "C1", status: "established", statement: "Entropy is proportional to area, $S = eta A$." }
+  ]);
+  assert(gslFlags.length === 1 && gslFlags[0].claimId === "C2", "S8: claim whose formula (strict >) contradicts its statement prose (never decreases) fails internal verification \u2014 the Bekenstein GSL named regression");
+  const s4Paper = await upsertPaper("Contested framework paper for S4");
+  const s4Claims = [{ id: "C1", statement: "Gravity emerges as an entropic force.", status: "contested" }];
+  const s4Rv = await persistReview(s4Paper, { promptVersion: "synthetic", recommendedScore: 70, correctnessInternal: "contested_defensible", correctnessPublic: "contested", claims: s4Claims });
+  const s4Applied = await applyOverviewImpact(db2, { overviewSlug: OVERVIEW_SLUG, paperId: s4Paper, reviewVersionId: s4Rv, correctnessPublic: "contested", claims: s4Claims, edits: [
+    { action: "add_paragraph", targetPageSlug: "gravity-as-thermodynamics", proposedMarkdown: "Gravity is an entropic force arising from information on holographic screens.", citedPaperIds: [s4Paper], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc }
+  ] });
+  const s4a = await runConsistencyPass(db2, {
+    overviewSlug: OVERVIEW_SLUG,
+    paperId: s4Paper,
+    reviewVersionId: s4Rv,
+    claims: s4Claims,
+    scope: "model_heuristic",
+    correctnessPublic: "contested",
+    applied: s4Applied,
+    checker: heuristicConsistencyChecker,
+    regenerate: async (md, findings) => "This proposal is contested \u2014 critics dispute its circularity \u2014 and is a model-heuristic reorganization: " + md
+  });
+  assert(s4a.checked === 1 && s4a.regenerated === 1 && s4a.findingsStored === 0, "S4: contested claim stated as established is caught and regenerates WITH the caveat (no residue)");
+  const s4bApplied = await applyOverviewImpact(db2, { overviewSlug: OVERVIEW_SLUG, paperId: s4Paper, reviewVersionId: s4Rv, correctnessPublic: "contested", claims: s4Claims, edits: [
+    { action: "add_paragraph", targetPageSlug: "gravity-as-thermodynamics", proposedMarkdown: "This framework definitively shows that gravity is entropic in origin.", citedPaperIds: [s4Paper], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc }
+  ] });
+  const s4b = await runConsistencyPass(db2, {
+    overviewSlug: OVERVIEW_SLUG,
+    paperId: s4Paper,
+    reviewVersionId: s4Rv,
+    claims: s4Claims,
+    scope: "model_heuristic",
+    correctnessPublic: "contested",
+    applied: s4bApplied,
+    checker: heuristicConsistencyChecker,
+    regenerate: async (md) => md + " (still asserted without caveat)"
+  });
+  const s4Rows = await db2.select().from(consistencyFindingsTable);
+  assert(s4b.findingsStored >= 1 && s4Rows.length >= 1 && s4Rows[0].status === "queued", "S4: a second consistency failure stores a queued finding row for the auditor (overreach flagged)");
   if (!invOk) {
     console.log("[synthetic] CI INVARIANT FAILED");
     process.exitCode = 1;
@@ -83240,6 +83385,27 @@ async function runLive(db2, upsertPaper, persistReview) {
         contributionPassage: adj?.deltaBeyondPriorField || adj?.explanatoryUpdate || "",
         adjudicatedJson: adj
       });
+      const internalFlags = checkClaimInternalConsistency(claims);
+      for (const f4 of internalFlags) console.log("  \u26A0 claim internal contradiction [" + f4.claimId + "]: " + f4.detail.slice(0, 100));
+      const claimEqs = [...new Set(claims.flatMap((c2) => c2.statement.match(/\$\$[^$]+\$\$|\$[^$\n]+\$/g) ?? []))];
+      let claimEquationChecks = null;
+      if (claimEqs.length) {
+        try {
+          const vq = "Equations from the review's claim table (verify EACH against the page images):\n" + claimEqs.map((q2, i3) => i3 + 1 + ". " + q2).join("\n");
+          const vres = extractJson2(await callMM(B2.EQUATION_VERIFICATION_PROMPT, vq, imageParts));
+          const results = Array.isArray(vres?.results) ? vres.results : [];
+          claimEquationChecks = { internalFlags, results };
+          const differs = results.filter((x3) => x3.verdict === "differs");
+          if (differs.length) console.log("  \u2717 CLAIM EQUATION DIFFERS FROM IMAGE: " + differs.map((d2) => (d2.equation || "").slice(0, 50)).join(" ; "));
+          else console.log("  [S8] " + results.length + " claim equation(s) image-verified (" + results.map((x3) => x3.verdict).join(",") + ")");
+        } catch (e3) {
+          console.log("  \u26A0 claim-equation verification failed: " + (e3?.message ?? e3));
+          claimEquationChecks = { internalFlags, results: [], error: String(e3?.message ?? e3) };
+        }
+      } else if (internalFlags.length) {
+        claimEquationChecks = { internalFlags, results: [] };
+      }
+      if (claimEquationChecks) await db2.update(reviewVersionsTable).set({ claimEquationChecks }).where(eq(reviewVersionsTable.id, rvId));
       let edits = Array.isArray(oi.proposedEdits) ? oi.proposedEdits : [];
       const wantsPages = edits.some((e3) => e3.action !== "no_change");
       if (wantsPages) {
@@ -83285,6 +83451,29 @@ async function runLive(db2, upsertPaper, persistReview) {
       writeFileSync(OUT + "/records_live/" + paper.id + ".json", JSON.stringify({ paper: paper.id, reviewContext: ctx, score, internal, claims, evidencePackets, adjudicated: adj }, null, 2));
       console.log("  score=" + score + " scope=" + adj?.scopeOfUpdate + " correctness=" + internal + " | " + claims.length + " claims, " + edits.length + " proposed edits");
       for (const r3 of applied) console.log("    " + r3.status.padEnd(13) + " " + r3.action.padEnd(16) + " -> " + (r3.targetPageSlug || "-") + " [" + (r3.supportStatus || "-") + "]" + (r3.droppedCitations?.length ? " DROPPED-CITES:" + r3.droppedCitations.length : "") + (r3.rejectionReason ? " (REJECTED: " + r3.rejectionReason + ")" : ""));
+      const modelChecker = async ({ blockMarkdown, claims: ck, scope: sk }) => {
+        const inTxt = ["PROSE REGION:", blockMarkdown, "", "CITED CLAIMS (with status):", JSON.stringify(ck), "", "REVIEW SCOPE: " + (sk ?? "unknown"), "", "Report findings per the five checks."].join("\n");
+        try {
+          const out = extractJson2(await callMM(B21.CONSISTENCY_CHECK_PROMPT, inTxt, []));
+          return Array.isArray(out?.findings) ? out.findings : [];
+        } catch (e3) {
+          console.log("  \u26A0 consistency check failed: " + (e3?.message ?? e3));
+          return [];
+        }
+      };
+      const modelRegenerate = async (blockMarkdown, findings) => {
+        const inTxt = ['Rewrite the prose region below to RESOLVE these consistency findings while keeping everything that is right. Same voice, same completeness discipline, contested/speculative status in the FIRST sentence where applicable. Return JSON only: { "markdown": "..." }', "", "FINDINGS:", JSON.stringify(findings), "", "REGION:", blockMarkdown].join("\n");
+        try {
+          const out = extractJson2(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, inTxt, imageParts));
+          return typeof out?.markdown === "string" ? out.markdown : null;
+        } catch (e3) {
+          console.log("  \u26A0 regeneration failed: " + (e3?.message ?? e3));
+          return null;
+        }
+      };
+      const combinedChecker = async (x3) => [...await heuristicConsistencyChecker(x3), ...await modelChecker(x3)];
+      const cons = await runConsistencyPass(db2, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, claims, scope: adj?.scopeOfUpdate, correctnessPublic: routingCorrectness === "fatal_unverified" ? "sound" : routingCorrectness ?? "sound", applied, checker: combinedChecker, regenerate: modelRegenerate });
+      if (cons.checked) console.log("  [S4] consistency: checked=" + cons.checked + " regenerated=" + cons.regenerated + " findingsStored=" + cons.findingsStored);
       const flaggedEdits = [];
       for (const r3 of applied) {
         if (r3.status !== "draft_applied" || !r3.proposedOverviewEditId) continue;

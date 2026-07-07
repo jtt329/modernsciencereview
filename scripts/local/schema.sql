@@ -241,6 +241,7 @@ CREATE TABLE "review_versions" (
 	"claims" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"evidence_packets" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"overview_impact" jsonb,
+	"claim_equation_checks" jsonb,
 	"contribution_passage" text DEFAULT '' NOT NULL,
 	"adjudicated_json" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL

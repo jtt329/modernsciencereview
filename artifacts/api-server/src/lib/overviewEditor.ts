@@ -24,7 +24,7 @@ import {
   papersTable, reviewVersionsTable,
   fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageReferencesTable,
   pageSpansTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable,
-  divergenceFlagsTable, pageBlocksTable, pageVersionBlocksTable,
+  divergenceFlagsTable, pageBlocksTable, pageVersionBlocksTable, consistencyFindingsTable,
   type PageBlock, type PageBlockKind,
   type ComputedProminence, type FieldPageChangeLogEntry,
   type OverviewEditAction, type OverviewEditType,
@@ -1129,6 +1129,111 @@ export async function getContributionTransclusion(db: Db, paperId: string): Prom
   }
   const rv = (await db.select().from(reviewVersionsTable).where(eq(reviewVersionsTable.paperId, paperId)).orderBy(desc(reviewVersionsTable.createdAt)).limit(1))[0];
   return { regions, fallbackPassage: regions.length ? null : (rv?.contributionPassage || null) };
+}
+
+// ---- S8: claim internal-consistency check (deterministic; the GSL class) -------------
+// A claim whose FORMULA contradicts its own STATEMENT PROSE ("never decreases" with a strict
+// ">") is the wrong-but-consistent error the text-only watch cannot see downstream — catch it
+// at the claim, then image-verify. Watch + verification trigger, never a gate.
+export function checkClaimInternalConsistency(claims: ReviewClaim[]): { claimId: string; detail: string }[] {
+  const out: { claimId: string; detail: string }[] = [];
+  for (const c of claims ?? []) {
+    const s = c.statement ?? "";
+    const math = (s.match(/\$[^$]+\$/g) ?? []).join(" ");
+    if (!math) continue;
+    const hasStrictGt = /(^|[^=\\])>(?!=)/.test(math.replace(/\\g[et]q?\b/g, "")) && !/\\ge|\\geq|>=/.test(math);
+    const hasStrictLt = /(^|[^=\\])<(?!=)/.test(math.replace(/\\l[et]q?\b/g, "")) && !/\\le|\\leq|<=/.test(math);
+    const proseNonStrictLower = /never decreases|non-?decreasing|at least|greater than or equal/i.test(s);
+    const proseNonStrictUpper = /never increases|non-?increasing|at most|less than or equal/i.test(s);
+    if (proseNonStrictLower && hasStrictGt) out.push({ claimId: c.id, detail: `statement prose says a NON-STRICT bound ("never decreases"/"at least") but the formula uses strict ">" — reversible/saturating cases contradict it: ${math.slice(0, 80)}` });
+    if (proseNonStrictUpper && hasStrictLt) out.push({ claimId: c.id, detail: `statement prose says a NON-STRICT bound ("never increases"/"at most") but the formula uses strict "<": ${math.slice(0, 80)}` });
+  }
+  return out;
+}
+
+// ---- S4: review<->overview consistency pass ------------------------------------------
+// Post-edit verifier over affected sourced regions. Findings feed ONE regeneration retry with
+// the findings in context (generator feedback, not output patching); a second failure stores a
+// consistency_findings row for the auditor. Watch + feedback loop — never a score, never a
+// rigid gate (mis-attribution stays fail-closed elsewhere).
+export type ConsistencyFindingItem = { check: string; detail: string };
+export type ConsistencyChecker = (input: {
+  blockMarkdown: string; claims: ReviewClaim[]; scope?: string | null; correctnessInternal?: string | null;
+}) => Promise<ConsistencyFindingItem[]>;
+
+// Deterministic heuristic checker: the synthetic-suite checker and a free live pre-filter.
+// Deliberately conservative — the live pipeline layers the model checker on top.
+export const heuristicConsistencyChecker: ConsistencyChecker = async ({ blockMarkdown, claims, scope }) => {
+  const findings: ConsistencyFindingItem[] = [];
+  const contested = (claims ?? []).filter((c) => c.status === "contested");
+  if (contested.length && !/contest|debat|disput|object|criticiz|circular/i.test(blockMarkdown)) {
+    findings.push({ check: "status_mismatch", detail: "cites contested claim(s) but the prose never states the dispute or its central objection" });
+  }
+  const firstSentence = blockMarkdown.replace(/^#+[^\n]*\n+/, "").split(/(?<=[.!?])\s/)[0] ?? "";
+  if ((scope === "speculative_interpretation" || scope === "model_heuristic" || (claims ?? []).some((c) => c.status === "speculative"))
+      && !/speculat|heuristic|model-dependent|conjectur|proposal/i.test(firstSentence)) {
+    findings.push({ check: "scope_announcement", detail: "speculative/model-heuristic content must announce its status in the FIRST sentence of the region" });
+  }
+  if ((claims ?? []).some((c) => c.status !== "established") && /\b(proves?|proved|establishes? conclusively|definitively (shows?|established))\b/i.test(blockMarkdown)) {
+    findings.push({ check: "overreach", detail: "prose asserts proof/conclusive establishment while a cited claim is not status=established" });
+  }
+  return findings;
+};
+
+export async function runConsistencyPass(db: Db, opts: {
+  overviewSlug: string;
+  paperId: string;
+  reviewVersionId?: string | null;
+  claims: ReviewClaim[];
+  scope?: string | null;
+  correctnessPublic?: "sound" | "contested" | "flawed" | "hidden" | "fatal_unverified";
+  applied: AppliedEditResult[];
+  checker: ConsistencyChecker;
+  regenerate?: (blockMarkdown: string, findings: ConsistencyFindingItem[]) => Promise<string | null>;
+}): Promise<{ checked: number; regenerated: number; findingsStored: number }> {
+  let checked = 0, regenerated = 0, findingsStored = 0;
+  for (const r of opts.applied) {
+    if (r.status !== "draft_applied" || !r.spanId) continue;
+    const span = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.id, r.spanId)))[0];
+    if (!span?.blockId || span.supportStatus !== "sourced") continue;
+    const block = (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, span.blockId)))[0];
+    if (!block) continue;
+    checked += 1;
+    const findings = await opts.checker({ blockMarkdown: block.markdown, claims: opts.claims, scope: opts.scope ?? null });
+    if (findings.length === 0) continue;
+    let residual = findings;
+    if (opts.regenerate) {
+      const newMd = await opts.regenerate(block.markdown, findings);
+      if (newMd && newMd.trim() && newMd.trim() !== block.markdown.trim()) {
+        const reapplied = await applyOverviewImpact(db, {
+          overviewSlug: opts.overviewSlug, paperId: opts.paperId, reviewVersionId: opts.reviewVersionId,
+          correctnessPublic: opts.correctnessPublic ?? "sound", claims: opts.claims, provenance: "model_review",
+          edits: [{ action: "edit_existing_text", targetPageSlug: r.targetPageSlug ?? opts.overviewSlug, targetBlockId: block.id,
+            anchorText: block.markdown.slice(0, 120), proposedMarkdown: newMd.trim(),
+            citedPaperIds: [opts.paperId], citedClaimIds: (opts.claims ?? []).map((c) => c.id),
+            supportStatus: "sourced",
+            safetyCheck: { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" },
+            reason: `consistency regeneration: ${findings.map((f) => f.check).join(",")}` }],
+        });
+        const newSpanId = reapplied[0]?.spanId;
+        if (reapplied[0]?.status === "draft_applied" && newSpanId) {
+          regenerated += 1;
+          const newSpan = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.id, newSpanId)))[0];
+          const newBlock = newSpan?.blockId ? (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, newSpan.blockId)))[0] : null;
+          residual = newBlock ? await opts.checker({ blockMarkdown: newBlock.markdown, claims: opts.claims, scope: opts.scope ?? null }) : findings;
+          if (residual.length && newBlock) {
+            await db.insert(consistencyFindingsTable).values({ proposedOverviewEditId: reapplied[0].proposedOverviewEditId ?? null, blockId: newBlock.id, pageId: newBlock.pageId, paperId: opts.paperId, findings: residual });
+            findingsStored += 1;
+          }
+          continue;
+        }
+      }
+    }
+    // No regeneration possible (or it failed to apply): store the finding for the auditor.
+    await db.insert(consistencyFindingsTable).values({ proposedOverviewEditId: r.proposedOverviewEditId ?? null, blockId: block.id, pageId: block.pageId, paperId: opts.paperId, findings: residual });
+    findingsStored += 1;
+  }
+  return { checked, regenerated, findingsStored };
 }
 
 // ---- Corrections ledger (§3.2) — compact "what changed and why" per page, fed to the editor
