@@ -1087,7 +1087,7 @@ async function runLive(db, upsertPaper, persistReview) {
       // becomes a TRUE danger signal (a cite to something that genuinely doesn't resolve), and
       // strip claim ids (C1..) that belong in citedClaimIds, not citedPaperIds.
       const paperLabelMap = new Map();
-      for (const l of [paper.id, "self", "this", "this paper", "this manuscript", "the manuscript", "current", "current paper"]) paperLabelMap.set(String(l).toLowerCase().trim(), paperId);
+      for (const l of [paper.id, "self", "this", "this paper", "this manuscript", "the manuscript", "manuscript", "the paper", "paper", "this study", "the study", "this work", "the work", "present work", "the present work", "current", "current paper"]) paperLabelMap.set(String(l).toLowerCase().trim(), paperId);
       for (const pr of await db.select().from(papersTable)) paperLabelMap.set(pr.title.toLowerCase().trim(), pr.id);
       const mapCites = (ids) => {
         const out = [];
