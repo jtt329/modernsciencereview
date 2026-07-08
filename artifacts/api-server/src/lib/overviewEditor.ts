@@ -27,9 +27,10 @@ import {
   divergenceFlagsTable, pageBlocksTable, pageVersionBlocksTable, consistencyFindingsTable,
   type PageBlock, type PageBlockKind,
   type ComputedProminence, type FieldPageChangeLogEntry,
-  type OverviewEditAction, type OverviewEditType,
+  type OverviewEditAction, type OverviewEditType, type OverviewEditActor,
   type OverviewEditorRationale, type OverviewEditSafetyCheck, type SpanSupportStatus,
   type ReviewClaim, type ChipClaimStatus, type EquationFlags,
+  type RepresentationOutcome, type StructuralChangeRecord,
 } from "@workspace/db";
 
 // Independent prompt-injection screen (brief P2): a cheap pattern check on the OUTPUT prose,
@@ -126,6 +127,7 @@ export type ApplyOverviewInput = {
   claims?: ReviewClaim[]; // the review's claim table (with per-claim status) — for chip claimStatus
   createdByUserId?: string | null;
   provenance?: "model_review" | "seed_overview" | "admin_manual";
+  actor?: OverviewEditActor; // P6: null/absent = paper_editor; structure pass sets "structure_pass"
 };
 
 export type AppliedEditResult = {
@@ -469,7 +471,8 @@ async function applyOverviewImpactInner(db: Db, input: ApplyOverviewInput): Prom
       ) => {
         const [row] = await tx.insert(proposedOverviewEditsTable).values({
           reviewVersionId: input.reviewVersionId ?? null, paperId: input.paperId,
-          overviewSlug: input.overviewSlug, action: edit.action, editType: edit.editType ?? null,
+          overviewSlug: input.overviewSlug, actor: input.actor ?? "paper_editor",
+          action: edit.action, editType: edit.editType ?? null,
           targetPageSlug: extra.targetPageSlug ?? edit.targetPageSlug ?? null,
           targetSectionSlug: edit.targetSectionSlug ?? null,
           linkTargetSlug: edit.linkTargetSlug ?? null,
@@ -1077,6 +1080,48 @@ export async function checkImportanceDivergence(db: Db, overviewSlug: string, pa
   return { flagged: true, note };
 }
 
+// ---- P7: representation invariant (Phase 2a acceptance) ------------------------------
+// Prominence scales with importance; EXISTENCE does not. If a nonfatal review identifies a
+// surviving explanatory delta (correct, nontrivial, not already represented), the paper must
+// have a DISCOVERABLE place — at minimum its own paper page marked "not yet represented in
+// overview" plus the surviving-contribution summary. no_change means "no change to THIS page",
+// never "this paper contributes nowhere". This classifier turns the review verdict + what the
+// editor actually did into an audit-only outcome label; the NEGATIVE invariant it encodes
+// (invariantViolation) is what CI asserts. It computes NOTHING that feeds score/placement.
+export function classifyRepresentationOutcome(args: {
+  internal: string | null | undefined;          // review correctnessInternal
+  hasSurvivingDelta: boolean;                    // adjudicated review identifies a surviving delta
+  survivingSummary?: string | null;              // required (floor detail) when hasSurvivingDelta
+  alreadyRepresentedPointer?: string | null;     // editor's page/section pointer if already covered
+  noSurvivingReason?: string | null;             // one-line reason if nothing survives
+  applied: AppliedEditResult[];                  // what the editor actually applied
+}): { outcome: RepresentationOutcome; detail: string; invariantViolation: boolean } {
+  if (args.internal === "fatal_verified") {
+    return { outcome: "disputed_or_failed_route", detail: "fatal_verified — routed to disputed/failed-claims only", invariantViolation: false };
+  }
+  const applied = (args.applied ?? []).filter((r) => r.status === "draft_applied");
+  const onDisputed = applied.some((r) => (r.targetPageSlug ?? "").endsWith(DISPUTED_PAGE_SLUG_SUFFIX));
+  if (onDisputed) return { outcome: "disputed_or_failed_route", detail: "recorded on the disputed/failed-claims page", invariantViolation: false };
+  const created = applied.some((r) => r.action === "create_page" || r.action === "create_subpage");
+  const editedProse = applied.some((r) => r.action === "edit_existing_text" || r.action === "add_paragraph" || r.action === "add_subsection");
+  const mentioned = applied.some((r) => r.action === "add_reference" || r.action === "add_link");
+  if (created) return { outcome: "created_or_updated_niche_page", detail: "created/grew a topic page for the contribution", invariantViolation: false };
+  if (editedProse) return { outcome: "updated_existing_page", detail: "updated an existing page's explanation", invariantViolation: false };
+  if (mentioned) return { outcome: "added_citation_or_mention", detail: "sourced/linked on an existing page", invariantViolation: false };
+  // Nothing reached the structure. Distinguish the three honest cases; the floor prevents a
+  // silent vanish. Guards: no_surviving needs a reason, already_represented needs a pointer.
+  if (!args.hasSurvivingDelta) {
+    return { outcome: "no_surviving_contribution", detail: (args.noSurvivingReason ?? "").trim(), invariantViolation: !((args.noSurvivingReason ?? "").trim()) };
+  }
+  if ((args.alreadyRepresentedPointer ?? "").trim()) {
+    return { outcome: "already_represented", detail: args.alreadyRepresentedPointer!.trim(), invariantViolation: false };
+  }
+  // Surviving delta, no structural edit, no "already represented" pointer -> the FLOOR. A missing
+  // surviving summary is itself a violation (we cannot floor without recording what survives).
+  const summary = (args.survivingSummary ?? "").trim();
+  return { outcome: "paper_page_only_not_yet_represented", detail: summary, invariantViolation: !summary };
+}
+
 // ---- Contribution transclusion (slice 3, now on BLOCK lineage) ----------------------
 // The paper page's "Contribution to the Explanatory Structure" is a live transclusion of the
 // paper's blocks in the CURRENT page versions. A superseded contribution follows the block
@@ -1151,6 +1196,31 @@ export function checkClaimInternalConsistency(claims: ReviewClaim[]): { claimId:
   return out;
 }
 
+// ---- P1: strict-vs-non-strict inequality contradiction in PROSE (block or whole page) -----
+// The GSL class, generalized to the editor's OWN prose (S8's checkClaimInternalConsistency only
+// guards review CLAIMS). Given a text region, if the prose asserts a NON-STRICT bound ("never
+// decreases" / "at least" / "never increases" / "at most") while a nearby $...$/$$...$$ formula
+// uses a STRICT operator (> or < without \ge/\le), that is a wrong-but-consistent error a
+// downstream text watch cannot see. Works at BLOCK level (prose+math in one block) AND at PAGE
+// level (the "never decreases" prose in one block, the "$$...>0$$" display in the next) — the S6
+// failure that survived every version because it was born on a create_page's later block, which
+// the per-span consistency pass never checked.
+export function strictInequalityContradictions(text: string): { detail: string; math: string }[] {
+  const out: { detail: string; math: string }[] = [];
+  const lowerProse = /\bnever decreases?\b|\bnon-?decreasing\b|\bcannot decrease\b|\bdoes not decrease\b|\bat least\b|\bmonotonically (?:non-?decreasing|increasing)\b/i.test(text);
+  const upperProse = /\bnever increases?\b|\bnon-?increasing\b|\bcannot increase\b|\bdoes not increase\b|\bat most\b/i.test(text);
+  if (!lowerProse && !upperProse) return out;
+  const maths = text.match(/\$\$[^$]+\$\$|\$[^$\n]+\$/g) ?? [];
+  for (const m of maths) {
+    const cleaned = m.replace(/\\g[et]q?\b/g, "").replace(/\\l[et]q?\b/g, "");
+    const hasStrictGt = /(^|[^=<>\\])>(?!=)/.test(cleaned) && !/\\ge|\\geq|>=/.test(m);
+    const hasStrictLt = /(^|[^=<>\\])<(?!=)/.test(cleaned) && !/\\le|\\leq|<=/.test(m);
+    if (lowerProse && hasStrictGt) out.push({ math: m, detail: `prose asserts a NON-STRICT lower bound ("never decreases"/"at least") but the formula uses strict ">": ${m.slice(0, 90)} — reversible/saturating cases require \\ge` });
+    if (upperProse && hasStrictLt) out.push({ math: m, detail: `prose asserts a NON-STRICT upper bound ("never increases"/"at most") but the formula uses strict "<": ${m.slice(0, 90)} — use \\le` });
+  }
+  return out;
+}
+
 // ---- S4: review<->overview consistency pass ------------------------------------------
 // Post-edit verifier over affected sourced regions. Findings feed ONE regeneration retry with
 // the findings in context (generator feedback, not output patching); a second failure stores a
@@ -1177,6 +1247,8 @@ export const heuristicConsistencyChecker: ConsistencyChecker = async ({ blockMar
   if ((claims ?? []).some((c) => c.status !== "established") && /\b(proves?|proved|establishes? conclusively|definitively (shows?|established))\b/i.test(blockMarkdown)) {
     findings.push({ check: "overreach", detail: "prose asserts proof/conclusive establishment while a cited claim is not status=established" });
   }
+  // P1: block-level strict-inequality contradiction (prose + math in the same block).
+  for (const s of strictInequalityContradictions(blockMarkdown)) findings.push({ check: "strict_inequality", detail: s.detail });
   return findings;
 };
 
@@ -1192,15 +1264,10 @@ export async function runConsistencyPass(db: Db, opts: {
   regenerate?: (blockMarkdown: string, findings: ConsistencyFindingItem[]) => Promise<string | null>;
 }): Promise<{ checked: number; regenerated: number; findingsStored: number }> {
   let checked = 0, regenerated = 0, findingsStored = 0;
-  for (const r of opts.applied) {
-    if (r.status !== "draft_applied" || !r.spanId) continue;
-    const span = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.id, r.spanId)))[0];
-    if (!span?.blockId || span.supportStatus !== "sourced") continue;
-    const block = (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, span.blockId)))[0];
-    if (!block) continue;
-    checked += 1;
-    const findings = await opts.checker({ blockMarkdown: block.markdown, claims: opts.claims, scope: opts.scope ?? null });
-    if (findings.length === 0) continue;
+  const seenBlocks = new Set<string>();
+  // Check one block against `findings`: try ONE regeneration (generator feedback, not output
+  // patching); on residual/failure store a consistency_findings row for the auditor.
+  const remedy = async (block: PageBlock, findings: ConsistencyFindingItem[], targetSlug: string, editId?: string | null) => {
     let residual = findings;
     if (opts.regenerate) {
       const newMd = await opts.regenerate(block.markdown, findings);
@@ -1208,30 +1275,74 @@ export async function runConsistencyPass(db: Db, opts: {
         const reapplied = await applyOverviewImpact(db, {
           overviewSlug: opts.overviewSlug, paperId: opts.paperId, reviewVersionId: opts.reviewVersionId,
           correctnessPublic: opts.correctnessPublic ?? "sound", claims: opts.claims, provenance: "model_review",
-          edits: [{ action: "edit_existing_text", targetPageSlug: r.targetPageSlug ?? opts.overviewSlug, targetBlockId: block.id,
+          edits: [{ action: "edit_existing_text", targetPageSlug: targetSlug, targetBlockId: block.id,
             anchorText: block.markdown.slice(0, 120), proposedMarkdown: newMd.trim(),
             citedPaperIds: [opts.paperId], citedClaimIds: (opts.claims ?? []).map((c) => c.id),
             supportStatus: "sourced",
             safetyCheck: { paperTextTreatedAsData: true, suspiciousInstructionsDetected: false, actionTaken: "none" },
             reason: `consistency regeneration: ${findings.map((f) => f.check).join(",")}` }],
         });
-        const newSpanId = reapplied[0]?.spanId;
-        if (reapplied[0]?.status === "draft_applied" && newSpanId) {
+        if (reapplied[0]?.status === "draft_applied") {
           regenerated += 1;
-          const newSpan = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.id, newSpanId)))[0];
-          const newBlock = newSpan?.blockId ? (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, newSpan.blockId)))[0] : null;
+          const newBlockId = reapplied[0].spanId
+            ? (await db.select().from(pageSpansTable).where(eq(pageSpansTable.id, reapplied[0].spanId)))[0]?.blockId
+            : reapplied[0].appliedVersionId ? (await blocksOfVersion(db, reapplied[0].appliedVersionId)).find((b) => b.supersedesBlockId === block.id)?.id : null;
+          const newBlock = newBlockId ? (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, newBlockId)))[0] : null;
           residual = newBlock ? await opts.checker({ blockMarkdown: newBlock.markdown, claims: opts.claims, scope: opts.scope ?? null }) : findings;
           if (residual.length && newBlock) {
             await db.insert(consistencyFindingsTable).values({ proposedOverviewEditId: reapplied[0].proposedOverviewEditId ?? null, blockId: newBlock.id, pageId: newBlock.pageId, paperId: opts.paperId, findings: residual });
             findingsStored += 1;
           }
-          continue;
+          return;
         }
       }
     }
-    // No regeneration possible (or it failed to apply): store the finding for the auditor.
-    await db.insert(consistencyFindingsTable).values({ proposedOverviewEditId: r.proposedOverviewEditId ?? null, blockId: block.id, pageId: block.pageId, paperId: opts.paperId, findings: residual });
+    await db.insert(consistencyFindingsTable).values({ proposedOverviewEditId: editId ?? null, blockId: block.id, pageId: block.pageId, paperId: opts.paperId, findings: residual });
     findingsStored += 1;
+  };
+
+  // (1) Per-edit span block — the sourced region an edit produced.
+  for (const r of opts.applied) {
+    if (r.status !== "draft_applied" || !r.spanId) continue;
+    const span = (await db.select().from(pageSpansTable).where(eq(pageSpansTable.id, r.spanId)))[0];
+    if (!span?.blockId || span.supportStatus !== "sourced") continue;
+    const block = (await db.select().from(pageBlocksTable).where(eq(pageBlocksTable.id, span.blockId)))[0];
+    if (!block || seenBlocks.has(block.id)) continue;
+    seenBlocks.add(block.id);
+    checked += 1;
+    const findings = await opts.checker({ blockMarkdown: block.markdown, claims: opts.claims, scope: opts.scope ?? null });
+    if (findings.length) await remedy(block, findings, r.targetPageSlug ?? opts.overviewSlug, r.proposedOverviewEditId);
+  }
+
+  // (2) P1: a NEW page's later blocks (display equations, prose beyond the span block) are never
+  // reached by (1) — the S6 GSL error was born on exactly such a block and survived every
+  // version. For each create_page result, check the WHOLE page: every content block through the
+  // checker, plus a page-level strict-inequality scan that spans blocks ("never decreases" in one
+  // block, "$$...>0$$" in the next). Regenerate the offending block.
+  for (const r of opts.applied) {
+    if (r.status !== "draft_applied") continue;
+    if (r.action !== "create_page" && r.action !== "create_subpage") continue;
+    const page = r.targetPageSlug ? await getPageBySlug(db, r.targetPageSlug) : null;
+    const v = page ? await latestVersion(db, page.id) : null;
+    if (!v) continue;
+    const blocks = await blocksOfVersion(db, v.id);
+    for (const b of blocks) {
+      if (b.kind === "heading" || seenBlocks.has(b.id)) continue;
+      seenBlocks.add(b.id);
+      checked += 1;
+      const findings = await opts.checker({ blockMarkdown: b.markdown, claims: opts.claims, scope: opts.scope ?? null });
+      if (findings.length) await remedy(b, findings, r.targetPageSlug!, r.proposedOverviewEditId);
+    }
+    // Cross-block strictness: "never decreases" prose and the strict-> display equation may live
+    // in different blocks; scan the whole page and remedy the block that carries the strict math.
+    const fullText = blocks.map((b) => b.markdown).join("\n\n");
+    for (const c of strictInequalityContradictions(fullText)) {
+      const host = blocks.find((b) => b.markdown.includes(c.math));
+      if (!host || seenBlocks.has(host.id + ":xblock")) continue;
+      seenBlocks.add(host.id + ":xblock");
+      checked += 1;
+      await remedy(host, [{ check: "strict_inequality", detail: c.detail }], r.targetPageSlug!, r.proposedOverviewEditId);
+    }
   }
   return { checked, regenerated, findingsStored };
 }
@@ -1301,6 +1412,257 @@ export async function rollbackReorganize(db: Db, editId: string) {
   }
   await db.update(proposedOverviewEditsTable).set({ status: "reverted" }).where(eq(proposedOverviewEditsTable.id, editId));
   return { reverted: change.children.length };
+}
+
+// ---- reverse a merge (P6 reversibility) ---------------------------------------------
+// Repoints both pages to their pre-merge versions (block-set repoint; provenance reappears by
+// membership) and reparents the merged-away page's children back. History is untouched.
+export async function rollbackMerge(db: Db, editId: string) {
+  const edit = (await db.select().from(proposedOverviewEditsTable).where(eq(proposedOverviewEditsTable.id, editId)))[0];
+  const change = edit?.structuralChange as StructuralChangeRecord | null;
+  if (!edit || edit.action !== "merge_duplicate_or_near_duplicate_pages" || !change || change.kind !== "merge") {
+    throw new Error("not a reversible merge edit");
+  }
+  const into = await getPageBySlug(db, change.intoSlug);
+  const from = await getPageBySlug(db, change.fromSlug);
+  if (into) await rollbackPage(db, into.id, change.intoPrevVersionId);
+  if (from) await rollbackPage(db, from.id, change.fromPrevVersionId);
+  for (const c of change.children) {
+    const child = await getPageBySlug(db, c.slug);
+    if (!child) continue;
+    const oldParent = c.oldParentSlug ? await getPageBySlug(db, c.oldParentSlug) : null;
+    await db.update(fieldPagesTable).set({ parentPageId: oldParent?.id ?? null, updatedAt: new Date() }).where(eq(fieldPagesTable.id, child.id));
+  }
+  await db.update(proposedOverviewEditsTable).set({ status: "reverted" }).where(eq(proposedOverviewEditsTable.id, editId));
+  return { reverted: true };
+}
+
+// ---- P6: the scheduled STRUCTURE PASS (corpus-level actor) ---------------------------
+// The per-paper editor is local by construction: it sees one paper and rarely restructures. This
+// actor is asked the ONE corpus-level question — "does the current page tree best explain the
+// current corpus?" — and applies judgment-chosen structural moves. It is a DISTINCT actor
+// (actor="structure_pass"), each move versioned, reversible, and attributed in the change
+// history. No field-specific terms, no scoring formula: the caller supplies the model's decisions
+// (this function is the apply half); the prompt supplies the judgment.
+export type StructurePassAction =
+  | { action: "no_change"; reason?: string }
+  | { action: "reorganize_parent" | "move_niche_page_under_better_parent"; parentSlug: string; childSlugs: string[]; rewriteOpeningSlug?: string; newOpeningMarkdown?: string; newOpeningSummaryOneLine?: string; newOpeningSummaryShort?: string; reason?: string }
+  | { action: "rewrite_parent_opening"; targetPageSlug: string; proposedMarkdown: string; pageSummaryOneLine?: string; pageSummaryShort?: string; reason?: string }
+  | { action: "create_missing_parent"; targetPageSlug: string; title?: string; proposedMarkdown: string; childSlugs?: string[]; pageSummaryOneLine?: string; pageSummaryShort?: string; reason?: string }
+  | { action: "merge_duplicate_or_near_duplicate_pages"; mergeIntoSlug: string; mergeFromSlug: string; reason?: string };
+
+export type StructurePassResult = {
+  action: string;
+  status: "draft_applied" | "rejected" | "no_change";
+  targetPageSlug: string | null;
+  proposedOverviewEditId?: string;
+  rejectionReason?: string;
+};
+
+// Rewrite a page's OPENING (first content block) as a new generation — the reversible core of
+// rewrite_parent_opening and the "opening follows the move" rule. Returns the new version.
+async function rewriteOpeningBlock(
+  tx: Db, page: FieldPageForStructure, markdown: string,
+  summaries: { oneLine?: string; short?: string }, reason: string | undefined, createdByUserId?: string | null,
+) {
+  const cur = await latestVersion(tx, page.id);
+  const blocks = cur ? await blocksOfVersion(tx, cur.id) : [];
+  const currentSet: BlockSetEntry[] = blocks.map((b) => ({ blockId: b.id, orderKey: b.orderKey }));
+  const firstContent = blocks.find((b) => b.kind !== "heading");
+  const descriptors = splitMarkdownIntoBlocks(markdown);
+  if (descriptors.length === 0) return null;
+  const newBlocks: PageBlock[] = [];
+  for (let i = 0; i < descriptors.length; i += 1) {
+    newBlocks.push(await insertBlock(tx, { pageId: page.id, kind: descriptors[i].kind, markdown: descriptors[i].markdown, supersedesBlockId: i === 0 && firstContent ? firstContent.id : null }));
+  }
+  let newSet: BlockSetEntry[];
+  if (firstContent) {
+    await copyBlockProvenance(tx, firstContent.id, newBlocks[0]);
+    newSet = setReplace(currentSet, firstContent.id, newBlocks.map((b) => b.id));
+  } else {
+    const heading = blocks.find((b) => b.kind === "heading");
+    newSet = heading ? setInsertAfter(currentSet, heading.orderKey, newBlocks.map((b) => b.id)) : setAppend(currentSet, newBlocks.map((b) => b.id));
+  }
+  // Structure-pass opening prose is EXPLANATORY scaffolding (unsourced_explanatory) unless a
+  // later paper sources it — never mis-sourced to a paper it doesn't come from.
+  const anchor = newBlocks.find((b) => b.kind !== "heading") ?? newBlocks[0];
+  const version = await newVersionWithBlockSet(tx, page.id, newSet, [{ at: new Date().toISOString(), action: "structure_pass: rewrite opening", note: reason }], createdByUserId, summaries);
+  await createSpan(tx, { pageId: page.id, versionId: version.id, blockId: anchor.id, blockMarkdown: anchor.markdown, text: anchor.markdown.slice(0, 400), supportStatus: "unsourced_explanatory" });
+  return version;
+}
+
+type FieldPageForStructure = { id: string; slug: string; title: string; parentPageId: string | null };
+
+export async function applyStructurePass(db: Db, input: {
+  overviewSlug: string; actions: StructurePassAction[]; createdByUserId?: string | null;
+}): Promise<StructurePassResult[]> {
+  const results: StructurePassResult[] = [];
+  for (const act of input.actions) {
+    const one = async (tx: Db): Promise<StructurePassResult> => {
+      await (tx as any).execute(dsql`SELECT pg_advisory_xact_lock(hashtext(${input.overviewSlug}))`);
+      const record = async (extra: {
+        action: string; targetPageSlug?: string | null; parentSlug?: string | null; linkTargetSlug?: string | null;
+        proposedMarkdown?: string; structuralChange?: StructuralChangeRecord | null; appliedVersionId?: string | null;
+        status?: "draft_applied" | "rejected" | "no_change"; reason?: string;
+      }) => {
+        const [row] = await tx.insert(proposedOverviewEditsTable).values({
+          reviewVersionId: null, paperId: null, overviewSlug: input.overviewSlug, actor: "structure_pass",
+          action: extra.action as OverviewEditAction, editType: "reorganization",
+          targetPageSlug: extra.targetPageSlug ?? null, parentSlug: extra.parentSlug ?? null, linkTargetSlug: extra.linkTargetSlug ?? null,
+          structuralChange: extra.structuralChange ?? null, proposedMarkdown: extra.proposedMarkdown ?? "",
+          reason: extra.reason ?? "", status: extra.status === "rejected" ? "rejected" : "draft_applied",
+          appliedVersionId: extra.appliedVersionId ?? null,
+        }).returning();
+        return row.id;
+      };
+      const reject = async (action: string, target: string | null, reason: string): Promise<StructurePassResult> => {
+        const id = await record({ action, targetPageSlug: target, status: "rejected", reason });
+        return { action, status: "rejected", targetPageSlug: target, proposedOverviewEditId: id, rejectionReason: reason };
+      };
+
+      if (act.action === "no_change") {
+        const id = await record({ action: "no_change", status: "no_change", reason: act.reason });
+        return { action: "no_change", status: "no_change", targetPageSlug: null, proposedOverviewEditId: id };
+      }
+
+      if (act.action === "rewrite_parent_opening") {
+        const page = await getPageBySlug(tx, act.targetPageSlug);
+        if (!page) return reject(act.action, act.targetPageSlug, "unknown_target_slug");
+        const screen = independentInjectionScreen(act.proposedMarkdown ?? "");
+        if (screen.tripped) return reject(act.action, act.targetPageSlug, `injection_screen: ${screen.pattern}`);
+        const version = await rewriteOpeningBlock(tx, page, act.proposedMarkdown, { oneLine: act.pageSummaryOneLine, short: act.pageSummaryShort }, act.reason, input.createdByUserId);
+        if (!version) return reject(act.action, act.targetPageSlug, "empty_edit");
+        const id = await record({ action: act.action, targetPageSlug: act.targetPageSlug, proposedMarkdown: act.proposedMarkdown, appliedVersionId: version.id, reason: act.reason });
+        return { action: act.action, status: "draft_applied", targetPageSlug: act.targetPageSlug, proposedOverviewEditId: id };
+      }
+
+      if (act.action === "reorganize_parent" || act.action === "move_niche_page_under_better_parent") {
+        const newParent = await getPageBySlug(tx, act.parentSlug);
+        if (!newParent) return reject(act.action, act.parentSlug, "unknown_parent_slug");
+        const childSlugs = (act.childSlugs ?? []).filter((s) => s && s !== act.parentSlug);
+        if (childSlugs.length === 0) return reject(act.action, act.parentSlug, "empty_edit");
+        const children: { slug: string; oldParentSlug: string | null; id: string }[] = [];
+        for (const cs of childSlugs) {
+          const child = await getPageBySlug(tx, cs);
+          if (!child) return reject(act.action, act.parentSlug, `unknown_target_slug: child "${cs}"`);
+          if (child.id === newParent.id) return reject(act.action, act.parentSlug, "cycle: a page cannot parent itself");
+          // Reject an obvious cycle: newParent must not be a descendant of the child being moved.
+          let anc: any = newParent; let guard = 0;
+          while (anc?.parentPageId && guard++ < 64) {
+            if (anc.parentPageId === child.id) return reject(act.action, act.parentSlug, "cycle: new parent is a descendant of the child");
+            anc = (await tx.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, anc.parentPageId)))[0];
+          }
+          const oldParent = child.parentPageId ? (await tx.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, child.parentPageId)))[0] : null;
+          children.push({ slug: cs, oldParentSlug: oldParent?.slug ?? null, id: child.id });
+        }
+        for (const c of children) await tx.update(fieldPagesTable).set({ parentPageId: newParent.id, updatedAt: new Date() }).where(eq(fieldPagesTable.id, c.id));
+        // "Rewriting the opening to match its new, broader role is part of the same move."
+        if (act.rewriteOpeningSlug && act.newOpeningMarkdown) {
+          const rp = await getPageBySlug(tx, act.rewriteOpeningSlug);
+          if (rp && !independentInjectionScreen(act.newOpeningMarkdown).tripped) {
+            await rewriteOpeningBlock(tx, rp, act.newOpeningMarkdown, { oneLine: act.newOpeningSummaryOneLine, short: act.newOpeningSummaryShort }, act.reason, input.createdByUserId);
+          }
+        }
+        const structuralChange: StructuralChangeRecord = { kind: "reparent", newParentSlug: act.parentSlug, children: children.map(({ slug, oldParentSlug }) => ({ slug, oldParentSlug })) };
+        const id = await record({ action: act.action, targetPageSlug: act.parentSlug, parentSlug: act.parentSlug, structuralChange, reason: act.reason });
+        return { action: act.action, status: "draft_applied", targetPageSlug: act.parentSlug, proposedOverviewEditId: id };
+      }
+
+      if (act.action === "create_missing_parent") {
+        const slug = slugify(act.targetPageSlug || (act.proposedMarkdown?.split("\n")[0] ?? "new-parent"));
+        if (await getPageBySlug(tx, slug)) return reject(act.action, slug, "slug_exists");
+        if (independentInjectionScreen(act.proposedMarkdown ?? "").tripped) return reject(act.action, slug, "injection_screen");
+        const title = (act.title || act.proposedMarkdown?.match(/^#+\s*(.+)/)?.[1] || slug.replace(/-/g, " ")).slice(0, 120);
+        const [page] = await tx.insert(fieldPagesTable).values({ slug, title, parentPageId: null, scopeStatement: act.reason ?? "", summary: "" }).returning();
+        await newDraftVersion(tx, page.id, act.proposedMarkdown || `## ${title}\n`, [{ at: new Date().toISOString(), action: "structure_pass: create missing parent", note: act.reason }], input.createdByUserId, { oneLine: act.pageSummaryOneLine, short: act.pageSummaryShort });
+        // Mark the opening as explanatory scaffolding.
+        const v0 = await latestVersion(tx, page.id);
+        const fc = v0 ? (await blocksOfVersion(tx, v0.id)).find((b) => b.kind !== "heading") : null;
+        if (v0 && fc) await createSpan(tx, { pageId: page.id, versionId: v0.id, blockId: fc.id, blockMarkdown: fc.markdown, text: fc.markdown.slice(0, 400), supportStatus: "unsourced_explanatory" });
+        const children: { slug: string; oldParentSlug: string | null }[] = [];
+        for (const cs of (act.childSlugs ?? []).filter((s) => s && s !== slug)) {
+          const child = await getPageBySlug(tx, cs);
+          if (!child) continue;
+          const oldParent = child.parentPageId ? (await tx.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, child.parentPageId)))[0] : null;
+          children.push({ slug: cs, oldParentSlug: oldParent?.slug ?? null });
+          await tx.update(fieldPagesTable).set({ parentPageId: page.id, updatedAt: new Date() }).where(eq(fieldPagesTable.id, child.id));
+        }
+        const structuralChange: StructuralChangeRecord | null = children.length ? { kind: "reparent", newParentSlug: slug, children } : null;
+        const id = await record({ action: act.action, targetPageSlug: slug, structuralChange, proposedMarkdown: act.proposedMarkdown, appliedVersionId: v0?.id ?? null, reason: act.reason });
+        return { action: act.action, status: "draft_applied", targetPageSlug: slug, proposedOverviewEditId: id };
+      }
+
+      if (act.action === "merge_duplicate_or_near_duplicate_pages") {
+        const into = await getPageBySlug(tx, act.mergeIntoSlug);
+        const from = await getPageBySlug(tx, act.mergeFromSlug);
+        if (!into || !from) return reject(act.action, act.mergeFromSlug ?? null, "unknown_target_slug");
+        if (into.id === from.id) return reject(act.action, act.mergeFromSlug, "merge_into_self");
+        if (from.slug.endsWith(DISPUTED_PAGE_SLUG_SUFFIX) || from.slug === input.overviewSlug) return reject(act.action, from.slug, "cannot_merge_system_page");
+        const intoV = await latestVersion(tx, into.id);
+        const fromV = await latestVersion(tx, from.id);
+        if (!intoV || !fromV) return reject(act.action, from.slug, "missing_version");
+        const intoBlocks = await blocksOfVersion(tx, intoV.id);
+        const fromBlocks = await blocksOfVersion(tx, fromV.id);
+        // Copy fromPage's live CONTENT blocks onto intoPage as new generations (kept sourcing).
+        let intoSet: BlockSetEntry[] = intoBlocks.map((b) => ({ blockId: b.id, orderKey: b.orderKey }));
+        const newIds: string[] = [];
+        for (const b of fromBlocks) {
+          if (b.kind === "heading") continue;
+          const gen = await insertBlock(tx, { pageId: into.id, kind: b.kind, markdown: b.markdown });
+          // Re-anchor from's live spans/refs for this block onto the new into-page block.
+          const refIdMap = new Map<string, string>();
+          for (const r of await tx.select().from(pageReferencesTable).where(eq(pageReferencesTable.blockId, b.id))) {
+            if ((r as any).status !== "approved") continue;
+            const [copy] = await tx.insert(pageReferencesTable).values({
+              pageId: into.id, versionId: null, blockId: gen.id, anchorText: r.anchorText,
+              startOffsetInBlock: r.anchorText ? gen.markdown.indexOf(r.anchorText) : null,
+              endOffsetInBlock: r.anchorText && gen.markdown.indexOf(r.anchorText) >= 0 ? gen.markdown.indexOf(r.anchorText) + r.anchorText.length : null,
+              paperId: r.paperId, reviewVersionId: r.reviewVersionId, claimIds: r.claimIds, claimStatus: r.claimStatus,
+              note: r.note, status: "approved", provenance: r.provenance,
+            }).returning();
+            refIdMap.set(r.id, copy.id);
+          }
+          for (const s of await tx.select().from(pageSpansTable).where(eq(pageSpansTable.blockId, b.id))) {
+            if ((s as any).superseded) continue;
+            const idx = s.text ? gen.markdown.indexOf(s.text) : -1;
+            await tx.insert(pageSpansTable).values({
+              pageId: into.id, versionId: intoV.id, blockId: gen.id, // repointed to mergedVersion below
+              startOffsetInBlock: idx >= 0 ? idx : null, endOffsetInBlock: idx >= 0 ? idx + s.text.length : null,
+              text: s.text, supportStatus: s.supportStatus, superseded: false,
+              referenceId: s.referenceId ? (refIdMap.get(s.referenceId) ?? null) : null,
+              createdByReviewVersionId: s.createdByReviewVersionId, createdByPaperId: s.createdByPaperId,
+            });
+          }
+          newIds.push(gen.id);
+        }
+        intoSet = setAppend(intoSet, newIds);
+        const mergedVersion = await newVersionWithBlockSet(tx, into.id, intoSet, [{ at: new Date().toISOString(), action: `structure_pass: merged ${from.slug} into ${into.slug}`, note: act.reason }], input.createdByUserId);
+        // Fix the just-inserted spans'/refs' versionId to the merged version (membership is by block,
+        // but keep the version pointer coherent for pre-block readers).
+        for (const id of newIds) {
+          await tx.update(pageReferencesTable).set({ versionId: mergedVersion.id }).where(eq(pageReferencesTable.blockId, id));
+          await tx.update(pageSpansTable).set({ versionId: mergedVersion.id }).where(eq(pageSpansTable.blockId, id));
+        }
+        // Reparent fromPage's children under intoPage.
+        const kids = await tx.select().from(fieldPagesTable).where(eq(fieldPagesTable.parentPageId, from.id));
+        const children: { slug: string; oldParentSlug: string | null }[] = [];
+        for (const k of kids) { children.push({ slug: k.slug, oldParentSlug: from.slug }); await tx.update(fieldPagesTable).set({ parentPageId: into.id, updatedAt: new Date() }).where(eq(fieldPagesTable.id, k.id)); }
+        // Tombstone fromPage: a redirect version (history intact; reversible).
+        await newDraftVersion(tx, from.id, `## ${from.title}\n\n_Merged into **${into.title}** — see that page._\n`, [{ at: new Date().toISOString(), action: `structure_pass: tombstone (merged into ${into.slug})`, note: act.reason }], input.createdByUserId, { oneLine: `merged into ${into.slug}`, short: `This topic was merged into ${into.slug}.` });
+        const structuralChange: StructuralChangeRecord = { kind: "merge", fromSlug: from.slug, intoSlug: into.slug, fromPrevVersionId: fromV.id, intoPrevVersionId: intoV.id, children };
+        const id = await record({ action: act.action, targetPageSlug: into.slug, structuralChange, appliedVersionId: mergedVersion.id, reason: act.reason });
+        return { action: act.action, status: "draft_applied", targetPageSlug: into.slug, proposedOverviewEditId: id };
+      }
+
+      return reject((act as any).action ?? "unknown", null, "unknown_structure_action");
+    };
+    try {
+      results.push(await (db as any).transaction(async (tx: Db) => one(tx)));
+    } catch (e) {
+      results.push({ action: (act as any).action ?? "unknown", status: "rejected", targetPageSlug: null, rejectionReason: `apply_failed: ${String((e as Error)?.message ?? e).slice(0, 200)}` });
+    }
+  }
+  return results;
 }
 
 // ---- Emergent-hierarchy scope (S3): the namespace is the whole page tree ------------

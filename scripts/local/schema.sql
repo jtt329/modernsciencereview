@@ -205,6 +205,7 @@ CREATE TABLE "proposed_overview_edits" (
 	"review_version_id" varchar,
 	"paper_id" varchar,
 	"overview_slug" varchar NOT NULL,
+	"actor" varchar,
 	"action" varchar NOT NULL,
 	"edit_type" varchar,
 	"target_page_slug" varchar,
@@ -242,6 +243,8 @@ CREATE TABLE "review_versions" (
 	"evidence_packets" jsonb DEFAULT '[]'::jsonb NOT NULL,
 	"overview_impact" jsonb,
 	"claim_equation_checks" jsonb,
+	"representation_outcome" varchar,
+	"representation_detail" text DEFAULT '' NOT NULL,
 	"contribution_passage" text DEFAULT '' NOT NULL,
 	"adjudicated_json" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL

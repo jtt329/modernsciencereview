@@ -38,6 +38,22 @@ export type ReviewCorrectnessInternal =
   | "sound" | "contested_defensible" | "fatal_verified" | "fatal_alleged_unverified";
 export type ReviewCorrectnessPublic = "sound" | "contested" | "flawed" | "hidden";
 
+// P7 representation invariant (Phase 2a acceptance). A "surviving explanatory delta" exists
+// when the adjudicated review identifies >=1 correct, nontrivial contribution NOT already
+// represented in the current explanatory structure. Prominence scales with importance;
+// EXISTENCE does not — displacement means moving to the right depth, never disappearance.
+// This label is audit-only metadata; the NEGATIVE invariant (no nonfatal paper with a
+// surviving delta may silently vanish) is enforced in code + CI, not by reading this value.
+export type RepresentationOutcome =
+  | "updated_existing_page"                 // edited an existing page's prose
+  | "created_or_updated_niche_page"         // created/grew a topic page
+  | "added_citation_or_mention"             // sourced/linked on an existing page
+  | "queued_placeholder_topic"              // a placeholder topic queued for later creation
+  | "paper_page_only_not_yet_represented"   // the FLOOR: recorded on its paper page, not silent
+  | "already_represented"                   // delta already in the structure (pointer required)
+  | "disputed_or_failed_route"              // fatal/flawed -> disputed page only
+  | "no_surviving_contribution";            // nothing survives (one-line reason required)
+
 // Per-claim epistemic status, read from the B.2.1 claim table (papers are MIXED — status is
 // per claim, never whole-paper). Source chips inherit this; it is a SOFT descriptive surfacing
 // that drives NOTHING (§3.2 hard invariant).
@@ -64,6 +80,14 @@ export const reviewVersionsTable = pgTable("review_versions", {
   // S8: image verification of ALL claim-table equations at review time (per-equation verdicts
   // + deterministic internal-contradiction flags). Watch + auditor input, never a gate.
   claimEquationChecks: jsonb("claim_equation_checks").$type<unknown>(),
+  // P7 (Phase 2a acceptance): AUDIT-ONLY representation outcome — where this paper's surviving
+  // explanatory delta landed in the structure. Drives NOTHING (no score/rank/placement/
+  // prominence); it is metadata that makes the negative vanish-invariant checkable. The
+  // load-bearing rule lives in code (classifyRepresentationOutcome + CI), not in this column.
+  representationOutcome: varchar("representation_outcome").$type<RepresentationOutcome>(),
+  // Required detail: the surviving-contribution summary (floor case), the "already represented"
+  // pointer, or the one-line no-surviving-contribution reason — per the two anti-laziness guards.
+  representationDetail: text("representation_detail").notNull().default(""),
   contributionPassage: text("contribution_passage").notNull().default(""),
   adjudicatedJson: jsonb("adjudicated_json").$type<unknown>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -164,8 +188,28 @@ export const pageReferencesTable = pgTable("page_references", {
 export type OverviewEditAction =
   | "no_change" | "add_reference" | "edit_existing_text" | "add_paragraph"
   | "add_subsection" | "create_subpage" /* legacy alias of create_page */ | "create_page"
-  | "reorganize_parent" | "merge_or_reorganize" | "add_link";
+  | "reorganize_parent" | "merge_or_reorganize" | "add_link"
+  // P6 structure-pass actions (corpus-level actor; see applyStructurePass). Judgment-chosen,
+  // not a checklist; each is a versioned, reversible edit attributed to actor="structure_pass".
+  | "rewrite_parent_opening" | "merge_duplicate_or_near_duplicate_pages"
+  | "move_niche_page_under_better_parent" | "create_missing_parent";
+
+// P6: who made the edit. The per-paper editor and the corpus-level structure pass are DISTINCT
+// actors in the public change history — a reader/auditor must be able to tell "this reorg was a
+// scheduled structure pass" from "this paper caused it". Null/absent = paper_editor (default).
+export type OverviewEditActor = "paper_editor" | "structure_pass";
 export type OverviewEditType = "prose" | "reference_only" | "new_section" | "new_subpage" | "reorganization" | "link_only";
+
+// Reversibility payload for structural edits (reorganize/move/create-missing-parent share the
+// `children` shape; merge adds page-repoint info). rollbackReorganize / rollbackMerge read this.
+export type StructuralChangeRecord =
+  | { kind?: "reparent"; newParentSlug: string; children: { slug: string; oldParentSlug: string | null }[] }
+  | {
+      kind: "merge";
+      fromSlug: string; intoSlug: string;
+      fromPrevVersionId: string; intoPrevVersionId: string;
+      children: { slug: string; oldParentSlug: string | null }[];
+    };
 export type OverviewEditStatus = "draft_applied" | "published" | "reverted" | "superseded" | "rejected";
 
 export type OverviewEditorRationale = {
@@ -186,14 +230,19 @@ export const proposedOverviewEditsTable = pgTable("proposed_overview_edits", {
   reviewVersionId: varchar("review_version_id"), // -> reviews.id today (soft)
   paperId: varchar("paper_id").references(() => papersTable.id, { onDelete: "cascade" }),
   overviewSlug: varchar("overview_slug").notNull(),
+  // P6: which actor produced this edit (null = paper_editor). Structure-pass edits carry no
+  // paperId; they are corpus-level restructuring, attributed distinctly in the change history.
+  actor: varchar("actor").$type<OverviewEditActor>(),
   action: varchar("action").$type<OverviewEditAction>().notNull(),
   editType: varchar("edit_type").$type<OverviewEditType>(),
   targetPageSlug: varchar("target_page_slug"),
   targetSectionSlug: varchar("target_section_slug"),
   linkTargetSlug: varchar("link_target_slug"), // add_link destination / reorganize_parent new parent (validated against the index)
   parentSlug: varchar("parent_slug"), // create_page: parent chosen from index or same batch (emergent hierarchy, S2)
-  // reorganize_parent reversibility: the children moved and their previous parents.
-  structuralChange: jsonb("structural_change").$type<{ newParentSlug: string; children: { slug: string; oldParentSlug: string | null }[] } | null>(),
+  // Structural-edit reversibility record. reorganize_parent/move/create_missing_parent store the
+  // children moved + their previous parents; merge stores the pre-merge version ids + reparented
+  // children + a redirect so rollbackMerge / rollbackReorganize can undo it precisely.
+  structuralChange: jsonb("structural_change").$type<StructuralChangeRecord | null>(),
   proposedMarkdown: text("proposed_markdown").notNull().default(""),
   citedPaperIds: jsonb("cited_paper_ids").$type<string[]>().notNull().default([]),
   citedClaimIds: jsonb("cited_claim_ids").$type<string[]>().notNull().default([]),
