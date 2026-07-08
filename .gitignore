@@ -53,3 +53,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# esbuild bundle build artifacts (regenerated per run; pid-unique)
+scripts/.seed-overview.bundle*.mjs
