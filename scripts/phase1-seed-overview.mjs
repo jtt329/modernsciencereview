@@ -26,6 +26,7 @@ const editorPath = join(ROOT, "artifacts/api-server/src/lib/overviewEditor.ts");
 const b21Path = join(ROOT, "artifacts/api-server/src/lib/prompts/explanatoryUpdateB21.ts");
 const b2Path = join(ROOT, "artifacts/api-server/src/lib/prompts/explanatoryUpdateB2.ts");
 const auditorPath = join(ROOT, "artifacts/api-server/src/lib/prompts/auditor.ts");
+const structurePassPath = join(ROOT, "artifacts/api-server/src/lib/prompts/structurePass.ts");
 const schemaSqlPath = join(ROOT, "scripts/local/schema.sql");
 const MODE = process.env.MODE || "synthetic";
 // Synthetic mode runs on in-memory pglite and never connects — @workspace/db only needs the
@@ -176,6 +177,7 @@ import {
   computeProminence, publishOverview, rollbackPage, checkEquationFidelity, assembleCorrectionsLedger,
   blocksOfVersion, migrateToBlocks, rollbackReorganize, pagesInScope,
   checkClaimInternalConsistency, runConsistencyPass, heuristicConsistencyChecker,
+  applyStructurePass, classifyRepresentationOutcome, rollbackMerge, strictInequalityContradictions,
 } from ${JSON.stringify(editorPath)};
 import { fieldPagesTable, fieldPageVersionsTable, pageSectionsTable, pageSpansTable, pageReferencesTable, papersTable, usersTable, reviewVersionsTable, proposedOverviewEditsTable, attributionChecksTable, pageLinksTable, divergenceFlagsTable, pageBlocksTable, pageVersionBlocksTable, consistencyFindingsTable } from "@workspace/db";
 import { eq, desc, inArray } from "drizzle-orm";
@@ -250,7 +252,8 @@ async function main() {
   // (run-*-db dirs) never overwrite each other's export or the seed-15 baseline
   // overview_draft_live.md (which run-a/run-b rounds clobbered before this fix).
   const dbBase = process.env.PGLITE_DIR ? basename(process.env.PGLITE_DIR) : "";
-  const draftName = "overview_draft_" + (dbBase.startsWith("run-") ? dbBase : MODE) + ".md";
+  // Any per-run DB gets its own export; only the legacy seed-db keeps the baseline filename.
+  const draftName = "overview_draft_" + (dbBase && dbBase !== "seed-db" ? dbBase : MODE) + ".md";
   const md = await assembleOverviewMarkdown(db, OVERVIEW_SLUG);
   writeFileSync(OUT + "/" + draftName, md);
   console.log("[seed] wrote " + draftName + " (" + md.length + " chars)");
@@ -719,6 +722,96 @@ async function runEmergenceAcceptance() {
   // Scope: with no pre-declared root, the namespace serves ALL pages.
   const scope = await pagesInScope(db2, OV);
   A(scope.length === allPages.length, "S3: pagesInScope covers the whole emergent tree when no root page exists");
+
+  // ===================== P6: the scheduled STRUCTURE PASS (corpus-level actor) =============
+  const BS = String.fromCharCode(92); // avoid template-literal backslash escaping entirely
+  // Two fresh top-level pages the structure pass should consolidate under a created parent.
+  await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "create_page", targetPageSlug: "topic-x", parentSlug: "", proposedMarkdown: "## Topic X\\n\\nTopic X in isolation.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+    { action: "create_page", targetPageSlug: "topic-y", parentSlug: "", proposedMarkdown: "## Topic Y\\n\\nTopic Y in isolation.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  const cmp = await applyStructurePass(db2, { overviewSlug: OV, actions: [
+    { action: "create_missing_parent", targetPageSlug: "broader-parent", proposedMarkdown: "## Broader parent\\n\\nA broader home that unifies its children.", childSlugs: ["topic-x", "topic-y"], pageSummaryOneLine: "the broader home", reason: "two roots share a broader subject" },
+  ] });
+  const afterCmp = await db2.select().from(fieldPagesTable);
+  const bp = afterCmp.find((p) => p.slug === "broader-parent");
+  A(cmp[0].status === "draft_applied" && bp && afterCmp.filter((p) => p.parentPageId === bp.id).length === 2, "P6: create_missing_parent consolidates two roots under a new parent (forest -> tree)");
+  const cmpEdit = (await db2.select().from(proposedOverviewEditsTable)).find((e) => e.id === cmp[0].proposedOverviewEditId);
+  A(cmpEdit && cmpEdit.actor === "structure_pass" && cmpEdit.paperId === null, "P6: structure-pass edit attributed actor=structure_pass with no paperId (distinct in change history)");
+  A((await db2.select().from(proposedOverviewEditsTable)).some((e) => e.actor === "paper_editor"), "P6: per-paper edits remain attributed actor=paper_editor (two distinct actors)");
+
+  // rewrite_parent_opening replaces the opening block (the stale-opening fix).
+  const preOpenVer = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, rp.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  const rop = await applyStructurePass(db2, { overviewSlug: OV, actions: [
+    { action: "rewrite_parent_opening", targetPageSlug: "radiative-processes", proposedMarkdown: "Radiative processes is the broad account of how systems exchange energy with fields, spanning thermal emission and spectral lines beneath it.", pageSummaryOneLine: "broad account of energy exchange with fields", reason: "opening had outgrown its first paper" },
+  ] });
+  const postOpenVer = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, rp.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  A(rop[0].status === "draft_applied" && postOpenVer.versionNumber > preOpenVer.versionNumber && /broad account of how systems exchange/.test(postOpenVer.markdownFull), "P6: rewrite_parent_opening replaces the opening as a new version");
+
+  // move_niche_page_under_better_parent + opening rewrite in one move (the permuted-B Ong heal).
+  await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "create_page", targetPageSlug: "niche-z", parentSlug: "", proposedMarkdown: "## Niche Z\\n\\nNiche Z arrived early and sits at the top level as an order artifact.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  const mv = await applyStructurePass(db2, { overviewSlug: OV, actions: [
+    { action: "move_niche_page_under_better_parent", parentSlug: "broader-parent", childSlugs: ["niche-z"], rewriteOpeningSlug: "niche-z", newOpeningMarkdown: "Within the broader-parent subject, niche Z is a narrow special case rather than a field of its own.", reason: "order artifact: niche page stranded at top level" },
+  ] });
+  const afterMv = await db2.select().from(fieldPagesTable);
+  const nz = afterMv.find((p) => p.slug === "niche-z");
+  const nzVer = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, nz.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  A(mv[0].status === "draft_applied" && nz.parentPageId === bp.id && /narrow special case/.test(nzVer.markdownFull), "P6: move_niche_page_under_better_parent re-parents AND rewrites its opening in one move");
+
+  // merge_duplicate_or_near_duplicate_pages folds content + children, reversibly.
+  await applyOverviewImpact(db2, { overviewSlug: OV, paperId: p2, reviewVersionId: null, correctnessPublic: "sound", edits: [
+    { action: "create_page", targetPageSlug: "dup-a", parentSlug: "", proposedMarkdown: "## Dup A\\n\\nThe surviving page's content.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+    { action: "create_page", targetPageSlug: "dup-b", parentSlug: "", proposedMarkdown: "## Dup B\\n\\nThe near-duplicate page's distinctive sentence.", citedPaperIds: [], citedClaimIds: [], supportStatus: "unsourced_explanatory", safetyCheck: sc },
+  ] });
+  const mg = await applyStructurePass(db2, { overviewSlug: OV, actions: [
+    { action: "merge_duplicate_or_near_duplicate_pages", mergeIntoSlug: "dup-a", mergeFromSlug: "dup-b", reason: "near-duplicate subject" },
+  ] });
+  const dupA = (await db2.select().from(fieldPagesTable)).find((p) => p.slug === "dup-a");
+  const dupAVer = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, dupA.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  const dupBVer = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, (await db2.select().from(fieldPagesTable)).find((p) => p.slug === "dup-b").id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  A(mg[0].status === "draft_applied" && /distinctive sentence/.test(dupAVer.markdownFull) && /Merged into/.test(dupBVer.markdownFull), "P6: merge folds the absorbed page's content into the survivor and tombstones it");
+  await rollbackMerge(db2, mg[0].proposedOverviewEditId);
+  const dupARb = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, dupA.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  A(!/distinctive sentence/.test(dupARb.markdownFull), "P6: rollbackMerge restores the survivor to its pre-merge content");
+
+  // Slug discipline holds for the structure pass too.
+  const badSp = await applyStructurePass(db2, { overviewSlug: OV, actions: [
+    { action: "reorganize_parent", parentSlug: "no-such-parent", childSlugs: ["topic-x"] },
+  ] });
+  A(badSp[0].status === "rejected" && badSp[0].rejectionReason === "unknown_parent_slug", "P6: structure pass rejects an unknown parent slug (slug discipline)");
+
+  // ===================== P1: strict-inequality on a NEW page's later block =================
+  // create_page whose LATER block carries a strict ">" beside "never decreases" prose in an
+  // EARLIER block — the exact S6 GSL error the per-span pass never reached. The whole-page scan
+  // must catch it and the regeneration must fix the operator.
+  const pgsl = await mkPaper("Strictness regression paper");
+  const gslApplied = await applyOverviewImpact(db2, { overviewSlug: OV, paperId: pgsl, reviewVersionId: null, correctnessPublic: "sound", claims: [{ id: "C1", statement: "The total entropy never decreases.", status: "established" }], edits: [
+    { action: "create_page", targetPageSlug: "entropy-law", parentSlug: "", proposedMarkdown: "## Entropy law\\n\\nThe total entropy of the closed system never decreases over time.\\n\\n$$S_{tot} > 0$$", citedPaperIds: [pgsl], citedClaimIds: ["C1"], supportStatus: "sourced", safetyCheck: sc, reason: "the entropy law" },
+  ] });
+  const gslRegen = async (md) => (md.includes("> 0") ? md.split("> 0").join(BS + "ge 0") : null);
+  const gslCons = await runConsistencyPass(db2, { overviewSlug: OV, paperId: pgsl, reviewVersionId: null, claims: [{ id: "C1", statement: "The total entropy never decreases.", status: "established" }], scope: "general_physics", correctnessPublic: "sound", applied: gslApplied, checker: heuristicConsistencyChecker, regenerate: gslRegen });
+  const elVer = (await db2.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, (await db2.select().from(fieldPagesTable)).find((p) => p.slug === "entropy-law").id)).orderBy(desc(fieldPageVersionsTable.versionNumber)))[0];
+  A(strictInequalityContradictions("the total entropy never decreases $$S_{tot} > 0$$").length === 1, "P1: strictInequalityContradictions detects non-strict prose beside a strict > formula");
+  A(gslCons.checked > 0 && gslCons.regenerated > 0, "P1: consistency pass CHECKS a created page's later blocks and regenerates the strict-inequality block");
+  A(elVer.markdownFull.includes("ge 0") && !elVer.markdownFull.includes("> 0"), "P1: the strict inequality on the new page's later block is fixed to a non-strict bound");
+
+  // ===================== P7: representation invariant (pure classifier) ====================
+  const cCreate = classifyRepresentationOutcome({ internal: "sound", hasSurvivingDelta: true, survivingSummary: "x", applied: [{ status: "draft_applied", action: "create_page", targetPageSlug: "p" }] });
+  A(cCreate.outcome === "created_or_updated_niche_page" && !cCreate.invariantViolation, "P7: a paper that created a page -> created_or_updated_niche_page");
+  const cFatal = classifyRepresentationOutcome({ internal: "fatal_verified", hasSurvivingDelta: false, applied: [{ status: "draft_applied", action: "add_paragraph", targetPageSlug: "field-disputed-and-failed-claims" }] });
+  A(cFatal.outcome === "disputed_or_failed_route", "P7: a fatal_verified paper -> disputed_or_failed_route");
+  const cFloor = classifyRepresentationOutcome({ internal: "sound", hasSurvivingDelta: true, survivingSummary: "a real surviving contribution", applied: [] });
+  A(cFloor.outcome === "paper_page_only_not_yet_represented" && !cFloor.invariantViolation && cFloor.detail.length > 0, "P7: surviving delta + no structural home + no pointer -> FLOOR (paper_page_only, never a silent vanish)");
+  const cFloorBad = classifyRepresentationOutcome({ internal: "sound", hasSurvivingDelta: true, survivingSummary: "", applied: [] });
+  A(cFloorBad.invariantViolation === true, "P7: the floor WITHOUT a surviving summary is flagged as an invariant violation (guard)");
+  const cAlready = classifyRepresentationOutcome({ internal: "sound", hasSurvivingDelta: true, applied: [], alreadyRepresentedPointer: "on the entropy-law page" });
+  A(cAlready.outcome === "already_represented" && !cAlready.invariantViolation && cAlready.detail.length > 0, "P7: already_represented WITH a pointer does not trip the vanish invariant");
+  const cNoneBad = classifyRepresentationOutcome({ internal: "sound", hasSurvivingDelta: false, applied: [], noSurvivingReason: "" });
+  A(cNoneBad.outcome === "no_surviving_contribution" && cNoneBad.invariantViolation === true, "P7: no_surviving_contribution WITHOUT a reason is flagged (anti-laziness guard)");
+  const cNoneOk = classifyRepresentationOutcome({ internal: "sound", hasSurvivingDelta: false, applied: [], noSurvivingReason: "scientifically empty after prior-field subtraction" });
+  A(cNoneOk.outcome === "no_surviving_contribution" && !cNoneOk.invariantViolation, "P7: no_surviving_contribution WITH an allowed reason is clean");
 }
 
 // ---- S5: the model-auditor loop. Advisory only: never edits pages, nothing is computed
@@ -813,6 +906,7 @@ async function runLive(db, upsertPaper, persistReview) {
   const B2 = await import(${JSON.stringify(b2Path)});
   const MANIFEST = JSON.parse(readFileSync(OUT + "/_live_manifest.json", "utf8"));
   const usage = { in: 0, out: 0, calls: 0 };
+  const papersBefore = (await db.select().from(papersTable)).length; // P6: cadence over cumulative corpus
   const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
   function extractJson(text) {
     let t = String(text || "").trim();
@@ -987,12 +1081,52 @@ async function runLive(db, upsertPaper, persistReview) {
       const routingCorrectness = !correctnessValid ? undefined
         : internal === "fatal_alleged_unverified" ? "fatal_unverified"
         : (pub === "hidden" ? "sound" : pub);
+      // ---- P4: citation label -> DB paper id. The model cites by LABEL (its own title, "this
+      // paper", or a prior paper's title); those never matched a DB uuid, so every legitimate
+      // self-citation showed up as a DROPPED-CITE. Map known labels to ids here so DROPPED-CITES
+      // becomes a TRUE danger signal (a cite to something that genuinely doesn't resolve), and
+      // strip claim ids (C1..) that belong in citedClaimIds, not citedPaperIds.
+      const paperLabelMap = new Map();
+      for (const l of [paper.id, "self", "this", "this paper", "this manuscript", "the manuscript", "current", "current paper"]) paperLabelMap.set(String(l).toLowerCase().trim(), paperId);
+      for (const pr of await db.select().from(papersTable)) paperLabelMap.set(pr.title.toLowerCase().trim(), pr.id);
+      const mapCites = (ids) => {
+        const out = [];
+        for (const raw of ids ?? []) {
+          const k = String(raw).toLowerCase().trim();
+          if (paperLabelMap.has(k)) out.push(paperLabelMap.get(k));
+          else if (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(String(raw))) out.push(raw); // already a uuid — engine resolves/drops
+          else if (/^c\\d+$/i.test(String(raw))) continue; // claim id misplaced in citedPaperIds
+          else out.push(raw); // unknown label: keep so the engine drops it -> a real signal
+        }
+        return [...new Set(out)];
+      };
+      edits = edits.map((e) => ({ ...e, citedPaperIds: mapCites(e.citedPaperIds) }));
       const applied = await applyOverviewImpact(db, { overviewSlug: OVERVIEW_SLUG, paperId, reviewVersionId: rvId, correctnessPublic: routingCorrectness, edits, claims });
       // Verbatim record to disk (the db may be ephemeral in fresh-run mode).
       mkdirSync(OUT + "/records_live", { recursive: true });
       writeFileSync(OUT + "/records_live/" + paper.id + ".json", JSON.stringify({ paper: paper.id, reviewContext: ctx, score, internal, claims, evidencePackets, adjudicated: adj }, null, 2));
       console.log("  score=" + score + " scope=" + adj?.scopeOfUpdate + " correctness=" + internal + " | " + claims.length + " claims, " + edits.length + " proposed edits");
       for (const r of applied) console.log("    " + r.status.padEnd(13) + " " + r.action.padEnd(16) + " -> " + (r.targetPageSlug || "-") + " [" + (r.supportStatus || "-") + "]" + (r.droppedCitations?.length ? " DROPPED-CITES:" + r.droppedCitations.length : "") + (r.rejectionReason ? " (REJECTED: " + r.rejectionReason + ")" : ""));
+
+      // ---- P7: representation invariant — record (audit-only) where the surviving delta landed;
+      // FLOOR a nonfatal paper with a surviving delta but no structural home to its own paper
+      // page ("not yet represented in overview" + surviving summary) so it never silently vanishes.
+      const ra = (oi && oi.representationAssessment) || {};
+      const hasSurvivingDelta = ra.hasSurvivingDelta === true
+        || (["sound", "contested_defensible"].includes(internal) && ra.outcomeIfNoStructuralEdit === "not_yet_represented");
+      const survivingSummary = String(ra.survivingContributionSummary || adj?.deltaBeyondPriorField || adj?.explanatoryUpdate || "").trim();
+      const rep = classifyRepresentationOutcome({
+        internal: correctnessValid ? internal : null,
+        hasSurvivingDelta,
+        survivingSummary,
+        alreadyRepresentedPointer: ra.outcomeIfNoStructuralEdit === "already_represented" ? (ra.alreadyRepresentedAt || "") : null,
+        noSurvivingReason: ra.outcomeIfNoStructuralEdit === "no_surviving_contribution" ? (ra.noSurvivingReason || "") : null,
+        applied,
+      });
+      let repDetail = rep.detail || (rep.outcome === "paper_page_only_not_yet_represented" ? survivingSummary : "");
+      await db.update(reviewVersionsTable).set({ representationOutcome: rep.outcome, representationDetail: repDetail }).where(eq(reviewVersionsTable.id, rvId));
+      if (rep.invariantViolation && !repDetail) console.log("  !! REPRESENTATION INVARIANT INCOMPLETE: surviving delta with no home and no summary");
+      console.log("  [P7] representation: " + rep.outcome + (repDetail ? " — " + repDetail.slice(0, 80) : ""));
 
       // ---- S4: review<->overview consistency pass (model checker; one regeneration). ----
       const modelChecker = async ({ blockMarkdown, claims: ck, scope: sk }) => {
@@ -1033,6 +1167,61 @@ async function runLive(db, upsertPaper, persistReview) {
         } catch (e) { console.log("  ⚠ equation verification failed: " + (e?.message ?? e)); }
       }
     } catch (e) { console.log("  ERROR " + (e?.message ?? e)); }
+  }
+
+  // ---- P6: scheduled STRUCTURE PASS (corpus-level actor). Runs every STRUCTURE_PASS_EVERY
+  // papers (crossing test, robust to round sizes) and always on the final round
+  // (STRUCTURE_PASS_FINAL=1). Edits attributed actor="structure_pass", versioned + reversible.
+  // This is the actor S6 showed was missing: nothing ever asked the corpus-level
+  // "does the tree best explain the corpus?" question, so nothing ever reorganized.
+  async function runStructurePass() {
+    const SP = await import(${JSON.stringify(structurePassPath)});
+    const pages = await db.select().from(fieldPagesTable);
+    if (pages.length === 0) { console.log("  [P6] empty field — nothing to restructure"); return; }
+    const parentSlugOf = (p) => (p.parentPageId ? (pages.find((x) => x.id === p.parentPageId)?.slug ?? null) : null);
+    const roots = pages.filter((p) => !p.parentPageId);
+    const lines = [];
+    for (const p of pages) {
+      const v = await latestVer(p.id);
+      const vb = v ? await blocksOfVersion(db, v.id) : [];
+      const opening = (vb.find((b) => b.kind !== "heading")?.markdown ?? "").replace(/\\s+/g, " ").slice(0, 220);
+      lines.push("- " + p.slug + (parentSlugOf(p) ? " (parent: " + parentSlugOf(p) + ")" : " (ROOT)") + ": " + (v?.summaryOneLine || p.scopeStatement.slice(0, 120)) + "\\n    opening: " + opening);
+    }
+    const rvs = await db.select().from(reviewVersionsTable);
+    const revLines = rvs.map((r) => "- scope=" + (r.scope || "?") + " correctness=" + (r.correctnessInternal || "?")).slice(0, 140);
+    const ledger = (await assembleCorrectionsLedger(db, OVERVIEW_SLUG)).slice(0, 6000);
+    const input = ["CURRENT PAGE TREE (" + pages.length + " pages, " + roots.length + " TOP-LEVEL/root pages):", lines.join("\\n"), "",
+      "REVIEW SUMMARIES (verdict/scope only, no identities):", revLines.join("\\n"), "",
+      "CORRECTIONS LEDGER (recent):", ledger, "", "Assess the tree and emit actions."].join("\\n");
+    let out;
+    try { out = extractJson(await callMM(SP.STRUCTURE_PASS_PROMPT, input, [])); }
+    catch (e) { console.log("  [P6] structure-pass call failed: " + (e?.message ?? e)); return; }
+    console.log("  [P6] structure pass over " + pages.length + " pages / " + roots.length + " roots: " + String(out?.treeAssessment || "").slice(0, 140));
+    const raw = Array.isArray(out?.actions) ? out.actions : [];
+    const actions = [];
+    for (const a of raw) {
+      if (!a || !a.action) continue;
+      const reason = a.reason || String(out?.treeAssessment || "").slice(0, 200);
+      if (a.action === "no_change") actions.push({ action: "no_change", reason });
+      else if (a.action === "reorganize_parent" || a.action === "move_niche_page_under_better_parent")
+        actions.push({ action: a.action, parentSlug: a.parentSlug, childSlugs: Array.isArray(a.childSlugs) ? a.childSlugs : [], rewriteOpeningSlug: a.rewriteOpeningSlug || undefined, newOpeningMarkdown: a.newOpeningMarkdown || undefined, newOpeningSummaryOneLine: a.pageSummaryOneLine || undefined, newOpeningSummaryShort: a.pageSummaryShort || undefined, reason });
+      else if (a.action === "rewrite_parent_opening")
+        actions.push({ action: a.action, targetPageSlug: a.targetPageSlug, proposedMarkdown: a.proposedMarkdown || a.newOpeningMarkdown || "", pageSummaryOneLine: a.pageSummaryOneLine, pageSummaryShort: a.pageSummaryShort, reason });
+      else if (a.action === "create_missing_parent")
+        actions.push({ action: a.action, targetPageSlug: a.targetPageSlug, title: a.title, proposedMarkdown: a.proposedMarkdown || "", childSlugs: Array.isArray(a.childSlugs) ? a.childSlugs : [], pageSummaryOneLine: a.pageSummaryOneLine, pageSummaryShort: a.pageSummaryShort, reason });
+      else if (a.action === "merge_duplicate_or_near_duplicate_pages")
+        actions.push({ action: a.action, mergeIntoSlug: a.mergeIntoSlug, mergeFromSlug: a.mergeFromSlug, reason });
+    }
+    if (actions.length === 0) { console.log("  [P6] no actionable structure edits"); return; }
+    const res = await applyStructurePass(db, { overviewSlug: OVERVIEW_SLUG, actions });
+    for (const r of res) console.log("    [P6] " + r.status.padEnd(13) + " " + r.action + " -> " + (r.targetPageSlug || "-") + (r.rejectionReason ? " (REJECTED: " + r.rejectionReason + ")" : ""));
+  }
+  const papersAfter = (await db.select().from(papersTable)).length;
+  const SP_N = parseInt(process.env.STRUCTURE_PASS_EVERY || "5", 10);
+  const spCrossed = Math.floor(papersAfter / SP_N) > Math.floor(papersBefore / SP_N);
+  const spMode = process.env.STRUCTURE_PASS || "auto";
+  if (spMode !== "off" && (spMode === "always" || process.env.STRUCTURE_PASS_FINAL === "1" || spCrossed)) {
+    try { await runStructurePass(); } catch (e) { console.log("  [P6] structure pass ERROR " + (e?.message ?? e)); }
   }
   console.log("\\n[live] usage: " + usage.calls + " calls, " + usage.in + " in + " + usage.out + " out tokens");
 }

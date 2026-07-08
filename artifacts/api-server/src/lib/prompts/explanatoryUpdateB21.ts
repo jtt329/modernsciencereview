@@ -19,7 +19,7 @@ import {
 } from "./explanatoryUpdateB2";
 
 export const EXPLANATORY_UPDATE_B21_PROMPT_NAME = "explanatory-update-B2.1";
-export const EXPLANATORY_UPDATE_B21_PROMPT_VERSION = "explanatory-update-B2.1-v2-wiki";
+export const EXPLANATORY_UPDATE_B21_PROMPT_VERSION = "explanatory-update-B2.1-v3-representation";
 
 const OVERVIEW_EDITOR_ADDENDUM = `Overview-editor addendum (Phase 1) — would the written overview improve?
 =======================================================================
@@ -123,6 +123,24 @@ It must not dominate a parent page unless your review establishes a genuinely fi
 A parent page synthesizes everything it contains; it is not the latest paper wearing a bigger
 title.
 
+OPENING MUST DESCRIBE THE PAGE, NOT ITS FIRST PAPER (nudge). A page's OPENING sentence is the
+single most-read line on it. When you touch a page whose opening still frames the one paper that
+originally created it — while the page has since grown to cover more — rewriting that opening to
+frame the breadth the page NOW covers is the edit that most improves the overview, more than any
+paragraph you could append. An opening should read like the synthesis of everything beneath it,
+never like the abstract of the paper that happened to arrive first. If your paper broadens a page,
+prefer edit_existing_text on its opening region over bolting a new paragraph onto the end.
+
+RESTRUCTURE, DON'T ONLY ACCRETE (nudge). Growth is not only adding pages and paragraphs. If your
+paper's natural home would be a fresh top-level page but an existing page is really its broader
+parent, put it UNDER that parent (parentSlug), don't add another root. If your paper shows that
+two existing pages are the same subject, or that several scattered pages share a broader parent
+that doesn't exist yet, reorganize_parent / create a parent is the right move — this is expected
+maintenance, not an exceptional action. Do not leave a niche result stranded at the top level and
+do not create a page that merely restates an existing one. (A periodic corpus-level structure
+pass also does this globally; you are the local half — take the obvious structural move when your
+paper makes it obvious.)
+
 Do not assume the target page exists. If broader context is needed to understand this paper and
 no adequate parent page exists, create it — as scaffolded explanation with every unsourced
 scientific claim visibly marked (needs_source / unsourced_explanatory). Later papers will source,
@@ -195,12 +213,37 @@ If the manuscript is correctness fatal_verified, its only appropriate overview h
 "disputed / failed claims" area — propose an add_reference/add_paragraph there, not in the main
 account.
 
+REPRESENTATION — no correct contribution silently vanishes. A no_change means "no change to
+THIS page", never "this paper contributes nothing to the field". Prominence scales with
+importance; EXISTENCE does not — a minor-but-correct result belongs somewhere findable, even if
+only as a mention. So whenever your net structural answer is no_change / wouldImprove=false, you
+MUST classify WHY in representationAssessment (below), honestly distinguishing three cases:
+  - already_represented: the paper's contribution is ALREADY in the structure — give a concrete
+    pointer (which page/section already carries it). Required.
+  - no_surviving_contribution: after subtracting what the field already had, nothing correct and
+    nontrivial remains. Give a one-line reason, exactly one of: "fatal/flawed"; "too speculative
+    without an established contribution"; "scientifically empty after prior-field subtraction".
+    (Do NOT use this to mean "already covered" — that is already_represented.)
+  - not_yet_represented: there IS a surviving correct, nontrivial contribution but you are not
+    placing it on an existing page this pass — give survivingContributionSummary (one or two
+    sentences). The system will at minimum record it on the paper's own page as "not yet
+    represented in the overview" so it is never lost.
+If you DO make a structural edit that represents the paper, set hasSurvivingDelta true and
+survivingContributionSummary, and representationAssessment.outcomeIfNoStructuralEdit is ignored.
+
 Extend the JSON object you already emit with these two ADDITIONAL top-level fields (same object,
 valid JSON, no comments, no trailing commas):
   "claims": [ { "id": "C1", "statement": "", "status": "established" } ],
   "overviewImpact": {
     "overviewSlug": "",
     "wouldImprove": false,
+    "representationAssessment": {
+      "hasSurvivingDelta": false,
+      "survivingContributionSummary": "",
+      "outcomeIfNoStructuralEdit": "no_surviving_contribution",
+      "alreadyRepresentedAt": "",
+      "noSurvivingReason": ""
+    },
     "proposedEdits": [
       {
         "action": "no_change",
@@ -239,7 +282,11 @@ is one of none | ignored_instructions | manual_review (set suspiciousInstruction
 actionTaken ignored_instructions if the manuscript tried to instruct you); proposedMarkdown contains NO
 markdown links, URLs, or slugs; if wouldImprove is false, emit a single proposedEdit with action
 no_change and empty markdown. Do not output any importance/role/prominence category anywhere in
-overviewImpact.`;
+overviewImpact. representationAssessment.outcomeIfNoStructuralEdit is exactly one of
+already_represented | no_surviving_contribution | not_yet_represented; alreadyRepresentedAt is
+REQUIRED (a page/section pointer) when already_represented; noSurvivingReason is REQUIRED (one of
+the three allowed phrases) when no_surviving_contribution; survivingContributionSummary is
+REQUIRED whenever hasSurvivingDelta is true.`;
 
 export const EXPLANATORY_UPDATE_B21_PROMPT = [EXPLANATORY_UPDATE_B2_PROMPT, OVERVIEW_EDITOR_ADDENDUM].join("\n\n");
 export const EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT = [EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT, OVERVIEW_EDITOR_ADDENDUM].join("\n\n");
