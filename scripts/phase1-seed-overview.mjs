@@ -245,6 +245,8 @@ async function main() {
     await runEmergenceAcceptance();
   } else if (MODE === "audit") {
     await runAudit(db);
+  } else if (MODE === "reverify") {
+    await runReverify();
   } else {
     await runLive(db, upsertPaper, persistReview);
   }
@@ -920,6 +922,63 @@ async function runAudit(db) {
   writeFileSync(OUT + "/audits/" + label + "_" + ts + ".md", md.join(NL));
   console.log("[audit] wrote " + outJson + " | usage: " + usage.calls + " calls, " + usage.in + " in + " + usage.out + " out");
   for (const [k, vArr] of Object.entries(merged)) if (vArr.length) console.log("  " + k + ": " + vArr.length);
+}
+
+// MODE=reverify (hardening items 3+4): re-adjudicate specific papers' STORED fatal allegations
+// through the NEW verification + centrality gate + escalation, and report old-vs-new verdicts.
+// READ-ONLY: reads records_live/<id>.json allegations + cached page images; writes only a report.
+// Touches no DB (no live, no seed). PAPERS selects which papers; the outer script renders them.
+async function runReverify() {
+  const { ai: geminiAI } = await import("@workspace/integrations-gemini-ai");
+  const { parseGeminiJsonResponse, GEMINI_PASS_MODEL } = await import(${JSON.stringify(enginePath)});
+  const B2 = await import(${JSON.stringify(b2Path)});
+  const FT = await import(${JSON.stringify(fatalTriagePath)});
+  const MANIFEST = JSON.parse(readFileSync(OUT + "/_live_manifest.json", "utf8"));
+  const ESCALATION_MODEL = process.env.SCIREVIEW_GEMINI_ESCALATION_MODEL?.trim() || GEMINI_PASS_MODEL;
+  const usage = { in: 0, out: 0, calls: 0 };
+  const extractJson = (text) => { let t = String(text || "").trim(); const f = t.indexOf("{"); if (f > 0) t = t.slice(f); try { return parseGeminiJsonResponse(t); } catch (_e) { return null; } };
+  const callMM = async (sys, txt, imgs, model) => {
+    let lastErr; for (let a = 0; a < 6; a += 1) { try {
+      const resp = await geminiAI.models.generateContent({ model: model || GEMINI_PASS_MODEL, contents: [{ role: "user", parts: [{ text: txt }, ...imgs] }], config: { systemInstruction: sys, responseMimeType: "application/json", temperature: ${TEMPERATURE}, maxOutputTokens: 65536 } });
+      const u = resp.usageMetadata || {}; usage.in += u.promptTokenCount || 0; usage.out += u.candidatesTokenCount || 0; usage.calls += 1;
+      if (!resp.text) throw new Error("empty"); return resp.text;
+    } catch (e) { lastErr = e; await new Promise((r) => setTimeout(r, Math.min(45000, 6000 * (a + 1)))); } } throw lastErr;
+  };
+  console.log("[reverify] escalation model: " + ESCALATION_MODEL);
+  const out = [];
+  for (const paper of MANIFEST) {
+    const rec = (() => { try { return JSON.parse(readFileSync(OUT + "/records_live/" + paper.id + ".json", "utf8")); } catch { return null; } })();
+    const adj = rec?.adjudicated || {};
+    const candidates = adj?.correctnessAssessment?.fatalFlawCandidates || (rec?.evidencePackets || []);
+    const oldVerdict = rec?.internal || adj?.correctnessAssessment?.internalStatusProposed || "(unknown)";
+    console.log("\\n### REVERIFY " + paper.id + " (old verdict: " + oldVerdict + ", " + candidates.length + " candidate(s))");
+    if (!candidates.length) { console.log("  (no fatal candidates on record — nothing to re-adjudicate)"); out.push({ paper: paper.id, oldVerdict, newVerdict: oldVerdict, note: "no candidates" }); continue; }
+    const imageParts = paper.pages.map((pg) => ({ inlineData: { mimeType: "image/png", data: readFileSync(pg.path).toString("base64") } }));
+    const packets = [];
+    for (const cand of candidates) {
+      const vText = ["Alleged fatal flaw to verify (do NOT score the paper):", "claim: " + (cand.claim || ""), "allegation: " + (cand.modelAllegation || cand.verificationDerivation || ""), "location: " + JSON.stringify(cand.locationInPaper || {}), "", "The rendered page images follow (authoritative)."].join("\\n");
+      try { const v = extractJson(await callMM(B2.FATAL_FLAW_VERIFICATION_PROMPT, vText, imageParts));
+        packets.push({ claim: cand.claim, modelAllegation: cand.modelAllegation, centralClaim: v?.centralClaim, flawLocation: v?.flawLocation, flawType: v?.flawType, correctingEliminatesCentral: v?.correctingEliminatesCentral, authorsAddressThis: v?.authorsAddressThis, whatSurvives: v?.whatSurvives, confidence: v?.confidence, skepticVerdict: v?.skepticVerdict || "uncertain_needs_human_or_author", verificationDerivation: v?.reDerivation, verbatimExpression: v?.verbatimExpression });
+      } catch (e) { packets.push({ claim: cand.claim, skepticVerdict: "uncertain_needs_human_or_author", note: "verify failed: " + (e?.message ?? e) }); }
+    }
+    let escalation = null, escalationErrored = false;
+    if (!FT.anyCertainCrankFatal(packets) && FT.anyNeedsEscalation(packets)) {
+      const idx = FT.candidateToEscalate(packets); const c = packets[idx] || packets[0];
+      const eText = ["FINAL ARBITER — decide whether correcting this alleged flaw eliminates the paper's central result.", "Paper's central claim (first-pass): " + (c?.centralClaim || c?.claim || ""), "Alleged flaw: " + (c?.modelAllegation || ""), "Verbatim expression: " + (c?.verbatimExpression || ""), "First-pass re-derivation: " + (c?.verificationDerivation || ""), "First-pass note on what survives: " + (c?.whatSurvives || ""), "", "The rendered page images follow (authoritative)."].join("\\n");
+      try { const esc = extractJson(await callMM(B2.FATAL_ESCALATION_PROMPT, eText, imageParts, ESCALATION_MODEL));
+        escalation = { verdict: esc?.verdict, confidence: esc?.confidence, centralResult: esc?.centralResult, correctionConsequence: esc?.correctionConsequence, independentCorroboration: esc?.independentCorroboration, publicWording: esc?.publicWording };
+      } catch (e) { escalationErrored = true; escalation = { error: String(e?.message ?? e) }; }
+    }
+    const newVerdict = FT.routeFatalVerdict({ candidates: packets, escalation: escalation && !escalation.error ? escalation : null, escalationErrored });
+    console.log("  candidates: " + packets.map((p) => (p.skepticVerdict || "?") + "/" + (p.flawType || "?") + "/" + (p.flawLocation || "?")).join(" ; "));
+    if (escalation) console.log("  escalation(" + ESCALATION_MODEL + "): " + (escalation.verdict || escalation.error) + " conf=" + (escalation.confidence || "-"));
+    console.log("  OLD: " + oldVerdict + "  ->  NEW: " + newVerdict);
+    out.push({ paper: paper.id, oldVerdict, newVerdict, escalation, packets });
+  }
+  const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  mkdirSync(OUT + "/reverify", { recursive: true });
+  writeFileSync(OUT + "/reverify/reverify_" + ts + ".json", JSON.stringify({ escalationModel: ESCALATION_MODEL, results: out }, null, 2));
+  console.log("\\n[reverify] wrote reverify/reverify_" + ts + ".json | usage: " + usage.calls + " calls, " + usage.in + " in + " + usage.out + " out");
 }
 
 async function runLive(db, upsertPaper, persistReview) {
