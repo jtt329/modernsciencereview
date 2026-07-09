@@ -17,7 +17,7 @@
 import { createHash } from "node:crypto";
 
 export const EXPLANATORY_UPDATE_B2_PROMPT_NAME = "explanatory-update-B2";
-export const EXPLANATORY_UPDATE_B2_PROMPT_VERSION = "explanatory-update-B2-v1";
+export const EXPLANATORY_UPDATE_B2_PROMPT_VERSION = "explanatory-update-B2-v2-centrality-gate";
 
 export const EXPLANATORY_UPDATE_B2_PROMPT = `You are reviewing an anonymous scientific manuscript on its scientific merits alone.
 Disregard author identity, institution, venue, journal, citation counts, publication
@@ -244,31 +244,105 @@ export const EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT = [
 // Verbatim from the brief; the model is told the image is authoritative and must
 // transcribe the disputed expression symbol by symbol before re-deriving.
 export const FATAL_FLAW_VERIFICATION_PROMPT = `You are verifying an alleged fatal flaw in a scientific manuscript. You are NOT scoring the paper.
-Your only job is to check whether the alleged flaw is actually present in the manuscript as written.
+Two questions, in order: (1) is the alleged flaw actually PRESENT as written? and — the one that
+decides "fatal" — (2) does the flaw BREAK THE PAPER'S CENTRAL CONTRIBUTION, or does it only dent a
+side derivation, an interpretive/observer/frame choice, or a subtlety the authors themselves
+already address? A flaw can be entirely real and still not be fatal.
 
 You are given the rendered page image(s). Treat the image as authoritative.
 1. Locate the exact equation/sentence/derivation being criticized on the page image.
-2. Transcribe the relevant expression VERBATIM from the image, symbol by symbol. Do not
-   simplify, do not drop factors, do not infer an equation from memory or from any text layer.
-3. Re-derive the disputed step from that verbatim expression.
-4. State the strongest defense the author could give.
-5. Verdict: fatal_survives | not_fatal | uncertain_needs_human_or_author.
-If the relevant expression is ambiguous or unreadable in the image, return uncertain, not fatal.
+2. Transcribe the relevant expression VERBATIM from the image, symbol by symbol. Do not simplify,
+   do not drop factors, do not infer an equation from memory or from any text layer.
+3. Re-derive the disputed step from that verbatim expression — confirm whether the flaw is real.
+4. State the paper's CENTRAL contribution (its main result, in one sentence).
+5. CENTRALITY GATE — the heart of the verdict. Determine:
+   - flawLocation: is the flawed step part of the derivation the CENTRAL result depends on
+     (central_step), a side_derivation, an interpretive_or_frame_choice (an observer/gauge/frame
+     convention, an interpretation), or a point the authors themselves already flag/handle
+     (self_addressed_by_authors — check footnotes, caveats, "we note that…")?
+   - flawType: arithmetic_or_algebra (a miscalculation — a wrong number, a dropped factor, a
+     mis-solved equation), conceptual_or_framework (a disputed assumption/definition/framework
+     choice), or interpretive_or_observer (a frame/observer/gauge choice, an interpretation).
+   - correctingEliminatesCentral: if you CORRECT the flaw, does the paper's central result
+     disappear? Often the central result is independently corroborated by other arguments that do
+     NOT use the flawed step — if so, correcting the flaw does NOT eliminate it.
+   - authorsAddressThis: does the paper itself already acknowledge/neutralize this point?
+6. State the strongest defense the author could give, and what SURVIVES if the flaw is corrected.
+7. Verdict — return fatal_survives ONLY if the flaw is present AND in a central_step AND correcting
+   it eliminates the central result AND the authors do not already neutralize it. If the flaw is
+   real but local/interpretive/self-addressed, or the central result survives its correction,
+   return not_fatal (the paper is narrowed/contested, never failed). If you cannot tell whether
+   correcting it eliminates the central result, return uncertain_needs_human_or_author.
+Be especially skeptical of "fatal" for a frame/observer/gauge objection or a lone side step — those
+are the classic false-fatals. If the expression is ambiguous/unreadable, return uncertain, not fatal.
 
 Return valid JSON only — no comments, no trailing commas:
 {
   "locatedOnPage": "",
   "verbatimExpression": "",
   "reDerivation": "",
+  "centralClaim": "",
+  "flawLocation": "central_step",
+  "flawType": "arithmetic_or_algebra",
+  "correctingEliminatesCentral": true,
+  "authorsAddressThis": false,
+  "whatSurvives": "",
   "possibleAuthorDefense": "",
+  "confidence": "high",
   "skepticVerdict": "fatal_survives",
   "publicWording": ""
 }
-Field rules (do not echo): verbatimExpression = the disputed expression read symbol-by-symbol
-from the image; reDerivation = the re-derivation from that verbatim expression; skepticVerdict =
-exactly one of fatal_survives, not_fatal, uncertain_needs_human_or_author; publicWording = a
-one-sentence public description of the flaw, used ONLY if skepticVerdict is fatal_survives.
-Math in LaTeX inside $...$, backslashes escaped. Output valid JSON only.`;
+Field rules (do not echo): verbatimExpression = the disputed expression read symbol-by-symbol from
+the image; centralClaim = the paper's main contribution; flawLocation is one of central_step |
+side_derivation | interpretive_or_frame_choice | self_addressed_by_authors; flawType is one of
+arithmetic_or_algebra | conceptual_or_framework | interpretive_or_observer; correctingEliminatesCentral
+and authorsAddressThis are booleans; confidence is one of high | medium | low; skepticVerdict is one
+of fatal_survives | not_fatal | uncertain_needs_human_or_author; publicWording = a one-sentence
+public description, used ONLY if skepticVerdict is fatal_survives. Math in LaTeX inside $...$,
+backslashes escaped. Output valid JSON only.`;
+
+// Fatal ESCALATION (Phase 2a hardening item 2): the second, decisive pass for any alleged fatal
+// that is NOT a certain crank (an image-verified arithmetic/algebra error in a central step). Run
+// on a STRONGER model. It answers exactly one question — does correcting the flaw ELIMINATE the
+// central result — and only a high-confidence "eliminates_central" routes the paper to failed.
+export const FATAL_ESCALATION_PROMPT = `You are the FINAL ARBITER on whether an alleged flaw is fatal to a scientific paper. A first-pass
+reviewer flagged a possible fatal flaw and could not settle it with high confidence. Decide
+rigorously: does CORRECTING this alleged flaw ELIMINATE the paper's central result, or does it
+merely narrow/dent a local step while the central result stands?
+
+You are given the rendered page image(s) (authoritative), the paper's stated central claim, and the
+specific alleged flaw with its verbatim expression and the first reviewer's re-derivation.
+
+Method:
+1. State the paper's CENTRAL result precisely and the exact chain of steps it depends on.
+2. Decide whether the flawed step is IN that dependency chain (flawInChain) or OUTSIDE it (a side
+   derivation, an interpretive/observer/gauge/frame choice, or a subtlety the paper itself
+   addresses in a footnote/caveat).
+3. Look for INDEPENDENT CORROBORATION: does the paper establish the central result by other
+   arguments that do NOT use the flawed step (e.g. multiple independent estimates converging on the
+   same result)? If so, correcting the flaw cannot eliminate the central result.
+4. State the consequence of correcting the flaw.
+Answer "eliminates_central" ONLY if you are HIGHLY CONFIDENT that, with the flaw corrected, the
+paper's central contribution collapses. If the central result survives the correction (local flaw,
+interpretive choice, self-addressed, or independently corroborated), answer "survives_correction".
+If you genuinely cannot tell, answer "genuinely_uncertain". Do NOT default to fatal under
+uncertainty — a real but non-fatal flaw makes a paper contested or narrowed, not failed.
+
+Return valid JSON only — no comments, no trailing commas:
+{
+  "centralResult": "",
+  "dependencyChain": "",
+  "flawInChain": true,
+  "independentCorroboration": "",
+  "correctionConsequence": "",
+  "verdict": "survives_correction",
+  "confidence": "high",
+  "publicWording": ""
+}
+Field rules (do not echo): verdict is exactly one of eliminates_central | survives_correction |
+genuinely_uncertain; confidence is one of high | medium | low; flawInChain is a boolean; publicWording
+is a one-sentence description used only if verdict is eliminates_central. Math in LaTeX inside $...$,
+backslashes escaped. Output valid JSON only.`;
 
 // Equation-transcription verification (integrity brief P2) — the same image-grounded treatment
 // fatal flaws get, applied to equations that reach the overview: a wrong-but-internally-
@@ -298,5 +372,10 @@ export const EXPLANATORY_UPDATE_B2_ADJUDICATOR_PROMPT_HASH = createHash("sha256"
 
 export const FATAL_FLAW_VERIFICATION_PROMPT_HASH = createHash("sha256")
   .update(FATAL_FLAW_VERIFICATION_PROMPT)
+  .digest("hex")
+  .slice(0, 16);
+
+export const FATAL_ESCALATION_PROMPT_HASH = createHash("sha256")
+  .update(FATAL_ESCALATION_PROMPT)
   .digest("hex")
   .slice(0, 16);

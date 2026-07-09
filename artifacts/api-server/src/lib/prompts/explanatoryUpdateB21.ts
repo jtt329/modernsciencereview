@@ -312,6 +312,15 @@ Check ONLY these five things and report findings:
 3. overreach — does any sentence say MORE than the cited claim establishes?
 4. misattribution — is the claim attributed to the right work, as far as the given claims show?
 5. hidden_claim — is any NEW scientific claim hiding as connective prose?
+6. inequality_strictness — SEMANTIC, not keyword. Does every inequality use the right strictness
+   for what the prose says about the bound? The rule: if the prose describes a bound that CAN BE
+   REACHED / attained / saturated (phrasings like "cannot exceed", "at most", "never decreases",
+   "no less than", "is saturated by", "reached in the extremal case"), the formula must use a
+   NON-STRICT symbol (≤ or ≥). A strict < or > is correct ONLY when the bound is genuinely never
+   attained (a strict separation the prose actually asserts). Flag a strict symbol paired with a
+   reachable/saturable bound. (E.g. "black holes saturate the entropy bound" beside $S < 2\\pi E R$
+   is wrong — it must be $S \\le 2\\pi E R$; "the total entropy never decreases" beside
+   $\\Delta S > 0$ is wrong — it must be $\\Delta S \\ge 0$.) Judge from meaning, not word lists.
 Return valid JSON only — no comments, no trailing commas:
 { "findings": [ { "check": "status_mismatch", "detail": "" } ] }
 An empty findings array means the region is consistent. Be precise and terse; findings feed a

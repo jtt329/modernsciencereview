@@ -27,6 +27,7 @@ const b21Path = join(ROOT, "artifacts/api-server/src/lib/prompts/explanatoryUpda
 const b2Path = join(ROOT, "artifacts/api-server/src/lib/prompts/explanatoryUpdateB2.ts");
 const auditorPath = join(ROOT, "artifacts/api-server/src/lib/prompts/auditor.ts");
 const structurePassPath = join(ROOT, "artifacts/api-server/src/lib/prompts/structurePass.ts");
+const fatalTriagePath = join(ROOT, "artifacts/api-server/src/lib/fatalTriage.ts");
 const schemaSqlPath = join(ROOT, "scripts/local/schema.sql");
 const MODE = process.env.MODE || "synthetic";
 // Synthetic mode runs on in-memory pglite and never connects — @workspace/db only needs the
@@ -812,6 +813,28 @@ async function runEmergenceAcceptance() {
   A(cNoneBad.outcome === "no_surviving_contribution" && cNoneBad.invariantViolation === true, "P7: no_surviving_contribution WITHOUT a reason is flagged (anti-laziness guard)");
   const cNoneOk = classifyRepresentationOutcome({ internal: "sound", hasSurvivingDelta: false, applied: [], noSurvivingReason: "scientifically empty after prior-field subtraction" });
   A(cNoneOk.outcome === "no_surviving_contribution" && !cNoneOk.invariantViolation, "P7: no_surviving_contribution WITH an allowed reason is clean");
+
+  // ===================== HARDENING item 1: semantic strictness backstop =====================
+  // A REACHABLE/saturable bound requires a non-strict symbol; genuinely strict prose keeps </>.
+  A(strictInequalityContradictions("black holes saturate the entropy bound $S < 2 E R$").length === 1, "H1: 'saturate' beside a strict < is flagged (reachable bound needs non-strict)");
+  A(strictInequalityContradictions("the entropy cannot exceed the bound, $S/E < 2 R$").length === 1, "H1: 'cannot exceed' beside a strict < is flagged (the Bekenstein-bound case)");
+  A(strictInequalityContradictions("the total entropy never decreases, $" + BS + "Delta S > 0$").length === 1, "H1: 'never decreases' beside a strict > is flagged (the GSL case, still)");
+  A(strictInequalityContradictions("the temperature is strictly positive, $T > 0$").length === 0, "H1: a genuinely strict bound ('strictly positive') is NOT flagged");
+
+  // ===================== HARDENING item 2: fatal-triage routing (pure) =====================
+  const FT = await import(${JSON.stringify(fatalTriagePath)});
+  const crank = { skepticVerdict: "fatal_survives", flawType: "arithmetic_or_algebra", flawLocation: "central_step", correctingEliminatesCentral: true, authorsAddressThis: false, confidence: "high" };
+  A(FT.isCertainCrankFatal(crank) && FT.routeFatalVerdict({ candidates: [crank] }) === "fatal_verified", "H2: image-verified arithmetic/algebra error in a central step -> fatal_verified, no escalation (crank)");
+  const observer = { skepticVerdict: "fatal_survives", flawType: "interpretive_or_observer", flawLocation: "interpretive_or_frame_choice", correctingEliminatesCentral: false, authorsAddressThis: true, confidence: "medium" };
+  A(!FT.isCertainCrankFatal(observer) && FT.candidateNeedsEscalation(observer), "H2: an observer/interpretive fatal is NOT a certain crank and needs escalation");
+  A(FT.routeFatalVerdict({ candidates: [observer], escalation: null }) === "contested_defensible", "H2: a non-crank fatal with NO escalation confirmation defaults to merit (contested), never failed");
+  A(FT.routeFatalVerdict({ candidates: [observer], escalation: { verdict: "survives_correction", confidence: "high" } }) === "contested_defensible", "H2: escalation 'survives_correction' -> contested (the paper-33 outcome), never failed");
+  A(FT.routeFatalVerdict({ candidates: [observer], escalation: { verdict: "eliminates_central", confidence: "high" } }) === "fatal_verified", "H2: escalation 'eliminates_central' with high confidence -> fatal_verified");
+  A(FT.routeFatalVerdict({ candidates: [observer], escalation: { verdict: "eliminates_central", confidence: "low" } }) === "contested_defensible", "H2: 'eliminates_central' WITHOUT high confidence does NOT fail the paper");
+  A(FT.routeFatalVerdict({ candidates: [observer], escalationErrored: true }) === "fatal_alleged_unverified", "H2: escalation infra failure -> fail-closed HOLD (never auto-pass)");
+  const conceptualCentral = { skepticVerdict: "fatal_survives", flawType: "conceptual_or_framework", flawLocation: "central_step", correctingEliminatesCentral: true, authorsAddressThis: false, confidence: "high" };
+  A(!FT.isCertainCrankFatal(conceptualCentral) && FT.routeFatalVerdict({ candidates: [conceptualCentral], escalation: null }) === "contested_defensible", "H2: a conceptual/framework fatal (published-paper class) ALWAYS escalates — never single-pass failed");
+  A(FT.routeFatalVerdict({ candidates: [{ skepticVerdict: "not_fatal" }] }) === "contested_defensible", "H2: all-not_fatal -> contested (merit)");
 }
 
 // ---- S5: the model-auditor loop. Advisory only: never edits pages, nothing is computed
@@ -904,6 +927,12 @@ async function runLive(db, upsertPaper, persistReview) {
   const { blindManuscriptText, parseGeminiJsonResponse, GEMINI_PASS_MODEL } = await import(${JSON.stringify(enginePath)});
   const B21 = await import(${JSON.stringify(b21Path)});
   const B2 = await import(${JSON.stringify(b2Path)});
+  const FT = await import(${JSON.stringify(fatalTriagePath)});
+  // Fatal ESCALATION model (item 2): a STRONGER, more expensive model than the pass model. Env
+  // SCIREVIEW_GEMINI_ESCALATION_MODEL points it at the strongest available tier; defaults to the
+  // pro pass model (already the pipeline's strongest) so the second decisive pass runs regardless.
+  const ESCALATION_MODEL = process.env.SCIREVIEW_GEMINI_ESCALATION_MODEL?.trim() || GEMINI_PASS_MODEL;
+  console.log("[live] fatal escalation model: " + ESCALATION_MODEL + (ESCALATION_MODEL === GEMINI_PASS_MODEL ? " (= pass model; set SCIREVIEW_GEMINI_ESCALATION_MODEL for a stronger tier)" : ""));
   const MANIFEST = JSON.parse(readFileSync(OUT + "/_live_manifest.json", "utf8"));
   const usage = { in: 0, out: 0, calls: 0 };
   const papersBefore = (await db.select().from(papersTable)).length; // P6: cadence over cumulative corpus
@@ -919,11 +948,11 @@ async function runLive(db, upsertPaper, persistReview) {
     let r = t; if (esc) r += "\\\\"; if (inStr) r += '"'; if (depth > 0) r += "}".repeat(depth);
     return parseGeminiJsonResponse(r);
   }
-  async function callMM(systemInstruction, textPart, imageParts) {
+  async function callMM(systemInstruction, textPart, imageParts, modelOverride) {
     let lastErr;
     for (let a = 0; a < 6; a += 1) {
       try {
-        const resp = await geminiAI.models.generateContent({ model: GEMINI_PASS_MODEL, contents: [{ role: "user", parts: [{ text: textPart }, ...imageParts] }], config: { systemInstruction, responseMimeType: "application/json", temperature: ${TEMPERATURE}, maxOutputTokens: 65536 } });
+        const resp = await geminiAI.models.generateContent({ model: modelOverride || GEMINI_PASS_MODEL, contents: [{ role: "user", parts: [{ text: textPart }, ...imageParts] }], config: { systemInstruction, responseMimeType: "application/json", temperature: ${TEMPERATURE}, maxOutputTokens: 65536 } });
         const u = resp.usageMetadata || {}; usage.in += u.promptTokenCount || 0; usage.out += u.candidatesTokenCount || 0; usage.calls += 1;
         if (!resp.text) throw new Error("empty (finishReason " + (resp.candidates?.[0]?.finishReason) + ")");
         return resp.text;
@@ -983,24 +1012,50 @@ async function runLive(db, upsertPaper, persistReview) {
       const adjInput = JSON.stringify({ adjudicatorInputNote: "Use the page images, reviewContext, field index, and the two reviews. Resolve; never average. Output the same schema incl. claims + (provisional) overviewImpact.", reviewContext: ctx, independentReviewPasses: [p1, p2] }, null, 2);
       const adj = extractJson(await callMM(B21.EXPLANATORY_UPDATE_B21_ADJUDICATOR_PROMPT, adjInput + "\\n\\n" + index + "\\n\\nPage images follow.", imageParts));
       const score = num(adj?.recommendedExplanatoryUpdateScore);
-      // FATAL-FLAW VERIFICATION (Phase-0 machinery, §10.6: verification precedes edits): a
-      // fatal_alleged verdict is a PROPOSAL — verify each candidate against the page images.
-      // survives -> fatal_verified (routes to disputed); uncertain -> fatal_alleged_unverified
-      // (all edits held); all not_fatal -> contested_defensible (conservative).
+      // FATAL-FLAW VERIFICATION + CENTRALITY GATE + ESCALATION (Phase 2a hardening, item 2). A
+      // fatal_alleged verdict is a PROPOSAL. Each candidate is verified against the page images AND
+      // put through the centrality gate (does the flaw BREAK the central result, or only dent a
+      // local/interpretive/self-addressed step?). A fatal that is NOT a certain crank (an
+      // image-verified arithmetic/algebra error in a central step) is ESCALATED to a stronger model
+      // asked one question: "does correcting this flaw eliminate the central result?" Only a
+      // high-confidence yes routes to failed; uncertainty defaults to honest merit (contested),
+      // never to failed. Routing is the pure fatalTriage decision (regression-locked).
       let evidencePackets = [];
+      let escalationRecord = null;
       if (adj?.correctnessAssessment?.internalStatusProposed === "fatal_alleged") {
         const candidates = Array.isArray(adj.correctnessAssessment.fatalFlawCandidates) ? adj.correctnessAssessment.fatalFlawCandidates : [];
         for (const cand of candidates) {
           const vText = ["Alleged fatal flaw to verify (do NOT score the paper):", "claim: " + (cand.claim || ""), "allegation: " + (cand.modelAllegation || ""), "location: " + JSON.stringify(cand.locationInPaper || {}), "", "The rendered page images follow (authoritative)."].join("\\n");
           try {
             const v = extractJson(await callMM(B2.FATAL_FLAW_VERIFICATION_PROMPT, vText, imageParts));
-            evidencePackets.push({ ...cand, verificationDerivation: v?.reDerivation || "", verbatimExpression: v?.verbatimExpression || "", possibleAuthorDefense: v?.possibleAuthorDefense || "", skepticVerdict: v?.skepticVerdict || "uncertain_needs_human_or_author", publicWording: v?.publicWording || "" });
+            evidencePackets.push({ ...cand, verificationDerivation: v?.reDerivation || "", verbatimExpression: v?.verbatimExpression || "", possibleAuthorDefense: v?.possibleAuthorDefense || "",
+              centralClaim: v?.centralClaim || "", flawLocation: v?.flawLocation, flawType: v?.flawType,
+              correctingEliminatesCentral: v?.correctingEliminatesCentral, authorsAddressThis: v?.authorsAddressThis,
+              whatSurvives: v?.whatSurvives || "", confidence: v?.confidence,
+              skepticVerdict: v?.skepticVerdict || "uncertain_needs_human_or_author", publicWording: v?.publicWording || "" });
           } catch (e) { evidencePackets.push({ ...cand, skepticVerdict: "uncertain_needs_human_or_author", publicWording: "", note: "verification call failed: " + (e?.message ?? e) }); }
         }
-        const survives = evidencePackets.some((x) => x.skepticVerdict === "fatal_survives");
-        const uncertain = evidencePackets.some((x) => x.skepticVerdict === "uncertain_needs_human_or_author");
-        adj.correctnessAssessment.internalStatusProposed = survives ? "fatal_verified" : uncertain ? "fatal_alleged_unverified" : "contested_defensible";
-        console.log("  [verify] " + evidencePackets.length + " fatal candidate(s): " + evidencePackets.map((x) => x.skepticVerdict).join(",") + " -> " + adj.correctnessAssessment.internalStatusProposed);
+        // Escalate any surviving-but-not-certain-crank or uncertain allegation (item 2).
+        let escalationErrored = false;
+        if (!FT.anyCertainCrankFatal(evidencePackets) && FT.anyNeedsEscalation(evidencePackets)) {
+          const idx = FT.candidateToEscalate(evidencePackets);
+          const cand = evidencePackets[idx] || evidencePackets[0];
+          const eText = ["FINAL ARBITER — decide whether correcting this alleged flaw eliminates the paper's central result.",
+            "Paper's stated central claim (first-pass): " + (cand?.centralClaim || cand?.claim || ""),
+            "Alleged flaw: " + (cand?.modelAllegation || ""),
+            "Verbatim expression (first pass): " + (cand?.verbatimExpression || ""),
+            "First-pass re-derivation: " + (cand?.verificationDerivation || ""),
+            "First-pass note on what survives: " + (cand?.whatSurvives || ""), "",
+            "The rendered page images follow (authoritative)."].join("\\n");
+          try {
+            const esc = extractJson(await callMM(B2.FATAL_ESCALATION_PROMPT, eText, imageParts, ESCALATION_MODEL));
+            escalationRecord = { model: ESCALATION_MODEL, candidateIndex: idx, verdict: esc?.verdict, confidence: esc?.confidence, centralResult: esc?.centralResult || "", correctionConsequence: esc?.correctionConsequence || "", independentCorroboration: esc?.independentCorroboration || "", publicWording: esc?.publicWording || "" };
+            console.log("  [escalate:" + ESCALATION_MODEL + "] " + (esc?.verdict || "?") + " (conf " + (esc?.confidence || "?") + ")");
+          } catch (e) { escalationErrored = true; escalationRecord = { model: ESCALATION_MODEL, error: String(e?.message ?? e) }; console.log("  [escalate] FAILED: " + (e?.message ?? e) + " -> fail-closed HOLD"); }
+        }
+        adj.correctnessAssessment.internalStatusProposed = FT.routeFatalVerdict({ candidates: evidencePackets, escalation: escalationRecord && !escalationRecord.error ? escalationRecord : null, escalationErrored });
+        if (escalationRecord) adj.correctnessAssessment.escalation = escalationRecord;
+        console.log("  [verify] " + evidencePackets.length + " candidate(s): " + evidencePackets.map((x) => (x.skepticVerdict || "?") + (x.flawType ? "/" + x.flawType : "") + (x.flawLocation ? "/" + x.flawLocation : "")).join(", ") + (escalationRecord ? " +escalated" : "") + " -> " + adj.correctnessAssessment.internalStatusProposed);
       }
       // FAIL CLOSED (brief P0.3): a missing/unrecognized correctness verdict must never take the
       // permissive branch. Persist the review, but hold every overview edit.

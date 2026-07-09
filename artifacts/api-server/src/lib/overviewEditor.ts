@@ -1205,10 +1205,16 @@ export function checkClaimInternalConsistency(claims: ReviewClaim[]): { claimId:
 // level (the "never decreases" prose in one block, the "$$...>0$$" display in the next) — the S6
 // failure that survived every version because it was born on a create_page's later block, which
 // the per-span consistency pass never checked.
+// This deterministic scan is only the CHEAP BACKSTOP (JT item 1): the intelligent S4 checker
+// owns the class semantically (CONSISTENCY_CHECK_PROMPT check inequality_strictness). The rule:
+// prose describing a bound that CAN BE REACHED — "cannot exceed", "at most", "never decreases",
+// saturation — requires a NON-STRICT symbol (≤/≥); only genuinely strict language gets </>.
 export function strictInequalityContradictions(text: string): { detail: string; math: string }[] {
   const out: { detail: string; math: string }[] = [];
-  const lowerProse = /\bnever decreases?\b|\bnon-?decreasing\b|\bcannot decrease\b|\bdoes not decrease\b|\bat least\b|\bmonotonically (?:non-?decreasing|increasing)\b/i.test(text);
-  const upperProse = /\bnever increases?\b|\bnon-?increasing\b|\bcannot increase\b|\bdoes not increase\b|\bat most\b/i.test(text);
+  // "saturate/saturation/attained/achieved/reached" ⇒ the bound is ACHIEVED ⇒ non-strict, either direction.
+  const saturates = /\bsaturat(?:e|es|ed|ing|ion)\b|\b(?:is|are|be) (?:attained|achieved|reached)\b|\bextremal (?:case|limit)\b/i.test(text);
+  const lowerProse = saturates || /\bnever decreases?\b|\bnon-?decreasing\b|\bcannot decrease\b|\bdoes not decrease\b|\bcannot (?:be|fall) (?:less|below)\b|\bno less than\b|\bat least\b|\bbounded below\b|\bmonotonically (?:non-?decreasing|increasing)\b/i.test(text);
+  const upperProse = saturates || /\bnever increases?\b|\bnon-?increasing\b|\bcannot increase\b|\bdoes not increase\b|\b(?:cannot|must not|does not) exceed\b|\bno (?:more|greater) than\b|\bat most\b|\bupper bound\b|\bbounded above\b/i.test(text);
   if (!lowerProse && !upperProse) return out;
   const maths = text.match(/\$\$[^$]+\$\$|\$[^$\n]+\$/g) ?? [];
   for (const m of maths) {
