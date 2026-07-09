@@ -924,6 +924,26 @@ async function runAudit(db) {
   for (const [k, vArr] of Object.entries(merged)) if (vArr.length) console.log("  " + k + ": " + vArr.length);
 }
 
+// Cross-provider ESCALATION arbiter (hardening item 2): the "stronger, more expensive model".
+// A different provider (OpenAI gpt-5.x) also breaks the same-model blind spot that made the
+// same-tier Gemini escalation reproduce a false-fatal (paper 33). Returns raw JSON text.
+async function callOpenAIEscalation(model, sys, txt, imageParts) {
+  const OpenAI = (await import("openai")).default;
+  const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const content = [{ type: "text", text: txt }, ...imageParts.map((p) => ({ type: "image_url", image_url: { url: "data:image/png;base64," + p.inlineData.data } }))];
+  const resp = await client.chat.completions.create({ model, messages: [{ role: "system", content: sys }, { role: "user", content }], response_format: { type: "json_object" } });
+  return resp?.choices?.[0]?.message?.content || "";
+}
+// Resolve escalation provider/model once. Default to OpenAI when a key is present (genuinely
+// stronger, cross-provider); else fall back to the Gemini pass model with a clear log.
+function escalationConfig(geminiPassModel) {
+  const provider = (process.env.SCIREVIEW_ESCALATION_PROVIDER || (process.env.OPENAI_API_KEY ? "openai" : "gemini")).toLowerCase();
+  const model = provider === "openai"
+    ? (process.env.SCIREVIEW_OPENAI_ESCALATION_MODEL?.trim() || "gpt-5.1")
+    : (process.env.SCIREVIEW_GEMINI_ESCALATION_MODEL?.trim() || geminiPassModel);
+  return { provider, model, sameTierAsPass: provider === "gemini" && model === geminiPassModel };
+}
+
 // MODE=reverify (hardening items 3+4): re-adjudicate specific papers' STORED fatal allegations
 // through the NEW verification + centrality gate + escalation, and report old-vs-new verdicts.
 // READ-ONLY: reads records_live/<id>.json allegations + cached page images; writes only a report.
@@ -934,9 +954,10 @@ async function runReverify() {
   const B2 = await import(${JSON.stringify(b2Path)});
   const FT = await import(${JSON.stringify(fatalTriagePath)});
   const MANIFEST = JSON.parse(readFileSync(OUT + "/_live_manifest.json", "utf8"));
-  const ESCALATION_MODEL = process.env.SCIREVIEW_GEMINI_ESCALATION_MODEL?.trim() || GEMINI_PASS_MODEL;
+  const ESC = escalationConfig(GEMINI_PASS_MODEL);
   const usage = { in: 0, out: 0, calls: 0 };
   const extractJson = (text) => { let t = String(text || "").trim(); const f = t.indexOf("{"); if (f > 0) t = t.slice(f); try { return parseGeminiJsonResponse(t); } catch (_e) { return null; } };
+  const runEscalation = async (sys, txt, imgs) => ESC.provider === "openai" ? callOpenAIEscalation(ESC.model, sys, txt, imgs) : callMM(sys, txt, imgs, ESC.model);
   const callMM = async (sys, txt, imgs, model) => {
     let lastErr; for (let a = 0; a < 6; a += 1) { try {
       const resp = await geminiAI.models.generateContent({ model: model || GEMINI_PASS_MODEL, contents: [{ role: "user", parts: [{ text: txt }, ...imgs] }], config: { systemInstruction: sys, responseMimeType: "application/json", temperature: ${TEMPERATURE}, maxOutputTokens: 65536 } });
@@ -944,7 +965,7 @@ async function runReverify() {
       if (!resp.text) throw new Error("empty"); return resp.text;
     } catch (e) { lastErr = e; await new Promise((r) => setTimeout(r, Math.min(45000, 6000 * (a + 1)))); } } throw lastErr;
   };
-  console.log("[reverify] escalation model: " + ESCALATION_MODEL);
+  console.log("[reverify] escalation: provider=" + ESC.provider + " model=" + ESC.model + (ESC.sameTierAsPass ? " (SAME TIER as pass model — not a stronger arbiter)" : ""));
   const out = [];
   for (const paper of MANIFEST) {
     const rec = (() => { try { return JSON.parse(readFileSync(OUT + "/records_live/" + paper.id + ".json", "utf8")); } catch { return null; } })();
@@ -965,13 +986,13 @@ async function runReverify() {
     if (!FT.anyCertainCrankFatal(packets) && FT.anyNeedsEscalation(packets)) {
       const idx = FT.candidateToEscalate(packets); const c = packets[idx] || packets[0];
       const eText = ["FINAL ARBITER — decide whether correcting this alleged flaw eliminates the paper's central result.", "Paper's central claim (first-pass): " + (c?.centralClaim || c?.claim || ""), "Alleged flaw: " + (c?.modelAllegation || ""), "Verbatim expression: " + (c?.verbatimExpression || ""), "First-pass re-derivation: " + (c?.verificationDerivation || ""), "First-pass note on what survives: " + (c?.whatSurvives || ""), "", "The rendered page images follow (authoritative)."].join("\\n");
-      try { const esc = extractJson(await callMM(B2.FATAL_ESCALATION_PROMPT, eText, imageParts, ESCALATION_MODEL));
-        escalation = { verdict: esc?.verdict, confidence: esc?.confidence, centralResult: esc?.centralResult, correctionConsequence: esc?.correctionConsequence, independentCorroboration: esc?.independentCorroboration, publicWording: esc?.publicWording };
-      } catch (e) { escalationErrored = true; escalation = { error: String(e?.message ?? e) }; }
+      try { const esc = extractJson(await runEscalation(B2.FATAL_ESCALATION_PROMPT, eText, imageParts));
+        escalation = { provider: ESC.provider, model: ESC.model, verdict: esc?.verdict, confidence: esc?.confidence, centralResult: esc?.centralResult, correctionConsequence: esc?.correctionConsequence, independentCorroboration: esc?.independentCorroboration, publicWording: esc?.publicWording };
+      } catch (e) { escalationErrored = true; escalation = { provider: ESC.provider, model: ESC.model, error: String(e?.message ?? e) }; }
     }
     const newVerdict = FT.routeFatalVerdict({ candidates: packets, escalation: escalation && !escalation.error ? escalation : null, escalationErrored });
     console.log("  candidates: " + packets.map((p) => (p.skepticVerdict || "?") + "/" + (p.flawType || "?") + "/" + (p.flawLocation || "?")).join(" ; "));
-    if (escalation) console.log("  escalation(" + ESCALATION_MODEL + "): " + (escalation.verdict || escalation.error) + " conf=" + (escalation.confidence || "-"));
+    if (escalation) console.log("  escalation(" + ESC.provider + ":" + ESC.model + "): " + (escalation.verdict || escalation.error) + " conf=" + (escalation.confidence || "-"));
     console.log("  OLD: " + oldVerdict + "  ->  NEW: " + newVerdict);
     out.push({ paper: paper.id, oldVerdict, newVerdict, escalation, packets });
   }
@@ -987,11 +1008,12 @@ async function runLive(db, upsertPaper, persistReview) {
   const B21 = await import(${JSON.stringify(b21Path)});
   const B2 = await import(${JSON.stringify(b2Path)});
   const FT = await import(${JSON.stringify(fatalTriagePath)});
-  // Fatal ESCALATION model (item 2): a STRONGER, more expensive model than the pass model. Env
-  // SCIREVIEW_GEMINI_ESCALATION_MODEL points it at the strongest available tier; defaults to the
-  // pro pass model (already the pipeline's strongest) so the second decisive pass runs regardless.
-  const ESCALATION_MODEL = process.env.SCIREVIEW_GEMINI_ESCALATION_MODEL?.trim() || GEMINI_PASS_MODEL;
-  console.log("[live] fatal escalation model: " + ESCALATION_MODEL + (ESCALATION_MODEL === GEMINI_PASS_MODEL ? " (= pass model; set SCIREVIEW_GEMINI_ESCALATION_MODEL for a stronger tier)" : ""));
+  // Fatal ESCALATION (item 2): the STRONGER arbiter. Defaults to a cross-provider OpenAI reasoning
+  // model when OPENAI_API_KEY is set (genuinely stronger + breaks the same-model blind spot);
+  // else the Gemini pass model. runEscalation dispatches by provider.
+  const ESC = escalationConfig(GEMINI_PASS_MODEL);
+  const runEscalation = async (sys, txt, imgs) => ESC.provider === "openai" ? callOpenAIEscalation(ESC.model, sys, txt, imgs) : callMM(sys, txt, imgs, ESC.model);
+  console.log("[live] fatal escalation: provider=" + ESC.provider + " model=" + ESC.model + (ESC.sameTierAsPass ? " (SAME TIER as pass — set SCIREVIEW_ESCALATION_PROVIDER=openai for a stronger arbiter)" : ""));
   const MANIFEST = JSON.parse(readFileSync(OUT + "/_live_manifest.json", "utf8"));
   const usage = { in: 0, out: 0, calls: 0 };
   const papersBefore = (await db.select().from(papersTable)).length; // P6: cadence over cumulative corpus
@@ -1107,10 +1129,10 @@ async function runLive(db, upsertPaper, persistReview) {
             "First-pass note on what survives: " + (cand?.whatSurvives || ""), "",
             "The rendered page images follow (authoritative)."].join("\\n");
           try {
-            const esc = extractJson(await callMM(B2.FATAL_ESCALATION_PROMPT, eText, imageParts, ESCALATION_MODEL));
-            escalationRecord = { model: ESCALATION_MODEL, candidateIndex: idx, verdict: esc?.verdict, confidence: esc?.confidence, centralResult: esc?.centralResult || "", correctionConsequence: esc?.correctionConsequence || "", independentCorroboration: esc?.independentCorroboration || "", publicWording: esc?.publicWording || "" };
-            console.log("  [escalate:" + ESCALATION_MODEL + "] " + (esc?.verdict || "?") + " (conf " + (esc?.confidence || "?") + ")");
-          } catch (e) { escalationErrored = true; escalationRecord = { model: ESCALATION_MODEL, error: String(e?.message ?? e) }; console.log("  [escalate] FAILED: " + (e?.message ?? e) + " -> fail-closed HOLD"); }
+            const esc = extractJson(await runEscalation(B2.FATAL_ESCALATION_PROMPT, eText, imageParts));
+            escalationRecord = { provider: ESC.provider, model: ESC.model, candidateIndex: idx, verdict: esc?.verdict, confidence: esc?.confidence, centralResult: esc?.centralResult || "", correctionConsequence: esc?.correctionConsequence || "", independentCorroboration: esc?.independentCorroboration || "", publicWording: esc?.publicWording || "" };
+            console.log("  [escalate:" + ESC.provider + ":" + ESC.model + "] " + (esc?.verdict || "?") + " (conf " + (esc?.confidence || "?") + ")");
+          } catch (e) { escalationErrored = true; escalationRecord = { provider: ESC.provider, model: ESC.model, error: String(e?.message ?? e) }; console.log("  [escalate] FAILED: " + (e?.message ?? e) + " -> fail-closed HOLD"); }
         }
         adj.correctnessAssessment.internalStatusProposed = FT.routeFatalVerdict({ candidates: evidencePackets, escalation: escalationRecord && !escalationRecord.error ? escalationRecord : null, escalationErrored });
         if (escalationRecord) adj.correctnessAssessment.escalation = escalationRecord;

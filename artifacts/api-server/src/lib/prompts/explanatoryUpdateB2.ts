@@ -314,19 +314,25 @@ You are given the rendered page image(s) (authoritative), the paper's stated cen
 specific alleged flaw with its verbatim expression and the first reviewer's re-derivation.
 
 Method:
-1. State the paper's CENTRAL result precisely and the exact chain of steps it depends on.
-2. Decide whether the flawed step is IN that dependency chain (flawInChain) or OUTSIDE it (a side
-   derivation, an interpretive/observer/gauge/frame choice, or a subtlety the paper itself
-   addresses in a footnote/caveat).
-3. Look for INDEPENDENT CORROBORATION: does the paper establish the central result by other
-   arguments that do NOT use the flawed step (e.g. multiple independent estimates converging on the
-   same result)? If so, correcting the flaw cannot eliminate the central result.
-4. State the consequence of correcting the flaw.
-Answer "eliminates_central" ONLY if you are HIGHLY CONFIDENT that, with the flaw corrected, the
-paper's central contribution collapses. If the central result survives the correction (local flaw,
-interpretive choice, self-addressed, or independently corroborated), answer "survives_correction".
-If you genuinely cannot tell, answer "genuinely_uncertain". Do NOT default to fatal under
-uncertainty — a real but non-fatal flaw makes a paper contested or narrowed, not failed.
+1. State the paper's CENTRAL result precisely.
+2. ENUMERATE EVERY independent argument the paper gives for that central result — list them all
+   (e.g. a heuristic estimate, an exact calculation, an energy-density argument, a flux argument, a
+   comparison to an independent published estimate). Papers often support one conclusion several
+   independent ways.
+3. For EACH such argument, decide whether it depends on the flawed step. A flaw is fatal ONLY if it
+   undermines ALL of the independent supports — or a shared assumption every one of them relies on.
+   If even ONE independent support for the central result does NOT use the flawed step and still
+   stands, the central result SURVIVES (answer survives_correction). Do not let a flaw in one
+   derivation be reported as killing supports it never touched.
+4. Check whether the PAPER ITSELF already addresses or bounds the objection — footnotes, caveats,
+   "we note that…", explicit acknowledgement of the observer/frame/approximation. A self-addressed
+   subtlety is not fatal.
+5. State the consequence of correcting the flaw.
+Answer "eliminates_central" ONLY if you are HIGHLY CONFIDENT that, with the flaw corrected, EVERY
+independent support for the central contribution collapses. If any independent support survives, or
+the flaw is a local/interpretive/self-addressed point, answer "survives_correction". If you
+genuinely cannot tell, answer "genuinely_uncertain". Do NOT default to fatal under uncertainty — a
+real but non-fatal flaw makes a paper contested or narrowed, not failed.
 
 Return valid JSON only — no comments, no trailing commas:
 {
