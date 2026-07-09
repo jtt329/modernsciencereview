@@ -998,7 +998,7 @@ async function runReverify() {
   }
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
   mkdirSync(OUT + "/reverify", { recursive: true });
-  writeFileSync(OUT + "/reverify/reverify_" + ts + ".json", JSON.stringify({ escalationModel: ESCALATION_MODEL, results: out }, null, 2));
+  writeFileSync(OUT + "/reverify/reverify_" + ts + ".json", JSON.stringify({ escalationProvider: ESC.provider, escalationModel: ESC.model, results: out }, null, 2));
   console.log("\\n[reverify] wrote reverify/reverify_" + ts + ".json | usage: " + usage.calls + " calls, " + usage.in + " in + " + usage.out + " out");
 }
 
