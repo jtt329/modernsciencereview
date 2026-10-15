@@ -169,9 +169,11 @@ async function insertSections(client, page, pageId, versionId) {
     await client.query(
       `INSERT INTO page_sections
         (id, page_id, version_id, slug, title, "order", one_line, short_explanation, markdown, anchor_ids)
-       SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb
+       SELECT $1::varchar, $2::varchar, $3::varchar, $4::varchar, $5::text,
+              $6::integer, $7::text, $8::text, $9::text, $10::jsonb
        WHERE NOT EXISTS (
-         SELECT 1 FROM page_sections WHERE version_id = $3 AND slug = $4
+         SELECT 1 FROM page_sections
+          WHERE version_id = $3::varchar AND slug = $4::varchar
        )`,
       [randomUUID(), pageId, versionId, section.slug, section.title, order, section.oneLine, section.oneLine, section.markdown, "[]"],
     );
