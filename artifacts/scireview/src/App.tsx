@@ -274,15 +274,22 @@ function paperPath(paperId: string) {
   return `/papers/${encodeURIComponent(paperId)}`;
 }
 
+const ROOT_FIELD_SLUG = 'horizon-thermodynamics';
+
 function readRoute() {
   const path = window.location.pathname;
   const paperMatch = path.match(/^\/papers\/([^/]+)\/?$/);
   const fieldMatch = path.match(/^\/fields\/([^/]+)\/?$/);
   const queryPaper = new URLSearchParams(window.location.search).get('paper');
+  const paperId = paperMatch ? decodeURIComponent(paperMatch[1]) : queryPaper;
 
   return {
-    paperId: paperMatch ? decodeURIComponent(paperMatch[1]) : queryPaper,
-    fieldSlug: fieldMatch ? decodeURIComponent(fieldMatch[1]) : null,
+    paperId,
+    fieldSlug: fieldMatch
+      ? decodeURIComponent(fieldMatch[1])
+      : path === '/' && !paperId
+        ? ROOT_FIELD_SLUG
+        : null,
     showHowItWorks: path === '/how-it-works',
     showSandbox: path === '/admin/sandbox',
     usedLegacyPaperQuery: !paperMatch && !!queryPaper,
@@ -291,10 +298,11 @@ function readRoute() {
 
 export default function App() {
   const { user, isLoading: authLoading, login, logout } = useAuth();
+  const initialRoute = useMemo(() => readRoute(), []);
 
   const [papers, setPapers] = useState<Paper[]>([]);
-  const [selectedPaperId, setSelectedPaperId] = useState<string | null>(null);
-  const [fieldSlug, setFieldSlug] = useState<string | null>(null);
+  const [selectedPaperId, setSelectedPaperId] = useState<string | null>(initialRoute.paperId);
+  const [fieldSlug, setFieldSlug] = useState<string | null>(initialRoute.fieldSlug);
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
   const [selectedReview, setSelectedReview] = useState<AIReview | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -304,8 +312,8 @@ export default function App() {
   const [selectedPapers, setSelectedPapers] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [showPromptAnalysis, setShowPromptAnalysis] = useState(false);
-  const [showHowItWorks, setShowHowItWorks] = useState(false);
-  const [showSandbox, setShowSandbox] = useState(false);
+  const [showHowItWorks, setShowHowItWorks] = useState(initialRoute.showHowItWorks);
+  const [showSandbox, setShowSandbox] = useState(initialRoute.showSandbox);
   const [papersLoading, setPapersLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -362,7 +370,9 @@ export default function App() {
     return () => window.removeEventListener('popstate', syncRoute);
   }, []);
 
-  useEffect(() => { fetchPapers(); }, [fetchPapers]);
+  useEffect(() => {
+    if (!fieldSlug) fetchPapers();
+  }, [fetchPapers, fieldSlug]);
 
   useEffect(() => {
     if (papers.length && user) {
@@ -404,7 +414,7 @@ export default function App() {
   };
 
   const handleBack = () => {
-    window.history.pushState({}, '', '/');
+    window.history.pushState({}, '', '/papers');
     setSelectedPaperId(null);
     setShowHowItWorks(false);
     fetchPapers();
@@ -483,7 +493,7 @@ export default function App() {
     if (!user) return;
     if (!window.confirm('Delete this paper and its review? This cannot be undone.')) return;
     await apiFetch(`/api/papers/${paperId}`, { method: 'DELETE' });
-    window.history.pushState({}, '', '/');
+    window.history.pushState({}, '', '/papers');
     setSelectedPaperId(null);
     fetchPapers();
   };
@@ -713,6 +723,21 @@ export default function App() {
     );
   }
 
+  if (fieldSlug) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <FieldOverviewPage
+          key={fieldSlug}
+          slug={fieldSlug}
+          isAdmin={isAdmin}
+          onOpenPaper={(id) => { window.history.pushState({}, '', paperPath(id)); setFieldSlug(null); setSelectedPaperId(id); }}
+          onOpenPage={(slug) => { window.history.pushState({}, '', `/fields/${encodeURIComponent(slug)}`); setFieldSlug(slug); }}
+          onBack={() => { window.history.pushState({}, '', '/papers'); setFieldSlug(null); }}
+        />
+      </div>
+    );
+  }
+
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
@@ -724,21 +749,6 @@ export default function App() {
             Try Again
           </button>
         </div>
-      </div>
-    );
-  }
-
-  if (fieldSlug) {
-    return (
-      <div className="min-h-screen bg-slate-50">
-        <FieldOverviewPage
-          key={fieldSlug}
-          slug={fieldSlug}
-          isAdmin={isAdmin}
-          onOpenPaper={(id) => { window.history.pushState({}, '', paperPath(id)); setFieldSlug(null); setSelectedPaperId(id); }}
-          onOpenPage={(slug) => { window.history.pushState({}, '', `/fields/${encodeURIComponent(slug)}`); setFieldSlug(slug); }}
-          onBack={() => { window.history.pushState({}, '', '/'); setFieldSlug(null); }}
-        />
       </div>
     );
   }
@@ -1115,7 +1125,7 @@ export default function App() {
         {showSandbox && isAdmin && (
           <SandboxViewer
             onClose={() => {
-              window.history.pushState({}, '', '/');
+              window.history.pushState({}, '', '/papers');
               setShowSandbox(false);
             }}
           />

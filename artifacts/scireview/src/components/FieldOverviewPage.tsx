@@ -109,17 +109,25 @@ export default function FieldOverviewPage({
   const [level, setLevel] = useState<Record<string, number>>({});
 
   useEffect(() => {
+    let active = true;
+    setPages(null);
+    setChanges([]);
+    setErr(null);
+    setLevel({});
     fetch(`/api/overviews/${encodeURIComponent(slug)}${isAdmin ? '?draft=1' : ''}`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e))))
-      .then((d) => setPages(d.pages || []))
-      .catch((e) => setErr(e?.error || 'failed to load overview'));
-    fetch(`/api/overviews/${encodeURIComponent(slug)}/changes`, { credentials: 'include' })
-      .then((r) => (r.ok ? r.json() : { changes: [] }))
-      .then((d) => setChanges(d.changes || []))
-      .catch(() => {});
+      .then((d) => { if (active) setPages(d.pages || []); })
+      .catch((e) => { if (active) setErr(isAdmin ? (e?.error || 'failed to load overview') : 'This explanation is temporarily unavailable.'); });
+    if (isAdmin) {
+      fetch(`/api/overviews/${encodeURIComponent(slug)}/changes`, { credentials: 'include' })
+        .then((r) => (r.ok ? r.json() : { changes: [] }))
+        .then((d) => { if (active) setChanges(d.changes || []); })
+        .catch(() => {});
+    }
+    return () => { active = false; };
   }, [slug, isAdmin]);
 
-  if (err) return <div className="max-w-3xl mx-auto p-8 text-slate-600"><button onClick={onBack} className="text-sm text-blue-600 mb-4">← Back</button><p>Overview not available: {err}</p><p className="text-xs mt-2 text-slate-400">The schema must be pushed and the overview seeded in the connected database.</p></div>;
+  if (err) return <div className="max-w-3xl mx-auto p-8 text-slate-600"><button onClick={onBack} className="text-sm text-blue-600 mb-4">← Paper library</button><p>{err}</p>{isAdmin && <p className="text-xs mt-2 text-slate-400">Check the connected database schema and overview seed.</p>}</div>;
   if (!pages) return <div className="max-w-3xl mx-auto p-8 text-slate-500">Loading overview…</div>;
 
   const root = pages.find((p) => !p.parentPageId) ?? pages[0];
@@ -146,7 +154,7 @@ export default function FieldOverviewPage({
           {lvl > 0 && (
             <button onClick={() => setLevel((m) => ({ ...m, [page.slug]: 0 }))} className="text-xs text-slate-400 hover:text-slate-600">[–]</button>
           )}
-          {v.visibility === 'draft' && <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">draft</span>}
+          {isAdmin && v.visibility === 'draft' && <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">draft</span>}
         </div>
         {page.scopeStatement && lvl > 0 && <p className="text-sm text-slate-400 italic mt-1">{page.scopeStatement}</p>}
         <div className="prose prose-slate max-w-none mt-3 text-slate-700 leading-relaxed">
@@ -182,7 +190,7 @@ export default function FieldOverviewPage({
             ))}
           </div>
         )}
-        {page.spans.length > 0 && (
+        {isAdmin && page.spans.length > 0 && (
           <p className="text-[11px] text-slate-400 mt-2">Provenance: {sourced} sourced · {unsourced} unsourced-explanatory</p>
         )}
       </section>
@@ -191,11 +199,11 @@ export default function FieldOverviewPage({
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
-      <button onClick={onBack} className="text-sm text-blue-600 mb-6">← Back to papers</button>
-      <p className="text-xs uppercase tracking-widest text-slate-400 mb-1">Field overview {isAdmin ? '(draft)' : ''}</p>
+      <button onClick={onBack} className="text-sm text-blue-600 mb-6">← Paper library</button>
+      <p className="text-xs uppercase tracking-widest text-slate-400 mb-1">{isAdmin ? 'Explanation workspace (draft)' : 'Living scientific explanation'}</p>
       {root && renderPage(root, true)}
       {subpages.map((p) => renderPage(p, false))}
-      {changes.length > 0 && (
+      {isAdmin && changes.length > 0 && (
         <section className="mt-10 border-t border-slate-200 pt-4">
           <h3 className="text-sm font-semibold text-slate-600 mb-2">Recent changes</h3>
           <ul className="space-y-1">
@@ -212,7 +220,9 @@ export default function FieldOverviewPage({
         </section>
       )}
       <p className="text-xs text-slate-400 mt-6 border-t border-slate-200 pt-4">
-        Read-only draft. Prominence is derived from structure; dotted-underlined sentences are best-explanation prose awaiting a source (citations accrete as papers are reviewed).
+        {isAdmin
+          ? 'Read-only draft. Prominence is derived from structure; dotted-underlined sentences are best-explanation prose awaiting a source.'
+          : 'This explanation is updated as supported contributions are added.'}
       </p>
     </div>
   );
