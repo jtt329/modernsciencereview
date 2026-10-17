@@ -159,7 +159,7 @@ export default function FieldOverviewPage({
           )}
           {isAdmin && v.visibility === 'draft' && <span className="text-[10px] uppercase tracking-wide text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded">draft</span>}
         </div>
-        {page.scopeStatement && lvl > 0 && <p className="text-sm text-slate-400 italic mt-1">{page.scopeStatement}</p>}
+        {isAdmin && page.scopeStatement && lvl > 0 && <p className="text-sm text-slate-400 italic mt-1">{page.scopeStatement}</p>}
         <div className="prose prose-slate max-w-none mt-3 whitespace-pre-line text-slate-700 leading-relaxed">
           {lvl === 2 && body
             ? <SegmentedBody body={body} spans={page.spans || []} references={page.references || []} links={page.links || []} onOpenPaper={onOpenPaper} onOpenPage={onOpenPage} />
