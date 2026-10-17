@@ -25,7 +25,7 @@ type Span = { id: string; text: string; startOffset: number | null; endOffset: n
 type PageLink = { id: string; phrase: string; startOffset: number | null; endOffset: number | null; toPageSlug: string; toPageTitle: string; toPageSummary?: string };
 type Page = {
   id: string; slug: string; title: string; parentPageId: string | null; scopeStatement: string;
-  version: { summaryOneLine: string; summaryShort: string; markdownFull: string; visibility: string };
+  version: { id: string; versionNumber: number; createdAt: string; summaryOneLine: string; summaryShort: string; markdownFull: string; visibility: string };
   sections: { id: string; slug: string; title: string }[];
   references: Ref[]; spans: Span[]; links: PageLink[];
 };
@@ -55,21 +55,18 @@ function SegmentedBody({ body, spans, references, links, onOpenPaper, onOpenPage
       overlays.push({ start: l.startOffset, end: l.endOffset, link: l });
     }
   }
-  overlays.sort((a, b) => a.start - b.start || (a.span ? -1 : 1));
-  const chosen: Overlay[] = []; let cursor = 0;
-  for (const o of overlays) { if (o.start >= cursor) { chosen.push(o); cursor = o.end; } }
+  const boundaries = [...new Set([0, body.length, ...overlays.flatMap(o => [o.start, o.end])])].sort((a,b) => a-b);
   const refById = new Map(references.map((r) => [r.id, r]));
-  const segs: { text: string; span?: Span; link?: PageLink }[] = []; let pos = 0;
-  for (const o of chosen) {
-    if (o.start > pos) segs.push({ text: body.slice(pos, o.start) });
-    segs.push({ text: body.slice(o.start, o.end), span: o.span, link: o.link });
-    pos = o.end;
-  }
-  if (pos < body.length) segs.push({ text: body.slice(pos) });
+  const segs = boundaries.slice(0,-1).map((start,i) => {
+    const end = boundaries[i+1];
+    const span = overlays.find(o => o.span && o.start <= start && o.end >= end);
+    const link = overlays.find(o => o.link && o.start <= start && o.end >= end);
+    return { text: body.slice(start,end), span: span?.span, link: link?.link, cite: span?.end === end };
+  });
   return (
     <>
       {segs.map((seg, i) => {
-        if (seg.link) {
+        if (seg.link && !seg.span) {
           return (
             <button key={i} onClick={() => onOpenPage(seg.link!.toPageSlug)}
               className="text-blue-700 hover:underline decoration-blue-300 underline-offset-2"
@@ -85,8 +82,8 @@ function SegmentedBody({ body, spans, references, links, onOpenPaper, onOpenPage
         return (
           <span key={i} className={isSourced ? '' : 'border-b border-dotted border-slate-300'}
             title={isSourced ? undefined : `${seg.span.supportStatus.replace(/_/g, ' ')} — best-explanation prose awaiting a source`}>
-            <LatexText>{seg.text}</LatexText>
-            {isSourced && ref && (
+            {seg.link ? <a href={`/fields/${encodeURIComponent(seg.link.toPageSlug)}`} onClick={e => { e.preventDefault(); onOpenPage(seg.link!.toPageSlug); }} className="text-blue-700 hover:underline" title={seg.link.toPageTitle}><LatexText>{seg.text}</LatexText></a> : <LatexText>{seg.text}</LatexText>}
+            {seg.cite && isSourced && ref && (
               <button onClick={() => onOpenPaper(ref.paperId!)}
                 className={`align-super text-[10px] px-1 ml-0.5 rounded-full border ${cue.cls}`}
                 title={`${ref.paperTitle || 'source'} — cited claim: ${ref.claimStatus || 'unverified'}`}>
@@ -104,6 +101,10 @@ export default function FieldOverviewPage({
   slug, isAdmin, onOpenPaper, onOpenPage, onBack,
 }: { slug: string; isAdmin: boolean; onOpenPaper: (paperId: string) => void; onOpenPage: (slug: string) => void; onBack: () => void }) {
   const [pages, setPages] = useState<Page[] | null>(null);
+  const [navigation, setNavigation] = useState<Pick<Page, 'id' | 'slug' | 'title' | 'parentPageId'>[]>([]);
+  const [breadcrumbs, setBreadcrumbs] = useState<Pick<Page, 'id' | 'slug' | 'title'>[]>([]);
+  const [history, setHistory] = useState<any[] | null>(null);
+  const [selectedVersion, setSelectedVersion] = useState('');
   const [changes, setChanges] = useState<Change[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [level, setLevel] = useState<Record<string, number>>({});
@@ -114,9 +115,9 @@ export default function FieldOverviewPage({
     setChanges([]);
     setErr(null);
     setLevel({});
-    fetch(`/api/overviews/${encodeURIComponent(slug)}${isAdmin ? '?draft=1' : ''}`, { credentials: 'include' })
+    fetch(`/api/overviews/${encodeURIComponent(slug)}?${new URLSearchParams({ ...(isAdmin ? { draft: '1' } : {}), ...(selectedVersion ? { version: selectedVersion } : {}) })}`, { credentials: 'include' })
       .then((r) => (r.ok ? r.json() : r.json().then((e) => Promise.reject(e))))
-      .then((d) => { if (active) setPages(d.pages || []); })
+      .then((d) => { if (active) { setPages(d.pages || []); setNavigation(d.navigation || []); setBreadcrumbs(d.breadcrumbs || []); } })
       .catch((e) => { if (active) setErr(isAdmin ? (e?.error || 'failed to load overview') : 'This explanation is temporarily unavailable.'); });
     if (isAdmin) {
       fetch(`/api/overviews/${encodeURIComponent(slug)}/changes`, { credentials: 'include' })
@@ -125,12 +126,14 @@ export default function FieldOverviewPage({
         .catch(() => {});
     }
     return () => { active = false; };
-  }, [slug, isAdmin]);
+  }, [slug, isAdmin, selectedVersion]);
+
+  useEffect(() => { setSelectedVersion(''); setHistory(null); }, [slug]);
 
   if (err) return <div className="max-w-3xl mx-auto p-8 text-slate-600"><button onClick={onBack} className="text-sm text-blue-600 mb-4">← Paper library</button><p>{err}</p>{isAdmin && <p className="text-xs mt-2 text-slate-400">Check the connected database schema and overview seed.</p>}</div>;
   if (!pages) return <div className="max-w-3xl mx-auto p-8 text-slate-500">Loading overview…</div>;
 
-  const root = pages.find((p) => !p.parentPageId) ?? pages[0];
+  const root = pages.find((p) => p.slug === slug) ?? pages[0];
   const subpages = pages.filter((p) => p.id !== root?.id);
 
   const renderPage = (page: Page, isRoot: boolean) => {
@@ -201,8 +204,12 @@ export default function FieldOverviewPage({
     <div className="max-w-3xl mx-auto px-6 py-8">
       <button onClick={onBack} className="text-sm text-blue-600 mb-6">← Paper library</button>
       <p className="text-xs uppercase tracking-widest text-slate-400 mb-1">{isAdmin ? 'Explanation workspace (draft)' : 'Living scientific explanation'}</p>
+      {breadcrumbs.length > 0 && <nav aria-label="Breadcrumb" className="flex flex-wrap gap-2 text-sm text-blue-700 mb-5">{breadcrumbs.map(p => <React.Fragment key={p.id}><a href={`/fields/${encodeURIComponent(p.slug)}`} onClick={e => { e.preventDefault(); onOpenPage(p.slug); }}>{p.title}</a><span aria-hidden="true">›</span></React.Fragment>)}<span className="text-slate-500">{root?.title}</span></nav>}
+      {selectedVersion && <p className="mb-4 rounded bg-amber-50 p-3 text-sm text-amber-800">Viewing a saved historical revision.</p>}
       {root && renderPage(root, true)}
-      {subpages.map((p) => renderPage(p, false))}
+      {subpages.length > 0 && <section className="mt-8 border-t pt-5"><h2 className="font-bold text-xl mb-3">Explore this topic</h2><div className="grid sm:grid-cols-2 gap-3">{subpages.map(p => <a key={p.id} href={`/fields/${encodeURIComponent(p.slug)}`} onClick={e => { e.preventDefault(); onOpenPage(p.slug); }} className="rounded-xl border p-4 hover:bg-blue-50"><span className="font-semibold text-blue-700">{p.title} →</span><p className="text-sm text-slate-500 mt-1">{p.version.summaryOneLine || p.scopeStatement}</p></a>)}</div></section>}
+      {navigation.length > 0 && <details className="mt-8 border-t pt-4"><summary className="cursor-pointer font-semibold text-slate-700">All explanation topics ({navigation.length})</summary><div className="grid sm:grid-cols-2 gap-2 mt-3">{navigation.map(p => <a className="text-sm text-blue-700 hover:underline" href={`/fields/${encodeURIComponent(p.slug)}`} key={p.id} onClick={e => { e.preventDefault(); onOpenPage(p.slug); }}>{p.title}</a>)}</div></details>}
+      {root && <section className="mt-6 border-t pt-4"><button className="text-sm text-blue-700" onClick={() => { if (history) { setHistory(null); return; } fetch(`/api/overviews/pages/${root.id}/versions`).then(r => r.ok ? r.json() : Promise.reject()).then(d => setHistory(d.versions)).catch(() => setErr('Could not load revision history.')); }}>Revision history</button>{selectedVersion && <button className="ml-4 text-sm text-blue-700" onClick={() => setSelectedVersion('')}>Return to current version</button>}{history && <ul className="mt-3 max-h-72 overflow-auto space-y-2">{history.map(v => <li key={v.id}><button className="text-sm text-blue-700 hover:underline" onClick={() => setSelectedVersion(v.id)}>Version {v.versionNumber} · {new Date(v.createdAt).toLocaleDateString()}{v.isCurrent ? ' · current' : ''}</button></li>)}</ul>}</section>}
       {isAdmin && changes.length > 0 && (
         <section className="mt-10 border-t border-slate-200 pt-4">
           <h3 className="text-sm font-semibold text-slate-600 mb-2">Recent changes</h3>

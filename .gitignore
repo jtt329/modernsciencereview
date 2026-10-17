@@ -56,3 +56,6 @@ Thumbs.db
 
 # esbuild bundle build artifacts (regenerated per run; pid-unique)
 scripts/.seed-overview.bundle*.mjs
+
+# Local recovery datasets contain internal review material; never upload with source.
+/scripts/data/

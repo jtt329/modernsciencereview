@@ -13,6 +13,7 @@ import PromptAnalysis from './components/PromptAnalysis';
 import HowItWorksModal from './components/HowItWorksModal';
 import SandboxViewer from './components/SandboxViewer';
 import FieldOverviewPage from './components/FieldOverviewPage';
+import PaperExplanation from './components/PaperExplanation';
 import { ReviewSource } from './services/reviewService';
 import { StoredReviewModelFamily, storedReviewModelFamily, storedReviewModelFamilyLabel } from './lib/modelLabels';
 
@@ -1092,6 +1093,8 @@ export default function App() {
                       />
                     </div>
                   )}
+
+                  <PaperExplanation paperId={selectedPaper.id} />
 
                   <CommentSection
                     comments={comments.map(c => ({ ...c, targetId: c.paperId, createdAt: new Date(c.createdAt).getTime() }))}

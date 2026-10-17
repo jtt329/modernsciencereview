@@ -46,17 +46,57 @@ async function latestVersion(pageId: string, visibility?: "draft" | "published")
   return rows[0] ?? null;
 }
 
+async function currentVersion(page: typeof fieldPagesTable.$inferSelect, visibility?: "draft" | "published") {
+  if (page.currentVersionId) {
+    const where = visibility
+      ? and(
+          eq(fieldPageVersionsTable.id, page.currentVersionId),
+          eq(fieldPageVersionsTable.pageId, page.id),
+          eq(fieldPageVersionsTable.visibility, visibility),
+        )
+      : and(
+          eq(fieldPageVersionsTable.id, page.currentVersionId),
+          eq(fieldPageVersionsTable.pageId, page.id),
+        );
+    const pointed = (await db.select().from(fieldPageVersionsTable).where(where).limit(1))[0];
+    if (pointed) return pointed;
+  }
+  // Compatibility fallback for pre-pointer records. New publish/rollback operations always
+  // maintain currentVersionId, so this must not override an existing valid pointer.
+  return latestVersion(page.id, visibility);
+}
+
+async function requestedVersion(pageId: string, versionId: string, visibility?: "draft" | "published") {
+  const where = visibility
+    ? and(
+        eq(fieldPageVersionsTable.id, versionId),
+        eq(fieldPageVersionsTable.pageId, pageId),
+        eq(fieldPageVersionsTable.visibility, visibility),
+      )
+    : and(eq(fieldPageVersionsTable.id, versionId), eq(fieldPageVersionsTable.pageId, pageId));
+  return (await db.select().from(fieldPageVersionsTable).where(where).limit(1))[0] ?? null;
+}
+
 // GET /api/overviews/:slug  — the overview tree (published by default; ?draft=1 admin-only)
 router.get("/overviews/:slug", async (req, res) => {
   const wantDraft = req.query.draft === "1";
+  const requestedVersionId = String(req.query.version || "");
   if (wantDraft && !requireAdmin(req, res)) return;
   try {
     const all = await db.select().from(fieldPagesTable);
+    if (!all.some(p => p.slug === req.params.slug)) { res.status(404).json({ error: "overview not found" }); return; }
     const pages = await pagesInScope(db as any, req.params.slug);
     if (pages.length === 0) { res.status(404).json({ error: "overview not found" }); return; }
+    const rootPage = pages.find((p) => p.slug === req.params.slug) ?? pages[0];
     const out = [] as any[];
     for (const p of pages) {
-      const version = await latestVersion(p.id, wantDraft ? undefined : "published");
+      const version = requestedVersionId && p.id === rootPage.id
+        ? await requestedVersion(p.id, requestedVersionId, wantDraft ? undefined : "published")
+        : await currentVersion(p, wantDraft ? undefined : "published");
+      if (requestedVersionId && p.id === rootPage.id && !version) {
+        res.status(404).json({ error: "overview version not found" });
+        return;
+      }
       if (!version) continue; // unpublished page hidden from public
       const sections = await db.select().from(pageSectionsTable).where(eq(pageSectionsTable.versionId, version.id)).orderBy(pageSectionsTable.order);
       // Block substrate: provenance by block membership with ABSOLUTE offsets computed against
@@ -71,18 +111,52 @@ router.get("/overviews/:slug", async (req, res) => {
         if (!target) continue;
         // Hover preview card = the target page's maintained one-line summary (multi-resolution
         // layer working for free; the term-level [+] is retired in favor of plain links).
-        const tv = (await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, target.id)).orderBy(desc(fieldPageVersionsTable.versionNumber)).limit(1))[0];
+        const tv = await currentVersion(target, wantDraft ? undefined : "published");
         links.push({ id: l.id, phrase: l.phrase, startOffset: l.anchorStartOffset, endOffset: l.anchorEndOffset, toPageSlug: target.slug, toPageTitle: target.title, toPageSummary: tv?.summaryOneLine || target.scopeStatement || "" });
       }
       out.push({
         id: p.id, slug: p.slug, title: p.title, parentPageId: p.parentPageId, scopeStatement: p.scopeStatement,
-        version: { id: version.id, visibility: version.visibility, summaryOneLine: version.summaryOneLine, summaryShort: version.summaryShort, markdownFull: version.markdownFull },
+        version: {
+          id: version.id, versionNumber: version.versionNumber, visibility: version.visibility,
+          createdAt: version.createdAt, changeLog: version.changeLog,
+          isCurrent: p.currentVersionId === version.id,
+          summaryOneLine: version.summaryOneLine, summaryShort: version.summaryShort, markdownFull: version.markdownFull,
+        },
         sections, references: await enrichReferences(refs),
         spans: spans.map((s) => ({ id: s.id, text: s.text, startOffset: s.startOffset, endOffset: s.endOffset, supportStatus: s.supportStatus, referenceId: s.referenceId })),
         links,
       });
     }
-    res.json({ overviewSlug: req.params.slug, isDraft: wantDraft, pages: out });
+    const visibleVersions = await db.select({ pageId: fieldPageVersionsTable.pageId }).from(fieldPageVersionsTable)
+      .where(wantDraft ? undefined : eq(fieldPageVersionsTable.visibility, "published"));
+    const visibleIds = new Set(visibleVersions.map((v) => v.pageId));
+    const navigation = all.filter((p) => visibleIds.has(p.id)).map((p) => ({ id: p.id, slug: p.slug, title: p.title, parentPageId: p.parentPageId }));
+    const breadcrumbs = [] as typeof navigation;
+    const visited = new Set<string>();
+    let parent = rootPage.parentPageId;
+    while (parent && !visited.has(parent)) {
+      visited.add(parent);
+      const p = navigation.find((p) => p.id === parent);
+      if (!p) break;
+      breadcrumbs.unshift(p); parent = p.parentPageId;
+    }
+    // Resolve mentions only to existing published concepts. This supplies navigation,
+    // never evidence: paper citations still come exclusively from stored provenance.
+    for (const page of out) {
+      const body = page.version.markdownFull;
+      for (const target of navigation.filter((p) => p.id !== page.id)) {
+        const phrases = [target.title.replace(/^The /i, ''), target.slug.replaceAll('-', ' ')];
+        if (target.slug === 'hawking-radiation') phrases.push('Hawking temperature');
+        for (const phrase of phrases.filter((s) => s.length >= 5)) {
+          const start = body.toLowerCase().indexOf(phrase.toLowerCase());
+          if (start < 0 || /[a-z0-9]/i.test(body[start - 1] || '') || /[a-z0-9]/i.test(body[start + phrase.length] || '')) continue;
+          if (page.links.some((l: any) => l.startOffset === start)) continue;
+          page.links.push({ id: `mention:${target.id}:${start}`, phrase: body.slice(start, start + phrase.length), startOffset: start, endOffset: start + phrase.length, toPageSlug: target.slug, toPageTitle: target.title });
+          break;
+        }
+      }
+    }
+    res.json({ overviewSlug: req.params.slug, isDraft: wantDraft, pages: out, navigation, breadcrumbs });
   } catch (err) { logger.error({ err }, "overview fetch failed"); res.status(500).json({ error: "overview fetch failed" }); }
 });
 
@@ -177,9 +251,22 @@ router.post("/admin/overviews/pages/:pageId/rollback", async (req, res) => {
 
 // GET /api/overviews/pages/:pageId/versions — version history (rollback targets)
 router.get("/overviews/pages/:pageId/versions", async (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  const versions = await db.select().from(fieldPageVersionsTable).where(eq(fieldPageVersionsTable.pageId, req.params.pageId)).orderBy(desc(fieldPageVersionsTable.createdAt));
-  res.json({ pageId: req.params.pageId, versions: versions.map((v) => ({ id: v.id, visibility: v.visibility, createdAt: v.createdAt, changeLog: v.changeLog })) });
+  const isAdmin = isAdminRequest(req);
+  const page = (await db.select().from(fieldPagesTable).where(eq(fieldPagesTable.id, req.params.pageId)).limit(1))[0];
+  if (!page) { res.status(404).json({ error: "overview page not found" }); return; }
+  const where = isAdmin
+    ? eq(fieldPageVersionsTable.pageId, req.params.pageId)
+    : and(eq(fieldPageVersionsTable.pageId, req.params.pageId), eq(fieldPageVersionsTable.visibility, "published"));
+  const versions = await db.select().from(fieldPageVersionsTable).where(where).orderBy(desc(fieldPageVersionsTable.versionNumber));
+  res.json({
+    pageId: req.params.pageId,
+    currentVersionId: page.currentVersionId,
+    versions: versions.map((v) => ({
+      id: v.id, versionNumber: v.versionNumber, visibility: v.visibility,
+      createdAt: v.createdAt, changeLog: v.changeLog,
+      isCurrent: page.currentVersionId === v.id,
+    })),
+  });
 });
 
 // --- Public change view (slice 5.3): what changed, when, triggered by which paper ---
