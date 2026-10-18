@@ -20,15 +20,15 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
   return (
     <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-slate-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between h-16 items-center">
-          <div className="cursor-pointer flex items-center gap-3" onClick={() => window.location.href = '/'}>
-            <span className="text-2xl font-black tracking-tight leading-none">ModernScience<span className="text-indigo-500">.</span>Review</span>
+        <div className="flex flex-wrap justify-between min-h-16 items-center gap-3 py-3">
+          <div className="cursor-pointer flex flex-wrap items-center gap-2 max-w-full" onClick={() => window.location.href = '/'}>
+            <span className="text-xl sm:text-2xl font-black tracking-tight leading-none">ModernScience<span className="text-indigo-500">.</span>Review</span>
             <span className="px-2.5 py-1 rounded-full bg-slate-100 border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500">
               {SITE_VERSION}
             </span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             {user ? (
               <>
                 {isAdmin && (
