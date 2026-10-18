@@ -158,14 +158,24 @@ export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
             </button>
             <h2 className="text-3xl font-black text-slate-900">How Modern Science Review works</h2>
             <p className="text-base text-slate-500 mt-2 leading-relaxed max-w-2xl">
-              Every paper on this site is reviewed by an AI scientific referee under a fixed, versioned, public
-              protocol. This page explains the entire pipeline — what the reviewer sees, how scores are computed, how
-              papers are compared against a benchmark of landmark and failed physics papers, and what the system can
-              and cannot promise.
+              Reviews are versioned. Paper pages prefer the latest available saved review and identify its
+              methodology. Earlier reviews remain available and can use different scoring systems.
             </p>
           </div>
 
           <div className="px-7 py-8 space-y-10">
+            <Section id="hiw-explanatory-update" number={nextNumber()} title="Saved explanatory-update reviews (B2.1)">
+              <p>The restored B2.1 reviews judge how much a paper advances scientific explanation relative to the prior
+                knowledge used in that review. The compiled scientific review is the main account, with one saved
+                explanatory-advance score. This score is not calculated by averaging Input, Construction, and Output grades.</p>
+              <p>A score of 50 represents a solid, useful published paper; around 75 is an important subfield advance;
+                90–100 is a field-defining advance. Framework-conditional value is an internal audit note, not a second
+                public score. The C/F shorthand is not part of this public review format.</p>
+              <p>The sections below document the earlier ICO review pipeline and its historical records. They do not
+                define the B2.1 score. Where a later verdict correction exists without a corrected score, the old score
+                is withheld pending reassessment.</p>
+            </Section>
+
             <Section id="hiw-identity-blind" number={nextNumber()} title="The identity-blind protocol">
               <p>
                 Before review, the manuscript is stripped of identifying information: author names, affiliations,
@@ -197,7 +207,7 @@ export default function HowItWorksModal({ onClose }: HowItWorksModalProps) {
               </p>
             </Section>
 
-            <Section id="hiw-diagnostic" number={nextNumber()} title="The diagnostic score: Input, Construction, Output">
+            <Section id="hiw-diagnostic" number={nextNumber()} title="Earlier ICO scoring: Input, Construction, Output">
               <p>
                 The reviewer does not produce a gut-feeling grade. It fills out a structured diagnostic ledger with
                 three dimensions, each scored 0–10 in half-point steps. The headline intrinsic score is 10 × the
