@@ -305,6 +305,7 @@ export default function App() {
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(initialRoute.paperId);
   const [fieldSlug, setFieldSlug] = useState<string | null>(initialRoute.fieldSlug);
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
+  const [reviewVersionView, setReviewVersionView] = useState<'latest' | 'earlier'>('latest');
   const [archivedReview, setArchivedReview] = useState<AIReview | null>(null);
   const [selectedReview, setSelectedReview] = useState<AIReview | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -392,6 +393,7 @@ export default function App() {
       return;
     }
     setDetailLoading(true);
+    setReviewVersionView('latest');
     Promise.all([
       apiFetch(`/api/papers/${selectedPaperId}`),
       apiFetch(`/api/papers/${selectedPaperId}/comments`),
@@ -478,7 +480,8 @@ export default function App() {
         if (data.liked) next.add(reviewId); else next.delete(reviewId);
         return next;
       });
-      setSelectedReview(r => r ? { ...r, likesCount: r.likesCount + (data.liked ? 1 : -1) } : r);
+      setSelectedReview(r => r && r.id === reviewId ? { ...r, likesCount: r.likesCount + (data.liked ? 1 : -1) } : r);
+      setArchivedReview(r => r && r.id === reviewId ? { ...r, likesCount: r.likesCount + (data.liked ? 1 : -1) } : r);
     } catch {}
   };
 
@@ -1083,21 +1086,24 @@ export default function App() {
                     </div>
                   )}
 
-                  {selectedReview && (
-                    <div className="pt-12">
-                      <ReviewCard
-                        review={{
-                          ...selectedReview,
-                          createdAt: new Date(selectedReview.createdAt).getTime(),
-                        }}
-                        onLike={handleLikeReview}
-                        isLiked={userLikes.has(selectedReview.id)}
-                        isAdmin={isAdmin}
-                      />
+                  {selectedReview && <section className="pt-8 space-y-4" aria-label="Saved review versions">
+                    {archivedReview && <div className="rounded-2xl border border-slate-200 bg-white p-4 md:p-5">
+                      <h2 className="font-bold text-slate-800 text-sm mb-3">Review versions</h2>
+                      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Review versions" onKeyDown={event => {
+                        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                        event.preventDefault();
+                        const next = event.key === 'Home' ? 'latest' : event.key === 'End' ? 'earlier' : reviewVersionView === 'latest' ? 'earlier' : 'latest';
+                        setReviewVersionView(next); document.getElementById(`review-${next}-tab`)?.focus();
+                      }}>
+                        <button id="review-latest-tab" role="tab" tabIndex={reviewVersionView === 'latest' ? 0 : -1} aria-selected={reviewVersionView === 'latest'} aria-controls="saved-review-panel" onClick={() => setReviewVersionView('latest')} className={`rounded-xl px-4 py-2.5 text-sm font-bold ${reviewVersionView === 'latest' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>Latest saved review</button>
+                        <button id="review-earlier-tab" role="tab" tabIndex={reviewVersionView === 'earlier' ? 0 : -1} aria-selected={reviewVersionView === 'earlier'} aria-controls="saved-review-panel" onClick={() => setReviewVersionView('earlier')} className={`rounded-xl px-4 py-2.5 text-sm font-bold ${reviewVersionView === 'earlier' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>Earlier detailed review</button>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-3">{reviewVersionView === 'earlier' ? 'The complete earlier interface, including its saved numerical diagnostics and assessment sections. Its score belongs to that review version.' : 'The later explanatory-update review. The earlier version retains the numerical score breakdowns from its own methodology.'}</p>
+                    </div>}
+                    <div id="saved-review-panel" role="tabpanel" aria-labelledby={archivedReview ? (reviewVersionView === 'earlier' ? 'review-earlier-tab' : 'review-latest-tab') : undefined}>
+                      {(() => { const visibleReview = reviewVersionView === 'earlier' && archivedReview ? archivedReview : selectedReview; return <ReviewCard key={`${selectedPaper.id}:${reviewVersionView}`} review={{...visibleReview, createdAt: new Date(visibleReview.createdAt).getTime()}} onLike={handleLikeReview} isLiked={userLikes.has(visibleReview.id)} isAdmin={isAdmin} />; })()}
                     </div>
-                  )}
-
-                  {archivedReview && <details className="rounded-2xl border border-slate-200 p-5"><summary className="cursor-pointer font-semibold text-slate-600">Earlier review (previous scoring system)</summary><div className="mt-5"><ReviewCard review={{...archivedReview, createdAt:new Date(archivedReview.createdAt).getTime()}} onLike={handleLikeReview} isLiked={userLikes.has(archivedReview.id)} isAdmin={isAdmin} /></div></details>}
+                  </section>}
 
                   <PaperExplanation paperId={selectedPaper.id} />
 

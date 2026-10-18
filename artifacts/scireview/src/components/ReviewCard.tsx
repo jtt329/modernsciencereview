@@ -1571,7 +1571,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     }
   }
   const activeDeduction = activeDiagnosticCard ? deductionByDimension[activeDiagnosticCard.id] : undefined;
-  if (parsedCoverage?.schemaVersion === 'explanatory-update-B2.1') return <ExplanatoryReviewCard review={review} ledger={parsedCoverage} />;
+  if (parsedCoverage?.schemaVersion === 'explanatory-update-B2.1') return <ExplanatoryReviewCard review={review} ledger={parsedCoverage} onLike={onLike} isLiked={isLiked} />;
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     {
