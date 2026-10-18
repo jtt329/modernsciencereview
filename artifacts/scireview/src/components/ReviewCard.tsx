@@ -7,6 +7,7 @@ import rehypeKatex from 'rehype-katex';
 import { format } from 'date-fns';
 import { AIReview } from '../types';
 import ReviewChat from './ReviewChat';
+import ExplanatoryReviewCard from './ExplanatoryReviewCard';
 import { normalizeMathMarkdown } from '../lib/mathMarkdown';
 import { formatStoredReviewModelName } from '../lib/modelLabels';
 
@@ -62,22 +63,6 @@ const GlossaryProse = ({ text, className }: { text: string; className?: string }
       ),
     )}
   </p>
-);
-
-const GlossaryLegend = () => (
-  <details className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
-    <summary className="cursor-pointer text-[10px] font-black text-slate-400 uppercase tracking-widest">
-      C1–C5 / F1–F4 legend
-    </summary>
-    <ul className="mt-2 space-y-1 text-xs text-slate-400">
-      {Object.values(GLOSSARY_DEFINITIONS).map((definition) => (
-        <li key={definition}>{definition}</li>
-      ))}
-    </ul>
-    <a href="/how-it-works#hiw-centrality" className="text-xs text-indigo-300 hover:underline mt-2 inline-block">
-      Full definitions on the How-it-works page
-    </a>
-  </details>
 );
 
 const Markdown = ({ children }: { children: string }) => (
@@ -311,7 +296,6 @@ const CalibrationPanel = ({ detail, loading }: { detail: any | null; loading: bo
             position-inconsistent. "Overall" is its own judged question — not an average of the three dimension verdicts —
             so dimension win rates and the overall win rate can legitimately differ.
           </p>
-          <GlossaryLegend />
           {pairs.length === 0 && <p className="text-sm text-slate-400">No stored pair outcomes.</p>}
           {pairs.map((pair: any, index: number) => (
             <details key={`${pair.partnerReviewId}-${index}`} className="bg-slate-950/30 border border-white/10 rounded-xl p-3">
@@ -1466,8 +1450,8 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
   // Headline framing: the score is "as established physics" (built on our most
   // empirically-supported theories), with speculative-but-leading work scoring
   // lower here and higher in the conditional.
-  const establishedPhysicsDefinition =
-    "How much this advances physics built on our most empirically-supported theories — not a claim the work is wrong or uncertain; speculative-but-leading work scores lower here and higher in the conditional below.";
+  const establishedPhysicsDefinition = "Score recorded by this older review's scoring system." +
+    (showAssumptionConditionals ? " The stored assumption-conditional scores are shown below." : "");
   // Public point-deduction breakdown ("−X pts: [cause]") per below-10
   // dimension, derived in code from the rung→points gap. Display only.
   const pointDeductions = Array.isArray(parsedCoverage?.pointDeductions)
@@ -1587,6 +1571,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
     }
   }
   const activeDeduction = activeDiagnosticCard ? deductionByDimension[activeDiagnosticCard.id] : undefined;
+  if (parsedCoverage?.schemaVersion === 'explanatory-update-B2.1') return <ExplanatoryReviewCard review={review} ledger={parsedCoverage} />;
   const technicalAssessmentBoxes = [
     { label: 'Correctness', value: currentCorrectness, color: 'text-emerald-400', icon: <CheckCircle2 className="w-4 h-4" /> },
     {
@@ -1638,11 +1623,11 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <p className="text-[10px] font-black text-indigo-300 uppercase tracking-widest"
                      title={selectedPass ? undefined : establishedPhysicsDefinition}>
-                    {selectedPass ? displayedScoreLabel : 'As established physics'}
+                    {selectedPass ? displayedScoreLabel : 'Archived review score'}
                   </p>
                   {!selectedPass && (
                     <span className="text-xs text-slate-400 max-w-xl" title={establishedPhysicsDefinition}>
-                      how much it advances physics built on our most empirically-supported theories — not a verdict that it's wrong or uncertain; speculative-but-leading work scores lower here, higher in the conditional below
+                      {establishedPhysicsDefinition}
                     </span>
                   )}
                   {pairwiseCalibrated && !selectedPass && (
@@ -1976,8 +1961,7 @@ export default function ReviewCard({ review, onLike, isLiked, isAdmin = false }:
               <h3 className="text-xs font-black text-indigo-300 uppercase tracking-widest flex items-center gap-2">
                 <BrainCircuit className="w-4 h-4" /> Input → Construction → Output Assessment
               </h3>
-              <GlossaryLegend />
-              <div className="space-y-3">
+                  <div className="space-y-3">
                 <div className="grid items-stretch gap-3 grid-cols-3">
                   {diagnosticCards.map((card) => {
                     const active = activeIcoTab === card.id;

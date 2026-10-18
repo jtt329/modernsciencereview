@@ -1118,7 +1118,7 @@ assert.doesNotMatch(routesSource, /row\.overallWinnerReviewId === reviewId \? "w
 assert.match(pairwisePromptV2Source, /keyComparisons/);
 assert.match(pairwisePromptV2Source, /ACTIVATION CHECKLIST/);
 assert.match(reviewCardSource, /GLOSSARY_DEFINITIONS/);
-assert.match(reviewCardSource, /GlossaryLegend/);
+assert.doesNotMatch(reviewCardSource, /GlossaryLegend/); // Retired public C/F legend; legacy inline definitions remain.
 assert.match(reviewCardSource, /withGlossaryLinks/);
 assert.match(reviewCardSource, /Bridge pair/);
 assert.match(howItWorksSource, /barred from automatic anchor\s+service; an administrator can deliberately pin one as an anchor/);

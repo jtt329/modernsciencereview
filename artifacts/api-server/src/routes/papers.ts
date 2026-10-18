@@ -1,9 +1,10 @@
 import { Router } from "express";
-import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable, calibrationPairsTable, sandboxReviewsTable, realizedYieldAssessmentsTable } from "@workspace/db";
+import { db, papersTable, reviewsTable, commentsTable, likesTable, reviewAttemptsTable, calibrationPairsTable, sandboxReviewsTable, realizedYieldAssessmentsTable, reviewVersionsTable } from "@workspace/db";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { createHash, randomUUID } from "crypto";
 import { ai as geminiAI } from "@workspace/integrations-gemini-ai";
 import { logger } from "../lib/logger";
+import { projectExplanatoryReview, explanatoryPaperIdentity } from "../lib/publicExplanatoryReview";
 import { runPostReviewOverviewHook } from "../lib/overviewEditor";
 import {
   BENCHMARK_SET_VERSION,
@@ -5488,21 +5489,25 @@ router.get("/papers", async (req, res) => {
     const reviews = await db.select({
       paperId: reviewsTable.paperId,
       summary: reviewsTable.summary,
+      createdAt: reviewsTable.createdAt,
       centralClaim: reviewsTable.centralClaim,
       finalJudgment: reviewsTable.finalJudgment,
       promptVersion: sql<string | null>`substring(${reviewsTable.coverageLedgerJson} from '"promptVersion"[[:space:]]*:[[:space:]]*"([^"]+)"')`,
     }).from(reviewsTable);
     const reviewMap = new Map(reviews.map(r => [r.paperId, r]));
     const papers = paperRecords.map((paper) => normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(reviewMap.get(paper.id))));
+    const explanatory = await latestExplanatoryReviews();
     const seenPromptScopedPapers = new Set<string>();
     const papersWithSummary = papers.map(p => {
       const review = reviewMap.get(p.id);
+      const current = projectExplanatoryReview(explanatory.forPaper(p), review);
       return {
         ...p,
-        promptVersion: review?.promptVersion || null,
-        reviewSummary: review?.summary || review?.finalJudgment || null,
-        reviewCentralClaim: review?.centralClaim || null,
-        reviewFinalJudgment: review?.finalJudgment || review?.summary || null,
+        ...(current ? { score: current.score, modelName: explanatory.forPaper(p)?.promptName } : {}),
+        promptVersion: current ? JSON.parse(current.coverageLedgerJson).promptVersion : review?.promptVersion || null,
+        reviewSummary: current?.summary || review?.summary || review?.finalJudgment || null,
+        reviewCentralClaim: current ? null : review?.centralClaim || null,
+        reviewFinalJudgment: current?.summary || review?.finalJudgment || review?.summary || null,
       };
     }).filter((paper) => {
       const key = promptScopedFeedDuplicateKey(paper, paper.promptVersion);
@@ -5582,6 +5587,21 @@ router.get("/admin/reviews/extraction-qa-scan", async (req, res) => {
   }
 });
 
+async function latestExplanatoryReviews() {
+  const rows = await db.select({ version: reviewVersionsTable, paper: papersTable })
+    .from(reviewVersionsTable).innerJoin(papersTable, eq(reviewVersionsTable.paperId, papersTable.id))
+    .orderBy(desc(reviewVersionsTable.createdAt));
+  const byId = new Map<string, any>();
+  const byIdentity = new Map<string, any>();
+  for (const row of rows) {
+    if (!projectExplanatoryReview(row.version)) continue;
+    if (!byId.has(row.paper.id)) byId.set(row.paper.id, row.version);
+    const identity = explanatoryPaperIdentity(row.paper);
+    if (!byIdentity.has(identity)) byIdentity.set(identity, row.version);
+  }
+  return { forPaper: (paper: any) => byId.get(paper.id) || byIdentity.get(explanatoryPaperIdentity(paper)) };
+}
+
 // GET /api/papers/:id — get paper with review
 router.get("/papers/:id", async (req, res) => {
   try {
@@ -5589,7 +5609,9 @@ router.get("/papers/:id", async (req, res) => {
     if (!paper) { res.status(404).json({ error: "Paper not found" }); return; }
 
     const [review] = await db.select().from(reviewsTable).where(eq(reviewsTable.paperId, paper.id));
-    res.json({ paper: normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(review)), review: review || null });
+    const saved = (await latestExplanatoryReviews()).forPaper(paper);
+    const current = projectExplanatoryReview(saved, review);
+    res.json({ paper: { ...normalizePaperDisplayMetadata(paper, reviewMetadataNormalizationText(review)), ...(current ? { score: current.score } : {}) }, review: current || review || null, archivedReview: current ? review || null : null });
   } catch (err: any) {
     logger.error({ err }, "Error getting paper");
     res.status(500).json({ error: err.message });

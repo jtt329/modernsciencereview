@@ -100,7 +100,7 @@ export default function PaperCard({ paper, onClick, onLike, isLiked, isSelectabl
                   <span className="text-xl leading-none">{paper.score}</span>
                 </div>
                 <div className="absolute top-full right-0 mt-2 w-64 p-3 bg-slate-900 text-white text-xs rounded-xl shadow-2xl opacity-0 group-hover/score:opacity-100 pointer-events-none transition-opacity duration-150 z-30 leading-relaxed">
-                  Anchored scientific merit score: 0 means wrong or no real contribution, 50 means an average serious published paper in the comparison cohort, and 99 means foundational or paradigm-shifting.
+                  {paper.promptVersion?.startsWith('explanatory-update') ? 'Explanatory advance: 50 is a solid, useful published paper; around 75 is an important subfield advance; 90–100 is field-defining. Scored against the review’s prior-knowledge baseline.' : 'Score from an earlier review and scoring system. See the paper page for its recorded methodology.'}
                 </div>
               </div>
               {modelLabel && (

@@ -9,12 +9,13 @@
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
-    "test": "pnpm run test:review && pnpm run test:wiki-invariants",
+    "test": "pnpm run test:review && pnpm run test:wiki-invariants && pnpm run test:review-display",
     "test:review": "node scripts/review-v17-invariants.mjs",
     "test:wiki-invariants": "MODE=synthetic node scripts/phase1-seed-overview.mjs",
     "restore:overview": "node scripts/restore-explanation-overview.mjs",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
+    "test:review-display": "node scripts/review-display-invariants.mjs"
   },
   "private": true,
   "devDependencies": {

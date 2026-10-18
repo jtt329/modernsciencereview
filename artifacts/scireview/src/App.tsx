@@ -305,6 +305,7 @@ export default function App() {
   const [selectedPaperId, setSelectedPaperId] = useState<string | null>(initialRoute.paperId);
   const [fieldSlug, setFieldSlug] = useState<string | null>(initialRoute.fieldSlug);
   const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
+  const [archivedReview, setArchivedReview] = useState<AIReview | null>(null);
   const [selectedReview, setSelectedReview] = useState<AIReview | null>(null);
   const [comments, setComments] = useState<Comment[]>([]);
   const [userLikes, setUserLikes] = useState<Set<string>>(new Set());
@@ -386,6 +387,7 @@ export default function App() {
     if (!selectedPaperId) {
       setSelectedPaper(null);
       setSelectedReview(null);
+      setArchivedReview(null);
       setComments([]);
       return;
     }
@@ -396,6 +398,7 @@ export default function App() {
     ]).then(([detail, commentsData]) => {
       setSelectedPaper(detail.paper);
       setSelectedReview(detail.review);
+      setArchivedReview(detail.archivedReview || null);
       setComments(commentsData.comments || []);
       if (user && detail.review) {
         fetchLikes([detail.paper.id, detail.review.id]);
@@ -1093,6 +1096,8 @@ export default function App() {
                       />
                     </div>
                   )}
+
+                  {archivedReview && <details className="rounded-2xl border border-slate-200 p-5"><summary className="cursor-pointer font-semibold text-slate-600">Earlier review (previous scoring system)</summary><div className="mt-5"><ReviewCard review={{...archivedReview, createdAt:new Date(archivedReview.createdAt).getTime()}} onLike={handleLikeReview} isLiked={userLikes.has(archivedReview.id)} isAdmin={isAdmin} /></div></details>}
 
                   <PaperExplanation paperId={selectedPaper.id} />
 
