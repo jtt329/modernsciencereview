@@ -29,6 +29,7 @@ export default function Navbar({ user, isAdmin, onLogin, onLogout, onNewPaper, o
           </div>
 
           <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+            <a href="/formal-lab" className="px-3 py-2 rounded-full text-sm font-semibold text-teal-800 bg-teal-50 border border-teal-200 hover:bg-teal-100">Formal Lab <span className="text-[10px] uppercase tracking-wide">Prototype</span></a>
             {user ? (
               <>
                 {isAdmin && (

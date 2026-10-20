@@ -15,7 +15,8 @@
     "restore:overview": "node scripts/restore-explanation-overview.mjs",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "test:review-display": "node scripts/review-display-invariants.mjs"
+    "test:review-display": "node scripts/review-display-invariants.mjs",
+    "test:formal": "node --test scripts/formal-lab.test.mjs"
   },
   "private": true,
   "devDependencies": {

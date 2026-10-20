@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "python": "3.13.2"
+  },
+  "steps": {
+    "build": {
+      "commands": [
+        "pnpm --filter @workspace/api-server build",
+        "python3 -m venv /app/.formal-venv && /app/.formal-venv/bin/python -m pip install --no-cache-dir -r artifacts/api-server/formal-verifier/requirements.txt"
+      ]
+    }
+  },
+  "deploy": {
+    "paths": [
+      "/app/.formal-venv/bin",
+      "..."
+    ]
+  }
+}

@@ -202,7 +202,7 @@ export default function FieldOverviewPage({
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
-      <button onClick={onBack} className="text-sm text-blue-600 mb-6">← Paper library</button>
+      <div className="flex flex-wrap items-center gap-4 mb-6"><button onClick={onBack} className="text-sm text-blue-600">← Paper library</button><a href="/formal-lab" className="text-sm font-semibold text-teal-800 hover:underline">Formal Lab · Prototype</a></div>
       <p className="text-xs uppercase tracking-widest text-slate-400 mb-1">{isAdmin ? 'Explanation workspace (draft)' : 'Living scientific explanation'}</p>
       {breadcrumbs.length > 0 && <nav aria-label="Breadcrumb" className="flex flex-wrap gap-2 text-sm text-blue-700 mb-5">{breadcrumbs.map(p => <React.Fragment key={p.id}><a href={`/fields/${encodeURIComponent(p.slug)}`} onClick={e => { e.preventDefault(); onOpenPage(p.slug); }}>{p.title}</a><span aria-hidden="true">›</span></React.Fragment>)}<span className="text-slate-500">{root?.title}</span></nav>}
       {selectedVersion && <p className="mb-4 rounded bg-amber-50 p-3 text-sm text-amber-800">Viewing a saved historical revision.</p>}

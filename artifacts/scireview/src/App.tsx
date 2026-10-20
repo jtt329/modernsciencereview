@@ -13,6 +13,7 @@ import PromptAnalysis from './components/PromptAnalysis';
 import HowItWorksModal from './components/HowItWorksModal';
 import SandboxViewer from './components/SandboxViewer';
 import FieldOverviewPage from './components/FieldOverviewPage';
+import FormalLabPage from './components/FormalLabPage';
 import PaperExplanation from './components/PaperExplanation';
 import { ReviewSource } from './services/reviewService';
 import { StoredReviewModelFamily, storedReviewModelFamily, storedReviewModelFamilyLabel } from './lib/modelLabels';
@@ -293,6 +294,7 @@ function readRoute() {
         : null,
     showHowItWorks: path === '/how-it-works',
     showSandbox: path === '/admin/sandbox',
+    showFormalLab: /^\/formal-lab(?:\/|$)/.test(path) && !path.endsWith('.pdf'),
     usedLegacyPaperQuery: !paperMatch && !!queryPaper,
   };
 }
@@ -317,6 +319,7 @@ export default function App() {
   const [showPromptAnalysis, setShowPromptAnalysis] = useState(false);
   const [showHowItWorks, setShowHowItWorks] = useState(initialRoute.showHowItWorks);
   const [showSandbox, setShowSandbox] = useState(initialRoute.showSandbox);
+  const [showFormalLab, setShowFormalLab] = useState(initialRoute.showFormalLab);
   const [papersLoading, setPapersLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -363,6 +366,7 @@ export default function App() {
       setFieldSlug(route.fieldSlug);
       setShowHowItWorks(route.showHowItWorks);
       setShowSandbox(route.showSandbox);
+      setShowFormalLab(route.showFormalLab);
       if (route.paperId && route.usedLegacyPaperQuery) {
         window.history.replaceState({}, '', paperPath(route.paperId));
       }
@@ -374,8 +378,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!fieldSlug) fetchPapers();
-  }, [fetchPapers, fieldSlug]);
+    if (!fieldSlug && !showFormalLab) fetchPapers();
+  }, [fetchPapers, fieldSlug, showFormalLab]);
 
   useEffect(() => {
     if (papers.length && user) {
@@ -729,6 +733,8 @@ export default function App() {
       </div>
     );
   }
+
+  if (showFormalLab) return <FormalLabPage />;
 
   if (fieldSlug) {
     return (

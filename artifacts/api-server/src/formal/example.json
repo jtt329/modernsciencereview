@@ -1,0 +1,1101 @@
+{
+  "schemaVersion": "formal-lab-v1",
+  "title": "Horizon boundary mechanics: from one potential to horizon work",
+  "authors": "J. T. Tyler",
+  "source": {
+    "title": "Horizon boundary mechanics — Area, acceleration length, and horizon work (one-page summary)",
+    "url": "/formal-lab/horizon-boundary-summary.pdf",
+    "version": "2026-10-12-radius-work-v1; one-page summary, 12 October 2026",
+    "sha256": "7566aed2baa71088aed6f512189b8bc4c5068243f8509ad1ea95c25925874389",
+    "excerpt": "Faithful mathematical transcription from the matching one-page LaTeX source of the hashed PDF, 12 October 2026. Equations and all scope sections are included; layout commands are omitted.\n\nArea measures transverse size. Acceleration length is the light-travel length of the surface-gravity timescale, $L=ct_\\kappa$ with $t_\\kappa=c/\\kappa$. One boundary potential gives surface stress, force, and pressure.\n\n\n\nGeometry and the mechanical responses\n\nFor a specified clock and positive surface gravity $\\kappa$, use the horizon area $A$ and\n\\begin{equation}\n L=\\frac{c^2}{\\kappa},\\qquad\n U(A,L)=\\frac{A\\kappa c^2}{8\\pi G}\n       =\\frac{c^4}{8\\pi G}\\frac AL.\n\\end{equation}\nThe Einstein boundary structure fixes this potential [1]. With $c,G$ fixed,\n\\begin{equation}\n dU=\\frac{c^4}{8\\pi GL}\\,dA-\\frac{Ac^4}{8\\pi GL^2}\\,dL\n    =\\Pi\\,dA-F_L\\,dL.\n\\end{equation}\nFor the mass equivalent $M_U=U/c^2$, the responses and force density are\n\\begin{align}\n \\Pi&=\\left(\\frac{\\partial U}{\\partial A}\\right)_L=\\frac UA,\n & F_L&=-\\left(\\frac{\\partial U}{\\partial L}\\right)_A=\\frac UL=M_U\\kappa,\\\\[0.35em]\n P_L&=\\frac{F_L}{A}=\\frac{\\Pi}{L}=\\frac{\\kappa^2}{8\\pi G},\n & U&=\\Pi A=F_L L=P_L AL.\n\\end{align}\nThe two terms change surface area and energy per area: $A\\,d\\Pi=-F_L\\,dL$, or $d\\Pi=-P_L\\,dL$. Volume work uses the pressure paired with its displacement; $AL$ is not generally that volume.\n\n\n\nThermal translation and stationary horizons\n\nThe Hawking--Unruh temperature and Einstein area entropy give\n\\begin{equation}\n T=\\frac{\\hbar c}{2\\pi k_B L},\\qquad\n S=\\frac{k_B A}{4\\ell_P^2},\\quad \\ell_P^2=\\frac{\\hbar G}{c^3},\\qquad\n U=TS,\\quad \\Pi\\,dA=T\\,dS.\n\\end{equation}\n\\textit{Rindler:} $L=c^2/a_{\\rm obs}$ is the normal horizon distance on the instantaneous rest slice; planar patch area $A$ is independent. \\textit{Schwarzschild:} $A=4\\pi R^2$, $L=2R$, $U=Mc^2/2$, with time normalized at infinity. For areal volume $V=4\\pi R^3/3$,\n\\begin{equation}\n F_L\\,dL=F_R\\,dR=M\\kappa\\,dR=P_R\\,dV,\\qquad\n P_R=2P_L=\\frac{\\kappa^2}{4\\pi G}.\n\\end{equation}\nSince $dL/L=dR/R$, this describes the same fractional horizon-size change. $R$ is areal radius, not a universal proper distance. Thus $dU=\\Pi\\,dA-P_R\\,dV$, with $U=3P_RV$; area and volume co-vary. This reveals the mass-energy decomposition $Mc^2=TS+F_L L$, while retaining the standard mass first law $d(Mc^2)=T\\,dS$.\n\n\n\nCosmological payoff\n\nFor the equilibrium FRW apparent horizon, $L=R_A$, so $P\\equiv P_R=P_L$. With $V=4\\pi R_A^3/3$, the Einstein--Misner--Sharp identification gives [2]\n\\begin{equation}\n U=E=\\frac{c^4R_A}{2G}=\\rho V,\\qquad\n P=\\frac{\\rho}{3},\\qquad\n \\boxed{dE=T\\,dS-P\\,dV.}\n\\end{equation}\nFor flat FRW, $R_A=c/H$ and the expansion, acceleration, and conservation laws are\n\\begin{equation}\n \\boxed{H^2=\\frac{8\\pi G}{c^2}P},\\qquad\n \\boxed{\\frac{2\\ddot a}{ac^2}=-\\kappa_E(P+p_m)},\\qquad\n \\boxed{\\dot P+H(3P+p_m)=0},\n\\end{equation}\nHere $H=\\dot a/a$, $\\kappa_E=8\\pi G/c^4$, $\\rho$ is total bulk energy density and $p_m$ total bulk pressure, distinct from $P$; vacuum contributions are included consistently. For curved FRW, $R_A=c/\\sqrt{H^2+kc^2/a^2}$ and $1/R_A^2=\\kappa_EP$. These reorganize the Einstein--FRW equations.\n\n\n\nCanonical basis and scope\n\nWith fixed clock, cuts, and the stated mixed boundary prescription, the scalar nonexpanding-null response ($\\theta=\\delta\\theta=0$) is [1]\n\\begin{equation}\n \\frac{\\Theta^{(0)}_\\kappa}{\\Delta\\tau}\n =\\frac{Ac^2}{8\\pi G}\\,\\delta\\kappa\n =-\\frac{Ac^4}{8\\pi GL^2}\\,\\delta L=-F_L\\,\\delta L.\n\\end{equation}\nThis selected response per prescribed time is realized by stationary Rindler, Schwarzschild and de Sitter. It is not the full action variation. Evolving FRW retains its separate equilibrium-screen calibration; no complete moving-boundary canonical theorem is asserted. Thermal input is unnecessary for $F_L$ and $P_L$.\n\n\n[1] Hopfm\\\"uller--Freidel, \\href{https://arxiv.org/abs/1611.03096}{1611.03096}; Odak et al., \\href{https://arxiv.org/abs/2309.03854}{2309.03854}; Parattu et al., \\href{https://arxiv.org/abs/1303.1535}{1303.1535}.\n[2] Cai--Kim, \\href{https://arxiv.org/abs/hep-th/0501055}{hep-th/0501055}; Akbar--Cai, \\href{https://arxiv.org/abs/hep-th/0609128}{hep-th/0609128}. Details and scope: the companion seven-page and full manuscripts."
+  },
+  "selectedInputs": [
+    {
+      "id": "einstein-boundary-potential",
+      "version": "1",
+      "title": "Selected Einstein boundary potential",
+      "statement": "For a prescribed clock and the stated Einstein boundary prescription, U(A,L) = c^4 A / (8 pi G L). Treat this physical starting potential as a cited input; the symbolic checker tests its consequences, not its derivation from the full action.",
+      "sourceUrl": "/formal-lab/horizon-boundary-summary.pdf"
+    },
+    {
+      "id": "acceleration-length",
+      "version": "1",
+      "title": "Positive acceleration-length convention",
+      "statement": "The one-page summary specifies positive surface gravity: L = c^2 / kappa, with c and G fixed. Use A > 0 and L > 0. Area and length are independent while taking the common partial derivatives.",
+      "sourceUrl": "/formal-lab/horizon-boundary-summary.pdf"
+    },
+    {
+      "id": "schwarzschild-horizon",
+      "version": "1",
+      "title": "Schwarzschild horizon family",
+      "statement": "With Killing time normalized at infinity, the one-page summary sets A = 4 pi R^2 and L = 2 R, with R > 0 and areal volume V = 4 pi R^3 / 3. Apply these substitutions after taking the common partial derivatives; distinguish P_R from P_L.",
+      "sourceUrl": "/formal-lab/horizon-boundary-summary.pdf"
+    }
+  ],
+  "mainClaim": "Starting from the selected Einstein boundary potential, one complete differential identifies surface stress and length-conjugate force; force per area gives normal-scale pressure. For the Schwarzschild family, the same work becomes work through the horizon’s own areal radius, with P_R = 2 P_L. These are conditional mathematical consequences of the listed inputs.",
+  "assumptions": [
+    "Use only the author’s one-page summary dated 12 October 2026 as the source of the claims below. This prepared example still requires the author to inspect and approve its formal translation.",
+    "c, G, and pi are positive constants. pi denotes the usual mathematical constant. A and L are positive independent variables before specialization; R is a positive areal radius.",
+    "Keep the physical clock normalization, orientation, and stated boundary prescription fixed when interpreting the mechanical responses.",
+    "Use the definitions Pi = c^4/(8 pi G L), F_L = A c^4/(8 pi G L^2), and P_L = c^4/(8 pi G L^2) as the proposed response formulas to test against derivatives of U.",
+    "For the Schwarzschild realization substitute A = 4 pi R^2 and L = 2 R only after computing the independent-variable responses; area and volume then co-vary.",
+    "For the final coordinate-change check, take the one-page summary’s selected scalar response (A c^2/(8 pi G)) delta kappa as a cited input, with theta = delta theta = 0, fixed clock and cuts, and the stated mixed boundary prescription."
+  ],
+  "symbols": [
+    {
+      "name": "c",
+      "label": "Speed of light",
+      "domain": "positive",
+      "dimensions": [
+        0,
+        1,
+        -1
+      ]
+    },
+    {
+      "name": "G",
+      "label": "Newton gravitational constant",
+      "domain": "positive",
+      "dimensions": [
+        -1,
+        3,
+        -2
+      ]
+    },
+    {
+      "name": "pi",
+      "label": "Circle constant pi",
+      "domain": "positive",
+      "dimensions": [
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "A",
+      "label": "Independent horizon-cut area",
+      "domain": "positive",
+      "dimensions": [
+        0,
+        2,
+        0
+      ]
+    },
+    {
+      "name": "L",
+      "label": "Independent positive acceleration length",
+      "domain": "positive",
+      "dimensions": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "R",
+      "label": "Schwarzschild areal radius",
+      "domain": "positive",
+      "dimensions": [
+        0,
+        1,
+        0
+      ]
+    },
+    {
+      "name": "kappa",
+      "label": "Surface-gravity acceleration",
+      "domain": "positive",
+      "dimensions": [
+        0,
+        1,
+        -2
+      ]
+    },
+    {
+      "name": "U",
+      "label": "Selected boundary potential",
+      "domain": "positive",
+      "dimensions": [
+        1,
+        2,
+        -2
+      ]
+    },
+    {
+      "name": "Pi",
+      "label": "Area-conjugate surface stress",
+      "domain": "positive",
+      "dimensions": [
+        1,
+        0,
+        -2
+      ]
+    },
+    {
+      "name": "F_L",
+      "label": "Length-conjugate force",
+      "domain": "positive",
+      "dimensions": [
+        1,
+        1,
+        -2
+      ]
+    },
+    {
+      "name": "P_L",
+      "label": "Normal-scale pressure",
+      "domain": "positive",
+      "dimensions": [
+        1,
+        -1,
+        -2
+      ]
+    },
+    {
+      "name": "U_S",
+      "label": "Potential on the Schwarzschild family",
+      "domain": "positive",
+      "dimensions": [
+        1,
+        2,
+        -2
+      ]
+    },
+    {
+      "name": "V_S",
+      "label": "Schwarzschild areal volume",
+      "domain": "positive",
+      "dimensions": [
+        0,
+        3,
+        0
+      ]
+    },
+    {
+      "name": "F_R",
+      "label": "Schwarzschild radius-conjugate force",
+      "domain": "positive",
+      "dimensions": [
+        1,
+        1,
+        -2
+      ]
+    },
+    {
+      "name": "P_R",
+      "label": "Schwarzschild radial pressure",
+      "domain": "positive",
+      "dimensions": [
+        1,
+        -1,
+        -2
+      ]
+    }
+  ],
+  "definitions": [
+    {
+      "symbol": "kappa",
+      "expression": {
+        "op": "div",
+        "numerator": {
+          "op": "pow",
+          "base": {
+            "op": "symbol",
+            "name": "c"
+          },
+          "exponent": 2
+        },
+        "denominator": {
+          "op": "symbol",
+          "name": "L"
+        }
+      },
+      "description": "Positive surface gravity written in acceleration-length coordinates; Eq. (1)."
+    },
+    {
+      "symbol": "U",
+      "expression": {
+        "op": "div",
+        "numerator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "pow",
+              "base": {
+                "op": "symbol",
+                "name": "c"
+              },
+              "exponent": 4
+            },
+            {
+              "op": "symbol",
+              "name": "A"
+            }
+          ]
+        },
+        "denominator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "integer",
+              "value": 8
+            },
+            {
+              "op": "symbol",
+              "name": "pi"
+            },
+            {
+              "op": "symbol",
+              "name": "G"
+            },
+            {
+              "op": "symbol",
+              "name": "L"
+            }
+          ]
+        }
+      },
+      "description": "The selected boundary potential supplied as a physical input; Eq. (1)."
+    },
+    {
+      "symbol": "Pi",
+      "expression": {
+        "op": "div",
+        "numerator": {
+          "op": "pow",
+          "base": {
+            "op": "symbol",
+            "name": "c"
+          },
+          "exponent": 4
+        },
+        "denominator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "integer",
+              "value": 8
+            },
+            {
+              "op": "symbol",
+              "name": "pi"
+            },
+            {
+              "op": "symbol",
+              "name": "G"
+            },
+            {
+              "op": "symbol",
+              "name": "L"
+            }
+          ]
+        }
+      },
+      "description": "Proposed area response; checked against the partial derivative of U; Eqs. (2)–(3)."
+    },
+    {
+      "symbol": "F_L",
+      "expression": {
+        "op": "div",
+        "numerator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "symbol",
+              "name": "A"
+            },
+            {
+              "op": "pow",
+              "base": {
+                "op": "symbol",
+                "name": "c"
+              },
+              "exponent": 4
+            }
+          ]
+        },
+        "denominator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "integer",
+              "value": 8
+            },
+            {
+              "op": "symbol",
+              "name": "pi"
+            },
+            {
+              "op": "symbol",
+              "name": "G"
+            },
+            {
+              "op": "pow",
+              "base": {
+                "op": "symbol",
+                "name": "L"
+              },
+              "exponent": 2
+            }
+          ]
+        }
+      },
+      "description": "Proposed force response; checked against minus the partial derivative of U; Eqs. (2)–(3)."
+    },
+    {
+      "symbol": "P_L",
+      "expression": {
+        "op": "div",
+        "numerator": {
+          "op": "pow",
+          "base": {
+            "op": "symbol",
+            "name": "c"
+          },
+          "exponent": 4
+        },
+        "denominator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "integer",
+              "value": 8
+            },
+            {
+              "op": "symbol",
+              "name": "pi"
+            },
+            {
+              "op": "symbol",
+              "name": "G"
+            },
+            {
+              "op": "pow",
+              "base": {
+                "op": "symbol",
+                "name": "L"
+              },
+              "exponent": 2
+            }
+          ]
+        }
+      },
+      "description": "Proposed force density and stress slope; Eq. (4)."
+    },
+    {
+      "symbol": "U_S",
+      "expression": {
+        "op": "substitute",
+        "expr": {
+          "op": "symbol",
+          "name": "U"
+        },
+        "values": {
+          "A": {
+            "op": "mul",
+            "args": [
+              {
+                "op": "integer",
+                "value": 4
+              },
+              {
+                "op": "symbol",
+                "name": "pi"
+              },
+              {
+                "op": "pow",
+                "base": {
+                  "op": "symbol",
+                  "name": "R"
+                },
+                "exponent": 2
+              }
+            ]
+          },
+          "L": {
+            "op": "mul",
+            "args": [
+              {
+                "op": "integer",
+                "value": 2
+              },
+              {
+                "op": "symbol",
+                "name": "R"
+              }
+            ]
+          }
+        }
+      },
+      "description": "Restrict the potential to the Schwarzschild family A = 4 pi R^2, L = 2 R."
+    },
+    {
+      "symbol": "V_S",
+      "expression": {
+        "op": "div",
+        "numerator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "integer",
+              "value": 4
+            },
+            {
+              "op": "symbol",
+              "name": "pi"
+            },
+            {
+              "op": "pow",
+              "base": {
+                "op": "symbol",
+                "name": "R"
+              },
+              "exponent": 3
+            }
+          ]
+        },
+        "denominator": {
+          "op": "integer",
+          "value": 3
+        }
+      },
+      "description": "Areal volume; this definition is local to the Schwarzschild family."
+    },
+    {
+      "symbol": "F_R",
+      "expression": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "substitute",
+            "expr": {
+              "op": "symbol",
+              "name": "F_L"
+            },
+            "values": {
+              "A": {
+                "op": "mul",
+                "args": [
+                  {
+                    "op": "integer",
+                    "value": 4
+                  },
+                  {
+                    "op": "symbol",
+                    "name": "pi"
+                  },
+                  {
+                    "op": "pow",
+                    "base": {
+                      "op": "symbol",
+                      "name": "R"
+                    },
+                    "exponent": 2
+                  }
+                ]
+              },
+              "L": {
+                "op": "mul",
+                "args": [
+                  {
+                    "op": "integer",
+                    "value": 2
+                  },
+                  {
+                    "op": "symbol",
+                    "name": "R"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "op": "diff",
+            "expr": {
+              "op": "mul",
+              "args": [
+                {
+                  "op": "integer",
+                  "value": 2
+                },
+                {
+                  "op": "symbol",
+                  "name": "R"
+                }
+              ]
+            },
+            "variable": "R"
+          }
+        ]
+      },
+      "description": "Transform the existing length-work coefficient to the actual areal-radius coordinate; Eq. (6)."
+    },
+    {
+      "symbol": "P_R",
+      "expression": {
+        "op": "div",
+        "numerator": {
+          "op": "symbol",
+          "name": "F_R"
+        },
+        "denominator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "integer",
+              "value": 4
+            },
+            {
+              "op": "symbol",
+              "name": "pi"
+            },
+            {
+              "op": "pow",
+              "base": {
+                "op": "symbol",
+                "name": "R"
+              },
+              "exponent": 2
+            }
+          ]
+        }
+      },
+      "description": "Radial force divided by the same horizon sphere’s area; Eq. (6)."
+    }
+  ],
+  "claims": [
+    {
+      "id": "area-response",
+      "title": "Area response is surface stress",
+      "lhs": {
+        "op": "diff",
+        "expr": {
+          "op": "symbol",
+          "name": "U"
+        },
+        "variable": "A"
+      },
+      "rhs": {
+        "op": "symbol",
+        "name": "Pi"
+      },
+      "explanation": "At fixed L, c, and G, differentiating the input potential with respect to A gives Pi. This checks the dA coefficient of Eq. (2)."
+    },
+    {
+      "id": "length-response",
+      "title": "Length response is minus the force",
+      "lhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "integer",
+            "value": -1
+          },
+          {
+            "op": "diff",
+            "expr": {
+              "op": "symbol",
+              "name": "U"
+            },
+            "variable": "L"
+          }
+        ]
+      },
+      "rhs": {
+        "op": "symbol",
+        "name": "F_L"
+      },
+      "explanation": "At fixed A, c, and G, minus the length derivative gives F_L. Together with the area response this checks the complete differential in Eq. (2)."
+    },
+    {
+      "id": "pressure",
+      "title": "Force density is the squared-acceleration pressure",
+      "lhs": {
+        "op": "div",
+        "numerator": {
+          "op": "symbol",
+          "name": "F_L"
+        },
+        "denominator": {
+          "op": "symbol",
+          "name": "A"
+        }
+      },
+      "rhs": {
+        "op": "div",
+        "numerator": {
+          "op": "pow",
+          "base": {
+            "op": "symbol",
+            "name": "kappa"
+          },
+          "exponent": 2
+        },
+        "denominator": {
+          "op": "mul",
+          "args": [
+            {
+              "op": "integer",
+              "value": 8
+            },
+            {
+              "op": "symbol",
+              "name": "pi"
+            },
+            {
+              "op": "symbol",
+              "name": "G"
+            }
+          ]
+        }
+      },
+      "explanation": "The force per area equals kappa squared divided by 8 pi G, as in Eq. (4)."
+    },
+    {
+      "id": "stress-slope",
+      "title": "Pressure is the negative surface-stress slope",
+      "lhs": {
+        "op": "diff",
+        "expr": {
+          "op": "symbol",
+          "name": "Pi"
+        },
+        "variable": "L"
+      },
+      "rhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "integer",
+            "value": -1
+          },
+          {
+            "op": "symbol",
+            "name": "P_L"
+          }
+        ]
+      },
+      "explanation": "With the listed constants fixed, dPi = -P_L dL. This is a comparison of boundary configurations, not a new material pressure gradient."
+    },
+    {
+      "id": "potential-product",
+      "title": "Pressure, area, and length recover the same potential",
+      "lhs": {
+        "op": "symbol",
+        "name": "U"
+      },
+      "rhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "symbol",
+            "name": "P_L"
+          },
+          {
+            "op": "symbol",
+            "name": "A"
+          },
+          {
+            "op": "symbol",
+            "name": "L"
+          }
+        ]
+      },
+      "explanation": "Eq. (4) identifies U = P_L A L. This product identity does not make A L a geometric volume."
+    },
+    {
+      "id": "schwarzschild-pressure",
+      "title": "Schwarzschild radial pressure is twice the length pressure",
+      "lhs": {
+        "op": "symbol",
+        "name": "P_R"
+      },
+      "rhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "integer",
+            "value": 2
+          },
+          {
+            "op": "substitute",
+            "expr": {
+              "op": "symbol",
+              "name": "P_L"
+            },
+            "values": {
+              "A": {
+                "op": "mul",
+                "args": [
+                  {
+                    "op": "integer",
+                    "value": 4
+                  },
+                  {
+                    "op": "symbol",
+                    "name": "pi"
+                  },
+                  {
+                    "op": "pow",
+                    "base": {
+                      "op": "symbol",
+                      "name": "R"
+                    },
+                    "exponent": 2
+                  }
+                ]
+              },
+              "L": {
+                "op": "mul",
+                "args": [
+                  {
+                    "op": "integer",
+                    "value": 2
+                  },
+                  {
+                    "op": "symbol",
+                    "name": "R"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "explanation": "After A = 4 pi R^2 and L = 2 R, changing the work coordinate gives P_R = 2 P_L; Eq. (6)."
+    },
+    {
+      "id": "schwarzschild-work",
+      "title": "Length work and radial volume work agree",
+      "lhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "substitute",
+            "expr": {
+              "op": "symbol",
+              "name": "F_L"
+            },
+            "values": {
+              "A": {
+                "op": "mul",
+                "args": [
+                  {
+                    "op": "integer",
+                    "value": 4
+                  },
+                  {
+                    "op": "symbol",
+                    "name": "pi"
+                  },
+                  {
+                    "op": "pow",
+                    "base": {
+                      "op": "symbol",
+                      "name": "R"
+                    },
+                    "exponent": 2
+                  }
+                ]
+              },
+              "L": {
+                "op": "mul",
+                "args": [
+                  {
+                    "op": "integer",
+                    "value": 2
+                  },
+                  {
+                    "op": "symbol",
+                    "name": "R"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "op": "diff",
+            "expr": {
+              "op": "mul",
+              "args": [
+                {
+                  "op": "integer",
+                  "value": 2
+                },
+                {
+                  "op": "symbol",
+                  "name": "R"
+                }
+              ]
+            },
+            "variable": "R"
+          }
+        ]
+      },
+      "rhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "symbol",
+            "name": "P_R"
+          },
+          {
+            "op": "diff",
+            "expr": {
+              "op": "symbol",
+              "name": "V_S"
+            },
+            "variable": "R"
+          }
+        ]
+      },
+      "explanation": "Equality of the coefficients of dR checks F_L dL = P_R dV on the same Schwarzschild horizon, using its own areal volume."
+    },
+    {
+      "id": "schwarzschild-differential",
+      "title": "The complete potential law survives the family constraint",
+      "lhs": {
+        "op": "diff",
+        "expr": {
+          "op": "symbol",
+          "name": "U_S"
+        },
+        "variable": "R"
+      },
+      "rhs": {
+        "op": "add",
+        "args": [
+          {
+            "op": "mul",
+            "args": [
+              {
+                "op": "substitute",
+                "expr": {
+                  "op": "symbol",
+                  "name": "Pi"
+                },
+                "values": {
+                  "A": {
+                    "op": "mul",
+                    "args": [
+                      {
+                        "op": "integer",
+                        "value": 4
+                      },
+                      {
+                        "op": "symbol",
+                        "name": "pi"
+                      },
+                      {
+                        "op": "pow",
+                        "base": {
+                          "op": "symbol",
+                          "name": "R"
+                        },
+                        "exponent": 2
+                      }
+                    ]
+                  },
+                  "L": {
+                    "op": "mul",
+                    "args": [
+                      {
+                        "op": "integer",
+                        "value": 2
+                      },
+                      {
+                        "op": "symbol",
+                        "name": "R"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "op": "diff",
+                "expr": {
+                  "op": "mul",
+                  "args": [
+                    {
+                      "op": "integer",
+                      "value": 4
+                    },
+                    {
+                      "op": "symbol",
+                      "name": "pi"
+                    },
+                    {
+                      "op": "pow",
+                      "base": {
+                        "op": "symbol",
+                        "name": "R"
+                      },
+                      "exponent": 2
+                    }
+                  ]
+                },
+                "variable": "R"
+              }
+            ]
+          },
+          {
+            "op": "mul",
+            "args": [
+              {
+                "op": "integer",
+                "value": -1
+              },
+              {
+                "op": "symbol",
+                "name": "P_R"
+              },
+              {
+                "op": "diff",
+                "expr": {
+                  "op": "symbol",
+                  "name": "V_S"
+                },
+                "variable": "R"
+              }
+            ]
+          }
+        ]
+      },
+      "explanation": "Check dU = Pi dA - P_R dV along the family. Both area and volume change; the work term must not be appended as an independent correction to the usual mass first law."
+    },
+    {
+      "id": "schwarzschild-product",
+      "title": "The Schwarzschild potential equals three radial pressure–volume products",
+      "lhs": {
+        "op": "symbol",
+        "name": "U_S"
+      },
+      "rhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "integer",
+            "value": 3
+          },
+          {
+            "op": "symbol",
+            "name": "P_R"
+          },
+          {
+            "op": "symbol",
+            "name": "V_S"
+          }
+        ]
+      },
+      "explanation": "The one-page summary states U = 3 P_R V. This checks that algebraic identity without interpreting it as three independently stored energies."
+    },
+    {
+      "id": "canonical-coordinate",
+      "title": "The supplied scalar response transforms to minus the length force",
+      "lhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "div",
+            "numerator": {
+              "op": "mul",
+              "args": [
+                {
+                  "op": "symbol",
+                  "name": "A"
+                },
+                {
+                  "op": "pow",
+                  "base": {
+                    "op": "symbol",
+                    "name": "c"
+                  },
+                  "exponent": 2
+                }
+              ]
+            },
+            "denominator": {
+              "op": "mul",
+              "args": [
+                {
+                  "op": "integer",
+                  "value": 8
+                },
+                {
+                  "op": "symbol",
+                  "name": "pi"
+                },
+                {
+                  "op": "symbol",
+                  "name": "G"
+                }
+              ]
+            }
+          },
+          {
+            "op": "diff",
+            "expr": {
+              "op": "symbol",
+              "name": "kappa"
+            },
+            "variable": "L"
+          }
+        ]
+      },
+      "rhs": {
+        "op": "mul",
+        "args": [
+          {
+            "op": "integer",
+            "value": -1
+          },
+          {
+            "op": "symbol",
+            "name": "F_L"
+          }
+        ]
+      },
+      "explanation": "Starting from the supplied coefficient of delta kappa in Eq. (9), the chain rule for kappa = c^2/L gives the coefficient -F_L of delta L. This checks the coordinate transformation, not the full action derivation."
+    }
+  ],
+  "consequences": [
+    {
+      "title": "One potential organizes the mechanical responses",
+      "text": "Area change and acceleration-length change give the two coefficients of a single complete differential. Pressure is force per area, and the negative slope of surface stress. The checker can expose each dependence directly.",
+      "claimIds": [
+        "area-response",
+        "length-response",
+        "pressure",
+        "stress-slope",
+        "potential-product"
+      ]
+    },
+    {
+      "title": "Radius work concerns the same Schwarzschild horizon",
+      "text": "L = 2 R changes the work coefficient: radial pressure is twice length pressure. The equal-work identity describes a change in the same horizon’s areal radius and volume; it does not displace another surface at 2 R.",
+      "claimIds": [
+        "schwarzschild-pressure",
+        "schwarzschild-work",
+        "schwarzschild-differential",
+        "schwarzschild-product"
+      ]
+    },
+    {
+      "title": "The action-response coefficient matches conditionally",
+      "text": "Given the summary’s selected nonexpanding-null scalar response, the reciprocal-length substitution yields the same force coefficient as the potential derivative. Establishing the cited gravitational response itself remains outside these algebraic checks.",
+      "claimIds": [
+        "length-response",
+        "canonical-coordinate"
+      ]
+    }
+  ],
+  "limitations": [
+    "This is a prepared draft for author approval, based only on the one-page summary. It is not an author-approved submission or a verification of every statement in the manuscript.",
+    "The checker tests exact symbolic identities and mass–length–time dimensions under declared inputs. It does not provide a Lean proof, validate the physical inputs, establish novelty, or demonstrate agreement with experiment.",
+    "The boundary potential and selected gravitational response are physical inputs. Their canonical justification, admissible variations, and correspondence to the cited literature need expert review or a separate formal development.",
+    "The source uses positive surface gravity and positive acceleration length. Zero surface gravity, signed branches, unrestricted moving boundaries, rotation, and other sectors are not included in this package.",
+    "A and L are independent for partial derivatives. Schwarzschild A, L, and V co-vary only after substitution. The length pressure P_L is not generally the radial pressure P_R or a covariant bulk stress tensor; A L is not generally a volume.",
+    "The summary also discusses thermal translation and equilibrium FRW cosmology. Those claims are not tested by this initial package; no checked status here extends to their physical assumptions, Friedmann equations, or a complete moving-boundary theorem."
+  ]
+}

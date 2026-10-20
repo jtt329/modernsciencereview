@@ -59,3 +59,7 @@ scripts/.seed-overview.bundle*.mjs
 
 # Local recovery datasets contain internal review material; never upload with source.
 /scripts/data/
+
+# Isolated symbolic checker environment
+.formal-venv/
+__pycache__/
