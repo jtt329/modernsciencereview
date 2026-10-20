@@ -90,3 +90,19 @@ test('adopted input summary counts approved input proposals, not repeated covera
  const f=fixture();const repeated=structuredClone(f.pkg.analysis.coverage[0]);repeated.id='same-input-again';f.pkg.analysis.coverage.push(repeated);f.report.packageDigest=packageDigest(f.pkg);
  const out=buildFallbackOutputs(f.pkg,f.report,f.source);assert.equal(out.summary.conditionalInputs,f.pkg.selectedInputs.length);
 });
+
+test('a checked consequence inside a mixed unverified section gets its own eligible explanation without promoting the interpretation',()=>{
+ const f=fixture();const raw=proposal(f);
+ raw.explanation[0].coverageIds=['input','derivative','interpretation'];
+ raw.explanation[0].sourceLineIds=['L1','L2','L4'];
+ raw.explanation[0].text='The derivative checks, but this paragraph also discusses an unverified physical interpretation.';
+ const out=validateGeneratedOutputs(raw,f.pkg,f.report,f.source,'test');
+ const mixed=out.explanation.find(section=>section.id==='consequence');assert.equal(mixed.status,'unverified-context');
+ const isolated=out.explanation.find(section=>section.id!==mixed.id&&section.coverageIds.includes('derivative'));
+ assert.ok(isolated);assert.equal(isolated.status,'conditional-checked');assert.deepEqual(isolated.coverageIds,['derivative']);assert.deepEqual(isolated.sourceLineIds,['L2']);assert.ok(!isolated.text.includes('unverified physical interpretation'));
+ assert.equal(out.coverage.find(item=>item.id==='interpretation').status,'interpretive');
+ const compiled=compileSubjectOutputs(subject(),submission(f),f.source,out);
+ assert.equal(compiled.subject.paragraphs.length,1);assert.deepEqual(compiled.subject.paragraphs[0].sources[0].sourceLineIds,['L2']);assert.ok(!compiled.subject.paragraphs[0].text.includes('unverified physical interpretation'));
+ assert.equal(compiled.outputs.contributions.find(item=>item.sectionId===mixed.id).disposition,'unsupported');
+ assert.equal(compiled.outputs.contributions.find(item=>item.sectionId===isolated.id).disposition,'included');
+});

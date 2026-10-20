@@ -83,7 +83,7 @@ function completeOutputs(pkg: FormalPackage, report: VerificationReport, source:
   const slug = pkg.analysis?.subjectSlug || 'unclassified';
   // No checked mathematical coverage unit silently disappears because a model
   // chose a short explanation. Preserve omitted consequences transparently.
-  const explained = new Set(explanation.flatMap(section=>section.coverageIds));
+  const explained = new Set(explanation.filter(section=>section.status==='conditional-checked').flatMap(section=>section.coverageIds));
   for (const item of coverage.filter(c=>c.status==='checked' && !explained.has(c.id))) {
     let id=`checked-${item.id}`; while(explanation.some(section=>section.id===id)) id=`additional-${id}`;
     const section:ExplanationSection={id,title:item.statement.slice(0,180),text:`Source statement: ${item.statement}\n\nThe mapped mathematical candidates checked under the approved premises: ${item.claimIds.map(id=>pkg.claims.find(c=>c.id===id)?.title || id).join('; ')}. Their exact expressions and derivation logs are available in the verification report. This source statement's broader physical interpretation is not established merely by the symbolic checks.`,claimIds:item.claimIds,coverageIds:[item.id],sourceLineIds:item.sourceLineIds,inputIds:item.inputIds,status:'conditional-checked'};
