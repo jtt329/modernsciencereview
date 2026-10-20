@@ -28,9 +28,14 @@ worker echoes the supplied digest; the API is responsible for computing it from
 the frozen stored package and checking the author's approval before invocation.
 A worker success is never sufficient to establish authorship or semantic approval.
 
-`checker` is `formal-lab-sympy-v1`, `engine` is `SymPy 1.14.0`, and `checkedAt` is
+`checker` is `formal-lab-sympy-v2`, `engine` is `SymPy 1.14.0`, and `checkedAt` is
 UTC ISO 8601. Each claim contains an exact residual, dimensional status, original
-denominator restrictions, and a scoped result. The package status is `checked`
+denominator restrictions, a scoped result, and deterministic `steps` describing the actual
+operations performed. `derivationKind` is `definition-restatement` for direct
+restatements of an approved definition (including the same expression on both
+sides), otherwise `identity`. Both kinds still undergo all domain, dimension,
+and residual checks. A definition restatement does not independently test its
+physical justification. The package status is `checked`
 only when all claims pass; `partial` means at least one passes; otherwise `failed`.
 Malformed input produces a failed report. Crashes, signals, missing runtimes, or
 missing JSON output must be treated by the caller as worker failure, never pass.
@@ -53,10 +58,14 @@ For the example, differentiate in independent area/length coordinates before
 specializing to the Schwarzschild family. Derived symbols expand before a
 requested derivative, so differentiating `U` expands its defining formula.
 
-Dimensions are integer exponent vectors for mass, length, and time. Addition,
-substitution, declared definitions, derivatives, and equality sides are checked.
-Exact zero is compatible with any dimension. Temperature and other base units
-are outside this version.
+Dimensions accept legacy three-element mass/length/time vectors or seven-element
+SI vectors ordered mass, length, time, electric current, temperature, amount of
+substance, luminous intensity. Legacy vectors are padded with four zeros
+internally. Addition, substitution, declared definitions, derivatives, and
+equality sides are checked. Exact zero is compatible with any dimension.
+Thermal identities can therefore include independently declared temperature,
+Boltzmann constant, entropy, and Planck-constant dimensions. The checker does not
+infer units from prose or supply numerical values for physical constants.
 
 Original denominator and negative-power restrictions are recorded before
 simplification and transformed through substitutions. For example, `x/x = 1`
@@ -76,12 +85,12 @@ paper are not automatically checked. A symbolic check is not a Lean proof.
 
 ## Bounds and isolation
 
-- 512 KiB input, 2,048 AST nodes, depth 32.
-- 32 symbols, 32 definitions, 24 claims, 32 operands per sum/product.
-- Literal magnitude at most 1,000,000,000; input integer exponent magnitude 16.
+- 1 MiB input, 16,000 AST nodes, depth 32.
+- 120 symbols, 120 definitions, 120 claims, 32 operands per sum/product.
+- Literal magnitude at most 1,000,000,000; input integer exponent magnitude 8.
 - Conservative expanded numerator/denominator term bounds of 4,096, combined
   exponent magnitude 64, and exact-integer arithmetic size limits.
-- CPU limit of 8 seconds (hard limit 9); Linux address-space limit 512 MiB;
+- CPU limit of 10 seconds (hard limit 12); Linux address-space limit 512 MiB;
   output-file limit 1 MiB. The API must additionally enforce a wall timeout,
   bounded stdout/stderr, and concurrency limits, and provide a minimal environment
   without service credentials. Symbolic operations are not run on API threads.
@@ -109,3 +118,8 @@ Tests cover the actual ten-claim example, independent exact derivatives, sign
 and factor mutations, local dimensional failures, hidden and explicit poles,
 substitution order/domains, cyclic definitions, invalid declared properties,
 malicious/unsupported ASTs, input limits, and the subprocess JSON protocol.
+Additional independent fixtures cover all seven SI dimensions, `TS = U`,
+`T dS = Pi dA`, the Schwarzschild mass first law, and scalar FRW consequences
+under explicit equilibrium and Einstein-FRW inputs. These fixtures check the
+algebraic reformulations; they do not derive Einstein-FRW laws from the boundary
+potential. Definition-restatement labels and deterministic traces are covered.

@@ -125,6 +125,9 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
     `,
     },
   });
+  // Bundle the text-only parser separately so untrusted PDF work runs in a
+  // resource-limited worker rather than the API event loop.
+  await esbuild({entryPoints:[path.resolve(artifactDir, "formal-source-worker.cjs")],outfile:path.resolve(distDir,"formal-source-worker.cjs"),platform:"node",bundle:true,format:"cjs",logLevel:"info"});
   await cp(path.resolve(artifactDir, "formal-verifier"), path.resolve(distDir, "formal-verifier"), { recursive: true });
 }
 

@@ -5,8 +5,25 @@ import exampleJson from '../formal/example.json';
 import { canonicalJson, FormalError, packageDigest, validatePackage } from '../formal/package';
 import { verifyPackage } from '../formal/checker';
 import { proposalSchema, decodeProposal } from '../formal/proposalSchema';
-import { appendRevision, createSubmission, listSubmissions, readSubmission, recordApprovalOrReport, revisionHistory } from '../formal/store';
+import { appendRevision, createSubmission, recordOutputs, ensureFormalSchema, listSubmissions, readSubmission, recordApprovalOrReport, revisionHistory } from '../formal/store';
 import type { FormalPackage, VerificationReport } from '../formal/contract';
+
+import {saveSource,readSource,makeSourcePublic} from '../formal/sources';
+import {createJob,readJob,launchJob} from '../formal/jobs';
+import {analyzeSource} from '../formal/ingest';
+import {generateOutputs} from '../formal/outputs';
+import {publishOutputs,readSubject,listSubjects,readPublishedSubmission,refreshSubjectOverview} from '../formal/subjects';
+import {formalModel} from '../formal/model';
+async function validateOwnerPackage(value:unknown,owner:string) {
+  const pkg=validatePackage(value);
+  if(!pkg.analysis)return lockedInputs(pkg);
+  const {source}=await readSource(pkg.analysis.sourceId,owner);
+  if(pkg.source.sha256!==source.sha256||pkg.source.url!==source.fileUrl)throw new FormalError('Keep the uploaded source hash and original-file link attached to this analysis. Upload a new source when changing the manuscript.');
+  const lines=new Set(source.lines.map(l=>l.id));
+  const references=[...pkg.analysis.coverage.flatMap(c=>c.sourceLineIds),...pkg.analysis.inputReferences.flatMap(r=>r.sourceLineIds),...pkg.analysis.claimReferences.flatMap(r=>r.sourceLineIds)];
+  if(references.some(id=>!lines.has(id)))throw new FormalError('Analysis references a source line that does not exist in the uploaded manuscript.');
+  return pkg;
+}
 
 const router: IRouter=Router();
 const example=validatePackage(exampleJson);
@@ -33,7 +50,7 @@ function identity(req:Request,res:Response,next:NextFunction) {
   if(req.method!=='GET' && (req.get('sec-fetch-site')==='cross-site' || !allowedOrigin)) {res.status(403).json({error:'Submit changes from the website itself.'}); return;}
   res.setHeader('Cache-Control','no-store'); next();
 }
-router.get('/formal-lab/catalog',(_req,res)=>res.json({inputs:catalog,example,exampleDigest,capabilities:{checker:'SymPy · exact scalar checks',scope:['Exact rational algebra','Partial derivatives','Dimensional consistency','Explicit denominator domains'],limitations:['No tensor or PDE verification in this prototype','Physical applicability and novelty require scientific review']}}));
+router.get('/formal-lab/catalog',(_req,res)=>res.json({inputs:catalog,example,exampleDigest,capabilities:{workflowVersion:'source-analysis-v2',checker:'SymPy · exact scalar checks',scope:['Exact rational algebra','Partial derivatives','Dimensional consistency','Explicit denominator domains'],limitations:['No tensor or PDE verification in this prototype','Physical applicability and novelty require scientific review']}}));
 router.get('/formal-lab/example/report',async(_req,res)=>{
   if(!demoReport) {
     if(!demoPending) demoPending=verifyPackage(example,exampleDigest).then(r=>{demoReport=r;return r;}).finally(()=>{demoPending=undefined;});
@@ -41,18 +58,84 @@ router.get('/formal-lab/example/report',async(_req,res)=>{
   }
   res.json(demoReport);
 });
-router.use('/formal-lab/submissions',identity);
+router.post('/formal-lab/sources',identity,async(req,res)=>{
+  if(typeof req.body?.filename!=='string'||typeof req.body?.mimeType!=='string')throw new FormalError('Supply the source filename and file type.');
+  res.status(201).json(await saveSource(req.user!.id,req.body.filename,req.body.mimeType,req.body.base64));
+});
+router.get('/formal-lab/sources/:id/file',async(req,res)=>{
+  const {source,bytes,isPublic}=await readSource(String(req.params.id),req.user?.id,true);
+  res.setHeader('Cache-Control',isPublic?'public,max-age=300':'private,no-store');
+  res.setHeader('Content-Type',source.mimeType==='application/pdf'?'application/pdf':'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition',`inline; filename="${source.filename}"`);
+  res.setHeader('X-Content-Type-Options','nosniff');res.send(bytes);
+});
+router.get('/formal-lab/sources/:id',async(req,res)=>{res.setHeader('Cache-Control','private,no-store');res.json((await readSource(String(req.params.id),req.user?.id)).source);});
+router.post('/formal-lab/analyze',identity,async(req,res)=>{
+  const owner=req.user!.id;const {source,bytes}=await readSource(String(req.body?.sourceId),owner,true);
+  const overrides={title:req.body?.title,authors:req.body?.authors,mainClaim:req.body?.mainClaim,subjectSlug:req.body?.subjectSlug};
+  for(const [key,value] of Object.entries(overrides))if(value!==undefined&&(typeof value!=='string'||value.length>(key==='mainClaim'?6000:300)))throw new FormalError('Author guidance must be bounded text.');
+  if(overrides.subjectSlug && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(overrides.subjectSlug))throw new FormalError('Choose a valid subject slug.');
+  const job=await createJob(owner,'analyze',{sourceId:source.id});
+  launchJob(job,async progress=>{
+    const draft=await analyzeSource(source,bytes!,progress,overrides);
+    if(typeof overrides.title==='string'&&overrides.title.trim())draft.title=overrides.title.trim().slice(0,300);
+    if(typeof overrides.authors==='string'&&overrides.authors.trim())draft.authors=overrides.authors.trim().slice(0,300);
+    if(typeof overrides.mainClaim==='string'&&overrides.mainClaim.trim())draft.mainClaim=overrides.mainClaim.trim().slice(0,6000);
+    if(draft.analysis){draft.analysis.ingestionLog=[...source.events,...job.events];if(overrides.subjectSlug)draft.analysis.subjectSlug=overrides.subjectSlug;}
+    const pkg=await validateOwnerPackage(draft,owner);
+    await progress('saving','Saving the extracted inputs, source coverage and mathematical proposal as an unapproved author revision.');
+    const submission=await createSubmission(owner,pkg,'ai',formalModel);return {submissionId:submission.id};
+  });res.status(202).json(job);
+});
+router.get('/formal-lab/jobs/:id',identity,async(req,res)=>res.json(await readJob(String(req.params.id),req.user!.id)));
+router.get('/formal-lab/subjects',async(_req,res)=>{await ensureFormalSchema();res.json({subjects:await listSubjects()});});
+router.get('/formal-lab/subjects/:slug',async(req,res)=>{await ensureFormalSchema();const subject=await readSubject(String(req.params.slug));if(!subject)throw new FormalError('No author-approved contributions have been published to this subject yet.',404);res.json(subject);});
+router.post('/formal-lab/submissions/:id/process',identity,async(req,res)=>{
+  const owner=req.user!.id;const id=String(req.params.id);const initial=await readSubmission(id,owner);const r=initial.currentRevision;
+  if(!r.approvedAt||r.digest!==req.body?.digest)throw new FormalError('Approve the exact current source-linked revision before generating its results.',409);
+  if(!initial.sourceDocument)throw new FormalError('Upload the original source to generate the full coverage, review and field contribution outputs.');
+  const job=await createJob(owner,'process',{sourceId:initial.sourceDocument.id,submissionId:id});
+  launchJob(job,async progress=>{
+    await progress('verification',`Checking ${r.package.claims.length} mathematical candidates with the independent SymPy worker; prose and adopted premises are tracked separately.`);
+    let submission=await readSubmission(id,owner);
+    const report=submission.currentRevision.verification?.packageDigest===r.digest?submission.currentRevision.verification:await verifyPackage(r.package,r.digest);
+    submission=await recordApprovalOrReport(id,owner,r.digest,report);
+    await progress('coverage',`${report.claims.filter(c=>c.status==='checked').length} of ${report.claims.length} mathematical candidates checked. Computing source-claim coverage without marking adopted premises as proved.`);
+    await progress('explanation','Generating the paper explanation and scientific review from the source-linked verification record.');
+    let outputs=await generateOutputs(r.package,report,initial.sourceDocument!);
+    outputs.processingLog=[...job.events];
+    submission=await recordOutputs(id,owner,r.digest,outputs);
+    if(submission.currentRevision.publishConsent){
+      await progress('field-compilation','Adding eligible conditional findings to the separate versioned field explanation, with source and claim links.');
+      outputs=await publishOutputs(submission,initial.sourceDocument!,outputs);
+      await makeSourcePublic(initial.sourceDocument!.id,owner);
+      await progress('field-explanation','Compiling the subject account from cited checked contributions while preserving every evidence paragraph.');
+      const subject=await refreshSubjectOverview(r.package.analysis!.subjectSlug);
+      await progress('field-explanation',subject.overview?.sourceVersion===subject.version?'Compiled a current subject narrative with links to every supporting evidence paragraph.':'Preserved the complete cited evidence pool; a current combined narrative could not be generated.');
+      outputs.processingLog=[...job.events];
+      await recordOutputs(id,owner,r.digest,outputs);
+    }else {await progress('private-results','Results saved privately. Field publication was not selected when this revision was approved.');outputs.processingLog=[...job.events];await recordOutputs(id,owner,r.digest,outputs);}
+    return {submissionId:id};
+  });res.status(202).json(job);
+});
+router.use('/formal-lab/submissions',(req,res,next)=>{
+  // Public access is limited to immutable explicitly published snapshots.
+  if(req.method==='GET'&&/^\/[a-f0-9-]{36}\/?$/.test(req.path)){next();return;}identity(req,res,next);
+});
 router.get('/formal-lab/submissions',async(req,res)=>res.json({submissions:await listSubmissions(req.user!.id)}));
-router.post('/formal-lab/submissions',async(req,res)=>{ const pkg=lockedInputs(validatePackage(req.body?.package)); res.status(201).json(await createSubmission(req.user!.id,pkg,packageDigest(pkg)===exampleDigest?'prepared-example':'author-edit')); });
-router.get('/formal-lab/submissions/:id',async(req,res)=>res.json(await readSubmission(String(req.params.id),req.user!.id)));
+router.post('/formal-lab/submissions',async(req,res)=>{ const pkg=await validateOwnerPackage(req.body?.package,req.user!.id); res.status(201).json(await createSubmission(req.user!.id,pkg,packageDigest(pkg)===exampleDigest?'prepared-example':'author-edit')); });
+router.get('/formal-lab/submissions/:id',async(req,res)=>{
+  const id=String(req.params.id);if(req.user){try{res.setHeader('Cache-Control','private,no-store');res.json(await readSubmission(id,req.user.id));return;}catch(error){if(!(error instanceof FormalError)||error.statusCode!==404)throw error;}}
+  const published=await readPublishedSubmission(id);if(!published)throw new FormalError('Submission not found.',404);res.json(published);
+});
 router.get('/formal-lab/submissions/:id/revisions',async(req,res)=>res.json({revisions:await revisionHistory(String(req.params.id),req.user!.id)}));
 router.post('/formal-lab/submissions/:id/revisions',async(req,res)=>{
   if(typeof req.body?.baseDigest!=='string') throw new FormalError('Supply the revision digest you edited.');
-  res.status(201).json(await appendRevision(String(req.params.id),req.user!.id,lockedInputs(validatePackage(req.body?.package)),req.body.baseDigest,'author-edit'));
+  res.status(201).json(await appendRevision(String(req.params.id),req.user!.id,await validateOwnerPackage(req.body?.package,req.user!.id),req.body.baseDigest,'author-edit'));
 });
 router.post('/formal-lab/submissions/:id/approve',async(req,res)=>{
   if(req.body?.confirmed!==true || !/^[a-f0-9]{64}$/.test(req.body?.digest)) throw new FormalError('Explicitly approve the displayed package and digest.');
-  res.json(await recordApprovalOrReport(String(req.params.id),req.user!.id,req.body.digest));
+  res.json(await recordApprovalOrReport(String(req.params.id),req.user!.id,req.body.digest,undefined,req.body.publishToField===true));
 });
 router.post('/formal-lab/submissions/:id/verify',async(req,res)=>{
   const id=String(req.params.id); const owner=req.user!.id;

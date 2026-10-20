@@ -13,15 +13,15 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-MAX_INPUT = 512 * 1024
-MAX_NODES = 2048
+MAX_INPUT = 1024 * 1024
+MAX_NODES = 16000
 MAX_DEPTH = 32
-MAX_SYMBOLS = 32
-MAX_DEFINITIONS = 32
-MAX_CLAIMS = 24
+MAX_SYMBOLS = 120
+MAX_DEFINITIONS = 120
+MAX_CLAIMS = 120
 MAX_ARGS = 32
 MAX_NUMBER = 10**9
-MAX_EXPONENT = 16
+MAX_EXPONENT = 8
 MAX_EXPANDED_TERMS = 4096
 MAX_INTEGER_BITS = 4096
 NAME = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,39}$")
@@ -32,7 +32,7 @@ def resource_limits() -> None:
     """Additional Linux worker limits; the caller must also enforce wall time."""
     try:
         import resource
-        resource.setrlimit(resource.RLIMIT_CPU, (8, 9))
+        resource.setrlimit(resource.RLIMIT_CPU, (10, 12))
         # RLIMIT_AS is reliable on Linux; imposing it on macOS can break Python.
         if sys.platform.startswith("linux"):
             resource.setrlimit(resource.RLIMIT_AS, (512 * 1024**2, 512 * 1024**2))
@@ -65,7 +65,7 @@ class Obligation:
 @dataclass(frozen=True)
 class Value:
     expression: Any
-    dimensions: tuple[int, int, int] | None
+    dimensions: tuple[int, ...] | None
     obligations: tuple[Obligation, ...] = ()
 
 
@@ -81,10 +81,14 @@ def name(value: Any) -> str:
     return value
 
 
-def dimensions(value: Any) -> tuple[int, int, int]:
-    if not isinstance(value, list) or len(value) != 3:
-        raise Unsupported("Dimensions require [mass, length, time] integer exponents.")
-    return tuple(integer(n, "Dimension exponent", 12) for n in value)
+def dimensions(value: Any) -> tuple[int, ...]:
+    if not isinstance(value, list) or len(value) not in (3, 7):
+        raise Unsupported("Dimensions require 3 legacy or 7 SI integer exponents [mass, length, time, current, temperature, amount, luminous intensity].")
+    result = tuple(integer(n, "Dimension exponent", 12) for n in value)
+    return result + (0,) * (7 - len(result))
+
+
+DIMENSIONLESS = (0,) * 7
 
 
 def dim_add(a, b):
@@ -279,15 +283,15 @@ class Compiler:
         finally:
             self.active.remove(symbol_name)
 
-    def evaluate(self, ast):
+    def evaluate(self, ast, expand_definitions=True):
         op = ast["op"]
         if op == "symbol":
-            return self.resolve(ast["name"])
+            return self.resolve(ast["name"]) if expand_definitions else Value(self.symbols[ast["name"]], self.metadata[ast["name"]][1])
         if op in ("integer", "rational"):
             expr = sp.Integer(ast["value"]) if op == "integer" else sp.Rational(ast["numerator"], ast["denominator"])
-            return Value(expr, None if expr == 0 else (0, 0, 0))
+            return Value(expr, None if expr == 0 else DIMENSIONLESS)
         if op in ("add", "mul"):
-            values = [self.evaluate(arg) for arg in ast["args"]]
+            values = [self.evaluate(arg, expand_definitions) for arg in ast["args"]]
             obligations = tuple(o for v in values for o in v.obligations)
             if op == "add":
                 dims = {v.dimensions for v in values if v.dimensions is not None}
@@ -296,17 +300,17 @@ class Compiler:
                 dimension = next(iter(dims), None)
                 expr = sp.Add(*(v.expression for v in values))
             else:
-                dimension = (0, 0, 0)
+                dimension = DIMENSIONLESS
                 for value in values:
                     dimension = dim_add(dimension, value.dimensions)
                 expr = sp.Mul(*(v.expression for v in values))
         elif op == "div":
-            a, b = self.evaluate(ast["numerator"]), self.evaluate(ast["denominator"])
+            a, b = self.evaluate(ast["numerator"], expand_definitions), self.evaluate(ast["denominator"], expand_definitions)
             obligations = a.obligations + b.obligations + (Obligation(b.expression, "nonzero", "original division denominator"),)
             dimension = None if a.dimensions is None or b.dimensions is None else tuple(x - y for x, y in zip(a.dimensions, b.dimensions))
             expr = a.expression / b.expression
         elif op == "pow":
-            value = self.evaluate(ast["base"])
+            value = self.evaluate(ast["base"], expand_definitions)
             exponent = ast["exponent"]
             if isinstance(value.expression, sp.Rational):
                 bits = abs(int(value.expression.p)).bit_length() + int(value.expression.q).bit_length()
@@ -316,9 +320,9 @@ class Compiler:
             if exponent < 0:
                 obligations += (Obligation(value.expression, "nonzero", "original negative power base"),)
             expr = sp.Pow(value.expression, exponent)
-            dimension = (0, 0, 0) if exponent == 0 else (tuple(n * exponent for n in value.dimensions) if value.dimensions is not None else None)
+            dimension = DIMENSIONLESS if exponent == 0 else (tuple(n * exponent for n in value.dimensions) if value.dimensions is not None else None)
         elif op == "diff":
-            value = self.evaluate(ast["expr"])
+            value = self.evaluate(ast["expr"], expand_definitions)
             budget(value.expression)
             expr = sp.diff(value.expression, self.symbols[ast["variable"]])
             obligations = value.obligations
@@ -327,8 +331,8 @@ class Compiler:
         elif op == "substitute":
             # AST ordering is explicit: evaluate/differentiate the inner expression
             # before applying this node's simultaneous replacements.
-            value = self.evaluate(ast["expr"])
-            replacements = {key: self.evaluate(expr) for key, expr in ast["values"].items()}
+            value = self.evaluate(ast["expr"], expand_definitions)
+            replacements = {key: self.evaluate(expr, expand_definitions) for key, expr in ast["values"].items()}
             mapping = {}
             obligations = []
             for key, replacement in replacements.items():
@@ -348,6 +352,88 @@ class Compiler:
         if expr == 0:
             dimension = None
         return Value(expr, dimension, obligations)
+
+    def derivation_kind(self, claim):
+        """Identify direct restatements without expanding the model globally.
+
+        This is a display classification, never a shortcut for a successful
+        check. Domains, dimensions and residuals are still audited normally.
+        It deliberately recognises only scalar algebraic restatements; a
+        definition inside a derivative/substitution is a genuine computation.
+        """
+        def purely_algebraic(ast):
+            if ast["op"] in ("diff", "substitute"):
+                return False
+            if ast["op"] in ("symbol", "integer", "rational"):
+                return True
+            if ast["op"] in ("add", "mul"):
+                return all(purely_algebraic(arg) for arg in ast["args"])
+            if ast["op"] == "div":
+                return purely_algebraic(ast["numerator"]) and purely_algebraic(ast["denominator"])
+            return purely_algebraic(ast["base"])
+
+        lhs_ast, rhs_ast = claim["lhs"], claim["rhs"]
+        if not purely_algebraic(lhs_ast) or not purely_algebraic(rhs_ast):
+            return "identity"
+        try:
+            lhs = self.evaluate(lhs_ast, False).expression
+            rhs = self.evaluate(rhs_ast, False).expression
+            residual = lhs - rhs
+            budget(residual)
+            if sp.cancel(sp.together(residual)) == 0:
+                return "definition-restatement"
+            # A direct definition is still merely an approved input even if
+            # its two written sides need elementary algebra to match.
+            for direct, other in ((lhs_ast, rhs), (rhs_ast, lhs)):
+                if direct["op"] == "symbol" and direct["name"] in self.definitions:
+                    expression = self.definitions[direct["name"]]
+                    if purely_algebraic(expression):
+                        residual = self.evaluate(expression, False).expression - other
+                        budget(residual)
+                        if sp.cancel(sp.together(residual)) == 0:
+                            return "definition-restatement"
+        except (Unsupported, KeyError, TypeError, ValueError, RecursionError, MemoryError):
+            pass
+        return "identity"
+
+    def operation_steps(self, claim):
+        """A deterministic operations log, not a generated reasoning narrative."""
+        referenced, derivatives, substitutions = set(), set(), set()
+
+        def visit(ast):
+            op = ast["op"]
+            if op == "symbol":
+                symbol_name = ast["name"]
+                if symbol_name in self.definitions and symbol_name not in referenced:
+                    referenced.add(symbol_name)
+                    visit(self.definitions[symbol_name])
+            elif op in ("add", "mul"):
+                for arg in ast["args"]:
+                    visit(arg)
+            elif op == "div":
+                visit(ast["numerator"])
+                visit(ast["denominator"])
+            elif op == "pow":
+                visit(ast["base"])
+            elif op == "diff":
+                visit(ast["expr"])
+                derivatives.add(ast["variable"])
+            elif op == "substitute":
+                visit(ast["expr"])
+                substitutions.update(ast["values"])
+                for replacement in ast["values"].values():
+                    visit(replacement)
+
+        visit(claim["lhs"])
+        visit(claim["rhs"])
+        steps = ["Read both sides as bounded exact scalar ASTs; no source code or expression strings were executed."]
+        if referenced:
+            steps.append("Expanded approved definitions: " + ", ".join(sorted(referenced)) + ".")
+        if derivatives:
+            steps.append("AST specifies exact derivatives with respect to independent symbols: " + ", ".join(sorted(derivatives)) + "; each operation follows its AST ordering.")
+        if substitutions:
+            steps.append("AST specifies simultaneous substitutions for: " + ", ".join(sorted(substitutions)) + "; inner operations were evaluated first.")
+        return steps
 
     def domain_audit(self, obligations):
         restrictions = []
@@ -385,7 +471,7 @@ BASE_LIMITATIONS = [
 
 def new_report(digest):
     return {
-        "checker": "formal-lab-sympy-v1", "engine": f"SymPy {sp.__version__}",
+        "checker": "formal-lab-sympy-v2", "engine": f"SymPy {sp.__version__}",
         "checkedAt": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "packageDigest": digest if isinstance(digest, str) else "",
         "status": "failed", "claims": [], "limitations": list(BASE_LIMITATIONS),
@@ -395,7 +481,8 @@ def new_report(digest):
 def claim_result(claim, status, message, residual="", dims="unsupported", restrictions=None):
     return {"id": str(claim.get("id", "invalid")), "title": str(claim.get("title", "Untitled claim")),
             "status": status, "residual": residual[:4000], "dimensions": dims,
-            "domainRestrictions": restrictions or [], "message": message}
+            "domainRestrictions": restrictions or [], "message": message,
+            "steps": ["Validation stopped: " + message[:1000]] if status == "unsupported" else []}
 
 
 def verify(payload):
@@ -415,20 +502,27 @@ def verify(payload):
         report["limitations"].append(f"Package could not be checked: {error}")
         return report
     for claim in claims:
+        steps = []
+        kind = "identity"
         try:
+            steps = compiler.operation_steps(claim)
+            kind = compiler.derivation_kind(claim)
             lhs, rhs = compiler.evaluate(claim["lhs"]), compiler.evaluate(claim["rhs"])
             obligations = (*compiler.global_obligations, *lhs.obligations, *rhs.obligations)
             restrictions, missing = compiler.domain_audit(obligations)
             dims = "consistent" if lhs.dimensions is None or rhs.dimensions is None or lhs.dimensions == rhs.dimensions else "mismatch"
+            steps.append(f"Audited SI dimensions [M,L,T,I,temperature,amount,luminous intensity]: {lhs.dimensions} versus {rhs.dimensions}; exact zero is dimension-compatible.")
+            steps.append(f"Audited {len(restrictions)} distinct original denominator, negative-power, definition-domain and substitution obligations: {len(missing)} unresolved.")
             if missing:
                 result = claim_result(claim, "unsupported", "The approved domains do not exclude undefined regions or establish required input properties: " + "; ".join(missing), dims=dims, restrictions=restrictions)
             elif dims == "mismatch":
-                result = claim_result(claim, "contradicted", "The two sides have incompatible mass/length/time dimensions.", dims=dims, restrictions=restrictions)
+                result = claim_result(claim, "contradicted", "The two sides have incompatible SI dimensions.", dims=dims, restrictions=restrictions)
             else:
                 raw_residual = lhs.expression - rhs.expression
                 budget(raw_residual)
                 residual = sp.cancel(sp.together(raw_residual))
                 budget(residual)
+                steps.append("Computed exact lhs - rhs, combined rational denominators and cancelled common factors; residual = " + str(residual)[:2000] + ".")
                 if residual == 0:
                     result = claim_result(claim, "checked", "The exact residual is zero under the approved definitions and established domain restrictions.", "0", dims, restrictions)
                 else:
@@ -442,6 +536,12 @@ def verify(payload):
             result = claim_result(claim, "contradicted", str(error), dims="mismatch")
         except (Unsupported, KeyError, TypeError, ValueError, RecursionError, MemoryError) as error:
             result = claim_result(claim, "unsupported", str(error))
+        if kind == "definition-restatement":
+            steps.append("Classified as a direct definition restatement or the same algebraic expression on both sides; this does not independently justify that input physically.")
+            if result["status"] == "checked":
+                result["message"] += " This equality restates an approved definition or the same expression; it is not an independent physical test."
+        result["derivationKind"] = kind
+        result["steps"] = [*steps, *result["steps"]]
         report["claims"].append(result)
     statuses = [c["status"] for c in report["claims"]]
     report["status"] = "checked" if statuses and all(s == "checked" for s in statuses) else ("partial" if "checked" in statuses else "failed")
@@ -461,7 +561,7 @@ def main():
     raw = sys.stdin.buffer.read(MAX_INPUT + 1)
     try:
         if len(raw) > MAX_INPUT:
-            raise Unsupported("Input exceeds the 512 KiB limit.")
+            raise Unsupported("Input exceeds the 1 MiB limit.")
         payload = json.loads(raw, object_pairs_hook=no_duplicate_keys,
                              parse_constant=lambda _: (_ for _ in ()).throw(Unsupported("Non-finite JSON numbers are forbidden.")))
         report = verify(payload)

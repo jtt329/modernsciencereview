@@ -1,43 +1,58 @@
-# Formal Lab prototype
+# Formal Lab
 
-Separate public entry: `/formal-lab`. It never writes papers, reviews, overview blocks, scoring, or existing explanation records.
+The current source-linked workflow is documented in
+[Formal Lab v2](../../../../docs/formal-lab-v2.md). The separate entry point is
+`/formal-lab`; the original prepared scalar baseline remains explicitly labelled
+at `/formal-lab?prepared=1`.
 
-## Working flow
+## Current pipeline
 
-1. Select versioned cited inputs and provide source text and a main claim.
-2. Request a schema-constrained AI proposal (with at most one structural correction attempt), or inspect the prepared one-page packet. AI receives only the explicit source excerpt, claim, metadata, and selected inputs.
-3. Save and inspect an immutable revision. All definitions, domains, hypotheses, candidate equations, explanation text, and provenance belong to its SHA-256 digest.
-4. Explicitly approve that digest as the signed-in author. Edits and regeneration create a new revision with no approval or result.
-5. The fixed SymPy checker reloads the approved package from storage. Its report binds the same digest. Explanatory paragraphs appear only if all their referenced mathematical claims checked; the prose interpretation itself is not machine verified.
+A signed-in author uploads an actual PDF, text or TeX source. The system retains
+its original bytes and SHA-256, indexes numbered source lines, and asks AI to
+inventory source-specific inputs and assertions. A coverage audit and bounded
+scalar formalization groups propose inspectable mathematical candidates. The
+prepared example’s equations are not supplied to fresh source analysis.
 
-The public example report is an unapproved demonstration. It does not record J. T. Tyler's approval. The author test source is the exact October 12, 2026 one-page PDF, with an extracted TeX transcription for the model and a source SHA-256. Its ten prepared scalar claims all check. Thermal and FRW statements are outside this first prepared claim set.
+The author reviews the original source, extracted lines, assumptions, definitions,
+domains, exact equations, coverage and gaps, then approves an immutable revision.
+A separate publication checkbox is optional and initially unchecked. Approval
+without publication consent keeps the submission private. Edits require a new
+revision and approval.
+
+The server invokes the independent fixed SymPy checker against the stored
+approved package. Actual results determine coverage labels; definitions and
+physical inputs do not become independently proved physics. A post-verification
+AI pass generates an explanation and qualitative scientific review. If it fails,
+a clearly labelled deterministic report preserves the computed findings.
+
+With explicit consent, eligible conditional consequences join isolated subject
+records with immutable source/revision/check references. A version-bound narrative
+compiles those contributions into a readable subject account above the preserved
+evidence pool. Unsupported assertions and tooling gaps remain visible. Neither
+the paper review nor subject synthesis establishes physical applicability,
+source fidelity, experimental validity or literature-wide novelty automatically.
+An argument outside the scalar tool’s language may already be supplied by the
+manuscript; not checking it is different from finding it absent or incorrect.
 
 ## Components
 
-- `contract.ts`: declarative expression tree and package/report types.
-- `package.ts`: API limits, exact field validation, canonical JSON and SHA-256.
-- `store.ts`: isolated additive `formal_lab_submissions` and `formal_lab_revisions` tables; owner checks and row locks prevent stale approval/results from becoming current.
-- `checker.ts`: at most two static Python subprocesses, 15-second wall limit, bounded output, no inherited credentials. The worker also applies CPU/memory limits on Linux.
-- `../routes/formalLab.ts`: catalog, public demo, private drafts, immutable revisions, AI, approval and verification.
-- `../../formal-verifier/`: pinned SymPy worker, tests and detailed checker scope.
+- `contract.ts`, `package.ts`: bounded expression trees, package validation,
+  provenance contracts, canonical JSON and revision digests.
+- `sources.ts`, `ingest.ts`: original source retention, extraction, inventory,
+  coverage audit and independently namespaced scalar formalization.
+- `model.ts`, `jobs.ts`: configured AI transport and persisted processing events.
+- `store.ts`: owner-scoped submissions, immutable revisions, approval and results.
+- `checker.ts`, `../../formal-verifier/`: credential-free static symbolic worker,
+  exact arithmetic, dimensions/domains, deterministic traces and resource bounds.
+- `outputs.ts`, `subjects.ts`: computed source coverage, explanation/review,
+  explicit publication, conservative deduplication and cited subject synthesis.
+- `../routes/formalLab.ts`: authenticated workflow and limited public access to
+  explicitly published immutable snapshots.
 
-## Runtime and deployment
+No existing paper reviews, scoring, readers or field-overview records are replaced.
+All new database objects are isolated additive `formal_lab_*` tables.
 
-Local setup:
-
-```sh
-python3 -m venv .formal-venv
-.formal-venv/bin/python -m pip install -r artifacts/api-server/formal-verifier/requirements.txt
-pnpm test:formal
-.formal-venv/bin/python artifacts/api-server/formal-verifier/test_check.py
-```
-
-`FORMAL_PYTHON` can select another interpreter. The API build copies the static checker beside its bundle. Railway's API service alone uses `RAILPACK_CONFIG_FILE=artifacts/api-server/railpack.formal.json`; this adds pinned Python and a virtual environment. Web and review-worker configurations remain independent. Existing AI credentials and authentication are reused. `FORMAL_LAB_MODEL` overrides the existing Gemini draft model choice.
-
-All writes require the existing account session; author drafts and reports are private. Foreign owners receive 404. Browser writes require a trusted site origin. Prototype limits include 50 submissions/account, 100 revisions/submission, one AI request/account at a time and six/hour; these are basic pilot controls, not a public high-volume service. The AI limiter is process-local. No user-supplied code or symbolic string parser is executed.
-
-## Scope and next increment
-
-This first checker handles bounded exact scalar rational/polynomial identities, integer powers, derivatives, simultaneous substitutions, dimensions, and denominator domains. It does not verify source authenticity, prose assumptions, experimental evidence, novelty, tensor calculus, PDEs, or physical applicability. Definitions are explicit premises, not newly proved physics. Nonzero residuals disprove an identity over its declared domain, not equality at every point.
-
-The next useful experiment is an author-approved small packet followed by an independent review of whether it faithfully expresses the source. Then add a second example from a different paper. Add a Lean/Mathlib/Physlib adapter only for selected theorems that benefit from kernel checking; record all hypotheses, audit axioms and proof gaps, and preserve the distinction between conditional theorem checking and evidence for physics.
+For pilot limits, privacy/retry behavior, Python and Railway configuration, and the
+actual JavaScript/Python/build verification commands, use the
+[v2 documentation](../../../../docs/formal-lab-v2.md). The checker’s detailed
+mathematical scope is in [its README](../../formal-verifier/README.md).
