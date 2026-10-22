@@ -13,9 +13,26 @@ export const SESSION_TTL = 7 * 24 * 60 * 60 * 1000;
 
 export interface SessionData {
   user: AuthUser;
-  access_token: string;
-  refresh_token?: string;
-  expires_at?: number;
+}
+
+// The provider authenticates the login; our application session retains only
+// the identity. Never persist provider credentials or arbitrary caller fields.
+function sessionIdentity(data: unknown): SessionData | null {
+  if (!data || typeof data !== "object") return null;
+  const candidate = (data as { user?: unknown }).user;
+  if (!candidate || typeof candidate !== "object") return null;
+  const user = candidate as Record<string, unknown>;
+  if (typeof user.id !== "string" || !user.id.trim()) return null;
+  const text = (value: unknown): string | null => typeof value === "string" ? value : null;
+  return {
+    user: {
+      id: user.id,
+      email: text(user.email),
+      firstName: text(user.firstName),
+      lastName: text(user.lastName),
+      profileImageUrl: text(user.profileImageUrl),
+    },
+  };
 }
 
 let oidcConfig: client.Configuration | null = null;
@@ -37,10 +54,12 @@ export async function getOidcConfig(): Promise<client.Configuration> {
 }
 
 export async function createSession(data: SessionData): Promise<string> {
+  const identity = sessionIdentity(data);
+  if (!identity) throw new Error("Invalid session identity");
   const sid = crypto.randomBytes(32).toString("hex");
   await db.insert(sessionsTable).values({
     sid,
-    sess: data as unknown as Record<string, unknown>,
+    sess: identity as unknown as Record<string, unknown>,
     expire: new Date(Date.now() + SESSION_TTL),
   });
   return sid;
@@ -57,20 +76,9 @@ export async function getSession(sid: string): Promise<SessionData | null> {
     return null;
   }
 
-  return row.sess as unknown as SessionData;
-}
-
-export async function updateSession(
-  sid: string,
-  data: SessionData,
-): Promise<void> {
-  await db
-    .update(sessionsTable)
-    .set({
-      sess: data as unknown as Record<string, unknown>,
-      expire: new Date(Date.now() + SESSION_TTL),
-    })
-    .where(eq(sessionsTable.sid, sid));
+  const identity = sessionIdentity(row.sess);
+  if (!identity) await deleteSession(sid);
+  return identity;
 }
 
 export async function deleteSession(sid: string): Promise<void> {

@@ -193,7 +193,6 @@ router.get("/callback", async (req: Request, res: Response) => {
     claims as unknown as Record<string, unknown>,
   );
 
-  const now = Math.floor(Date.now() / 1000);
   const sessionData: SessionData = {
     user: {
       id: dbUser.id,
@@ -202,9 +201,6 @@ router.get("/callback", async (req: Request, res: Response) => {
       lastName: dbUser.lastName,
       profileImageUrl: dbUser.profileImageUrl,
     },
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expires_at: tokens.expiresIn() ? now + tokens.expiresIn()! : claims.exp,
   };
 
   const sid = await createSession(sessionData);
@@ -272,7 +268,6 @@ router.post(
         claims as unknown as Record<string, unknown>,
       );
 
-      const now = Math.floor(Date.now() / 1000);
       const sessionData: SessionData = {
         user: {
           id: dbUser.id,
@@ -281,9 +276,6 @@ router.post(
           lastName: dbUser.lastName,
           profileImageUrl: dbUser.profileImageUrl,
         },
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: tokens.expiresIn() ? now + tokens.expiresIn()! : claims.exp,
       };
 
       const sid = await createSession(sessionData);

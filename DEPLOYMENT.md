@@ -82,6 +82,20 @@ Configure the Google OAuth client with redirect URIs for every web origin:
 
 The API computes callback URLs from `PUBLIC_WEB_ORIGIN`, so each environment's `PUBLIC_WEB_ORIGIN` must exactly match the site users browse.
 
+## Login sessions
+
+Google/OIDC is used to validate identity during the browser or mobile login
+exchange. The application stores only the user's identity in its session JSON;
+it does not retain Google access tokens, refresh tokens or provider expiry.
+Application sessions expire seven days after login, without renewal on requests.
+The random session ID, database expiration and explicit logout control site
+access independently of the provider token lifetime.
+
+Deploying this change does not revoke previously issued provider credentials or
+remove tokens from existing session rows. Incident response must separately
+invalidate existing sessions and revoke affected provider grants as appropriate.
+No session schema migration is required.
+
 ## Database schema pushes (data-loss risk — flagged)
 
 `start:with-db-push` runs `drizzle-kit push --force` on boot, which can auto-truncate tables to satisfy a schema change (it offered to truncate `calibration_pairs` during the v19 deploy). This is a destructive footgun on a data-bearing service.
