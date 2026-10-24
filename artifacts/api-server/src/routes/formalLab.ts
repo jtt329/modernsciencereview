@@ -6,14 +6,25 @@ import { canonicalJson, FormalError, packageDigest, validatePackage } from '../f
 import { verifyPackage } from '../formal/checker';
 import { proposalSchema, decodeProposal } from '../formal/proposalSchema';
 import { appendRevision, createSubmission, recordOutputs, ensureFormalSchema, listSubmissions, readSubmission, recordApprovalOrReport, revisionHistory } from '../formal/store';
-import type { FormalPackage, VerificationReport } from '../formal/contract';
+import type { FormalPackage, FormalRevision, VerificationReport } from '../formal/contract';
 
 import {saveSource,readSource,makeSourcePublic} from '../formal/sources';
 import {createJob,readJob,launchJob} from '../formal/jobs';
 import {analyzeSource} from '../formal/ingest';
 import {generateOutputs} from '../formal/outputs';
 import {publishOutputs,readSubject,listSubjects,readPublishedSubmission,refreshSubjectOverview} from '../formal/subjects';
-import {formalModel} from '../formal/model';
+import {getFormalModels,resolveFormalModel,withFormalModel,type FormalModelCallUsage} from '../formal/model';
+function modelForRevision(revision:FormalRevision) {
+  if(!revision.model)return resolveFormalModel();
+  const recordedSelection=revision.package.analysis?.ingestionLog?.find(event=>/^model-selection-(current|sol|argon)$/.test(event.stage))?.stage.replace('model-selection-','');
+  const profile=getFormalModels().find(option=>recordedSelection?option.id===recordedSelection&&option.model===revision.model:option.model===revision.model);
+  if(!profile)throw new FormalError('The saved analysis model is no longer configured. Start a new analysis with an available model; the existing revision and checks are preserved.',409);
+  return resolveFormalModel(profile.id);
+}
+async function recordModelCall(progress:(stage:string,message:string)=>Promise<void>,call:FormalModelCallUsage) {
+  const tokens=(n:number|undefined)=>n===undefined?'not reported':String(n);
+  await progress('model-call',`${call.provider}: requested ${call.model}; returned ${call.returnedModel}. Input tokens: ${tokens(call.inputTokens)}; output tokens: ${tokens(call.outputTokens)}; reasoning tokens: ${tokens(call.reasoningTokens)}; cached input: ${tokens(call.cachedInputTokens)}. Duration: ${call.durationMs} ms. Token counts are provider-reported usage, not a final bill.`);
+}
 async function validateOwnerPackage(value:unknown,owner:string) {
   const pkg=validatePackage(value);
   if(!pkg.analysis)return lockedInputs(pkg);
@@ -50,7 +61,7 @@ function identity(req:Request,res:Response,next:NextFunction) {
   if(req.method!=='GET' && (req.get('sec-fetch-site')==='cross-site' || !allowedOrigin)) {res.status(403).json({error:'Submit changes from the website itself.'}); return;}
   res.setHeader('Cache-Control','no-store'); next();
 }
-router.get('/formal-lab/catalog',(_req,res)=>res.json({inputs:catalog,example,exampleDigest,capabilities:{workflowVersion:'source-analysis-v2',checker:'SymPy · exact scalar checks',scope:['Exact rational algebra','Partial derivatives','Dimensional consistency','Explicit denominator domains'],limitations:['No tensor or PDE verification in this prototype','Physical applicability and novelty require scientific review']}}));
+router.get('/formal-lab/catalog',(_req,res)=>res.json({inputs:catalog,example,exampleDigest,models:getFormalModels(),defaultModel:'current',capabilities:{workflowVersion:'source-analysis-v2',checker:'SymPy · exact scalar checks',scope:['Exact rational algebra','Partial derivatives','Dimensional consistency','Explicit denominator domains'],limitations:['No tensor or PDE verification in this prototype','Physical applicability and novelty require scientific review']}}));
 router.get('/formal-lab/example/report',async(_req,res)=>{
   if(!demoReport) {
     if(!demoPending) demoPending=verifyPackage(example,exampleDigest).then(r=>{demoReport=r;return r;}).finally(()=>{demoPending=undefined;});
@@ -71,12 +82,13 @@ router.get('/formal-lab/sources/:id/file',async(req,res)=>{
 });
 router.get('/formal-lab/sources/:id',async(req,res)=>{res.setHeader('Cache-Control','private,no-store');res.json((await readSource(String(req.params.id),req.user?.id)).source);});
 router.post('/formal-lab/analyze',identity,async(req,res)=>{
-  const owner=req.user!.id;const {source,bytes}=await readSource(String(req.body?.sourceId),owner,true);
+  const owner=req.user!.id;const selectedModel=resolveFormalModel(req.body?.modelId);const {source,bytes}=await readSource(String(req.body?.sourceId),owner,true);
   const overrides={title:req.body?.title,authors:req.body?.authors,mainClaim:req.body?.mainClaim,subjectSlug:req.body?.subjectSlug};
   for(const [key,value] of Object.entries(overrides))if(value!==undefined&&(typeof value!=='string'||value.length>(key==='mainClaim'?6000:300)))throw new FormalError('Author guidance must be bounded text.');
   if(overrides.subjectSlug && !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(overrides.subjectSlug))throw new FormalError('Choose a valid subject slug.');
-  const job=await createJob(owner,'analyze',{sourceId:source.id});
-  launchJob(job,async progress=>{
+  const job=await createJob(owner,'analyze',{sourceId:source.id,model:selectedModel});
+  launchJob(job,progress=>withFormalModel(selectedModel,async()=>{
+    await progress('model-selection-'+selectedModel.id,`Analysis model: ${selectedModel.label} (${selectedModel.model}); provider: ${selectedModel.provider}. This same selection will generate this revision's explanation and review.`);
     const draft=await analyzeSource(source,bytes!,progress,overrides);
     if(typeof overrides.title==='string'&&overrides.title.trim())draft.title=overrides.title.trim().slice(0,300);
     if(typeof overrides.authors==='string'&&overrides.authors.trim())draft.authors=overrides.authors.trim().slice(0,300);
@@ -84,8 +96,8 @@ router.post('/formal-lab/analyze',identity,async(req,res)=>{
     if(draft.analysis){draft.analysis.ingestionLog=[...source.events,...job.events];if(overrides.subjectSlug)draft.analysis.subjectSlug=overrides.subjectSlug;}
     const pkg=await validateOwnerPackage(draft,owner);
     await progress('saving','Saving the extracted inputs, source coverage and mathematical proposal as an unapproved author revision.');
-    const submission=await createSubmission(owner,pkg,'ai',formalModel);return {submissionId:submission.id};
-  });res.status(202).json(job);
+    const submission=await createSubmission(owner,pkg,'ai',selectedModel.model);return {submissionId:submission.id};
+  },call=>recordModelCall(progress,call)));res.status(202).json(job);
 });
 router.get('/formal-lab/jobs/:id',identity,async(req,res)=>res.json(await readJob(String(req.params.id),req.user!.id)));
 router.get('/formal-lab/subjects',async(_req,res)=>{await ensureFormalSchema();res.json({subjects:await listSubjects()});});
@@ -94,8 +106,10 @@ router.post('/formal-lab/submissions/:id/process',identity,async(req,res)=>{
   const owner=req.user!.id;const id=String(req.params.id);const initial=await readSubmission(id,owner);const r=initial.currentRevision;
   if(!r.approvedAt||r.digest!==req.body?.digest)throw new FormalError('Approve the exact current source-linked revision before generating its results.',409);
   if(!initial.sourceDocument)throw new FormalError('Upload the original source to generate the full coverage, review and field contribution outputs.');
-  const job=await createJob(owner,'process',{sourceId:initial.sourceDocument.id,submissionId:id});
-  launchJob(job,async progress=>{
+  const selectedModel=modelForRevision(r);
+  const job=await createJob(owner,'process',{sourceId:initial.sourceDocument.id,submissionId:id,model:selectedModel});
+  launchJob(job,progress=>withFormalModel(selectedModel,async()=>{
+    await progress('model-selection',`Explanation and review model: ${selectedModel.label} (${selectedModel.model}); provider: ${selectedModel.provider}. Mathematical verification is performed separately by SymPy.`);
     await progress('verification',`Checking ${r.package.claims.length} mathematical candidates with the independent SymPy worker; prose and adopted premises are tracked separately.`);
     let submission=await readSubmission(id,owner);
     const report=submission.currentRevision.verification?.packageDigest===r.digest?submission.currentRevision.verification:await verifyPackage(r.package,r.digest);
@@ -116,7 +130,7 @@ router.post('/formal-lab/submissions/:id/process',identity,async(req,res)=>{
       await recordOutputs(id,owner,r.digest,outputs);
     }else {await progress('private-results','Results saved privately. Field publication was not selected when this revision was approved.');outputs.processingLog=[...job.events];await recordOutputs(id,owner,r.digest,outputs);}
     return {submissionId:id};
-  });res.status(202).json(job);
+  },call=>recordModelCall(progress,call)));res.status(202).json(job);
 });
 router.use('/formal-lab/submissions',(req,res,next)=>{
   // Public access is limited to immutable explicitly published snapshots.

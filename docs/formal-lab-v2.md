@@ -124,8 +124,30 @@ are enforced; this is not a high-volume public service.
 ## Runtime and deployment
 
 The API requires its existing `DATABASE_URL`, account/session configuration and
-Gemini integration credentials. `FORMAL_LAB_MODEL` selects the model; otherwise
-the implementation uses `SCIREVIEW_GEMINI_REVIEW_MODEL`, then its coded fallback.
+Gemini integration credentials. The submission page offers three allowlisted
+profiles: the existing Gemini workflow, GPT-6.1 Sol, and Gemini 4 Argon. Sol uses
+`OPENAI_API_KEY` with OpenAI's Responses API; Argon uses the existing Gemini
+credential. Configured availability in the catalog is not proof of successful
+inference or available quota. No secret is exposed to the browser.
+
+`FORMAL_LAB_MODEL` selects the existing Gemini profile; otherwise it uses
+`SCIREVIEW_GEMINI_REVIEW_MODEL`, then its coded fallback. Selecting Sol or Argon
+for a new analysis does not change the older reviews or existing submissions.
+The server records the exact requested model on the job and saved revision,
+retains it through same-source author edits, and uses it again for explanation
+and review generation. Changing the source requires fresh analysis. Each model
+call records requested/returned model IDs and provider-reported input, output,
+reasoning and cache token counts in the source/processing log when available.
+Output counts include reported reasoning tokens; usage is not a final bill.
+
+Both providers receive the original PDF plus numbered text. Sol uses high
+reasoning and strict structured output; Argon uses high thinking without sampling
+parameters. Per-request model contexts keep simultaneous jobs isolated. Long
+reasoning calls have bounded deadlines and refresh the persisted job lease.
+The pinned current one-page source is dated 22 October 2026 and is separate from
+the older prepared baseline. Loading that sample selects the file locally;
+analysis requires an explicit click.
+
 Use the actual `src/formal/model.ts` configuration when changing deployments.
 
 `FORMAL_PYTHON` can select the Python interpreter. Otherwise the API checks a

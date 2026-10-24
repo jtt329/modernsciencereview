@@ -8,7 +8,7 @@ const live=new Set<string>();
 export async function ensureJobSchema(){
   if(!ready)ready=pool.query(`CREATE TABLE IF NOT EXISTS formal_lab_jobs(id uuid PRIMARY KEY,owner_id text NOT NULL,kind text NOT NULL,status text NOT NULL,metadata jsonb NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now()); CREATE INDEX IF NOT EXISTS formal_lab_job_owner_idx ON formal_lab_jobs(owner_id,created_at);`).catch(e=>{ready=undefined;throw e;});await ready;
 }
-export async function createJob(owner:string,kind:FormalJob['kind'],refs:{sourceId?:string;submissionId?:string}):Promise<FormalJob>{
+export async function createJob(owner:string,kind:FormalJob['kind'],refs:{sourceId?:string;submissionId?:string;model?:FormalJob['model']}):Promise<FormalJob>{
   await ensureJobSchema();
   const client=await pool.connect();
   try{
@@ -34,10 +34,14 @@ export async function readJob(id:string,owner:string):Promise<FormalJob>{
 async function persist(job:FormalJob){job.updatedAt=new Date().toISOString();await pool.query('UPDATE formal_lab_jobs SET status=$1,metadata=$2,updated_at=now() WHERE id=$3',[job.status,JSON.stringify(job),job.id]);}
 export function launchJob(job:FormalJob,work:(progress:(stage:string,message:string)=>Promise<void>)=>Promise<{submissionId?:string}>):void{
   live.add(job.id);
+  // Reasoning requests can legitimately run for several minutes. Keep the saved
+  // job lease current without adding fabricated progress events.
+  const lease=setInterval(()=>{void pool.query("UPDATE formal_lab_jobs SET updated_at=now() WHERE id=$1 AND status IN ('queued','running')",[job.id]).catch(()=>{});},30000);
+  lease.unref();
   void(async()=>{
     const progress=async(stage:string,message:string)=>{job.status='running';job.stage=stage;job.events.push({at:new Date().toISOString(),stage,message:message.slice(0,2000)});await persist(job);};
     try{await progress('started','Processing this source with a real analysis pipeline.');const result=await work(progress);Object.assign(job,result);job.status='complete';job.stage='complete';job.events.push({at:new Date().toISOString(),stage:'complete',message:'Completed. Open the saved submission to inspect every source link and result.'});await persist(job);}
     catch(error){job.status='failed';job.stage='failed';job.error=error instanceof FormalError?error.message:'This stage could not complete. Your source and completed results are retained; retry the stage.';job.events.push({at:new Date().toISOString(),stage:'failed',message:job.error});await persist(job).catch(()=>{});logger.warn({jobId:job.id,errorType:error instanceof Error?error.name:'unknown'},'Formal Lab job failed');}
-    finally{live.delete(job.id);}
+    finally{clearInterval(lease);live.delete(job.id);}
   })();
 }

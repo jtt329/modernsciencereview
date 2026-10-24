@@ -107,6 +107,7 @@ export interface FormalJob {
   id: string; kind: 'analyze' | 'process'; status: 'queued' | 'running' | 'complete' | 'failed';
   stage: string; events: { at: string; stage: string; message: string }[];
   sourceId?: string; submissionId?: string; error?: string; updatedAt: string;
+  model?: {id: 'current' | 'sol' | 'argon'; label: string; model: string; provider: 'google' | 'openai'};
 }
 export interface FormalSubject {
   slug: string; title: string; version: number; updatedAt: string;

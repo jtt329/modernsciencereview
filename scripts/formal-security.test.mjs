@@ -50,6 +50,7 @@ test('editing a formulation preserves the real server log and removes forged rep
  const edited=structuredClone(created.currentRevision.package);edited.mainClaim+=' Clarified.';edited.analysis.ingestionLog=structuredClone(forgedLog);
  const result=await appendRevision(created.id,state.owner,edited,created.currentRevision.digest,'author-edit');
  assert.deepEqual(result.currentRevision.package.analysis.ingestionLog,serverLog);
+ assert.equal(result.currentRevision.model,'test-model','same-source author edits retain the originating AI model');
  assert(!JSON.stringify(result).includes('FAKE'));
  assert.equal(result.currentRevision.digest,packageDigest(result.currentRevision.package));
  assert.notEqual(result.currentRevision.digest,packageDigest(edited));
@@ -60,6 +61,7 @@ test('changing the uploaded source clears the former source ingestion trail',asy
  const edited=structuredClone(created.currentRevision.package);edited.analysis.sourceId='22222222-2222-4222-8222-222222222222';edited.analysis.ingestionLog=structuredClone(forgedLog);
  const result=await appendRevision(created.id,state.owner,edited,created.currentRevision.digest,'author-edit');
  assert.equal(result.currentRevision.package.analysis.ingestionLog,undefined);
+ assert.equal(result.currentRevision.model,null,'a changed source clears model attribution from the former analysis');
  assert.deepEqual(created.currentRevision.package.analysis.ingestionLog,serverLog);
 });
 test('isolated bundled parser reads the actual one-page manuscript completely',async()=>{
@@ -69,6 +71,16 @@ test('isolated bundled parser reads the actual one-page manuscript completely',a
  assert.equal(result.lines[0].text,'Horizon boundary mechanics');
  assert.equal(result.sha256,'7566aed2baa71088aed6f512189b8bc4c5068243f8509ad1ea95c25925874389');
  assert.equal(new Set(result.lines.map(line=>line.id)).size,80);
+});
+test('isolated bundled parser reads the current 22 October one-page sample through its references',async()=>{
+ const bytes=await readFile(path.join(root,'artifacts/scireview/public/formal-lab/horizon-boundary-summary-current.pdf'));
+ const result=await extractSource('horizon-boundary-summary-current.pdf','application/pdf',bytes);
+ assert.equal(result.pageCount,1);assert.equal(result.lines.length,82);
+ assert.equal(result.sha256,'0dab6492b6814c887b8d40b675b33693145c80be91a11300c1188ade83193dc9');
+ assert.equal(result.lines[0].text,'Horizon boundary mechanics');
+ assert.match(result.lines[2].text,/22 October 2026/);
+ assert.match(result.lines.at(-1).text,/companion seven-page and full manuscripts/);
+ assert.equal(new Set(result.lines.map(line=>line.id)).size,82);
 });
 test('isolated parser rejects malformed PDF and complete documents beyond its page limit',async()=>{
  await assert.rejects(()=>extractSource('bad.pdf','application/pdf',Buffer.from('%PDF-not-a-document')),/could not be read/);

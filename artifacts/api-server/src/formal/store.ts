@@ -78,6 +78,9 @@ export async function appendRevision(id:string,owner:string,pkg:FormalPackage,ba
     if(latest.digest!==baseDigest) throw new FormalError('The draft changed. Reload the current revision before saving.',409);
     if(latest.revision>=100) throw new FormalError('Prototype limit: 100 revisions per submission.',429);
     pkg=authorPackageWithServerLog(pkg,latest.package);
+    // Model attribution is server evidence and survives an author's edit of
+    // the same source. A different source needs a fresh model analysis.
+    if(origin==='author-edit')model=pkg.analysis?.sourceId===latest.package.analysis?.sourceId?latest.model:null;
     await client.query('INSERT INTO formal_lab_revisions(id,submission_id,revision,package,digest,origin,model) VALUES($1,$2,$3,$4,$5,$6,$7)',[randomUUID(),id,latest.revision+1,JSON.stringify(pkg),packageDigest(pkg),origin,model]);
     await client.query('COMMIT');
   } catch(e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
