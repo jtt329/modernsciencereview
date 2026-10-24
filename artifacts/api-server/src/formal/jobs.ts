@@ -18,7 +18,7 @@ export async function createJob(owner:string,kind:FormalJob['kind'],refs:{source
     const {rows:[n]}=await client.query(`SELECT count(*) FILTER (WHERE status IN ('queued','running') AND updated_at>now()-interval '15 minutes')::int AS active,count(*) FILTER(WHERE kind=$2 AND created_at>now()-interval '1 hour')::int AS recent FROM formal_lab_jobs WHERE owner_id=$1`,[owner,kind]);
     if(n.active>0)throw new FormalError('An analysis is already running for your account. Open its saved progress before starting another.',429);
     if(n.recent>=8)throw new FormalError('Pilot limit: eight analyses and eight output-generation runs per hour.',429);
-    const job:FormalJob={id:randomUUID(),kind,status:'queued',stage:'queued',events:[{at:new Date().toISOString(),stage:'queued',message:'Job created; source and subsequent results are saved separately.'}],...refs,updatedAt:new Date().toISOString()};
+    const job:FormalJob={id:randomUUID(),kind,status:'queued',stage:'queued',events:[{at:new Date().toISOString(),stage:'queued',message:'Job created; the uploaded source is saved. Completed drafts and final results are saved separately.'}],...refs,updatedAt:new Date().toISOString()};
     await client.query('INSERT INTO formal_lab_jobs(id,owner_id,kind,status,metadata) VALUES($1,$2,$3,$4,$5)',[job.id,owner,kind,job.status,JSON.stringify(job)]);
     await client.query('COMMIT');return job;
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
@@ -28,7 +28,7 @@ export async function readJob(id:string,owner:string):Promise<FormalJob>{
   if(!/^[a-f0-9-]{36}$/.test(id))throw new FormalError('Analysis job not found.',404);await ensureJobSchema();
   const{rows:[row]}=await pool.query('SELECT metadata,updated_at FROM formal_lab_jobs WHERE id=$1 AND owner_id=$2',[id,owner]);if(!row)throw new FormalError('Analysis job not found.',404);
   const job:FormalJob=row.metadata;
-  if(['queued','running'].includes(job.status)&&!live.has(id)&&Date.now()-new Date(row.updated_at).getTime()>15*60_000){job.status='failed';job.error='This analysis was interrupted by a server restart. Your source and completed results are retained. Start the stage again.';await persist(job);}
+  if(['queued','running'].includes(job.status)&&!live.has(id)&&Date.now()-new Date(row.updated_at).getTime()>15*60_000){job.status='failed';job.error='This analysis was interrupted by a server restart. Your uploaded source and previously saved revisions are retained. Start the stage again.';await persist(job);}
   return job;
 }
 async function persist(job:FormalJob){job.updatedAt=new Date().toISOString();await pool.query('UPDATE formal_lab_jobs SET status=$1,metadata=$2,updated_at=now() WHERE id=$3',[job.status,JSON.stringify(job),job.id]);}
@@ -41,7 +41,7 @@ export function launchJob(job:FormalJob,work:(progress:(stage:string,message:str
   void(async()=>{
     const progress=async(stage:string,message:string)=>{job.status='running';job.stage=stage;job.events.push({at:new Date().toISOString(),stage,message:message.slice(0,2000)});await persist(job);};
     try{await progress('started','Processing this source with a real analysis pipeline.');const result=await work(progress);Object.assign(job,result);job.status='complete';job.stage='complete';job.events.push({at:new Date().toISOString(),stage:'complete',message:'Completed. Open the saved submission to inspect every source link and result.'});await persist(job);}
-    catch(error){job.status='failed';job.stage='failed';job.error=error instanceof FormalError?error.message:'This stage could not complete. Your source and completed results are retained; retry the stage.';job.events.push({at:new Date().toISOString(),stage:'failed',message:job.error});await persist(job).catch(()=>{});logger.warn({jobId:job.id,errorType:error instanceof Error?error.name:'unknown'},'Formal Lab job failed');}
+    catch(error){job.status='failed';job.stage='failed';job.error=error instanceof FormalError?error.message:'This stage could not complete. Your uploaded source and previously saved revisions are retained; retry the stage.';job.events.push({at:new Date().toISOString(),stage:'failed',message:job.error});await persist(job).catch(()=>{});logger.warn({jobId:job.id,errorType:error instanceof Error?error.name:'unknown'},'Formal Lab job failed');}
     finally{clearInterval(lease);live.delete(job.id);}
   })();
 }

@@ -66,7 +66,7 @@ const tokenCount=(value:unknown):number|undefined=>typeof value==='number'&&Numb
 function parseStructured(raw:string):any {
   const text=raw.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'');
   if(text.length>300000)throw new FormalError('The AI response exceeded the supported size.',422);
-  try{return JSON.parse(text);}catch{throw new FormalError('The AI did not finish a valid structured response. The source and previous completed stages are preserved.',422);}
+  try{return JSON.parse(text);}catch{throw new FormalError(`The AI did not finish a valid structured response. ${retainedSourceMessage}`,422);}
 }
 async function recordUsage(config:FormalModelConfig,response:any,durationMs:number):Promise<void> {
   const handler=modelContext.getStore()?.onCall;
@@ -91,44 +91,134 @@ async function googleCall(options:FormalAIOptions,config:FormalModelConfig,ms:nu
     abortSignal:AbortSignal.timeout(ms),httpOptions:{timeout:ms,retryOptions:{attempts:1}}}});
   await recordUsage(config,response,Date.now()-started);
   const finish=response.candidates?.[0]?.finishReason;
-  if(finish&&finish!=='STOP')throw new FormalError('Gemini did not complete the structured response. Your source and completed stages are preserved.',422);
+  if(finish&&finish!=='STOP')throw new FormalError(`Gemini did not complete the structured response. ${retainedSourceMessage}`,422);
   return {data:parseStructured(response.text||''),model:config.model};
+}
+const OPENAI_STREAM_EVENT_LIMIT=1024*1024;
+const OPENAI_RESPONSE_BUFFER_LIMIT=2*1024*1024;
+const retainedSourceMessage='Your uploaded source and previously saved revisions are retained.';
+type ProviderError=Error&{status?:number;providerCode?:string;providerParam?:string;requestId?:string;noRetry?:boolean};
+const providerCodes=new Set(['invalid_request_error','invalid_json_schema','invalid_api_key','model_not_found','insufficient_quota','rate_limit_exceeded','server_error','authentication_error','permission_denied','context_length_exceeded','unsupported_parameter','invalid_value']);
+function safeProviderMetadata(value:any,requestId:string|null):Pick<ProviderError,'providerCode'|'providerParam'|'requestId'> {
+  const code=value?.error?.code??value?.code;
+  const param=value?.error?.param??value?.param;
+  return {...(typeof code==='string'&&providerCodes.has(code)?{providerCode:code}:{}),
+    ...(typeof param==='string'&&param.length<=120&&/^(?:model|input|instructions|reasoning|max_output_tokens|text|store|stream|service_tier)(?:\.[A-Za-z_][A-Za-z0-9_-]*|\[\d+\])*$/.test(param)?{providerParam:param}:{}),
+    ...(typeof requestId==='string'&&/^req_[A-Za-z0-9_-]{1,100}$/.test(requestId)?{requestId}:{})};
+}
+function providerFailure(status:number,metadata:ReturnType<typeof safeProviderMetadata>={},noRetry=false):ProviderError {
+  return Object.assign(new Error('OpenAI request failed'),{status,...metadata,...(noRetry?{noRetry:true}:{})});
+}
+function streamFailure():FormalError {return new FormalError(`OpenAI's response stream ended without a valid complete result. ${retainedSourceMessage} Please retry this stage.`,502);}
+async function boundedResponseJSON(response:Response,limit=OPENAI_RESPONSE_BUFFER_LIMIT):Promise<any> {
+  if(!response.body)throw streamFailure();
+  const reader=response.body.getReader();const decoder=new TextDecoder('utf-8',{fatal:true});let text='';let bytes=0;
+  try {
+    while(true){const chunk=await reader.read();if(chunk.done)break;bytes+=chunk.value.byteLength;if(bytes>limit)throw streamFailure();text+=decoder.decode(chunk.value,{stream:true});}
+    text+=decoder.decode();try{return JSON.parse(text);}catch{throw streamFailure();}
+  }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+}
+/** Consume transport deltas without accepting partial JSON or duplicating the final output.
+ * The terminal event contains the authoritative complete response and billed usage. */
+export async function readOpenAIResponse(response:Response):Promise<any> {
+  const contentType=response.headers.get('content-type')?.split(';',1)[0].trim().toLowerCase();
+  // Some API-compatible transports return a completed JSON response even for stream:true.
+  if(contentType==='application/json'){
+    const body=await boundedResponseJSON(response);
+    if(!body||typeof body!=='object'||Array.isArray(body)||!['completed','incomplete','failed'].includes(body.status))throw streamFailure();
+    return body;
+  }
+  if(contentType!=='text/event-stream'||!response.body)throw streamFailure();
+  const reader=response.body.getReader();const decoder=new TextDecoder('utf-8',{fatal:true});
+  let buffer='';let data:string[]=[];let eventType='';let eventBytes=0;
+  const dispatch=():any=>{
+    if(!data.length){eventType='';eventBytes=0;return undefined;}
+    const raw=data.join('\n');data=[];const declaredType=eventType;eventType='';eventBytes=0;
+    if(raw==='[DONE]')throw streamFailure(); // A complete terminal event is required first.
+    let event:any;try{event=JSON.parse(raw);}catch{throw streamFailure();}
+    if(!event||typeof event!=='object'||Array.isArray(event)||typeof event.type!=='string'||(declaredType&&declaredType!==event.type))throw streamFailure();
+    if(event.type==='error')throw providerFailure(502,safeProviderMetadata(event,response.headers.get('x-request-id')),true);
+    const terminalStatus=({'response.completed':'completed','response.incomplete':'incomplete','response.failed':'failed'} as Record<string,string>)[event.type];
+    if(!terminalStatus)return undefined;
+    if(!event.response||typeof event.response!=='object'||event.response.status!==terminalStatus)throw streamFailure();
+    return event.response;
+  };
+  const consume=(eof=false):any=>{
+    while(true){
+      const next=buffer.search(/[\r\n]/);if(next<0)break;
+      if(!eof&&buffer[next]==='\r'&&next===buffer.length-1)break;
+      const line=buffer.slice(0,next);const separator=buffer[next]==='\r'&&buffer[next+1]==='\n'?2:1;buffer=buffer.slice(next+separator);
+      if(!line){const terminal=dispatch();if(terminal)return terminal;continue;}
+      eventBytes+=Buffer.byteLength(line,'utf8')+1;if(eventBytes>OPENAI_STREAM_EVENT_LIMIT)throw streamFailure();
+      if(line[0]===':')continue;
+      const colon=line.indexOf(':');const field=colon<0?line:line.slice(0,colon);let value=colon<0?'':line.slice(colon+1);if(value[0]===' ')value=value.slice(1);
+      if(field==='data')data.push(value);else if(field==='event')eventType=value;
+    }
+    return undefined;
+  };
+  try {
+    while(true){
+      const chunk=await reader.read();
+      if(chunk.done){buffer+=decoder.decode();const terminal=consume(true);if(terminal)return terminal;throw streamFailure();}
+      // Bound each decode before appending; no unbounded line/event is retained.
+      if(chunk.value.byteLength>OPENAI_RESPONSE_BUFFER_LIMIT)throw streamFailure();
+      buffer+=decoder.decode(chunk.value,{stream:true});if(Buffer.byteLength(buffer,'utf8')>OPENAI_RESPONSE_BUFFER_LIMIT)throw streamFailure();
+      const terminal=consume();if(terminal)return terminal;
+    }
+  }finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+}
+function isTransportTimeout(error:unknown):boolean {
+  let current:any=error;
+  for(let depth=0;current&&depth<6;depth++,current=current.cause){
+    if(['TimeoutError','AbortError'].includes(current.name)||['UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','ETIMEDOUT','ABORT_ERR'].includes(current.code))return true;
+  }
+  return false;
 }
 async function openAICall(options:FormalAIOptions,config:FormalModelConfig,ms:number):Promise<{data:any;model:string}> {
   const content:any[]=[{type:'input_text',text:JSON.stringify(options.payload)}];
   if(options.pdf)content.push({type:'input_file',filename:'submitted-paper.pdf',file_data:`data:${options.pdf.mimeType};base64,${options.pdf.base64}`});
   const started=Date.now();
   const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${process.env.OPENAI_API_KEY}`},body:JSON.stringify({
-    model:config.model,instructions:options.system,input:[{role:'user',content}],reasoning:{effort:'high'},max_output_tokens:32768,store:false,
+    model:config.model,instructions:options.system,input:[{role:'user',content}],reasoning:{effort:'high'},max_output_tokens:32768,store:false,stream:true,
     text:{format:options.schema?{type:'json_schema',name:'formal_lab_response',strict:true,schema:openAISchema(options.schema)}:{type:'json_object'}}}),signal:AbortSignal.timeout(ms)});
-  if(!response.ok){const error=new Error('OpenAI request failed') as Error&{status:number};error.status=response.status;throw error;}
-  // Never surface a raw provider body: it can echo source content or credentials.
-  const body:any=await response.json();
+  if(!response.ok){
+    let metadata=safeProviderMetadata(undefined,response.headers.get('x-request-id'));
+    try{metadata=safeProviderMetadata(await boundedResponseJSON(response,65536),response.headers.get('x-request-id'));}catch{/* Raw provider content is deliberately discarded. */}
+    throw providerFailure(response.status,metadata);
+  }
+  // Never surface provider bodies: they can echo source content or credentials.
+  let body:any;try{body=await readOpenAIResponse(response);}catch(error){if(error&&typeof error==='object')Object.assign(error,{noRetry:true});throw error;}
   await recordUsage(config,body,Date.now()-started);
-  if(body.status!=='completed')throw new FormalError('OpenAI did not complete the structured response. Your source and completed stages are preserved.',422);
+  if(body.status!=='completed')throw new FormalError(`OpenAI did not complete the structured response. ${retainedSourceMessage}`,422);
   const parts=(Array.isArray(body.output)?body.output:[]).filter((item:any)=>item?.type==='message'&&item?.role==='assistant').flatMap((item:any)=>Array.isArray(item.content)?item.content:[]);
-  if(parts.some((part:any)=>part?.type==='refusal'))throw new FormalError('OpenAI could not produce a formalization for this source. Your source and completed stages are preserved.',422);
+  if(parts.some((part:any)=>part?.type==='refusal'))throw new FormalError(`OpenAI could not produce a formalization for this source. ${retainedSourceMessage}`,422);
   const raw=parts.filter((part:any)=>part?.type==='output_text'&&typeof part.text==='string').map((part:any)=>part.text).join('');
   return {data:parseStructured(raw),model:config.model};
 }
 export async function callFormalAI(options:FormalAIOptions):Promise<{data:any;model:string}> {
   const config=getCurrentFormalModel();
   // Keep the established default workflow unchanged; reasoning models need longer bounded stage deadlines.
-  const ms=config.id==='current'?Math.min(options.timeoutMs||90000,120000):Math.min(Math.max(options.timeoutMs||0,config.id==='argon'?900000:300000),900000);
+  const ms=config.id==='current'?Math.min(options.timeoutMs||90000,120000):900000;
   if(config.provider==='openai'&&!hasKey(process.env.OPENAI_API_KEY))throw new FormalError('The OpenAI API credential is not configured on this service.',503);
+  const deadline=Date.now()+ms;
   for(let attempt=0;attempt<2;attempt++){try{
-    return config.provider==='openai'?await openAICall(options,config,ms):await googleCall(options,config,ms);
+    const remaining=deadline-Date.now();if(remaining<=0)throw new DOMException('Formal Lab stage deadline exceeded','TimeoutError');
+    return config.provider==='openai'?await openAICall(options,config,remaining):await googleCall(options,config,remaining);
   }catch(error){
+    if(isTransportTimeout(error)){
+      logger.warn({provider:config.provider,model:config.model,errorType:error instanceof Error?error.name:'unknown',status:504},'Formal Lab model stage timed out; no automatic retry');
+      throw new FormalError(`${config.provider==='openai'?'OpenAI':'Gemini'} analysis timed out before returning a complete result. ${retainedSourceMessage} Please retry this stage.`,504);
+    }
     if(error instanceof FormalError)throw error;
     const status=Number((error as any)?.status)||0;
-    if(attempt===0&&(error instanceof TypeError||status===502||status===503||status===504)){
+    if(attempt===0&&!(error as ProviderError)?.noRetry&&(error instanceof TypeError||status===502||status===503||status===504)){
       logger.warn({provider:config.provider,model:config.model,errorType:error instanceof Error?error.name:'unknown',status},'Retrying one transient Formal Lab model transport failure');
       await new Promise(resolve=>setTimeout(resolve,750));continue;
     }
-    logger.warn({provider:config.provider,model:config.model,errorType:error instanceof Error?error.name:'unknown',status},'Formal Lab model stage failed');
+    logger.warn({provider:config.provider,model:config.model,errorType:error instanceof Error?error.name:'unknown',status,...safeProviderMetadata({error:{code:(error as ProviderError)?.providerCode,param:(error as ProviderError)?.providerParam}},(error as ProviderError)?.requestId||null)},'Formal Lab model stage failed');
     const provider=config.provider==='openai'?'OpenAI':'Gemini';
     const issue=status===401||status===403?'credential or model access was rejected':status===429?'quota or rate limit was reached':'service could not complete this stage';
-    throw new FormalError(`${provider} ${issue}. Your source and completed results are saved; retry the analysis after resolving the provider issue.`,503);
+    throw new FormalError(`${provider} ${issue}. ${retainedSourceMessage} Retry the analysis after resolving the provider issue.`,503);
   }}
   throw new FormalError('The AI stage did not complete.',503);
 }

@@ -118,7 +118,9 @@ existing account session and owner checks. Published access exposes only
 explicitly approved publication snapshots and source files. Jobs are persisted,
 but work executes in the API process rather than a durable external queue;
 server restarts can interrupt an in-flight model stage. Saved source files and
-completed revisions/reports remain available for retry. Pilot account/job limits
+completed revisions/reports remain available for retry. Intermediate inventory and
+audit objects remain in memory until a complete draft is saved; retries currently
+restart analysis from the retained source rather than resuming those objects. Pilot account/job limits
 are enforced; this is not a high-volume public service.
 
 ## Runtime and deployment
@@ -141,8 +143,11 @@ reasoning and cache token counts in the source/processing log when available.
 Output counts include reported reasoning tokens; usage is not a final bill.
 
 Both providers receive the original PDF plus numbered text. Sol uses high
-reasoning and strict structured output; Argon uses high thinking without sampling
-parameters. Per-request model contexts keep simultaneous jobs isolated. Long
+reasoning and strict structured output over a bounded Responses event stream; only
+a completed terminal response is accepted. Its fifteen-minute stage deadline also
+covers any allowed transient retry. A timeout or interrupted stream does not
+automatically duplicate a potentially billed request. Argon uses high thinking
+without sampling parameters. Per-request model contexts keep simultaneous jobs isolated. Long
 reasoning calls have bounded deadlines and refresh the persisted job lease.
 The pinned current one-page source is dated 22 October 2026 and is separate from
 the older prepared baseline. Loading that sample selects the file locally;
