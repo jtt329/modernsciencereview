@@ -41,3 +41,5 @@
 
 /* Permit long subject equations to scroll inside their column on small screens. */
 @media(max-width:900px){.fl-subject-layout{grid-template-columns:minmax(0,1fr)}.fl-subject-toc,.fl-subject-article{min-width:0}}
+
+.fl-original-coverage-link{margin:0 0 15px;font-size:10px!important}.fl-original-coverage-note{display:block;margin-bottom:6px;font-size:8px;line-height:1.9;color:#a2adb3;text-transform:uppercase;letter-spacing:.06em}@media(max-width:600px){.fl-original-coverage-link{font-size:9px!important}.fl-original-coverage-note{font-size:7px}}
