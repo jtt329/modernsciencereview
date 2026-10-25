@@ -1,11 +1,11 @@
 /** A bounded retrieved-literature review, never a novelty proof or author approval. */
 export interface LiteraturePaper {
   id:string; title:string; authors:string[]; year:number|null; doi?:string; arxivId?:string; url:string;
-  provider:'arxiv'|'crossref'; evidenceLevel:'metadata'|'abstract'|'selected-fulltext'; relevance:string;
+  provider:'arxiv'|'crossref'|'inspire'; evidenceLevel:'metadata'|'abstract'|'selected-fulltext'; relevance:string;
   // Abstracts are supplied privately to the model, not republished in evidence downloads.
 }
 export interface LiteratureSearch {
-  provider:'arxiv'|'crossref'; query:string; url:string; status:'searched'|'unavailable';
+  provider:'arxiv'|'crossref'|'inspire'; query:string; url:string; status:'searched'|'unavailable';
   searchedAt:string; resultCount:number; note:string;
 }
 export interface LiteratureAssessment {

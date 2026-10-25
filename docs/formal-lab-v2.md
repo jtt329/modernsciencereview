@@ -321,3 +321,53 @@ contain accepted evidence-linked corrections only, without private conversations
 Queue failure leaves the accepted correction saved and a visible refresh action.
 The single evidence export adds the current assessment and resolution record while
 retaining the original submission and all previous result artifacts.
+
+## Claim-driven verification and restricted canonical reconstruction
+
+The evidence view now includes a claim dependency ledger rather than treating a
+passing equation as certification of every physical statement around it. It maps
+each formal candidate and source assertion to its numbered lines, adopted inputs,
+mathematical prerequisites, existing evidence, supported checker, counterexample
+strategy and concrete next action. Duplicate references are stored once. Counts
+separate distinct checks from the source assertions that reuse them; neither is
+a probability of scientific truth. An unformalized assertion remains open without
+being labeled a paper error.
+
+For a structurally matched Einstein horizon potential, a fixed trusted SymPy
+kernel reconstructs the selected length-work response. Its
+`gaussian-null-eh-v2` implementation computes the local null Einstein–Hilbert
+current from metric/variation jets, tracks endpoint terms, reduces the scalar
+trace, varies the chosen boundary generating functional, imposes the tangent
+nonexpanding restrictions, restores the physical clock and transforms to the
+length coordinate. The complete independent potential differential is compared
+with the selected one-form. The current kernel contains 19 derivation checks and
+four expected-nonzero negative controls, including explicit tests that removing
+required restrictions or changing the boundary functional can change the result.
+The optional stationary area–boost route is distinguished from prerequisites of
+the direct chain.
+
+This is a bounded reconstruction under explicit local gauge, action,
+polarization, normalization, controlled-sector and endpoint premises. It does not
+certify arbitrary covariant/global corner prescriptions, moving cosmological
+boundaries, empirical adequacy or historical firstness. Rewriting an energy
+function does not uniquely select a physical action or mechanical interpretation.
+A shared potential or a passing product identity cannot transfer these checks to
+a thermal law, Newtonian interaction, or the separate FRW screen construction.
+The exact source affinity of each derivation step is preserved.
+
+The scientific model separately assesses open source interpretations, with exact
+source and evidence references. These judgments are labeled source-reviewed
+rather than machine-proved. They cannot override a contradicted mathematical
+prerequisite and do not become a circular input into the mathematical plan.
+Only judgments from the current scientific assessment are shown as current;
+accepted clarifications can make them stale while the unchanged exact checks
+remain available. The single evidence export includes the plan, restricted
+reconstruction, its premises and controls, and the separate source judgments.
+
+`GET /api/formal-lab/submissions/:id/claim-verification` is read-only. Owners may
+select their own exact historical revision; public readers receive only the
+published snapshot. Reloading reconstructs the pure evidence mapping without
+calling a model, fetching references or rerunning the proof kernel. A persisted
+derivation must match the current kernel, manuscript digest, source hash, primary
+source identities and companion passage locators. Redacting private retrieved
+text does not invalidate those content-hash identities.

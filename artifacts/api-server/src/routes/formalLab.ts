@@ -224,7 +224,7 @@ router.post('/formal-lab/submissions/:id/process',identity,async(req,res)=>{
 });
 router.use('/formal-lab/submissions',(req,res,next)=>{
   // Public access is limited to immutable explicitly published snapshots.
-  if(req.method==='GET'&&/^\/[a-f0-9-]{36}(?:\/(?:(?:canonical|literature)-assessment|assessment))?\/?$/.test(req.path)){next();return;}identity(req,res,next);
+  if(req.method==='GET'&&/^\/[a-f0-9-]{36}(?:\/(?:(?:canonical|literature)-assessment|assessment|claim-verification))?\/?$/.test(req.path)){next();return;}identity(req,res,next);
 });
 router.get('/formal-lab/submissions',async(req,res)=>res.json({submissions:await listSubmissions(req.user!.id)}));
 router.post('/formal-lab/submissions',async(req,res)=>{ const pkg=await validateOwnerPackage(req.body?.package,req.user!.id); res.status(201).json(await createSubmission(req.user!.id,pkg,packageDigest(pkg)===exampleDigest?'prepared-example':'author-edit')); });
@@ -286,17 +286,23 @@ async function assessmentSnapshot(req:Request):Promise<{submission:FormalSubmiss
 }
 router.get('/formal-lab/submissions/:id/assessment',async(req,res)=>{
   const {submission,owner}=await assessmentSnapshot(req);
-  const {evidence,...view}=await currentScientificAssessment(submission,owner);
+  const {evidence,claimVerificationPlan,restrictedCanonicalDerivation,...view}=await currentScientificAssessment(submission,owner);
   res.setHeader('Cache-Control',owner?'private,no-store':'public,max-age=30');
   const job=owner&&view.evidenceFingerprint?await readActiveScientificAssessmentJob(owner,{submissionId:submission.id,revisionId:submission.currentRevision.id,revisionDigest:submission.currentRevision.digest,evidenceFingerprint:view.evidenceFingerprint}):null;
   res.json({...view,...(owner?{job}:{})});
+});
+router.get('/formal-lab/submissions/:id/claim-verification',async(req,res)=>{
+  const {submission,owner}=await assessmentSnapshot(req);
+  const view=await currentScientificAssessment(submission,owner);
+  res.setHeader('Cache-Control',owner?'private,no-store':'public,max-age=30');
+  res.json({plan:view.claimVerificationPlan||null,derivation:view.restrictedCanonicalDerivation||null,current:Boolean(view.claimVerificationPlan),assessmentCurrent:view.current,sourceJudgments:view.current?view.assessment?.claimSourceJudgments||[]:[],evidenceFingerprint:view.evidenceFingerprint});
 });
 router.post('/formal-lab/submissions/:id/assessment',async(req,res)=>{
   if(!req.body||typeof req.body.digest!=='string'||Object.keys(req.body).some(k=>!['digest','revisionId'].includes(k)))throw new FormalError('Request an assessment of the exact saved revision.');
   const owner=req.user!.id,submission=await readSubmission(String(req.params.id),owner);
   if(submission.currentRevision.digest!==req.body.digest||req.body.revisionId!==undefined&&req.body.revisionId!==submission.currentRevision.id)throw new FormalError('Refresh the current approved revision before assessing it.',409);
   const job=await startScientificReview(submission,owner);
-  if(job)res.status(202).json(job);else {const {evidence,...view}=await currentScientificAssessment(submission,owner);res.json({...view,job:null});}
+  if(job)res.status(202).json(job);else {const {evidence,claimVerificationPlan,restrictedCanonicalDerivation,...view}=await currentScientificAssessment(submission,owner);res.json({...view,job:null});}
 });
 router.get('/formal-lab/submissions/:id/canonical-assessment',async(req,res)=>{
   const {submission,owner}=await assessmentSnapshot(req);res.setHeader('Cache-Control',owner?'private,no-store':'public,max-age=60');

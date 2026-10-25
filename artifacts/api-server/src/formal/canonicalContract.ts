@@ -2,7 +2,7 @@
 export interface CanonicalSourceExcerpt { id:string; locator:string; text:string; }
 export interface CanonicalReference {
   id:string; title:string; url:string; status:'retrieved'|'unavailable'; retrievedAt:string;
-  sha256?:string; excerpts:CanonicalSourceExcerpt[]; extractionNote:string;
+  sha256?:string; excerpts:CanonicalSourceExcerpt[]; extractionNote:string; origin?:'cited'|'discovered';
 }
 export interface CanonicalExactCheck {
   id:string; title:string; status:'checked'|'contradicted'|'inconclusive';

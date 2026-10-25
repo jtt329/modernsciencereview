@@ -1,3 +1,5 @@
+import type { CanonicalDerivationReport } from './derivationContract';
+import type { ClaimVerificationPlan, ClaimSourceJudgment } from './obligationContract';
 import type { FormalOutputs, VerificationReport } from './contract';
 import type { CanonicalAssessment, CanonicalExactCheck, CanonicalReference } from './canonicalContract';
 import type { LiteratureAssessment } from './literatureContract';
@@ -23,6 +25,8 @@ export interface ScientificAssessmentEvidence {
   actualSourceUncertainties?:{id:string;sourceLineIds:string[];detail:string}[];
   companion?:AssessmentCompanionEvidence[];
   primaryReferences?:CanonicalReference[];
+  restrictedCanonicalDerivation?:CanonicalDerivationReport|null;
+  claimVerificationPlan?:ClaimVerificationPlan|null;
 }
 export interface AssessmentRigor {
   core:{total:number;checked:number;identities:number;definitionRestatements:number;contradicted:number;inconclusive:number;unsupported:number};
@@ -49,6 +53,9 @@ export interface ScientificAssessment {
   tabSummaries:{tab:'verification'|'explanation'|'review'|'source';title:string;text:string;keyPoints:string[]}[];
   rigor:AssessmentRigor;
   geometryEvidence:GeometryAssessment|null;
+  restrictedCanonicalDerivation?:CanonicalDerivationReport|null;
+  claimVerificationPlan?:ClaimVerificationPlan|null;
+  claimSourceJudgments?:ClaimSourceJudgment[];
   primaryReferences:CanonicalReference[];
   companionEvidence:AssessmentCompanionEvidence[];
   actualSourceUncertainties:{id:string;sourceLineIds:string[];detail:string}[];

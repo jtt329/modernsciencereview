@@ -60,20 +60,21 @@ async function boundedHtml(response:Response):Promise<string>{
 }
 /** The submission supplies IDs only through its text. Network destinations are
  * fixed by this server allowlist; arbitrary author/model URLs never get fetched. */
-async function retrieveReferences(source:IngestedSource,catalog:ReadonlyArray<{id:string;version:string;title:string}>):Promise<CanonicalReference[]>{
+async function retrieveReferences(source:IngestedSource,catalog:ReadonlyArray<{id:string;version?:string;title:string;origin?:'cited'|'discovered'}>,citationOnly=true):Promise<CanonicalReference[]>{
   const text=source.lines.map(line=>line.text).join('\n');
-  const cited=catalog.filter(reference=>new RegExp(`(?:^|[^0-9])${reference.id.replace('.','\\.')}(?:v[1-9][0-9]*)?\\b`).test(text));
+  const cited=catalog.filter(reference=>!citationOnly||new RegExp(`(?:^|[^0-9])${reference.id.replace('.','\\.')}(?:v[1-9][0-9]*)?\\b`).test(text));
   const result:CanonicalReference[]=[];
   for(const reference of cited){
-    const url=`https://arxiv.org/html/${reference.id}${reference.version}`;const retrievedAt=new Date().toISOString();
+    const url=`https://arxiv.org/html/${reference.id}${reference.version||''}`;const retrievedAt=new Date().toISOString();
     try{
       const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(30000),headers:{Accept:'text/html'}});
       if(!response.ok||!response.headers.get('content-type')?.toLowerCase().includes('text/html'))throw new Error('unavailable');
-      const html=await boundedHtml(response);const excerpts=canonicalHtmlExcerpts(html,url);if(!excerpts.length)throw new Error('no-excerpts');
-      result.push({id:reference.id,title:reference.title,url,status:'retrieved',retrievedAt,sha256:createHash('sha256').update(html).digest('hex'),excerpts,
-        extractionNote:`Retrieved the versioned primary-source HTML and selected ${excerpts.length} bounded passages about boundary variations and canonical conventions. Passages preserve MathML TeX alttext where available; this is a targeted evidence assessment, not a complete reading or independent proof of the cited paper.`});
+      const html=await boundedHtml(response);let used=0;const budget=Math.min(MAX_REFERENCE_TEXT,Math.floor(185000/Math.max(cited.length,1)));const excerpts=canonicalHtmlExcerpts(html,url).filter(excerpt=>{if(used+excerpt.text.length>budget)return false;used+=excerpt.text.length;return true;});if(!excerpts.length)throw new Error('no-excerpts');
+      const documentTitle=plain(entity(html.match(/<h1\b[^>]*class=["'][^"']*ltx_title_document[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i)?.[1]?.replace(/<[^>]*>/g,' ')||reference.title)).slice(0,500);
+      result.push({id:reference.id,title:documentTitle||reference.title,origin:reference.origin||'cited',url,status:'retrieved',retrievedAt,sha256:createHash('sha256').update(html).digest('hex'),excerpts,
+        extractionNote:`${reference.origin==='discovered'?'Discovered bibliography record; not an author-cited premise. ':''}Retrieved the primary-source HTML (content SHA pins the snapshot) and selected ${excerpts.length} bounded passages about boundary variations and canonical conventions. Passages preserve MathML TeX alttext where available; this is a targeted evidence assessment, not a complete reading or independent proof of the cited paper.`});
     }catch{
-      result.push({id:reference.id,title:reference.title,url,status:'unavailable',retrievedAt,excerpts:[],extractionNote:'The versioned primary-source HTML could not be retrieved within the bounded request. Its contents must not be treated as read evidence.'});
+      result.push({id:reference.id,title:reference.title,origin:reference.origin||'cited',url,status:'unavailable',retrievedAt,excerpts:[],extractionNote:'The versioned primary-source HTML could not be retrieved within the bounded request. Its contents must not be treated as read evidence.'});
     }
   }
   return result;
@@ -81,7 +82,23 @@ async function retrieveReferences(source:IngestedSource,catalog:ReadonlyArray<{i
 
 export async function retrieveCanonicalReferences(source:IngestedSource):Promise<CanonicalReference[]>{return retrieveReferences(source,REFERENCES);}
 /** Includes the separately cited cosmological equilibrium-screen literature. */
-export async function retrieveAssessmentReferences(source:IngestedSource):Promise<CanonicalReference[]>{return retrieveReferences(source,[...REFERENCES,...FRW_REFERENCES]);}
+const ARXIV_ID=/^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v[1-9]\d{0,2})?$/i;
+/** Recognize citation identifiers only; author-supplied hosts are never fetched. */
+export function citedArxivReferenceCatalog(source:IngestedSource){
+  const known=[...REFERENCES,...FRW_REFERENCES],text=source.lines.map(line=>line.text).join('\n');
+  const matches=text.match(/\b(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v[1-9]\d{0,2})?\b/gi)||[];
+  const catalog:Array<{id:string;version?:string;title:string;origin:'cited'}>=[];const seen=new Set<string>();
+  for(const match of matches){if(!ARXIV_ID.test(match))continue;const id=match.replace(/v[1-9]\d{0,2}$/,'');if(seen.has(id))continue;seen.add(id);const fixed=known.find(item=>item.id===id),version=match.slice(id.length)||fixed?.version;
+    catalog.push({id,...(version?{version}:{}),title:fixed?.title||`arXiv ${id}`,origin:'cited'});if(catalog.length>=10)break;
+  }return catalog;
+}
+export async function retrieveAssessmentReferences(source:IngestedSource):Promise<CanonicalReference[]>{return retrieveReferences(source,citedArxivReferenceCatalog(source),false);}
+/** Only identifiers from bounded bibliography records are accepted; requests remain on arxiv.org. */
+export async function retrieveDiscoveredPrimaryReferences(records:{id:string;title:string}[]):Promise<CanonicalReference[]>{
+  if(!Array.isArray(records)||records.length>2||records.some(item=>!ARXIV_ID.test(item.id)||typeof item.title!=='string'||!item.title.trim()||item.title.length>500))throw new FormalError('Invalid bounded discovered reference identifiers.',422);
+  const catalog=records.map(item=>{const id=item.id.replace(/v[1-9]\d{0,2}$/,''),version=item.id.slice(id.length);return{id,...(version?{version}:{}),title:item.title,origin:'discovered' as const};});
+  return retrieveReferences({lines:[]} as unknown as IngestedSource,catalog,false);
+}
 
 let checking=0;
 export async function runCanonicalExactChecks(digest:string):Promise<CanonicalExactCheck[]>{
