@@ -1,6 +1,7 @@
 import type { CoverageItem, CoverageResult, ExplanationSection, FormalOutputs, FormalPackage, FormalReview, IngestedSource, VerificationReport } from './contract';
 import { FormalError, packageDigest } from './package';
 import { callFormalAI } from './model';
+import { recoverCoverageMappings } from './coverageMappings';
 
 const uniq = <T>(items: T[]): T[] => [...new Set(items)];
 const roles = new Set(['mathematical','physical-input','definition','interpretation','empirical','citation','scope','metadata','unassessed']);
@@ -28,7 +29,7 @@ export function buildCoverage(pkg: FormalPackage, report: VerificationReport, so
   const claimIds = new Set(pkg.claims.map(c => c.id));
   const inputIds = new Set(pkg.selectedInputs.map(i => i.id));
   const reportMap = new Map(report.claims.map(c => [c.id, c]));
-  const items: CoverageItem[] = structuredClone(pkg.analysis?.coverage || []);
+  const items: CoverageItem[] = recoverCoverageMappings(pkg, report, structuredClone(pkg.analysis?.coverage || []));
   const itemIds = new Set<string>();
   for (const item of items) {
     if (!item.id || itemIds.has(item.id) || !roles.has(item.role)) throw new FormalError('Invalid or duplicate source coverage item.');

@@ -205,3 +205,73 @@ access; subject-to-source evidence links; reload/revisit behavior; desktop/mobil
 layout; and the existing main site. Unit tests cannot substitute for that actual
 pipeline check. Record observed outcomes separately rather than assuming fixed
 numbers of extracted claims, passing checks or generated sections.
+
+## Review conversations, version history, and research assessments
+
+The current interface has four stages: **Upload → Review & approve → Verify → Results**.
+The review and approval stages share one source-linked view. Approval starts
+verification and output generation immediately. A repeated request reuses the
+same live exact-revision job; a reload does not request another paid analysis.
+A failed publication phase can resume from saved mathematical and explanation
+outputs without regenerating them.
+
+Item-level discussions cover inputs, assumptions, definitions, claims, warnings,
+source statements and lines, and major review/explanation/field sections. The
+server stores each comment before requesting the selected model's response.
+The model can explain disagreement or propose bounded before/after replacements.
+It reads the full current source and formulation, plus existing verification and
+review evidence. Proposed edits are validated as data, checked against exact
+before-values and source IDs, and diagnostically checked across all candidates.
+They are never author approval. Explicit acceptance creates a new unapproved
+revision; old approval, results and publication consent do not carry over.
+Accepted manuscript-line changes create an immutable amended text transcription
+with stable line IDs and ancestry. It is clearly distinguished from the original
+typeset PDF. The original upload and prior reviews remain accessible in history.
+
+Result counters open their exact equation, statement or input lists. Source/log
+issues link to the precise affected item. Derived coverage reconciliation can
+recover a missing link only for an exact atomic ratio identity, matching approved
+symbol names and the identical source-line span, with an independently passing
+check. It never rewrites the approved package or original report; the interface
+shows old and reconciled counts separately. Context, adopted premises, partial
+coverage, unassessed claims and actual contradictions have distinct labels.
+
+Canonical and literature assessments are separate artifacts bound to the exact
+approved revision, digest and source hash. New processing runs attempt them after
+saving the core results; existing runs can request them explicitly. A retrieval
+or model failure preserves the completed core report and leaves an explicit
+research gap with an independent retry action. Public reads require the exact
+published snapshot; private comments and revision history remain owner-only.
+
+The canonical supplement retrieves only allowlisted, versioned primary arXiv
+sources explicitly cited by the manuscript. It assesses action, polarization,
+clock, variations, corners, signs and regime using targeted passages. A separate
+trusted SymPy script checks inverse cut-metric and area identities, every component
+of the four-dimensional Palatini Ricci variation, a stated regular static-horizon
+canonical momentum limit, and scalar/thermal coefficient identities. These are
+fixed prerequisite computations with explicit assumptions, not a generic proof
+compiler for arbitrary null-boundary actions. AI source agreement is labelled
+separately from exact computation; a full canonical derivation is not certified.
+
+The literature supplement plans bounded queries and executes actual public
+arXiv and Crossref metadata searches. It records queries, dates, unavailable
+providers, identifiers, sources and whether metadata, abstracts, or selected
+passages of explicitly cited primary papers were available. Selected passages
+are labelled separately from a full reading of the paper.
+It explains inputs/construction/outputs, the paper's argument, established prior
+work, proposed advances, field placement and remaining limits. Comparisons must
+cite retrieved records; absence of a result is not proof of novelty. Abstracts
+and full retrieved source passages are not republished wholesale in evidence.
+
+The Results view has four tabs: Verification, Explanation, Scientific review, and
+Source & log. Field contribution is an assessment within Scientific review, not
+a duplicate explanation tab. It evaluates novelty, conceptual insight, predictions
+where supplied, and the proposed change to the subject account against the
+retrieved evidence. Existing saved field contributions and publication links are
+preserved.
+
+The single evidence download retains all of the original five-output snapshot and adds
+available research assessments, this revision's authorized private discussions,
+and a labelled public subject snapshot when applicable. The original PDF remains
+a separately linked, hashed file. Missing supplementary data is disclosed in the
+export rather than invented or silently called complete.

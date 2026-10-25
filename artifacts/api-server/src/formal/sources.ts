@@ -4,6 +4,7 @@ import { Worker } from 'node:worker_threads';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { FormalError } from './package';
+import { validateSourceEdits } from './reviewProposal';
 import type { IngestedSource, SourceLine } from './contract';
 let ready:Promise<unknown>|undefined;
 export async function ensureSourceSchema(){
@@ -61,3 +62,34 @@ export async function readSource(id:string,owner?:string,includeBytes=false):Pro
   return {source:row.metadata,bytes:row.file_data,isPublic:row.is_public};
 }
 export async function makeSourcePublic(id:string,owner:string){await ensureSourceSchema();await pool.query('UPDATE formal_lab_sources SET is_public=true WHERE id=$1 AND owner_id=$2',[id,owner]);}
+
+/** Build a clearly labelled text transcription, preserving original page/line IDs.
+ * The uploaded PDF and every earlier source version remain immutable. */
+export function buildAmendedSource(source:IngestedSource,edits:import('./reviewContract').SourceEdit[],reason='Author accepted source clarifications'):{source:import('./reviewContract').AmendedSource;bytes:Buffer}{
+  if(!/^[a-f0-9-]{36}$/.test(source.id)||!/^[a-f0-9]{64}$/.test(source.sha256)||source.fileUrl!==`/api/formal-lab/sources/${source.id}/file`)throw new FormalError('Invalid original source identity.');
+  if(typeof reason!=='string'||!reason.trim()||reason.length>4000)throw new FormalError('An amendment needs a concise explanation.');
+  const checked=validateSourceEdits(source,edits);if(!checked.length)throw new FormalError('An amended source needs at least one changed line.');
+  const byId=new Map(checked.map(edit=>[edit.lineId,edit.after]));const lines=source.lines.map(line=>({...line,text:byId.get(line.id)??line.text}));
+  if(lines.length>900||lines.reduce((sum,line)=>sum+line.text.length,0)>45000)throw new FormalError('The amended source exceeds the complete-analysis pilot bounds.');
+  const id=randomUUID();const createdAt=new Date().toISOString();
+  const previous=(source as import('./reviewContract').AmendedSource).amendment;
+  const rootSourceId=previous?.rootSourceId||source.id;
+  const header=`AMENDED TRANSCRIPTION — NOT THE ORIGINAL UPLOADED PDF\nParent source: ${source.id}\nParent SHA-256: ${source.sha256}\nOriginal source: ${rootSourceId}\nCreated: ${createdAt}\nReason: ${reason}\nStable numbered source lines follow; original PDF page/line locations are retained.\n\n`;
+  const bytes=Buffer.from(header+lines.map(line=>`[${line.id}] ${line.text}`).join('\n')+'\n','utf8');
+  const amended:import('./reviewContract').AmendedSource={...structuredClone(source),id,filename:(source.filename.replace(/\.[^.]+$/,'').slice(0,140)||'paper')+'-amended.txt',mimeType:'text/plain',sha256:createHash('sha256').update(bytes).digest('hex'),lines,createdAt,fileUrl:`/api/formal-lab/sources/${id}/file`,warnings:[...source.warnings,'This is an author-amended text transcription. Numbered locations refer to the original extraction; the uploaded PDF has not been changed.'],events:[...source.events,{at:createdAt,stage:'source-amended',message:`Created an immutable amended transcription from source ${source.id}; ${checked.length} numbered line(s) changed. The original upload is preserved.`}],amendment:{kind:'amended-transcription',parentSourceId:source.id,parentSha256:source.sha256,rootSourceId,createdAt,reason,edits:checked}};
+  return {source:amended,bytes};
+}
+/** Ownership is checked directly, without the public-read fallback in readSource. */
+export async function createAmendedSource(owner:string,sourceId:string,expectedSha256:string,edits:import('./reviewContract').SourceEdit[],reason?:string,transaction?:{query:(sql:string,args?:any[])=>Promise<{rows:any[]}>}):Promise<import('./reviewContract').AmendedSource>{
+  if(typeof owner!=='string'||!owner||owner.length>500||!/^[a-f0-9-]{36}$/.test(sourceId)||!/^[a-f0-9]{64}$/.test(expectedSha256))throw new FormalError('Source not found.',404);
+  await ensureSourceSchema();const database=transaction||pool;
+  const {rows:[row]}=await database.query('SELECT metadata,file_data FROM formal_lab_sources WHERE id=$1 AND owner_id=$2',[sourceId,owner]);
+  if(!row)throw new FormalError('Source not found.',404);
+  const original:IngestedSource=row.metadata;
+  if(original.id!==sourceId||original.sha256!==expectedSha256||!Buffer.isBuffer(row.file_data)||createHash('sha256').update(row.file_data).digest('hex')!==expectedSha256)throw new FormalError('The source identity changed. Reload before accepting an amendment.',409);
+  const built=buildAmendedSource(original,edits,reason);
+  const {rows:[count]}=await database.query('SELECT count(*)::int AS n FROM formal_lab_sources WHERE owner_id=$1',[owner]);
+  if(count.n>=60)throw new FormalError('Prototype limit: 60 uploaded sources and amendments per account.',429);
+  await database.query('INSERT INTO formal_lab_sources(id,owner_id,metadata,file_data) VALUES($1,$2,$3,$4)',[built.source.id,owner,JSON.stringify(built.source),built.bytes]);
+  return built.source;
+}

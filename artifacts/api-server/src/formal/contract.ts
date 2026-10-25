@@ -52,7 +52,7 @@ export interface FormalRevision {
   outputs?: FormalOutputs | null;
   publishConsent?: boolean;
 }
-export interface FormalSubmission { id: string; title: string; currentRevision: FormalRevision; sourceDocument?: IngestedSource; }
+export interface FormalSubmission { id: string; title: string; currentRevision: FormalRevision; sourceDocument?: IngestedSource; coverageAssessment?: CoverageAssessment; }
 
 /** Source-linked ingestion and reporting, v2. A numbered line is extracted text,
  * not a claim that PDF reading order or mathematical transcription is perfect. */
@@ -104,9 +104,9 @@ export interface FormalOutputs {
   processingLog?: { at:string; stage:string; message:string }[];
 }
 export interface FormalJob {
-  id: string; kind: 'analyze' | 'process'; status: 'queued' | 'running' | 'complete' | 'failed';
+  id: string; kind: 'analyze' | 'process' | 'discussion' | 'canonical' | 'literature'; status: 'queued' | 'running' | 'complete' | 'failed';
   stage: string; events: { at: string; stage: string; message: string }[];
-  sourceId?: string; submissionId?: string; error?: string; updatedAt: string;
+  sourceId?: string; submissionId?: string; revisionDigest?: string; revisionId?: string; discussionId?: string; error?: string; updatedAt: string;
   model?: {id: 'current' | 'sol' | 'argon'; label: string; model: string; provider: 'google' | 'openai'};
 }
 export interface FormalSubject {
@@ -116,4 +116,11 @@ export interface FormalSubject {
     sources: { submissionId: string; title: string; revisionId: string; digest: string;
       claimIds: string[]; sourceLineIds: string[]; sourceId: string; sourceUrl: string }[];
   }[];
+}
+
+export interface CoverageAssessment {
+  version:'coverage-reconciliation-v1';packageDigest:string;computedAt:string;coverage:CoverageResult[];
+  summary:{total:number;checked:number;conditionalInputs:number;unresolved:number};
+  originalSummary:{total:number;checked:number;conditionalInputs:number;unresolved:number};
+  corrections:{coverageId:string;previousStatus:CoverageResult['status'];status:CoverageResult['status'];claimIds:string[];reason:string}[];
 }

@@ -26,7 +26,7 @@ function reset(){
  const state={owner:'test-owner',id:null,rows:[]};
  state.query=async(sql,args)=>{
   sql=sql.trim();
-  if(sql.startsWith('CREATE')||sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return {rows:[]};
+  if(sql.startsWith('CREATE')||sql.startsWith('SELECT pg_advisory')||sql==='BEGIN'||sql==='COMMIT'||sql==='ROLLBACK')return {rows:[]};
   if(sql.includes('SELECT count(*)'))return {rows:[{n:0}]};
   if(sql.startsWith('INSERT INTO formal_lab_submissions')){state.id=args[0];return {rows:[]};}
   if(sql.startsWith('INSERT INTO formal_lab_revisions')){const [id,submission_id,revision,pkg,digest,origin,model]=args.length===6?[args[0],args[1],1,...args.slice(2)]:args;state.rows.push({id,submission_id,revision,package:JSON.parse(pkg),digest,origin,model,created_at:new Date(),approved_at:null,verification:null,outputs:null,publish_consent:false});return {rows:[]};}

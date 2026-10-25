@@ -3,6 +3,7 @@ import { pool } from '@workspace/db';
 import type { FormalPackage, FormalRevision, FormalSubmission, VerificationReport, FormalOutputs } from './contract';
 import { FormalError, packageDigest } from './package';
 import { readSource } from './sources';
+import { ensureJobSchema } from './jobSchema';
 let schemaReady: Promise<unknown> | undefined;
 export async function ensureFormalSchema() {
   if(!schemaReady) schemaReady = pool.query(`
@@ -31,6 +32,16 @@ export async function readSubmission(id: string, owner: string): Promise<FormalS
   if(!rows[0]) throw new FormalError('Submission not found.',404);
   const currentRevision=revision(rows[0]);
   const sourceId=currentRevision.package.analysis?.sourceId;
+  const sourceDocument=sourceId?(await readSource(sourceId,owner)).source:undefined;
+  return {id,title:currentRevision.package.title,currentRevision,...(sourceDocument?{sourceDocument}:{})};
+}
+/** Owner-only immutable revision view; its source is resolved from that revision. */
+export async function readRevisionSubmission(id:string,owner:string,revisionId:string):Promise<FormalSubmission> {
+  if(!/^[a-f0-9-]{36}$/.test(id)||!/^[a-f0-9-]{36}$/.test(revisionId))throw new FormalError('Revision not found.',404);
+  await ensureFormalSchema();
+  const {rows:[row]}=await pool.query('SELECT r.* FROM formal_lab_submissions s JOIN formal_lab_revisions r ON r.submission_id=s.id WHERE s.id=$1 AND s.owner_id=$2 AND r.id=$3',[id,owner,revisionId]);
+  if(!row)throw new FormalError('Revision not found.',404);
+  const currentRevision=revision(row);const sourceId=currentRevision.package.analysis?.sourceId;
   const sourceDocument=sourceId?(await readSource(sourceId,owner)).source:undefined;
   return {id,title:currentRevision.package.title,currentRevision,...(sourceDocument?{sourceDocument}:{})};
 }
@@ -70,9 +81,12 @@ export async function createSubmission(owner:string,pkg:FormalPackage,origin:'pr
   return readSubmission(id,owner);
 }
 export async function appendRevision(id:string,owner:string,pkg:FormalPackage,baseDigest:string,origin:'ai'|'author-edit',model:string|null=null) {
-  await readSubmission(id,owner);
+  await readSubmission(id,owner); await ensureJobSchema();
   const client=await pool.connect();
   try { await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('formal-lab-job-capacity',0))");
+    const {rows:[active]}=await client.query("SELECT count(*)::int AS n FROM formal_lab_jobs WHERE owner_id=$1 AND status IN ('queued','running') AND updated_at>now()-interval '15 minutes'",[owner]);
+    if(active.n>0)throw new FormalError('Wait for the running analysis or verification to finish before saving a new revision.',409);
     await client.query('SELECT id FROM formal_lab_submissions WHERE id=$1 AND owner_id=$2 FOR UPDATE',[id,owner]);
     const {rows:[latest]}=await client.query('SELECT * FROM formal_lab_revisions WHERE submission_id=$1 ORDER BY revision DESC LIMIT 1',[id]);
     if(latest.digest!==baseDigest) throw new FormalError('The draft changed. Reload the current revision before saving.',409);

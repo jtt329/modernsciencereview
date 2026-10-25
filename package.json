@@ -16,7 +16,7 @@
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
     "test:review-display": "node scripts/review-display-invariants.mjs",
-    "test:formal": "node --test scripts/formal-lab.test.mjs scripts/formal-outputs.test.mjs scripts/formal-ingest.test.mjs scripts/formal-security.test.mjs scripts/formal-model.test.mjs scripts/formal-ui-polling.test.mjs scripts/formal-provider-ingest.test.mjs scripts/formal-ui-recovery.test.mjs scripts/formal-math-display.test.mjs",
+    "test:formal": "node --test scripts/formal-lab.test.mjs scripts/formal-outputs.test.mjs scripts/formal-ingest.test.mjs scripts/formal-security.test.mjs scripts/formal-model.test.mjs scripts/formal-ui-polling.test.mjs scripts/formal-provider-ingest.test.mjs scripts/formal-ui-recovery.test.mjs scripts/formal-math-display.test.mjs scripts/formal-review-proposal.test.mjs scripts/formal-discussions.test.mjs scripts/formal-review-routes.test.mjs scripts/formal-result-navigation.test.mjs scripts/formal-canonical.test.mjs scripts/formal-literature.test.mjs scripts/formal-coverage-reconciliation.test.mjs scripts/formal-research-store.test.mjs",
     "test:auth": "node --test scripts/auth-session.test.mjs"
   },
   "private": true,
