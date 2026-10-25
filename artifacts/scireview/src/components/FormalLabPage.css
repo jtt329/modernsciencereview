@@ -38,3 +38,6 @@
 .fl-evidence-overview{border:1px solid #e0e9ed;border-radius:7px;margin-bottom:19px;overflow:hidden}.fl-evidence-overview>summary{padding:13px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;font-size:10px;color:#7d98a5;background:#f9fbfc}.fl-evidence-overview>.fl-report-banner{border-radius:0;border-top:1px solid #e0e9ed}.fl-evidence-overview>.fl-summary-grid{margin:13px}.fl-evidence-overview>.fl-reconciliation-note{margin:12px}.fl-extraction-notes>ul,.fl-original-notes>ul{padding:14px 19px 15px 32px;margin:0;font-size:11px;line-height:1.95;color:#8b9fa9}.fl-extraction-notes li+li,.fl-original-notes li+li{margin-top:9px}.fl-extraction-notes{margin:15px 0}.fl-original-review>.fl-details-content{padding:22px}.fl-current-background article>div{font-size:11px;line-height:1.95;color:#8ba0a9}@media(max-width:600px){.fl-evidence-overview>summary{padding:12px;font-size:9px}.fl-extraction-notes>ul,.fl-original-notes>ul{font-size:10px;padding:12px 15px 13px 28px}.fl-original-review>.fl-details-content{padding:14px}}
 
 .fl .fl-button-primary{color:#fff}.fl .fl-button-primary:hover{color:#fff}
+
+/* Permit long subject equations to scroll inside their column on small screens. */
+@media(max-width:900px){.fl-subject-layout{grid-template-columns:minmax(0,1fr)}.fl-subject-toc,.fl-subject-article{min-width:0}}
