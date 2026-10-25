@@ -275,3 +275,49 @@ available research assessments, this revision's authorized private discussions,
 and a labelled public subject snapshot when applicable. The original PDF remains
 a separately linked, hashed file. Missing supplementary data is disclosed in the
 export rather than invented or silently called complete.
+
+
+## Public library, current assessment and author corrections
+
+`/formal-lab` now browses explicitly published papers and source-linked subject
+accounts. `/formal-lab/submit` opens the upload workflow; existing
+`/formal-lab?submission=...` review links remain valid. Public cards come only
+from the latest published snapshot, never a newer private author draft. Subject
+maps link the actual existing compiled paragraphs and their source evidence.
+
+A separate, append-only scientific assessment synthesizes the exact approved
+source, original verification, canonical and literature supplements, accepted
+review corrections, and cited supporting material. Its evidence fingerprint is
+recomputed on reads; a changed input makes the assessment visibly stale. Reading
+or reloading never starts an AI call. Existing papers can explicitly refresh the
+assessment; new verification runs attempt it after preserving completed outputs.
+Its overall summary and four tab summaries distinguish established conditional
+mathematics, adopted standard premises, proposed contribution and genuine open
+questions. Publication readiness is a qualified scientific assessment, not new
+author approval or publication consent.
+
+Rigor counts are computed from actual evidence, not chosen by the model. Original
+scalar claims, canonical prerequisites, fixed geometry checks, source coverage and
+literature access are separate categories, never a percentage of scientific truth.
+The fixed Rindler supplement checks six declared geometric statements using 26
+coordinate/component identities. It establishes the specified normal distance,
+reference acceleration and independent planar area; it does not certify arbitrary
+tensor equations or a complete general null-boundary variational theorem.
+
+The source-aware assessment retrieves five allowlisted primary papers, including
+Cai–Kim and Akbar–Cai. It distinguishes instantaneous equilibrium screen pressure
+from dynamical horizon-temperature and bulk work-density conventions. Explicitly
+identified companion excerpts can supply cited canonical derivation context,
+with URL, page locators and a content hash. They never replace or silently amend
+the primary manuscript.
+
+Saved discussions may now propose review-only resolutions separately from
+manuscript amendments. An author explicitly accepts a bounded, fingerprinted
+before/after correction or disposition. The immutable resolution ledger preserves
+the original review, source, approved package and exact check results. A review
+refresh considers accepted corrections across all sections; accepting a comment
+does not by itself mark an open scientific concern resolved. Public overlays
+contain accepted evidence-linked corrections only, without private conversations.
+Queue failure leaves the accepted correction saved and a visible refresh action.
+The single evidence export adds the current assessment and resolution record while
+retaining the original submission and all previous result artifacts.

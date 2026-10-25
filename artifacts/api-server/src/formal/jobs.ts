@@ -6,11 +6,12 @@ import type{FormalJob}from './contract';
 import {ensureCanonicalSchema} from './canonicalStore';
 import {ensureLiteratureSchema} from './literatureStore';
 import {ensureJobSchema} from './jobSchema';
+import {ensureScientificAssessmentSchema} from './assessmentStore';
 export {ensureJobSchema} from './jobSchema';
 const live=new Set<string>();
-type JobReferences = {sourceId?:string;submissionId?:string;model?:FormalJob['model'];revisionDigest?:string;discussionId?:string;revisionId?:string};
-async function reserveJob(owner:string,kind:FormalJob['kind'],refs:JobReferences,reuseProcess=false,assessmentKind?:'canonical'|'literature'):Promise<{job:FormalJob|null;created:boolean}>{
-  await ensureJobSchema();if(assessmentKind==='canonical')await ensureCanonicalSchema();if(assessmentKind==='literature')await ensureLiteratureSchema();
+type JobReferences = {sourceId?:string;submissionId?:string;model?:FormalJob['model'];revisionDigest?:string;discussionId?:string;revisionId?:string;evidenceFingerprint?:string};
+async function reserveJob(owner:string,kind:FormalJob['kind'],refs:JobReferences,reuseProcess=false,assessmentKind?:'canonical'|'literature'|'assessment'):Promise<{job:FormalJob|null;created:boolean}>{
+  await ensureJobSchema();if(assessmentKind==='canonical')await ensureCanonicalSchema();if(assessmentKind==='literature')await ensureLiteratureSchema();if(assessmentKind==='assessment')await ensureScientificAssessmentSchema();
   const client=await pool.connect();
   try{
     await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('formal-lab-job-capacity',0))");
@@ -27,10 +28,11 @@ async function reserveJob(owner:string,kind:FormalJob['kind'],refs:JobReferences
     if(assessmentKind){
       const {rows:[revision]}=await client.query('SELECT r.digest,r.approved_at FROM formal_lab_submissions s JOIN formal_lab_revisions r ON r.submission_id=s.id WHERE s.id=$1 AND s.owner_id=$2 AND r.id=$3 FOR UPDATE OF s',[refs.submissionId,owner,refs.revisionId]);
       if(!revision||!revision.approved_at||revision.digest!==refs.revisionDigest)throw new FormalError('This assessment requires the exact author-approved revision.',409);
-      const {rows:[existing]}=await client.query(`SELECT metadata FROM formal_lab_jobs WHERE owner_id=$1 AND kind='${assessmentKind}' AND metadata->>'submissionId'=$2 AND metadata->>'revisionId'=$3 AND metadata->>'revisionDigest'=$4 AND status IN ('queued','running') AND updated_at>now()-interval '15 minutes' ORDER BY created_at DESC LIMIT 1`,[owner,refs.submissionId,refs.revisionId,refs.revisionDigest]);
+      const {rows:[existing]}=await client.query(`SELECT metadata FROM formal_lab_jobs WHERE owner_id=$1 AND kind='${assessmentKind}' AND metadata->>'submissionId'=$2 AND metadata->>'revisionId'=$3 AND metadata->>'revisionDigest'=$4 AND ($5::text IS NULL OR metadata->>'evidenceFingerprint'=$5) AND status IN ('queued','running') AND updated_at>now()-interval '15 minutes' ORDER BY created_at DESC LIMIT 1`,[owner,refs.submissionId,refs.revisionId,refs.revisionDigest,refs.evidenceFingerprint||null]);
       if(existing){await client.query('COMMIT');return {job:existing.metadata,created:false};}
-      const table=assessmentKind==='canonical'?'formal_lab_canonical_assessments':'formal_lab_literature_assessments';
-      const {rows:[saved]}=await client.query(`SELECT id FROM ${table} WHERE submission_id=$1 AND owner_id=$2 AND revision_id=$3 AND package_digest=$4 LIMIT 1`,[refs.submissionId,owner,refs.revisionId,refs.revisionDigest]);
+      const table=assessmentKind==='canonical'?'formal_lab_canonical_assessments':assessmentKind==='literature'?'formal_lab_literature_assessments':'formal_lab_scientific_assessments';
+      const fingerprintClause=assessmentKind==='assessment'?' AND evidence_fingerprint=$5':'';
+      const {rows:[saved]}=await client.query(`SELECT id FROM ${table} WHERE submission_id=$1 AND owner_id=$2 AND revision_id=$3 AND package_digest=$4${fingerprintClause} LIMIT 1`,[refs.submissionId,owner,refs.revisionId,refs.revisionDigest,...(assessmentKind==='assessment'?[refs.evidenceFingerprint]:[])]);
       if(saved){await client.query('COMMIT');return {job:null,created:false};}
     }
     if(kind==='discussion'){
@@ -52,6 +54,11 @@ export async function createJob(owner:string,kind:FormalJob['kind'],refs:JobRefe
 export async function createOrReuseProcessJob(owner:string,refs:JobReferences&{submissionId:string;revisionDigest:string}){return reserveJob(owner,'process',refs,true);}
 export async function createOrReuseCanonicalJob(owner:string,refs:JobReferences&{submissionId:string;revisionId:string;revisionDigest:string}){return reserveJob(owner,'canonical',refs,false,'canonical');}
 export async function createOrReuseLiteratureJob(owner:string,refs:JobReferences&{submissionId:string;revisionId:string;revisionDigest:string}){return reserveJob(owner,'literature',refs,false,'literature');}
+export async function createOrReuseScientificAssessmentJob(owner:string,refs:JobReferences&{submissionId:string;revisionId:string;revisionDigest:string;evidenceFingerprint:string}){return reserveJob(owner,'assessment',refs,false,'assessment');}
+export async function readActiveScientificAssessmentJob(owner:string,refs:{submissionId:string;revisionId:string;revisionDigest:string;evidenceFingerprint:string}):Promise<FormalJob|null>{
+  await ensureJobSchema();const {rows:[row]}=await pool.query("SELECT id FROM formal_lab_jobs WHERE owner_id=$1 AND kind='assessment' AND metadata->>'submissionId'=$2 AND metadata->>'revisionId'=$3 AND metadata->>'revisionDigest'=$4 AND metadata->>'evidenceFingerprint'=$5 AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1",[owner,refs.submissionId,refs.revisionId,refs.revisionDigest,refs.evidenceFingerprint]);
+  if(!row)return null;const job=await readJob(row.id,owner);return job.kind==='assessment'&&job.revisionId===refs.revisionId&&job.revisionDigest===refs.revisionDigest&&job.evidenceFingerprint===refs.evidenceFingerprint&&['queued','running'].includes(job.status)?job:null;
+}
 /** Read-only recovery of an owner's exact supplemental job; never used by public views. */
 export async function readActiveAssessmentJob(owner:string,kind:'canonical'|'literature',refs:{submissionId:string;revisionId:string;revisionDigest:string}):Promise<FormalJob|null>{
   await ensureJobSchema();

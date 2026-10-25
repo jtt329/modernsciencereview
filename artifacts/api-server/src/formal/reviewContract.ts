@@ -2,7 +2,7 @@ import type { IngestedSource } from './contract';
 
 /** Review comments address one stable scientific item in an exact revision. */
 export interface ReviewTarget {
-  kind: 'main-claim' | 'input' | 'assumption' | 'definition' | 'claim' | 'warning' | 'coverage' | 'source-line' | 'review-section' | 'explanation-section' | 'field-contribution' | 'canonical-finding' | 'literature-section';
+  kind: 'main-claim' | 'input' | 'assumption' | 'definition' | 'claim' | 'warning' | 'coverage' | 'source-line' | 'review-section' | 'explanation-section' | 'field-contribution' | 'canonical-finding' | 'literature-section' | 'assessment-issue' | 'assessment-section';
   id: string;
 }
 export type ReviewJson = null | boolean | number | string | ReviewJson[] | { [key: string]: ReviewJson };

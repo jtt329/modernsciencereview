@@ -104,9 +104,9 @@ export interface FormalOutputs {
   processingLog?: { at:string; stage:string; message:string }[];
 }
 export interface FormalJob {
-  id: string; kind: 'analyze' | 'process' | 'discussion' | 'canonical' | 'literature'; status: 'queued' | 'running' | 'complete' | 'failed';
+  id: string; kind: 'analyze' | 'process' | 'discussion' | 'canonical' | 'literature' | 'assessment'; status: 'queued' | 'running' | 'complete' | 'failed';
   stage: string; events: { at: string; stage: string; message: string }[];
-  sourceId?: string; submissionId?: string; revisionDigest?: string; revisionId?: string; discussionId?: string; error?: string; updatedAt: string;
+  sourceId?: string; submissionId?: string; revisionDigest?: string; revisionId?: string; evidenceFingerprint?: string; discussionId?: string; error?: string; updatedAt: string;
   model?: {id: 'current' | 'sol' | 'argon'; label: string; model: string; provider: 'google' | 'openai'};
 }
 export interface FormalSubject {

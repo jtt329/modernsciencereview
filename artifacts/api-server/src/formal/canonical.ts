@@ -13,6 +13,10 @@ const REFERENCES = Object.freeze([
   {id:'2309.03854',version:'v3',title:'General gravitational charges on null hypersurfaces'},
   {id:'1303.1535',version:'v2',title:'The Structure of the Gravitational Action and its relation with Horizon Thermodynamics and Emergent Gravity Paradigm'},
 ]);
+const FRW_REFERENCES = Object.freeze([
+  {id:'hep-th/0501055',version:'v1',title:'First Law of Thermodynamics and Friedmann Equations of Friedmann-Robertson-Walker Universe'},
+  {id:'hep-th/0609128',version:'v4',title:'Thermodynamic Behavior of Friedmann Equation at Apparent Horizon of FRW Universe'},
+]);
 const DIGEST=/^[a-f0-9]{64}$/;
 const CANONICAL=/canonical|symplectic|mixed.boundary|non.?expanding|Θ|Theta|\\Theta|δκ|delta.?kappa/i;
 const MAX_HTML=6*1024*1024;
@@ -37,7 +41,7 @@ export function canonicalHtmlExcerpts(html:string,url:string):CanonicalSourceExc
     const text=plain(entity(match[3].replace(/<[^>]*>/g,' ')));
     if(text.length<12)continue;
     const anchor=match[2].match(/\bid\s*=\s*["']([A-Za-z0-9_.:-]{1,120})["']/i)?.[1];
-    const hits=text.match(/symplectic|polarization|canonical|boundary|corner|non.expanding|stationar|inaffinity|surface.gravity|delta|\\delta|kappa|\\kappa|expansion|fixed|variation|horizon|temperature/gi)||[];
+    const hits=text.match(/symplectic|polarization|canonical|boundary|corner|non.expanding|stationar|inaffinity|surface.gravity|Friedmann|apparent|work.density|energy.supply|delta|\\delta|kappa|\\kappa|expansion|fixed|variation|horizon|temperature/gi)||[];
     // Preserve stable source order after ranking. Formula-sized truncation is
     // disclosed and never called a full-paper review.
     blocks.push({index:index++,score:hits.length+(anchor?1:0),value:{id:`excerpt-${index}`,locator:anchor?`${url}#${anchor}`:`${url} (extracted block ${index})`,text:text.length>4000?text.slice(0,3970)+' [excerpt truncated]':text}});
@@ -56,9 +60,9 @@ async function boundedHtml(response:Response):Promise<string>{
 }
 /** The submission supplies IDs only through its text. Network destinations are
  * fixed by this server allowlist; arbitrary author/model URLs never get fetched. */
-export async function retrieveCanonicalReferences(source:IngestedSource):Promise<CanonicalReference[]>{
+async function retrieveReferences(source:IngestedSource,catalog:ReadonlyArray<{id:string;version:string;title:string}>):Promise<CanonicalReference[]>{
   const text=source.lines.map(line=>line.text).join('\n');
-  const cited=REFERENCES.filter(reference=>new RegExp(`(?:^|[^0-9])${reference.id.replace('.','\\.')}(?:v[1-9][0-9]*)?\\b`).test(text));
+  const cited=catalog.filter(reference=>new RegExp(`(?:^|[^0-9])${reference.id.replace('.','\\.')}(?:v[1-9][0-9]*)?\\b`).test(text));
   const result:CanonicalReference[]=[];
   for(const reference of cited){
     const url=`https://arxiv.org/html/${reference.id}${reference.version}`;const retrievedAt=new Date().toISOString();
@@ -74,6 +78,10 @@ export async function retrieveCanonicalReferences(source:IngestedSource):Promise
   }
   return result;
 }
+
+export async function retrieveCanonicalReferences(source:IngestedSource):Promise<CanonicalReference[]>{return retrieveReferences(source,REFERENCES);}
+/** Includes the separately cited cosmological equilibrium-screen literature. */
+export async function retrieveAssessmentReferences(source:IngestedSource):Promise<CanonicalReference[]>{return retrieveReferences(source,[...REFERENCES,...FRW_REFERENCES]);}
 
 let checking=0;
 export async function runCanonicalExactChecks(digest:string):Promise<CanonicalExactCheck[]>{

@@ -1,4 +1,5 @@
 import type { FormalPackage, IngestedSource, FormalOutputs } from './contract';
+import type {ScientificAssessment} from './assessmentContract';
 import type {CanonicalAssessment} from './canonicalContract';
 import type {LiteratureAssessment} from './literatureContract';
 import type { AmendedSource, ReviewProposal, ReviewTarget, SourceEdit } from './reviewContract';
@@ -46,7 +47,7 @@ function sourceIdentity(pkg: FormalPackage, source: IngestedSource): void {
   for (const item of [...pkg.analysis!.inputReferences, ...pkg.analysis!.claimReferences]) for (const id of item.sourceLineIds) if (!lineIds.has(id)) fail('A reference names a line outside this numbered source.');
   if (referenced.size !== lineIds.size) fail('Every numbered source line must remain represented in coverage.');
 }
-export function validateReviewTarget(pkg: FormalPackage, source: IngestedSource, value: unknown, context?: { outputs?: FormalOutputs;canonicalAssessment?:CanonicalAssessment;literatureAssessment?:LiteratureAssessment }): ReviewTarget {
+export function validateReviewTarget(pkg: FormalPackage, source: IngestedSource, value: unknown, context?: { outputs?: FormalOutputs;canonicalAssessment?:CanonicalAssessment;literatureAssessment?:LiteratureAssessment;scientificAssessment?:ScientificAssessment }): ReviewTarget {
   sourceIdentity(pkg, source);
   record(value, ['kind', 'id'], 'Comment target'); text(value.id, 'Comment target ID', 120);
   const indexed = (prefix: string, items: unknown[]) => { const match = value.id.match(new RegExp(`^${prefix}-(0|[1-9][0-9]*)$`)); return !!match && Number(match[1]) < items.length; };
@@ -62,7 +63,9 @@ export function validateReviewTarget(pkg: FormalPackage, source: IngestedSource,
     : value.kind === 'explanation-section' ? !!context?.outputs?.explanation.some(item => item.id === value.id)
     : value.kind === 'field-contribution' ? !!context?.outputs?.contributions.some(item => item.id === value.id)
     : value.kind === 'canonical-finding' ? !!context?.canonicalAssessment?.findings.some(item => item.id === value.id)
-    : value.kind === 'literature-section' ? !!context?.literatureAssessment?.sections.some(item => item.id === value.id) : false;
+    : value.kind === 'literature-section' ? !!context?.literatureAssessment?.sections.some(item => item.id === value.id)
+    : value.kind === 'assessment-issue' ? !!context?.scientificAssessment?.issues.some(item=>item.id===value.id)
+    : value.kind === 'assessment-section' ? !!context?.scientificAssessment?.sections.some(item=>item.id===value.id) : false;
   if (!valid) fail('The comment target is not part of this revision.');
   return structuredClone(value) as ReviewTarget;
 }
