@@ -371,3 +371,64 @@ calling a model, fetching references or rerunning the proof kernel. A persisted
 derivation must match the current kernel, manuscript digest, source hash, primary
 source identities and companion passage locators. Redacting private retrieved
 text does not invalidate those content-hash identities.
+
+## Optional author preparation brief
+
+An upload can include optional, bounded author pointers for main claims, inputs,
+construction, outputs, proposed novelty, predictions, empirical claims, scope and
+prior work. These remain separate from the original source and are supplied to
+inventory, audit, formalization and structural-repair stages as untrusted intent,
+never as evidence, a silently adopted premise or approval. The empirical selector
+distinguishes unspecified from an explicit author statement of none or present;
+source assertions are retained when they conflict with that pointer.
+
+The source-linked preparation preview reuses the actual structured package and
+numbered coverage without another AI call. It labels linked drafts, unlinked
+package proposals and absent fields, and displays saved author text separately.
+A missing statement is left blank rather than filled with invented novelty,
+predictions or applicability claims. Merely reporting no experiment does not
+establish that the paper makes no empirical claim.
+
+Guidance fields are optional trimmed strings, at most 6,000 characters each and
+24,000 combined. Empty/default guidance is omitted so existing package digests
+remain unchanged. Supplied guidance becomes part of an immutable new package;
+editing it uses the existing new-revision path and therefore requires fresh
+approval. The original manuscript, scientific evidence and earlier approval are
+preserved in their original revision.
+
+### Consolidated reader assessment and scoped novelty
+
+Results have three prominent tabs immediately below publication readiness:
+Verification, Scientific review, and Source & log. Scientific review opens with
+an abstract-style account of the central claim, supported correctness, contribution
+relative to examined work, and significance. The source-linked explanation is
+inside that review. Legacy explanation links open the same integrated section;
+the complete evidence export retains the underlying explanation and older tab
+summary records. `/boundary-mechanics` is the public alias for the approved
+boundary-mechanics submission; its original submission URL remains valid.
+
+Fresh scientific assessments classify actual empirical claims separately from
+mathematical/theoretical results. A theory paper with no empirical assertion does
+not acquire a missing-experiment defect. “What the review added” identifies actual
+computations, source assessments, comparisons, and proposed clarifications with
+source/check references and status. The trusted local Einstein–Hilbert procedure
+is developer-provided, selected from matching approved expressions and run under
+explicit premises; it is not an AI-invented general proof or a manuscript edit.
+Companion manuscripts remain labelled supporting context.
+
+Literature supplements include claim-specific novelty findings, qualitative
+confidence with reasons and limits, and closest-paper comparisons linked to
+actually retrieved passage locators and content hashes. INSPIRE reference/citation
+neighborhoods and a bounded alternate-query round expand discovery. The public
+audit lists discovered, assessed, excluded and currently unavailable records;
+prior failed requests remain in the search history after successful retries.
+Only assessed paper IDs can be cited in the structured judgment. Related metadata
+or an absent hit cannot establish priority; an “already known” verdict requires an
+earlier matching-result passage. Public evidence contains metadata and locators,
+not republished external source prose.
+
+Older assessments remain readable history. A feature-compatibility check lets an
+explicit owner request append the enhanced assessment while preserving the
+approved package, mathematical report, consent and evidence fingerprint. GETs do
+not invoke inference. Concurrent explicit requests reuse one locked job, and a
+current enhanced result is reused without paid repetition.

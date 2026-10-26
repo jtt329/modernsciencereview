@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { pool } from '@workspace/db';
 import type { LiteratureAssessment } from './literatureContract';
+import { validateStoredLiteratureEnhancements } from './literatureNovelty';
 import { FormalError } from './package';
 let ready:Promise<unknown>|undefined;
 export async function ensureLiteratureSchema(){
@@ -11,9 +12,11 @@ export async function readLiteratureAssessment(submissionId:string,owner:string,
 }
 export async function recordLiteratureAssessment(submissionId:string,owner:string,revisionId:string,report:LiteratureAssessment):Promise<LiteratureAssessment>{
   if(report?.version!=='literature-assessment-v1'||report.noveltyEstablished!==false||report.status!=='bounded-literature-assessment'||!Array.isArray(report.searches)||!Array.isArray(report.papers)||!Array.isArray(report.sections)||!Array.isArray(report.comparisons)||JSON.stringify(report).length>500000)throw new FormalError('Invalid literature assessment or unsupported novelty verdict.');
+  validateStoredLiteratureEnhancements(report);
   await ensureLiteratureSchema();const client=await pool.connect();
   try{await client.query('BEGIN');const {rows:[revision]}=await client.query(`SELECT r.digest,r.approved_at,r.package FROM formal_lab_submissions s JOIN formal_lab_revisions r ON r.submission_id=s.id WHERE s.id=$1 AND s.owner_id=$2 AND r.id=$3 FOR UPDATE OF r`,[submissionId,owner,revisionId]);
     if(!revision||!revision.approved_at||revision.digest!==report.packageDigest||revision.package.analysis?.sourceId!==report.sourceId||revision.package.source.sha256!==report.sourceSha256)throw new FormalError('Literature evidence must match an author-approved source and exact revision.',409);
+    validateStoredLiteratureEnhancements(report,revision.package);
     await client.query('INSERT INTO formal_lab_literature_assessments(id,revision_id,submission_id,owner_id,package_digest,report) VALUES($1,$2,$3,$4,$5,$6)',[randomUUID(),revisionId,submissionId,owner,report.packageDigest,JSON.stringify(report)]);await client.query('COMMIT');return report;
   }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
 }

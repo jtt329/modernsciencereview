@@ -13,6 +13,24 @@ export interface FormalSymbol { name: string; label: string; domain: 'real' | 'p
 export interface FormalDefinition { symbol: string; expression: Expr; description: string; }
 export interface FormalClaim { id: string; title: string; lhs: Expr; rhs: Expr; explanation: string; }
 export interface FormalInput { id: string; version: string; title: string; statement: string; sourceUrl?: string; }
+/** Optional author pointers, kept separate from manuscript evidence and approval. */
+export type AuthorGuidanceField = 'mainClaims' | 'inputs' | 'construction' | 'outputs' | 'novelty' | 'predictions' | 'empiricalClaims' | 'scope' | 'priorWork';
+export type AuthorEmpiricalStatus = 'unspecified' | 'none' | 'present';
+export interface AuthorSubmissionGuidance {
+  mainClaims?:string;inputs?:string;construction?:string;outputs?:string;novelty?:string;
+  predictions?:string;empiricalClaims?:string;scope?:string;priorWork?:string;
+  empiricalStatus?:AuthorEmpiricalStatus;
+}
+export interface AuthorSubmissionBriefSection {
+  id:AuthorGuidanceField;title:string;text:string;
+  basis:'source-linked-draft'|'package-proposal'|'author-guidance'|'not-stated';
+  sourceLineIds:string[];inputIds:string[];claimIds:string[];note:string;authorText?:string;
+}
+export interface AuthorSubmissionBrief {
+  version:'author-submission-brief-v1';sections:AuthorSubmissionBriefSection[];
+  empirical:{status:AuthorEmpiricalStatus;sourceStatus:AuthorEmpiricalStatus;authorStatus:AuthorEmpiricalStatus;basis:'source-linked-draft'|'author-guidance'|'not-stated';sourceLineIds:string[];conflict:boolean;notes:string[]};
+  limitations:string[];
+}
 export interface FormalPackage {
   schemaVersion: 'formal-lab-v1';
   title: string;
@@ -27,6 +45,7 @@ export interface FormalPackage {
   consequences: { title: string; text: string; claimIds: string[] }[];
   limitations: string[];
   analysis?: FormalAnalysis;
+  authorGuidance?:AuthorSubmissionGuidance;
 }
 export type ClaimStatus = 'checked' | 'contradicted' | 'unsupported' | 'inconclusive';
 export interface VerificationReport {

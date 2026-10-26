@@ -294,7 +294,7 @@ function readRoute() {
         : null,
     showHowItWorks: path === '/how-it-works',
     showSandbox: path === '/admin/sandbox',
-    showFormalLab: /^\/formal-lab(?:\/|$)/.test(path) && !path.endsWith('.pdf'),
+    showFormalLab: (/^\/formal-lab(?:\/|$)/.test(path) || /^\/boundary-mechanics\/?$/.test(path)) && !path.endsWith('.pdf'),
     usedLegacyPaperQuery: !paperMatch && !!queryPaper,
   };
 }

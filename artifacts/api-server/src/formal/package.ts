@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { FormalPackage } from './contract';
+import {normalizeAuthorGuidance} from './authorGuidance';
 
 export function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -22,7 +23,8 @@ export function validatePackage(value: unknown): FormalPackage {
   const p: any = structuredClone(value);
   object(p, 'Package');
   if (JSON.stringify(p).length > 600_000) fail('Package is too large (600 KB maximum).');
-  keys(p, ['schemaVersion','title','authors','source','selectedInputs','mainClaim','assumptions','symbols','definitions','claims','consequences','limitations','analysis'], 'Package');
+  keys(p, ['schemaVersion','title','authors','source','selectedInputs','mainClaim','assumptions','symbols','definitions','claims','consequences','limitations','analysis','authorGuidance'], 'Package');
+  if(Object.prototype.hasOwnProperty.call(p,'authorGuidance')){const guidance=normalizeAuthorGuidance(p.authorGuidance);if(guidance)p.authorGuidance=guidance;else delete p.authorGuidance;}
   if (p.schemaVersion !== 'formal-lab-v1') fail('Unsupported package version.');
   text(p.title, 'Title', 300); text(p.authors, 'Authors', 300, false); text(p.mainClaim, 'Main claim', 6000);
   object(p.source, 'Source'); keys(p.source, ['title','url','version','sha256','excerpt'], 'Source');

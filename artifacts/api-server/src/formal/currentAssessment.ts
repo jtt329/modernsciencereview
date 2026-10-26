@@ -9,6 +9,7 @@ import {buildReviewResolutionOverlay} from './reviewResolution';
 import {assessmentEvidenceFingerprint} from './assessment';
 import {buildClaimVerificationPlan} from './obligations';
 import {derivationReportMatches} from './derivation';
+import {hasCurrentLiteratureEvidence,hasCurrentScientificAssessment} from './assessmentCompatibility';
 
 /** Reading a summary never starts inference, redoes a proof, or changes the original report. */
 export async function currentScientificAssessment(submission:FormalSubmission,owner?:string){
@@ -27,7 +28,7 @@ export async function currentScientificAssessment(submission:FormalSubmission,ow
     restrictedCanonicalDerivation,claimVerificationPlan,geometry:assessment?.geometryEvidence||null,primaryReferences:assessment?.primaryReferences||[],companion:assessment?.companionEvidence||[],actualSourceUncertainties:assessment?.actualSourceUncertainties||[],resolutionOverlay:overlay,
   }:null;
   const evidenceFingerprint=evidence?assessmentEvidenceFingerprint(r.package,submission.sourceDocument!,evidence):null;
-  return {assessment,claimVerificationPlan,restrictedCanonicalDerivation,current:Boolean(assessment&&assessment.evidenceFingerprint===evidenceFingerprint),geometry:assessment?.geometryEvidence||null,resolutionOverlay:overlay,evidenceFingerprint,evidence};
+  return {assessment,claimVerificationPlan,restrictedCanonicalDerivation,current:Boolean(evidenceFingerprint&&hasCurrentScientificAssessment(assessment,{packageDigest:r.digest,sourceId:submission.sourceDocument?.id,sourceSha256:submission.sourceDocument?.sha256,evidenceFingerprint,requiresNoveltyEvidence:hasCurrentLiteratureEvidence(literature,{packageDigest:r.digest,sourceId:submission.sourceDocument?.id,sourceSha256:submission.sourceDocument?.sha256})})),geometry:assessment?.geometryEvidence||null,resolutionOverlay:overlay,evidenceFingerprint,evidence};
 }
 export async function publishedAssessmentCard(submission:FormalSubmission):Promise<PublishedFormalPaper['assessment']|undefined>{
   const view=await currentScientificAssessment(submission);

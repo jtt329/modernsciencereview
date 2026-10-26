@@ -8,10 +8,12 @@ import {ensureLiteratureSchema} from './literatureStore';
 import {ensureJobSchema} from './jobSchema';
 import {ensureScientificAssessmentSchema} from './assessmentStore';
 export {ensureJobSchema} from './jobSchema';
+import {hasCurrentLiteratureEvidence,hasCurrentScientificAssessment} from './assessmentCompatibility';
+export {hasCurrentLiteratureEvidence} from './assessmentCompatibility';
 const live=new Set<string>();
 type JobReferences = {sourceId?:string;submissionId?:string;model?:FormalJob['model'];revisionDigest?:string;discussionId?:string;revisionId?:string;evidenceFingerprint?:string};
 async function reserveJob(owner:string,kind:FormalJob['kind'],refs:JobReferences,reuseProcess=false,assessmentKind?:'canonical'|'literature'|'assessment'):Promise<{job:FormalJob|null;created:boolean}>{
-  await ensureJobSchema();if(assessmentKind==='canonical')await ensureCanonicalSchema();if(assessmentKind==='literature')await ensureLiteratureSchema();if(assessmentKind==='assessment')await ensureScientificAssessmentSchema();
+  await ensureJobSchema();if(assessmentKind==='canonical')await ensureCanonicalSchema();if(assessmentKind==='literature'||assessmentKind==='assessment')await ensureLiteratureSchema();if(assessmentKind==='assessment')await ensureScientificAssessmentSchema();
   const client=await pool.connect();
   try{
     await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('formal-lab-job-capacity',0))");
@@ -32,8 +34,17 @@ async function reserveJob(owner:string,kind:FormalJob['kind'],refs:JobReferences
       if(existing){await client.query('COMMIT');return {job:existing.metadata,created:false};}
       const table=assessmentKind==='canonical'?'formal_lab_canonical_assessments':assessmentKind==='literature'?'formal_lab_literature_assessments':'formal_lab_scientific_assessments';
       const fingerprintClause=assessmentKind==='assessment'?' AND evidence_fingerprint=$5':'';
-      const {rows:[saved]}=await client.query(`SELECT id FROM ${table} WHERE submission_id=$1 AND owner_id=$2 AND revision_id=$3 AND package_digest=$4${fingerprintClause} LIMIT 1`,[refs.submissionId,owner,refs.revisionId,refs.revisionDigest,...(assessmentKind==='assessment'?[refs.evidenceFingerprint]:[])]);
-      if(saved){await client.query('COMMIT');return {job:null,created:false};}
+      const savedFields=assessmentKind==='canonical'?'id':'id,report';
+      const newest=assessmentKind==='canonical'?'':' ORDER BY created_at DESC,id DESC';
+      const {rows:[saved]}=await client.query(`SELECT ${savedFields} FROM ${table} WHERE submission_id=$1 AND owner_id=$2 AND revision_id=$3 AND package_digest=$4${fingerprintClause}${newest} LIMIT 1`,[refs.submissionId,owner,refs.revisionId,refs.revisionDigest,...(assessmentKind==='assessment'?[refs.evidenceFingerprint]:[])]);
+      let savedCurrent=Boolean(saved);
+      const expected={packageDigest:refs.revisionDigest!,sourceId:refs.sourceId};
+      if(saved&&assessmentKind==='literature')savedCurrent=hasCurrentLiteratureEvidence(saved.report,expected);
+      if(saved&&assessmentKind==='assessment'){
+        const {rows:[literature]}=await client.query('SELECT report FROM formal_lab_literature_assessments WHERE submission_id=$1 AND owner_id=$2 AND revision_id=$3 AND package_digest=$4 ORDER BY created_at DESC,id DESC LIMIT 1',[refs.submissionId,owner,refs.revisionId,refs.revisionDigest]);
+        savedCurrent=hasCurrentScientificAssessment(saved.report,{...expected,evidenceFingerprint:refs.evidenceFingerprint,requiresNoveltyEvidence:hasCurrentLiteratureEvidence(literature?.report,expected)});
+      }
+      if(savedCurrent){await client.query('COMMIT');return {job:null,created:false};}
     }
     if(kind==='discussion'){
       const {rows:[linked]}=await client.query(`SELECT d.metadata,r.id AS revision_id,r.digest FROM formal_lab_submissions s JOIN formal_lab_discussions d ON d.submission_id=s.id JOIN LATERAL (SELECT id,digest FROM formal_lab_revisions WHERE submission_id=s.id ORDER BY revision DESC LIMIT 1) r ON true WHERE s.id=$1 AND s.owner_id=$2 AND d.id=$3 AND d.owner_id=$2 FOR UPDATE OF s,d`,[refs.submissionId,owner,refs.discussionId]);

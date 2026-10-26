@@ -2,7 +2,7 @@ import type { CanonicalDerivationReport } from './derivationContract';
 import type { ClaimVerificationPlan, ClaimSourceJudgment } from './obligationContract';
 import type { FormalOutputs, VerificationReport } from './contract';
 import type { CanonicalAssessment, CanonicalExactCheck, CanonicalReference } from './canonicalContract';
-import type { LiteratureAssessment } from './literatureContract';
+import type { LiteratureAssessment, LiteratureNoveltyFinding, LiteraturePassage, LiteraturePaper } from './literatureContract';
 import type { ReviewResolutionOverlay } from './reviewResolutionContract';
 
 export interface GeometryAssessment {
@@ -44,10 +44,27 @@ export interface AssessmentIssue {
   sourceLineIds:string[];claimIds:string[];canonicalFindingIds:string[];literaturePaperIds:string[];geometryCheckIds:string[];
   legacyNoteIds:string[];resolutionIds:string[];
 }
+export interface EmpiricalAssessment {
+  status:'none-claimed'|'predictions-only'|'empirical-claims'|'unclear';summary:string;sourceLineIds:string[];
+  claims:{id:string;statement:string;type:'prediction'|'observation'|'experiment';sourceLineIds:string[]}[];
+  evidenceNeeded:string[];authorDeclaration:'unspecified'|'none'|'present';declarationStatus:'not-provided'|'consistent'|'needs-review';
+}
+export interface ReviewAdditions {
+ summary:string;manuscriptChanged:false;
+ items:{id:string;title:string;kind:'calculation'|'derivation'|'literature-comparison'|'clarification'|'proposed-manuscript-edit';description:string;manuscriptBasis:'stated'|'cited'|'not-explicit'|'unclear';sourceLineIds:string[];checkRefs:{kind:'scalar-check'|'canonical-check'|'geometry-check'|'derivation-check';id:string}[];paperIds:string[];status:'checked-under-premises'|'source-assessed'|'interpretive'|'proposal'}[];
+}
+export interface AssessmentMethod {
+  derivationOrigin:'developer-provided-trusted-kernel'|'not-applied';kernelImplementation:string|null;
+  manuscriptChanged:false;sourceScope:string;aiRole:string;method:string;
+}
 export interface ScientificAssessment {
   version:'scientific-assessment-v1';packageDigest:string;sourceId:string;sourceSha256:string;evidenceFingerprint:string;
   createdAt:string;assessmentTimestampUTC:string;model:string;
   status:'scientifically-assessed';
+  empiricalAssessment?:EmpiricalAssessment;
+  reviewAdditions?:ReviewAdditions;
+  noveltyEvidence?:{findings:LiteratureNoveltyFinding[];passages:LiteraturePassage[];papers:LiteraturePaper[];scope:string;unavailableRequests:number};
+  assessmentMethod?:AssessmentMethod;
   overall:{verdict:'supported-in-stated-domain'|'coherent-with-specific-open-questions'|'material-revision-needed'|'contradicted'|'insufficient-evidence';headline:string;judgment:string;decisiveReasons:string[]};
   metaSummary:{title:string;text:string;established:string[];proposedContribution:string;openQuestions:string[]};
   tabSummaries:{tab:'verification'|'explanation'|'review'|'source';title:string;text:string;keyPoints:string[]}[];
