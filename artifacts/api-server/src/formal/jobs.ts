@@ -27,6 +27,12 @@ async function reserveJob(owner:string,kind:FormalJob['kind'],refs:JobReferences
         if(!revision.publish_consent||last?.status==='complete'){await client.query('COMMIT');return {job:null,created:false};}
       }
     }
+    if(kind==='compilation'){
+      const {rows:[revision]}=await client.query('SELECT r.id,r.digest,r.approved_at,r.publish_consent FROM formal_lab_submissions s JOIN LATERAL (SELECT id,digest,approved_at,publish_consent FROM formal_lab_revisions WHERE submission_id=s.id ORDER BY revision DESC LIMIT 1) r ON true WHERE s.id=$1 AND s.owner_id=$2 FOR UPDATE OF s',[refs.submissionId,owner]);
+      if(!revision||revision.id!==refs.revisionId||revision.digest!==refs.revisionDigest||!revision.approved_at||revision.publish_consent!==true)throw new FormalError('Compile only the exact current author-approved public revision.',409);
+      const {rows:[existing]}=await client.query("SELECT metadata FROM formal_lab_jobs WHERE owner_id=$1 AND kind='compilation' AND metadata->>'submissionId'=$2 AND metadata->>'revisionId'=$3 AND metadata->>'revisionDigest'=$4 AND status IN ('queued','running') AND updated_at>now()-interval '15 minutes' ORDER BY created_at DESC LIMIT 1",[owner,refs.submissionId,refs.revisionId,refs.revisionDigest]);
+      if(existing){await client.query('COMMIT');return {job:existing.metadata,created:false};}
+    }
     if(assessmentKind){
       const {rows:[revision]}=await client.query('SELECT r.digest,r.approved_at FROM formal_lab_submissions s JOIN formal_lab_revisions r ON r.submission_id=s.id WHERE s.id=$1 AND s.owner_id=$2 AND r.id=$3 FOR UPDATE OF s',[refs.submissionId,owner,refs.revisionId]);
       if(!revision||!revision.approved_at||revision.digest!==refs.revisionDigest)throw new FormalError('This assessment requires the exact author-approved revision.',409);
@@ -63,6 +69,8 @@ async function reserveJob(owner:string,kind:FormalJob['kind'],refs:JobReferences
 export async function createJob(owner:string,kind:FormalJob['kind'],refs:JobReferences):Promise<FormalJob>{return (await reserveJob(owner,kind,refs)).job!;}
 /** Duplicate approval requests and retries reuse the same live revision job. */
 export async function createOrReuseProcessJob(owner:string,refs:JobReferences&{submissionId:string;revisionDigest:string}){return reserveJob(owner,'process',refs,true);}
+/** Explicit public-account refresh; source analysis and mathematical checks are reused. */
+export async function createOrReuseCompilationJob(owner:string,refs:JobReferences&{submissionId:string;revisionId:string;revisionDigest:string}){return reserveJob(owner,'compilation',refs);}
 export async function createOrReuseCanonicalJob(owner:string,refs:JobReferences&{submissionId:string;revisionId:string;revisionDigest:string}){return reserveJob(owner,'canonical',refs,false,'canonical');}
 export async function createOrReuseLiteratureJob(owner:string,refs:JobReferences&{submissionId:string;revisionId:string;revisionDigest:string}){return reserveJob(owner,'literature',refs,false,'literature');}
 export async function createOrReuseScientificAssessmentJob(owner:string,refs:JobReferences&{submissionId:string;revisionId:string;revisionDigest:string;evidenceFingerprint:string}){return reserveJob(owner,'assessment',refs,false,'assessment');}

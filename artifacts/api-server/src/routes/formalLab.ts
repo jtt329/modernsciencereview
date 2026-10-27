@@ -9,7 +9,7 @@ import { appendRevision, createSubmission, recordOutputs, ensureFormalSchema, li
 import type { FormalPackage, FormalRevision, FormalSubmission, FormalJob, VerificationReport } from '../formal/contract';
 
 import {saveSource,readSource,makeSourcePublic} from '../formal/sources';
-import {createJob,createOrReuseProcessJob,createOrReuseCanonicalJob,createOrReuseLiteratureJob,createOrReuseScientificAssessmentJob,readActiveScientificAssessmentJob,readActiveAssessmentJob,readJob,launchJob,failUnstartedJob,hasCurrentLiteratureEvidence} from '../formal/jobs';
+import {createJob,createOrReuseProcessJob,createOrReuseCompilationJob,createOrReuseCanonicalJob,createOrReuseLiteratureJob,createOrReuseScientificAssessmentJob,readActiveScientificAssessmentJob,readActiveAssessmentJob,readJob,launchJob,failUnstartedJob,hasCurrentLiteratureEvidence} from '../formal/jobs';
 import {deriveCoverageAssessment} from '../formal/coverageAssessment';
 import {runCanonicalAssessment} from '../formal/canonical';
 import {readCanonicalAssessment,recordCanonicalAssessment,readPublishedCanonicalAssessment} from '../formal/canonicalStore';
@@ -24,7 +24,7 @@ import {listDiscussions,createDiscussionMessage,linkDiscussionJob,completeDiscus
 import {analyzeSource} from '../formal/ingest';
 import {normalizeAuthorGuidance} from '../formal/authorGuidance';
 import {generateOutputs} from '../formal/outputs';
-import {publishOutputs,readSubject,listSubjects,readPublishedSubmission,refreshSubjectOverview} from '../formal/subjects';
+import {publishOutputs,readSubject,listSubjects,readPublishedSubmission,integratePublishedSubject} from '../formal/subjects';
 import {getFormalModels,resolveFormalModel,withFormalModel,type FormalModelCallUsage} from '../formal/model';
 function modelForRevision(revision:FormalRevision) {
   if(!revision.model)return resolveFormalModel();
@@ -116,6 +116,16 @@ router.get('/formal-lab/jobs/:id',identity,async(req,res)=>res.json(await readJo
 router.get('/formal-lab/papers',async(_req,res)=>{res.setHeader('Cache-Control','public,max-age=30');res.json({papers:await listPublishedFormalPapers(publishedAssessmentCard)});});
 router.get('/formal-lab/subjects',async(_req,res)=>{await ensureFormalSchema();res.json({subjects:await listSubjects()});});
 router.get('/formal-lab/subjects/:slug',async(req,res)=>{await ensureFormalSchema();const subject=await readSubject(String(req.params.slug));if(!subject)throw new FormalError('No author-approved contributions have been published to this subject yet.',404);res.json(subject);});
+async function compilePublicExplanation(submission:FormalSubmission,progress:(stage:string,message:string)=>Promise<void>) {
+  const r=submission.currentRevision;
+  if(!r.publishConsent)return;
+  try{
+    await progress('field-compilation','Updating the compiled explanation from the exact published source, current scientific assessment and claim-level literature evidence. Uncertain origin claims remain provisional.');
+    const result=await integratePublishedSubject(submission.id,{revisionId:r.id,packageDigest:r.digest});
+    if(result.pendingNarrativeSlugs?.length)throw new FormalError('The subject evidence is saved, but its combined narrative is still incomplete. Retry the compiled explanation update.',503);
+    await progress('field-explanation',result.sourceBound?'Saved the evidence-bound contribution standing and linked subject hierarchy. Scientific support and bounded origin evidence remain separate.':'Preserved the conditional source account. A current source-bound assessment is needed before a contribution can be admitted as supported original work.');
+  }catch(error){await progress('field-explanation-unavailable','The published paper and all scientific results are saved. The compiled explanation update did not complete; retry its separate compilation without rerunning the paper analysis.');}
+}
 async function startScientificReview(initial:FormalSubmission,owner:string):Promise<FormalJob|null>{
   const r=initial.currentRevision;
   if(!r.approvedAt||!initial.sourceDocument||!r.verification||!r.outputs)throw new FormalError('Complete the approved mathematical report and outputs before requesting the current assessment.',409);
@@ -128,12 +138,13 @@ async function startScientificReview(initial:FormalSubmission,owner:string):Prom
   if(reservation.created){const job=reservation.job;launchJob(job,progress=>withFormalModel(selectedModel,async()=>{
     const exact=await readRevisionSubmission(initial.id,owner,r.id);
     const latest=await currentScientificAssessment(exact,owner);
-    if(latest.current){await progress('assessment-reused','The current evidence already has a saved scientific assessment.');return {submissionId:initial.id};}
+    if(latest.current){await progress('assessment-reused','The current evidence already has a saved scientific assessment.');await compilePublicExplanation(exact,progress);return {submissionId:initial.id};}
     if(!latest.evidence||!exact.sourceDocument)throw new FormalError('The assessment source and evidence are unavailable.',409);
     await progress('scientific-assessment','Reconciling exact mathematical checks, accepted physical inputs, cited sources and author clarifications into one current assessment.');
     const assessment=await runScientificAssessment(r.package,exact.sourceDocument,r.digest,latest.evidence,progress);
     await recordScientificAssessment(initial.id,owner,r.id,assessment);
     await progress('assessment-saved','Saved the current overall judgment, four section summaries, quantified evidence, and prioritized scientific concerns. The approved paper and original results are unchanged.');
+    await compilePublicExplanation(exact,progress);
     return {submissionId:initial.id};
   },call=>recordModelCall(progress,call)));}
   return reservation.job;
@@ -193,15 +204,12 @@ async function startProcessing(initial:FormalSubmission,owner:string):Promise<Fo
     outputs.processingLog=[...previousProcessingLog,...job.events];
     submission=await recordOutputs(id,owner,r.digest,outputs);
     if(submission.currentRevision.publishConsent){
-      await progress('field-compilation','Adding eligible conditional findings to the separate versioned field explanation, with source and claim links.');
+      await progress('publication','Saving the author-approved public paper and its conditional evidence account with exact source and claim links.');
       outputs=await publishOutputs(submission,initial.sourceDocument!,outputs);
       // The published snapshot stays immutable; the current result view can
       // reflect newly completed supplemental research on a publication retry.
       outputs.warnings=[...outputs.warnings.filter(warning=>warning!==literatureWarning&&warning!==canonicalWarning),...researchWarnings];
       await makeSourcePublic(initial.sourceDocument!.id,owner);
-      await progress('field-explanation','Compiling the subject account from cited checked contributions while preserving every evidence paragraph.');
-      const subject=await refreshSubjectOverview(r.package.analysis!.subjectSlug);
-      await progress('field-explanation',subject.overview?.sourceVersion===subject.version?'Compiled a current subject narrative with links to every supporting evidence paragraph.':'Preserved the complete cited evidence pool; a current combined narrative could not be generated.');
       outputs.processingLog=[...previousProcessingLog,...job.events];
       await recordOutputs(id,owner,r.digest,outputs);
     }else {await progress('private-results','Results saved privately. Field publication was not selected when this revision was approved.');outputs.processingLog=[...previousProcessingLog,...job.events];await recordOutputs(id,owner,r.digest,outputs);}
@@ -215,6 +223,7 @@ async function startProcessing(initial:FormalSubmission,owner:string):Promise<Fo
         await progress('assessment-saved','Saved the current assessment and prioritized concerns. Original mathematical results and publication consent are preserved.');
       }
     }catch(error){await progress('assessment-unavailable','Core results are saved. The current combined assessment did not complete; use Refresh assessment to retry without rerunning the paper analysis.');}
+    await compilePublicExplanation(await readSubmission(id,owner),progress);
     return {submissionId:id};
   },call=>recordModelCall(progress,call)));return job;
 }
@@ -226,7 +235,7 @@ router.post('/formal-lab/submissions/:id/process',identity,async(req,res)=>{
 });
 router.use('/formal-lab/submissions',(req,res,next)=>{
   // Public access is limited to immutable explicitly published snapshots.
-  if(req.method==='GET'&&/^\/[a-f0-9-]{36}(?:\/(?:(?:canonical|literature)-assessment|assessment|claim-verification))?\/?$/.test(req.path)){next();return;}identity(req,res,next);
+  if(req.method==='GET'&&/^\/[a-f0-9-]{36}(?:\/(?:(?:canonical|literature)-assessment|assessment|claim-verification|revisions\/[a-f0-9-]{36}))?\/?$/.test(req.path)){next();return;}identity(req,res,next);
 });
 router.get('/formal-lab/submissions',async(req,res)=>res.json({submissions:await listSubmissions(req.user!.id)}));
 router.post('/formal-lab/submissions',async(req,res)=>{ const pkg=await validateOwnerPackage(req.body?.package,req.user!.id); res.status(201).json(await createSubmission(req.user!.id,pkg,packageDigest(pkg)===exampleDigest?'prepared-example':'author-edit')); });
@@ -235,7 +244,12 @@ router.get('/formal-lab/submissions/:id',async(req,res)=>{
   const published=await readPublishedSubmission(id);if(!published)throw new FormalError('Submission not found.',404);res.json(deriveCoverageAssessment(published));
 });
 router.get('/formal-lab/submissions/:id/revisions',async(req,res)=>res.json({revisions:await revisionHistory(String(req.params.id),req.user!.id)}));
-router.get('/formal-lab/submissions/:id/revisions/:revisionId',async(req,res)=>res.json(deriveCoverageAssessment(await readRevisionSubmission(String(req.params.id),req.user!.id,String(req.params.revisionId)))));
+router.get('/formal-lab/submissions/:id/revisions/:revisionId',async(req,res)=>{
+  const id=String(req.params.id),revisionId=String(req.params.revisionId);
+  if(req.user){try{res.setHeader('Cache-Control','private,no-store');res.json(deriveCoverageAssessment(await readRevisionSubmission(id,req.user.id,revisionId)));return;}catch(error){if(!(error instanceof FormalError)||error.statusCode!==404)throw error;}}
+  const published=await readPublishedSubmission(id,revisionId);if(!published)throw new FormalError('Published revision not found.',404);
+  res.setHeader('Cache-Control','public,max-age=60');res.json(deriveCoverageAssessment(published));
+});
 router.get('/formal-lab/submissions/:id/discussions',async(req,res)=>res.json({threads:await listDiscussions(String(req.params.id),req.user!.id)}));
 router.post('/formal-lab/submissions/:id/discussions',async(req,res)=>{
   const owner=req.user!.id,submission=await readSubmission(String(req.params.id),owner);
@@ -282,7 +296,7 @@ router.post('/formal-lab/submissions/:id/resolutions/:resolutionId/accept',async
 async function assessmentSnapshot(req:Request):Promise<{submission:FormalSubmission;owner?:string}>{
   const id=String(req.params.id);if(req.query.revisionId!==undefined&&typeof req.query.revisionId!=='string')throw new FormalError('Choose one exact revision.');
   if(req.user){try{const submission=req.query.revisionId?await readRevisionSubmission(id,req.user.id,req.query.revisionId):await readSubmission(id,req.user.id);return {submission,owner:req.user.id};}catch(error){if(!(error instanceof FormalError)||error.statusCode!==404)throw error;}}
-  const published=await readPublishedSubmission(id);
+  const published=await readPublishedSubmission(id,req.query.revisionId as string|undefined);
   if(!published||(req.query.revisionId&&req.query.revisionId!==published.currentRevision.id))throw new FormalError('Published assessment not found.',404);
   return {submission:published};
 }
@@ -310,6 +324,25 @@ router.get('/formal-lab/submissions/:id/canonical-assessment',async(req,res)=>{
   const {submission,owner}=await assessmentSnapshot(req);res.setHeader('Cache-Control',owner?'private,no-store':'public,max-age=60');
   if(owner){const [assessment,job]=await Promise.all([readCanonicalAssessment(submission.id,owner,submission.currentRevision.id),readActiveAssessmentJob(owner,'canonical',{submissionId:submission.id,revisionId:submission.currentRevision.id,revisionDigest:submission.currentRevision.digest})]);res.json({assessment,job});}
   else res.json({assessment:await readPublishedCanonicalAssessment(submission)});
+});
+router.post('/formal-lab/submissions/:id/compilation',async(req,res)=>{
+  if(!req.body||typeof req.body.digest!=='string'||typeof req.body.revisionId!=='string'||Object.keys(req.body).some(k=>!['digest','revisionId'].includes(k)))throw new FormalError('Compile the exact saved public revision.');
+  const owner=req.user!.id,submission=await readSubmission(String(req.params.id),owner),r=submission.currentRevision;
+  if(r.digest!==req.body.digest||r.id!==req.body.revisionId||!r.approvedAt||!r.publishConsent)throw new FormalError('Compile only the current author-approved public revision.',409);
+  const published=await readPublishedSubmission(submission.id);
+  if(!published||published.currentRevision.id!==r.id||published.currentRevision.digest!==r.digest)throw new FormalError('Publish this exact approved revision before compiling its subject explanation.',409);
+  const selectedModel=modelForRevision(r),reservation=await createOrReuseCompilationJob(owner,{submissionId:submission.id,sourceId:submission.sourceDocument?.id,revisionId:r.id,revisionDigest:r.digest,model:selectedModel});
+  if(reservation.created&&reservation.job)launchJob(reservation.job,progress=>withFormalModel(selectedModel,async()=>{
+    const exact=await readSubmission(submission.id,owner);
+    if(exact.currentRevision.id!==r.id||exact.currentRevision.digest!==r.digest||!exact.currentRevision.publishConsent)throw new FormalError('The approved public revision changed before compilation began.',409);
+    // Fail this dedicated job visibly on incomplete compilation; the paper report remains saved.
+    await progress('field-compilation','Updating the compiled explanation and immediate subject parent from the saved exact evidence.');
+    const result=await integratePublishedSubject(submission.id,{revisionId:r.id,packageDigest:r.digest});
+    if(result.pendingNarrativeSlugs?.length)throw new FormalError('The subject evidence and hierarchy are saved, but the combined explanation did not complete. Retry this compiled update; the paper analysis and mathematical checks will be reused.',503);
+    await progress('field-explanation',result.changed?'Saved the revised evidence-bound compiled explanation and hierarchy.':'The compiled explanation already reflects this evidence; no source analysis or mathematical verification was repeated.');
+    return {submissionId:submission.id};
+  },call=>recordModelCall(progress,call)));
+  if(reservation.job)res.status(202).json(reservation.job);else res.json({job:null});
 });
 router.post('/formal-lab/submissions/:id/canonical-assessment',async(req,res)=>{
   const owner=req.user!.id,id=String(req.params.id);

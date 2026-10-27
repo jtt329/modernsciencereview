@@ -13,7 +13,7 @@ export function publishedPaperCard(snapshot:FormalSubmission,publishedAt:string,
   return {id:snapshot.id,revisionId:revision.id,revision:revision.revision,title:pkg.title,authors:pkg.authors,summary,mainClaim:pkg.mainClaim,
     source:{url:source.fileUrl,filename:source.filename,pageCount:source.pageCount,sha256:source.sha256,version:pkg.source.version},
     subject:{slug:pkg.analysis.subjectSlug,title:pkg.analysis.subjectTitle,url:`/formal-lab/subjects/${encodeURIComponent(pkg.analysis.subjectSlug)}`},
-    publishedAt,updatedAt:assessment?.verifiedAt||revision.outputs.generatedAt,reviewUrl:`/formal-lab?submission=${encodeURIComponent(snapshot.id)}`,
+    publishedAt,updatedAt:assessment?.verifiedAt||revision.outputs.generatedAt,reviewUrl:snapshot.id==='1a74fdf4-4e69-4e94-945e-811f742b6c86'?'/boundary-mechanics':`/formal-lab?submission=${encodeURIComponent(snapshot.id)}&tab=review`,
     rigor:{equations:report.claims.length,checkedEquations:report.claims.filter(c=>c.status==='checked').length,identities:report.claims.filter(c=>c.derivationKind==='identity'&&c.status==='checked').length,definitionRestatements:report.claims.filter(c=>c.derivationKind==='definition-restatement'&&c.status==='checked').length,sourceStatements:coverage.length,checkedSourceStatements:coverage.filter(c=>c.status==='checked').length,declaredInputs:pkg.selectedInputs.length,openStatements:coverage.filter(c=>['contradicted','partial','unsupported','not-assessed'].includes(c.status)).length},
     ...(assessment?{assessment}:{}),concepts:[...new Set([pkg.analysis.subjectTitle,...pkg.consequences.map(c=>c.title)])].slice(0,6)};
 }

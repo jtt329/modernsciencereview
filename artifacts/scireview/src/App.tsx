@@ -276,8 +276,6 @@ function paperPath(paperId: string) {
   return `/papers/${encodeURIComponent(paperId)}`;
 }
 
-const ROOT_FIELD_SLUG = 'horizon-thermodynamics';
-
 function readRoute() {
   const path = window.location.pathname;
   const paperMatch = path.match(/^\/papers\/([^/]+)\/?$/);
@@ -287,14 +285,10 @@ function readRoute() {
 
   return {
     paperId,
-    fieldSlug: fieldMatch
-      ? decodeURIComponent(fieldMatch[1])
-      : path === '/' && !paperId
-        ? ROOT_FIELD_SLUG
-        : null,
+    fieldSlug: fieldMatch ? decodeURIComponent(fieldMatch[1]) : null,
     showHowItWorks: path === '/how-it-works',
     showSandbox: path === '/admin/sandbox',
-    showFormalLab: (/^\/formal-lab(?:\/|$)/.test(path) || /^\/boundary-mechanics\/?$/.test(path)) && !path.endsWith('.pdf'),
+    showFormalLab: ((path === '/' && !paperId) || /^\/formal-lab(?:\/|$)/.test(path) || /^\/boundary-mechanics\/?$/.test(path)) && !path.endsWith('.pdf'),
     usedLegacyPaperQuery: !paperMatch && !!queryPaper,
   };
 }
@@ -580,7 +574,7 @@ export default function App() {
   };
 
   const handleCloseHowItWorks = () => {
-    window.history.pushState({}, '', selectedPaperId ? paperPath(selectedPaperId) : '/');
+    window.history.pushState({}, '', selectedPaperId ? paperPath(selectedPaperId) : '/papers');
     setShowHowItWorks(false);
   };
 

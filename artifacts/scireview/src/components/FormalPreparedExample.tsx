@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@workspace/auth-web';
 import { ArrowLeft, ArrowRight, BookOpen, Check, CheckCircle2, ChevronDown, Download, ExternalLink, FileText, FlaskConical, Layers3, Loader2, LockKeyhole, RotateCcw, ShieldCheck, Sparkles } from 'lucide-react';
 import LatexText from './LatexText';
+import FormalSiteHeader from './FormalSiteHeader';
 import type { Expr, FormalInput, FormalPackage, FormalSubmission, VerificationReport } from '../../../api-server/src/formal/contract';
 import './FormalLabPage.css';
 
@@ -157,9 +158,9 @@ export default function FormalPreparedExample() {
   const saveJson = () => run('Saving a new revision', async () => { let next: FormalPackage; try { next = JSON.parse(jsonDraft); } catch { throw new Error('The advanced package contains invalid JSON. Correct it before saving.'); } await savePacket(next); setNotice('A new revision has been saved. Approval and verification apply only to its new digest.'); });
 
   return <div className="fl">
-    <header className="fl-header"><div className="fl-header-inner"><a href="/" className="fl-brand" aria-label="Modern Science Review home">ModernScience<span>.</span>Review</a><a href="/formal-lab" className="fl-lab-wordmark"><FlaskConical size={14} /> Formal Lab <span><b className="fl-version-prefix">Prototype </b>v2</span></a><div className="fl-header-actions"><a href="/" className="fl-home-link"><ArrowLeft size={14} /> Main site</a>{!authLoading && (user ? <span className="fl-account">{user.firstName || user.email || 'Signed in'}</span> : <button className="fl-button fl-button-small fl-button-ghost" onClick={signIn}>Sign in</button>)}</div></div></header>
+    <FormalSiteHeader signedIn={user ? user.firstName || user.email || 'Signed in' : undefined} loading={authLoading} signIn={signIn} />
     <main>
-      <div className="fl-inline-note" style={{marginTop: 22}}>Prepared scalar baseline: this example was manually transcribed. <a href="/formal-lab">Upload a paper for the complete ingestion workflow →</a></div>
+      <div className="fl-inline-note" style={{marginTop: 22}}>Prepared scalar baseline: this example was manually transcribed. <a href="/formal-lab/submit">Upload a paper for the complete ingestion workflow →</a></div>
       <section className="fl-hero"><div className="fl-hero-copy"><div className="fl-eyebrow"><span className="fl-live-dot" /> A SEPARATE EXPERIMENT IN SCIENTIFIC REVIEW</div><h1>Make the assumptions visible.<br /><span>Check the mathematics.</span></h1><p>Choose the inputs. Let AI draft a precise claim. Approve what it means. Then have an independent symbolic checker test what follows.</p><div className="fl-hero-actions"><button className="fl-button fl-button-primary" onClick={resetExample} disabled={!catalog || Boolean(busy)}>Try the one-page example <ArrowRight size={16} /></button><button className="fl-button fl-button-ghost" onClick={showExample} disabled={!catalog || Boolean(busy)}><BookOpen size={16} /> See example results</button></div><p className="fl-hero-footnote">A focused pilot, separate from the existing paper reviews and explanation.</p></div><div className="fl-pilot-card"><div className="fl-pilot-top"><span className="fl-pilot-icon"><FileText size={21} /></span><span className="fl-small-caps">FIRST TEST CASE</span></div><h2>Horizon boundary mechanics</h2><p>J. T. Tyler’s one-page summary, with a prepared submission you can inspect before any author approval.</p><div className="fl-pilot-bottom"><span><strong>{catalog?.example.claims.length ?? '—'}</strong> mathematical claims</span><span className="fl-draft-label">Unapproved draft</span></div></div></section>
       <div className="fl-workflow" ref={workflow} id="formal-workflow"><nav className="fl-steps" aria-label="Submission stages">{STEPS.map((item, index) => { const Icon = item.icon; return <button key={item.title} className={`fl-step ${step === index ? 'fl-step-active' : ''}`} aria-current={step === index ? 'step' : undefined} aria-controls="formal-stage-panel" onClick={() => go(index as Step)} disabled={Boolean(busy)}><span className="fl-step-circle"><Icon size={16} /></span><span className="fl-step-label"><small>0{index + 1}</small><strong>{item.short}</strong></span></button>; })}</nav>
       {error && <div className="fl-alert fl-alert-error" role="alert"><strong>We couldn’t complete that action.</strong><span>{error}</span>{!user && catalog && <button className="fl-text-button" onClick={signIn}>Sign in to continue <ArrowRight size={14} /></button>}</div>}
@@ -202,7 +203,7 @@ export default function FormalPreparedExample() {
         </aside>
       </div>}
       </div>
-      <footer className="fl-footer"><span><FlaskConical size={14} /> Formal Lab · Prototype v2</span><p>Inputs → precise claims → author approval → independent checks → linked explanation.</p><a href="/">Return to the main site <ArrowRight size={13} /></a></footer>
+      <footer className="fl-footer"><span><FlaskConical size={14} /> Formal Lab · Prototype v2</span><p>Inputs → precise claims → author approval → independent checks → linked explanation.</p><a href="/">Browse papers <ArrowRight size={13} /></a></footer>
     </main>
   </div>;
 }

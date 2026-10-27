@@ -1,3 +1,5 @@
+import type {SubjectNodeRef,SubjectStats,SubjectAdmission,SubjectParentDecision} from './subjectContract';
+export type {SubjectNodeRef,SubjectStats,SubjectAdmission,SubjectParentDecision,SubjectIntegrationResult} from './subjectContract';
 /** Formal Lab v1: a bounded declarative language, never executable submission code. */
 export type Expr =
   | { op: 'symbol'; name: string }
@@ -123,17 +125,23 @@ export interface FormalOutputs {
   processingLog?: { at:string; stage:string; message:string }[];
 }
 export interface FormalJob {
-  id: string; kind: 'analyze' | 'process' | 'discussion' | 'canonical' | 'literature' | 'assessment'; status: 'queued' | 'running' | 'complete' | 'failed';
+  id: string; kind: 'analyze' | 'process' | 'discussion' | 'canonical' | 'literature' | 'assessment' | 'compilation'; status: 'queued' | 'running' | 'complete' | 'failed';
   stage: string; events: { at: string; stage: string; message: string }[];
   sourceId?: string; submissionId?: string; revisionDigest?: string; revisionId?: string; evidenceFingerprint?: string; discussionId?: string; error?: string; updatedAt: string;
   model?: {id: 'current' | 'sol' | 'argon'; label: string; model: string; provider: 'google' | 'openai'};
 }
-export interface FormalSubject {
-  slug: string; title: string; version: number; updatedAt: string;
-  overview?: { introduction:string; sections:{id:string;title:string;text:string;paragraphIds:string[]}[]; model:string;generatedAt:string;sourceVersion:number };
-  paragraphs: { id: string; title: string; text: string; status: 'conditional-checked'; conditions?: string[];
+export interface FormalSubjectDirectoryEntry {
+  slug:string;title:string;version:number;updatedAt:string;
+  parentSlug?:string|null;parent?:SubjectNodeRef|null;children?:SubjectNodeRef[];
+  nodeKind?:'evidence-account'|'navigation-parent';hierarchyVersion?:number;scope?:string;
+  stats?:SubjectStats;
+}
+export interface FormalSubject extends FormalSubjectDirectoryEntry {
+  parentDecision?:SubjectParentDecision|null;
+  overview?: { introduction:string; sections:{id:string;title:string;text:string;paragraphIds:string[];evidenceStatus?:'supported'|'provisional'|'legacy-context'|'mixed'}[]; model:string;generatedAt:string;sourceVersion:number;evidencePolicy?:'reviewed-subject-evidence-v1';admissionFingerprint?:string };
+  paragraphs: { id: string; title: string; text: string; status: 'conditional-checked'; conditions?: string[];admission?:SubjectAdmission;originSubjectSlug?:string;placementStatus?:'current'|'historical';
     sources: { submissionId: string; title: string; revisionId: string; digest: string;
-      claimIds: string[]; sourceLineIds: string[]; sourceId: string; sourceUrl: string }[];
+      claimIds: string[]; sourceLineIds: string[]; sourceId: string; sourceUrl: string;reviewUrl?:string;admission?:SubjectAdmission;rollupFromSubjectSlugs?:string[];placementStatus?:'current'|'historical' }[];
   }[];
 }
 
