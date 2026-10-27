@@ -57,6 +57,11 @@ export interface AssessmentMethod {
   derivationOrigin:'developer-provided-trusted-kernel'|'not-applied';kernelImplementation:string|null;
   manuscriptChanged:false;sourceScope:string;aiRole:string;method:string;
 }
+export interface AssessmentSection {
+  id:string;title:string;text:string;sourceLineIds:string[];claimIds:string[];paperIds:string[];
+  /** Absent in immutable legacy reports; the reader defaults to scientific. */
+  purpose?:'scientific'|'processing-history';issueIds?:string[];
+}
 export interface ScientificAssessment {
   version:'scientific-assessment-v1';packageDigest:string;sourceId:string;sourceSha256:string;evidenceFingerprint:string;
   createdAt:string;assessmentTimestampUTC:string;model:string;
@@ -80,7 +85,7 @@ export interface ScientificAssessment {
   issues:AssessmentIssue[];
   novelty:{claimed:string;assessment:'supported-distinction'|'plausible-distinction'|'already-known'|'not-established'|'contradicted';judgment:string;insight:string;predictions:string;fieldContribution:string;established:string[];conditional:string[];speculative:string[];paperIds:string[]};
   readiness:{status:'ready-for-public-reading'|'author-clarification-needed'|'mathematical-correction-needed';reason:string;nextActions:string[];publicationConsentUnchanged:true};
-  sections:{id:string;title:string;text:string;sourceLineIds:string[];claimIds:string[];paperIds:string[]}[];
+  sections:AssessmentSection[];
   resolvedIssueIds:string[];
   limitations:string[];
 }

@@ -432,3 +432,27 @@ explicit owner request append the enhanced assessment while preserving the
 approved package, mathematical report, consent and evidence fingerprint. GETs do
 not invoke inference. Concurrent explicit requests reuse one locked job, and a
 current enhanced result is reused without paid repetition.
+
+### Reader-first review presentation
+
+The scientific review follows the current summary and tab navigation immediately.
+The claim-dependency bridge, original scalar report, extraction notes, older
+review, model/checker metadata and reproducibility record sit below the selected
+output in an evidence/audit area. Reading the review does not require stepping
+through processing details.
+
+The opening scientific account remains expanded. Subsequent review sections use
+accessible disclosures with bounded text/math previews, a fade on clipped text,
+and explicit expand/collapse actions. An initially closed contents list opens
+and scrolls to the requested section; source links, comments and saved deep links
+remain available. The same components apply to current and future submissions.
+
+Fresh generated sections distinguish scientific exposition from processing
+history. Historical placement requires links to resolved historical issue
+records; an open scientific concern, observed source discrepancy or unestablished
+physical scope cannot be hidden as processing history. A conservative legacy
+adapter separates recognized reconciliation/retrieval prose while preserving
+scientific conditions and priority caveats. Unknown wording stays scientific.
+This is a presentation layer: saved review text, manuscript, approval, checker
+results and evidence fingerprints remain unchanged, and reading never triggers
+another paid review.

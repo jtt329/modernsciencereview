@@ -1,0 +1,177 @@
+{
+  "sections": [
+    {
+      "id": "current-evidence-and-boundaries",
+      "title": "Current evidence resolves the earlier narrow concerns",
+      "text": "As of 2026-10-26T00:42:21.519Z, the supplied evidence supports the manuscript's restricted scientific chain without an identified sign, normalization, derivative-order, or pressure-convention mismatch. The six source-judgment targets are answered here using existing checks and source assessments; this does not rewrite the deterministic plan or create new checker results. The Schwarzschild decomposition target is interpretive rather than an additional theorem.\n\nThe current reconciliation repairs the old missing link for \\(F_L=U/L\\). Its two remaining canonical entries exceed complete scalar representation, but the restricted derivation supplies additional conditional support. They should not be counted as two unresolved mathematical failures. Likewise, obsolete statements that references were unread, companions unavailable, or checks merely proposed no longer describe the current record.\n\nThe supporting companion is separate from the one-page submission, and the referenced full manuscript has not been assumed. The accepted-correction overlay is empty. No actual manuscript source uncertainty is recorded. The literature record's identified abstract/title mismatch for 2201.12141 is a retrieval-quality caution about that external record; it is not evidence against this manuscript and is not used decisively here.\n\nExplicit premises remain essential: the EH theory and orientation, selected boundary polarization, physical clock/generator, null-preserving tangent variations, controlled shear/generator/matter and corner responses, and the fixed-domain stationary reduction. No missing scientific premise is identified for the narrow claim under these supplied conditions. Arbitrary-gauge covariance, moving-cut/global-corner certification, and existence of arbitrary on-shell source families remain uncomputed extensions, not accomplishments of this review and not prerequisites imposed on a claim that disclaims them. There are no open material issues in this assessment; historical priority is the remaining open clarification.",
+      "sourceLineIds": [
+        "p1-l008",
+        "p1-l013",
+        "p1-l022",
+        "p1-l024",
+        "p1-l049",
+        "p1-l054",
+        "p1-l072",
+        "p1-l076",
+        "p1-l078",
+        "p1-l079",
+        "p1-l080",
+        "p1-l081",
+        "p1-l082"
+      ],
+      "claimIds": [
+        "b1-g01_length_response_ratio",
+        "b5-g05_force_ratio",
+        "b5-g05_canonical_length_coeff",
+        "b5-g05_canonical_force_coeff"
+      ],
+      "paperIds": []
+    }
+  ],
+  "issues": [
+    {
+      "id": "issue-citations-and-companion-history",
+      "title": "Earlier claims that references and companions were unread are superseded",
+      "category": "historical-note",
+      "materiality": "information",
+      "status": "resolved",
+      "assessment": "Targeted passages from the cited primary works have now been supplied and assessed, and the seven-page companion is available as separate context. The referenced full manuscript remains unavailable and is not assumed. Earlier statements that nothing had been checked or approved describe prior processing stages, not the current mathematical evidence and not publication consent.",
+      "action": "Preserve the original records while using current evidence. Continue to distinguish selected-passage assessment from complete-paper reading.",
+      "sourceLineIds": [
+        "p1-l081",
+        "p1-l082"
+      ],
+      "claimIds": [],
+      "canonicalFindingIds": [
+        "F01"
+      ],
+      "literaturePaperIds": [
+        "1611.03096",
+        "2309.03854",
+        "1303.1535",
+        "hep-th/0501055",
+        "hep-th/0609128"
+      ],
+      "geometryCheckIds": [],
+      "legacyNoteIds": [
+        "note-0c33126451dbd962",
+        "note-adcb59a08f931908"
+      ],
+      "resolutionIds": []
+    },
+    {
+      "id": "issue-coverage-repair",
+      "title": "The former missing link for F_L=U/L was a mapping error",
+      "category": "historical-note",
+      "materiality": "information",
+      "status": "resolved",
+      "assessment": "The current coverageReconciliation correctly maps c023 to the exact passing independent-coordinate ratio candidates. It is no longer an unresolved mathematical statement. The two remaining non-scalar-complete canonical coverage entries are supported separately under the restricted action premises; their original scalar classifications need not be rewritten.",
+      "action": "Use the current reconciliation while retaining the immutable original outputs.",
+      "sourceLineIds": [
+        "p1-l021",
+        "p1-l022",
+        "p1-l023",
+        "p1-l024",
+        "p1-l074",
+        "p1-l075",
+        "p1-l076",
+        "p1-l077"
+      ],
+      "claimIds": [
+        "b1-g01_length_response_ratio",
+        "b5-g05_force_ratio",
+        "b5-g05_canonical_length_coeff",
+        "b5-g05_canonical_force_coeff"
+      ],
+      "canonicalFindingIds": [
+        "F18",
+        "F19"
+      ],
+      "literaturePaperIds": [],
+      "geometryCheckIds": [],
+      "legacyNoteIds": [],
+      "resolutionIds": []
+    }
+  ],
+  "actualSourceUncertainties": [],
+  "priorWorkSection": {
+    "id": "prior-work-and-contribution",
+    "title": "The supported advance is the length-work identification",
+    "text": "The closest prior result is the action response, not merely \\(TS\\). Parattu et al., Equations (111)–(113), derives the area-weighted surface-gravity variation from gravitational momentum variation in its specified static horizon setting. Hopfmüller–Freidel develops the null scalar conjugacy, exact-variation exchange, and corner structure. Odak et al. compares different scalar polarizations explicitly. Those results are foundations, not discoveries of this manuscript.\n\nThe membrane comparison is nevertheless not an identity of all pressures. Kolekar–Kothawala's examined passages derive a tangential surface stress and connect its area product to heat content. The manuscript's \\(P_L=\\Pi/L\\) has different dimensions and is the coefficient of a different scale variation. Wang's evolving FLRW membrane construction includes generator/regulator-dependent pressure corrections; it is not the same object as the present instantaneous scalar screen pressure. These additional membrane and phase-space works were discovered during review and must not be attributed to the author's one-page bibliography.\n\nThe supplied claim-specific novelty findings therefore support a partly distinctive mechanical interpretation and a distinct FRW screen assignment, with moderate confidence. The search audit includes focused queries and bounded citation neighborhoods, with earlier failed seed lookups subsequently resolved. It is not an exhaustive priority search. An earlier full-text construction using the same length source, action response, and normal-pressure interpretation would change the novelty finding. Conversely, a useful identification need not introduce new dynamics or an experiment to contribute to the field's explanation.",
+    "sourceLineIds": [
+      "p1-l005",
+      "p1-l006",
+      "p1-l027",
+      "p1-l029",
+      "p1-l030",
+      "p1-l038",
+      "p1-l045",
+      "p1-l054",
+      "p1-l058",
+      "p1-l076",
+      "p1-l078",
+      "p1-l081",
+      "p1-l082"
+    ],
+    "claimIds": [
+      "b1-g01_mass_acceleration_identity",
+      "b1-g01_pressure_surface_gravity",
+      "b3-schw_pressure_factor",
+      "b4-frw_density_pressure",
+      "b5-g05_canonical_force_coeff"
+    ],
+    "paperIds": [
+      "1303.1535",
+      "1611.03096",
+      "2309.03854",
+      "1111.1242",
+      "1411.6445",
+      "hep-th/0501055",
+      "hep-th/0609128"
+    ]
+  },
+  "primaryReferences": [
+    {
+      "id": "1611.03096",
+      "status": "retrieved",
+      "title": "Gravity Degrees of Freedom on a Null Surface",
+      "url": "https://arxiv.org/html/1611.03096v2"
+    },
+    {
+      "id": "2309.03854",
+      "status": "retrieved",
+      "title": "General gravitational charges on null hypersurfaces",
+      "url": "https://arxiv.org/html/2309.03854v3"
+    },
+    {
+      "id": "1303.1535",
+      "status": "retrieved",
+      "title": "Structure of the Gravitational Action and its relation with Horizon Thermodynamics and Emergent Gravity Paradigm",
+      "url": "https://arxiv.org/html/1303.1535v2"
+    },
+    {
+      "id": "hep-th/0501055",
+      "status": "retrieved",
+      "title": "First Law of Thermodynamics and Friedmann Equations of Friedmann-Robertson-Walker Universe",
+      "url": "https://arxiv.org/html/hep-th/0501055v1"
+    },
+    {
+      "id": "hep-th/0609128",
+      "status": "retrieved",
+      "title": "Thermodynamic Behavior of Friedmann Equation at Apparent Horizon of FRW Universe",
+      "url": "https://arxiv.org/html/hep-th/0609128v4"
+    },
+    {
+      "id": "1111.1242",
+      "status": "retrieved",
+      "title": "Membrane Paradigm and Horizon Thermodynamics in Lanczos-Lovelock Gravity",
+      "url": "https://arxiv.org/html/1111.1242v3"
+    },
+    {
+      "id": "1411.6445",
+      "status": "retrieved",
+      "title": "Cosmological horizons as new examples of membrane paradigm",
+      "url": "https://arxiv.org/html/1411.6445v2"
+    }
+  ]
+}
