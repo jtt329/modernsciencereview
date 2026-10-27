@@ -18,3 +18,13 @@
 @media(max-width:520px){.fl-site-header .fl-header-inner{padding:10px 14px;gap:5px 10px}.fl-site-header .fl-brand{font-size:16px;letter-spacing:-.7px}.fl-site-header .fl-header-actions{gap:8px}.fl-site-header .fl-account{display:block;max-width:50px;font-size:9px;line-height:1.5}.fl-site-sign-in{font-size:9px;padding:0 0 2px}.fl-site-header .fl-header-upload{padding:7px 9px;font-size:9px;gap:5px}.fl-site-header .fl-header-upload>svg{width:13px}.fl-site-navigation{gap:23px}.fl-site-navigation>a{font-size:10px;padding:5px 0}.fl [id]{scroll-margin-top:125px}}
 
 @media(max-width:360px){.fl-site-header .fl-header-actions{flex-direction:column;align-items:flex-end;gap:1px}.fl-site-header .fl-account{max-width:90px}.fl-site-sign-in{padding:0 0 2px}}
+
+.fl-account-menu{position:relative;min-width:0}
+.fl-account-button{display:flex;align-items:center;gap:4px;min-width:0;padding:5px 0;border:0;background:transparent;color:#6c8593;cursor:pointer}
+.fl-account-button .fl-account{min-width:0}
+.fl-account-dropdown{position:absolute;top:calc(100% + 9px);right:0;z-index:45;width:225px;max-width:calc(100vw - 28px);padding:7px;background:#fff;border:1px solid #dce6eb;border-radius:7px;box-shadow:0 8px 24px #173b4c1a;color:#597887}
+.fl-account-dropdown>p{padding:8px 10px 10px;font-size:10px;line-height:1.6;color:#8399a5;border-bottom:1px solid #edf2f4;margin:0 0 4px;overflow-wrap:anywhere}
+.fl-account-dropdown strong{display:block;font-weight:600;color:#416575}
+.fl-account-dropdown>a{display:flex;align-items:center;gap:9px;padding:9px 10px;border-radius:4px;font-size:11px;color:#416575;text-decoration:none}
+.fl-account-dropdown>a:hover,.fl-account-dropdown>a:focus{background:#edf6f5;text-decoration:none}
+@media(max-width:520px){.fl-account-button{gap:3px;padding:2px 0}.fl-account-button>svg{width:9px}.fl-account-dropdown{width:210px}}

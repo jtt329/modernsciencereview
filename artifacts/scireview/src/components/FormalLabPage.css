@@ -66,3 +66,6 @@
 .fl-upload-page .fl-upload-hero h1{max-width:none;margin:0 0 12px;font-size:38px;line-height:1.25}
 .fl-upload-page .fl-upload-hero .fl-hero-copy>p{max-width:none;font-size:14px;line-height:1.8}
 @media(max-width:700px){.fl-upload-page .fl-upload-hero{padding:23px 0 20px}.fl-upload-page .fl-upload-hero h1{font-size:30px;line-height:1.25;margin-bottom:10px}.fl-upload-page .fl-upload-hero .fl-hero-copy>p{font-size:12px;line-height:1.8}}
+
+/* Finished readers enter the evidence directly; author stages remain a separate editing workflow. */
+.fl-steps.fl-steps-completed{grid-template-columns:repeat(3,minmax(0,1fr))}.fl-reader-page .fl-paper-heading{padding-top:7px}.fl-reader-page .fl-workspace-report>.fl-panel{padding-top:27px}.fl-reader-page .fl-history-notice{margin-top:0}@media(max-width:700px){.fl-steps.fl-steps-completed .fl-step{min-width:0}.fl-reader-page .fl-paper-heading{padding-top:3px}.fl-reader-page .fl-workspace-report>.fl-panel{padding-top:20px}}
