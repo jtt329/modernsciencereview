@@ -31,8 +31,11 @@ async function header(){
 try{
  for(const viewport of [{width:1440,height:1000},{width:390,height:844},{width:320,height:900}]){
   await page.setViewportSize(viewport);await page.goto(base+'/');await page.locator('.fl-library-paper').first().waitFor();await header();
-  assert.equal(await page.locator('.fl-library-principles,.fl-library-hero-actions').count(),0);
-  const hero=await page.locator('.fl-library-hero').boundingBox(),heading=await page.locator('.fl-library-hero h1').boundingBox(),card=await page.locator('.fl-library-paper').first().boundingBox();
+  assert.equal(await page.locator('.fl-library-principles,.fl-library-hero-actions,.fl-library-hero').count(),0);
+  assert.equal(await page.locator('#how-the-library-works').count(),1);
+  assert.equal(await page.getByRole('heading',{name:'Every explanation leads back to its evidence.',exact:true}).count(),1);
+  assert.equal(await page.locator('#how-the-library-works details').getAttribute('open'),null);
+  const hero=await page.locator('#how-the-library-works').boundingBox(),heading=await page.locator('#how-the-library-works h1').boundingBox(),card=await page.locator('.fl-library-paper').first().boundingBox();
   assert.ok(heading.width>=hero.width-3,'Library heading spans the former sidebar area');assert.ok(card.y<(viewport.width>700?650:850),'Paper previews appear higher on the page');
   await page.screenshot({path:path.join(out,`home-${viewport.width}.png`),fullPage:false});
   await page.locator('.fl-header-upload').click();await page.locator('.fl-upload-hero').waitFor();await header();
