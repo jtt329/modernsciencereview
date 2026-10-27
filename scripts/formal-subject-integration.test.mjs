@@ -100,3 +100,12 @@ test('concurrent narrative refresh uses one lease and never attaches a synthesis
  s.nodes.get('horizon').version++;release();await first;assert.equal(s.nodes.get('horizon').overview,undefined);assert.equal(s.nodes.get('horizon').compile_token,null);
  s.overviewGate=null;const refreshed=await api.refreshSubjectOverview('horizon');assert.equal(refreshed.overview.sourceVersion,2);assert.equal(s.modelCalls.filter(c=>c.system.startsWith('Build')).length,2);
 });
+
+
+test('reuse inherits legacy account metadata even when the model leaves duplicate fields blank, while new children remain strict',()=>{
+ const nodes=[{slug:'existing',title:'Existing scientific account',scope:'',parentSlug:null,version:1,updatedAt:''}],reuse={action:'reuse',slug:'existing',title:'',scope:'',parentSlug:null,reason:'The existing account is the best fit.'};
+ const selected=api.validateSubjectPlacement(reuse,nodes,'offline');assert.equal(selected.slug,'existing');assert.equal(selected.title,nodes[0].title);assert.match(selected.scope,/detailed scope has not been recorded/);
+ assert.equal(api.validateSubjectPlacement({...reuse,title:'Invented model rename',scope:'An unsupported invented scope.'},[{...nodes[0],scope:'Recorded factual scope.'}],'offline').scope,'Recorded factual scope.');
+ assert.throws(()=>api.validateSubjectPlacement({...reuse,slug:'unknown'},nodes,'offline'),/existing node/);
+ for(const blank of [{title:'',scope:'Nonempty scope.'},{title:'New child',scope:''}])assert.throws(()=>api.validateSubjectPlacement({...reuse,...blank,action:'create-child',slug:'new-child',parentSlug:'existing'},nodes,'offline'),/nonempty bounded/);
+});
