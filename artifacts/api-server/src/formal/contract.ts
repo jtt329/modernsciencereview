@@ -1,5 +1,5 @@
-import type {SubjectNodeRef,SubjectStats,SubjectAdmission,SubjectParentDecision} from './subjectContract';
-export type {SubjectNodeRef,SubjectStats,SubjectAdmission,SubjectParentDecision,SubjectIntegrationResult} from './subjectContract';
+import type {SubjectNodeRef,SubjectStats,SubjectAdmission,SubjectParentDecision,SubjectContext} from './subjectContract';
+export type {SubjectNodeRef,SubjectStats,SubjectAdmission,SubjectParentDecision,SubjectIntegrationResult,SubjectContext,SubjectContextTopic,SubjectContextReference,SubjectContextEvidence,SubjectContextLink} from './subjectContract';
 /** Formal Lab v1: a bounded declarative language, never executable submission code. */
 export type Expr =
   | { op: 'symbol'; name: string }
@@ -134,7 +134,7 @@ export interface FormalSubjectDirectoryEntry {
   slug:string;title:string;version:number;updatedAt:string;
   parentSlug?:string|null;parent?:SubjectNodeRef|null;children?:SubjectNodeRef[];
   nodeKind?:'evidence-account'|'navigation-parent';hierarchyVersion?:number;scope?:string;
-  stats?:SubjectStats;
+  stats?:SubjectStats;context?:SubjectContext;contextCurrent?:boolean;displayTitle?:string;
 }
 export interface FormalSubject extends FormalSubjectDirectoryEntry {
   parentDecision?:SubjectParentDecision|null;

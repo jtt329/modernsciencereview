@@ -22,6 +22,8 @@ async function buildAll() {
       // One-off maintenance entry: provenance backfill, bundled so it can run in
       // the deployed image's Console (pg + db inlined) — see src/scripts/backfillProvenance.ts.
       path.resolve(artifactDir, "src/scripts/backfillProvenance.ts"),
+      // Evidence-bound, idempotent context initialization through the deployed Console/SSH.
+      path.resolve(artifactDir, "src/scripts/initializeSubjectContext.ts"),
     ],
     platform: "node",
     bundle: true,

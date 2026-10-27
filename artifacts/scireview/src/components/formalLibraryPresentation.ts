@@ -38,9 +38,10 @@ export function paperReviewUrl(paper:PublishedFormalPaper):string {
 }
 export function subjectUrl(slug:string):string {return `/formal-lab/subjects/${encodeURIComponent(slug)}`;}
 export type LibrarySubjectEntry = FormalSubjectDirectoryEntry;
+export function subjectDisplayTitle(subject:LibrarySubjectEntry):string {return subject.displayTitle||subject.context?.displayTitle||subject.title;}
 export function selectLibrarySubjects(subjects:readonly LibrarySubjectEntry[],filters:Pick<LibraryFilters,'query'|'subject'|'sort'>):LibrarySubjectEntry[] {
-  const needle=searchable(filters.query.trim()),selected=subjects.filter(item=>(filters.subject==='all'||item.slug===filters.subject||item.parentSlug===filters.subject||item.children?.some(child=>child.slug===filters.subject))&&(!needle||searchable([item.title,item.slug,item.parent?.title||'',...(item.children||[]).map(child=>child.title)].join(' ')).includes(needle)));
-  return selected.sort((a,b)=>filters.sort==='newest'?dateValue(b.updatedAt)-dateValue(a.updatedAt)||a.title.localeCompare(b.title):filters.sort==='oldest'?dateValue(a.updatedAt)-dateValue(b.updatedAt)||a.title.localeCompare(b.title):a.title.localeCompare(b.title));
+  const needle=searchable(filters.query.trim()),selected=subjects.filter(item=>(filters.subject==='all'||item.slug===filters.subject||item.parentSlug===filters.subject||item.children?.some(child=>child.slug===filters.subject))&&(!needle||searchable([item.title,subjectDisplayTitle(item),item.context?.introduction||'',...(item.context?.topics||[]).map(topic=>topic.title),item.slug,item.parent?.title||'',...(item.children||[]).map(child=>child.title)].join(' ')).includes(needle)));
+  return selected.sort((a,b)=>filters.sort==='newest'?dateValue(b.updatedAt)-dateValue(a.updatedAt)||subjectDisplayTitle(a).localeCompare(subjectDisplayTitle(b)):filters.sort==='oldest'?dateValue(a.updatedAt)-dateValue(b.updatedAt)||subjectDisplayTitle(a).localeCompare(subjectDisplayTitle(b)):subjectDisplayTitle(a).localeCompare(subjectDisplayTitle(b)));
 }
 
 /** Connections use an exact shared claim in one revision; withheld records stay in audit, not this map. */

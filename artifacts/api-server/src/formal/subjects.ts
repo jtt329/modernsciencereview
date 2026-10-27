@@ -5,7 +5,9 @@ import { canonicalJson, FormalError, packageDigest } from './package';
 import { callFormalAI } from './model';
 import {subjectStats,subjectSourceAdmission,aggregateSubjectAdmission,verifiedHistoricalChronology} from './subjectAdmission';
 import {validateSubjectParentDecision,assertSubjectParentAcyclic,subjectParentSchema,SUBJECT_PARENT_PROMPT,validateSubjectPlacement,subjectPlacementSchema,SUBJECT_PLACEMENT_PROMPT} from './subjectHierarchy';
-import type {SubjectIntegrationResult,SubjectAdmission} from './subjectContract';
+import type {SubjectIntegrationResult,SubjectAdmission,SubjectContext,SubjectContextReference} from './subjectContract';
+import {validateSubjectContext,subjectContextFingerprint,isCurrentSubjectContext,subjectContextTargetSlugs,subjectContextSchema,SUBJECT_CONTEXT_PROMPT} from './subjectContext';
+import {curatedSubjectContextDrafts,HORIZON_CONTEXT_REFERENCES} from './subjectContextCatalog';
 import {currentScientificAssessment} from './currentAssessment';
 
 let schemaReady: Promise<unknown> | undefined;
@@ -23,6 +25,15 @@ export async function ensureFormalSubjectSchema() {
     ALTER TABLE formal_lab_subjects_v2 ADD COLUMN IF NOT EXISTS parent_decision jsonb;
     ALTER TABLE formal_lab_subjects_v2 ADD COLUMN IF NOT EXISTS compile_token text;
     ALTER TABLE formal_lab_subjects_v2 ADD COLUMN IF NOT EXISTS compile_lease_until timestamptz;
+    ALTER TABLE formal_lab_subjects_v2 ADD COLUMN IF NOT EXISTS context jsonb;
+    ALTER TABLE formal_lab_subjects_v2 ADD COLUMN IF NOT EXISTS context_revision integer NOT NULL DEFAULT 0;
+    ALTER TABLE formal_lab_subjects_v2 ADD COLUMN IF NOT EXISTS context_compile_token text;
+    ALTER TABLE formal_lab_subjects_v2 ADD COLUMN IF NOT EXISTS context_compile_lease_until timestamptz;
+    CREATE TABLE IF NOT EXISTS formal_lab_subject_context_versions_v1 (
+      subject_slug text NOT NULL REFERENCES formal_lab_subjects_v2(slug), revision integer NOT NULL,
+      scope_fingerprint text NOT NULL, context jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY(subject_slug,revision)
+    );
     CREATE INDEX IF NOT EXISTS formal_lab_subject_parent_v2 ON formal_lab_subjects_v2(parent_slug);
     CREATE TABLE IF NOT EXISTS formal_lab_subject_integrations_v1 (
       revision_id uuid NOT NULL REFERENCES formal_lab_revisions(id), integration_key text NOT NULL,
@@ -148,20 +159,26 @@ export async function publishOutputs(submission: FormalSubmission, source: Inges
     return compiled.outputs;
   } catch(error) {await client.query('ROLLBACK');throw error;} finally {client.release();}
 }
+function subjectNavigationTitle(title:string,context:SubjectContext|undefined):string {
+ const display=context?.version==='subject-context-v1'?context.displayTitle:undefined;
+ return typeof display==='string'&&display.trim()&&display.length<=300&&!/https?:\/\/|\]\(|<a\b/i.test(display)?display.trim():title;
+}
 function subjectFromRow(row:any):FormalSubject {
- const value:FormalSubject={slug:row.slug,title:row.title,version:row.version,updatedAt:new Date(row.updated_at).toISOString(),paragraphs:row.paragraphs||[],parentSlug:row.parent_slug||null,nodeKind:row.node_kind==='navigation-parent'?'navigation-parent':'evidence-account',hierarchyVersion:row.hierarchy_version||0,scope:row.scope||'',parentDecision:row.parent_decision||null,...(row.overview?{overview:row.overview}:{})};
+ const value:FormalSubject={slug:row.slug,title:row.title,version:row.version,updatedAt:new Date(row.updated_at).toISOString(),paragraphs:row.paragraphs||[],parentSlug:row.parent_slug||null,nodeKind:row.node_kind==='navigation-parent'?'navigation-parent':'evidence-account',hierarchyVersion:row.hierarchy_version||0,scope:row.scope||'',parentDecision:row.parent_decision||null,...(row.overview?{overview:row.overview}:{}),...(row.context?{context:row.context,displayTitle:subjectNavigationTitle(row.title,row.context)}:{})};
  value.stats=subjectStats(value);return value;
 }
 export async function readSubject(slug:string):Promise<FormalSubject|null> {
  if(!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)||slug.length>100)return null;
  await ensureFormalSubjectSchema();const {rows:[row]}=await pool.query('SELECT * FROM formal_lab_subjects_v2 WHERE slug=$1',[slug]);if(!row)return null;
- const value=subjectFromRow(row);const {rows:relations}=await pool.query('SELECT slug,title,parent_slug FROM formal_lab_subjects_v2 WHERE slug=$1 OR parent_slug=$2 ORDER BY title',[value.parentSlug,slug]);
- value.parent=value.parentSlug?relations.find(node=>node.slug===value.parentSlug)||null:null;value.children=relations.filter(node=>node.parent_slug===slug).map(({slug,title})=>({slug,title}));
- if(value.parent)value.parent={slug:value.parent.slug,title:value.parent.title};return value;
+ const value=subjectFromRow(row);const {rows:relations}=await pool.query('SELECT slug,title,parent_slug,context FROM formal_lab_subjects_v2 WHERE slug=$1 OR parent_slug=$2 ORDER BY title',[value.parentSlug,slug]);
+ value.parent=value.parentSlug?relations.find(node=>node.slug===value.parentSlug)||null:null;value.children=relations.filter(node=>node.parent_slug===slug).map(({slug,title,context})=>({slug,title:subjectNavigationTitle(title,context)}));
+ if(value.parent){const parentRow=relations.find(node=>node.slug===value.parentSlug)!;value.parent={slug:parentRow.slug,title:subjectNavigationTitle(parentRow.title,parentRow.context)};}
+ if(value.context){const slugs=[...new Set([slug,...value.children.map(n=>n.slug),...subjectContextTargetSlugs(value.context)])];const {rows:contextNodes}=await pool.query('SELECT * FROM formal_lab_subjects_v2 WHERE slug=ANY($1::text[]) ORDER BY slug',[slugs]);value.contextCurrent=isCurrentSubjectContext(value,contextNodes.map(subjectFromRow));}
+ return value;
 }
 export async function listSubjects():Promise<FormalSubjectDirectoryEntry[]> {
  await ensureFormalSubjectSchema();const {rows}=await pool.query('SELECT * FROM formal_lab_subjects_v2 WHERE version>0 OR node_kind=\'navigation-parent\' ORDER BY title LIMIT 200');
- const nodes=rows.map(subjectFromRow);return nodes.map(({paragraphs,overview,parentDecision,...node})=>({...node,parent:node.parentSlug?nodes.find(item=>item.slug===node.parentSlug)?{slug:node.parentSlug,title:nodes.find(item=>item.slug===node.parentSlug)!.title}:null:null,children:nodes.filter(item=>item.parentSlug===node.slug).map(({slug,title})=>({slug,title}))}));
+ const nodes=rows.map(subjectFromRow);return nodes.map(({paragraphs,overview,parentDecision,...node})=>({...node,...(node.context?{contextCurrent:isCurrentSubjectContext({...node,paragraphs},nodes)}:{}),parent:node.parentSlug?nodes.find(item=>item.slug===node.parentSlug)?{slug:node.parentSlug,title:nodes.find(item=>item.slug===node.parentSlug)!.displayTitle||nodes.find(item=>item.slug===node.parentSlug)!.title}:null:null,children:nodes.filter(item=>item.parentSlug===node.slug).map(({slug,title,displayTitle})=>({slug,title:displayTitle||title}))}));
 }
 export async function readPublishedSubmission(id:string,revisionId?:string):Promise<FormalSubmission|null> {
   if(!/^[a-f0-9-]{36}$/i.test(id)||revisionId!==undefined&&!/^[a-f0-9-]{36}$/i.test(revisionId))return null;
@@ -353,7 +370,7 @@ export async function integratePublishedSubject(submissionId:string,expected?:{r
  const {rows:[cached]}=await pool.query('SELECT record FROM formal_lab_subject_integrations_v1 WHERE revision_id=$1 AND integration_key=$2',[revision.id,integrationKey]);
  const {rows:[priorIntegration]}=await pool.query('SELECT subject_slug,record FROM formal_lab_subject_integrations_v1 WHERE revision_id=$1 ORDER BY created_at DESC LIMIT 1',[revision.id]);
  let placement:any=cached?.record?.placement;
- if(!placement){const result=await callFormalAI({system:SUBJECT_PLACEMENT_PROMPT,schema:subjectPlacementSchema,payload:{publication:{title:revision.package.title,mainClaim:revision.package.mainClaim,originalSubjectSlug:baseSlug,assessment:view.current?view.assessment?.metaSummary:null,novelty:view.current?view.assessment?.novelty:null,contributionTitles:revision.outputs!.explanation.filter(section=>section.status==='conditional-checked').map(section=>section.title)},existingNodes:directory.map(({slug,title,parentSlug,scope,stats})=>({slug,title,parentSlug,scope,stats}))}});placement=validateSubjectPlacement(result.data,directory,result.model);}
+ if(!placement){const result=await callFormalAI({system:SUBJECT_PLACEMENT_PROMPT,schema:subjectPlacementSchema,payload:{publication:{title:revision.package.title,mainClaim:revision.package.mainClaim,originalSubjectSlug:baseSlug,assessment:view.current?view.assessment?.metaSummary:null,novelty:view.current?view.assessment?.novelty:null,contributionTitles:revision.outputs!.explanation.filter(section=>section.status==='conditional-checked').map(section=>section.title)},existingNodes:directory.map(({slug,title,parentSlug,scope,stats,context})=>({slug,title,parentSlug,scope,stats,topics:context?.topics.map(t=>({id:t.id,title:t.title,summary:t.summary,childSlugs:t.childSlugs}))||[]}))}});placement=validateSubjectPlacement(result.data,directory,result.model);}
  const chronology=cached?.record?.chronology||await sourceChronology(snapshot,new Date(publication.created_at).toISOString(),view.evidence?.literature);
  const context={assessment:view.assessment,assessmentCurrent:view.current,literature:view.evidence?.literature||null,chronology};
  const slugs=[...new Set([baseSlug,placement.slug,...(priorIntegration?.subject_slug?[priorIntegration.subject_slug]:[])])].sort(),client=await pool.connect();let changed=false;
@@ -387,6 +404,75 @@ export async function integratePublishedSubject(submissionId:string,expected?:{r
  const affected=new Set<string>([...slugs,...(parentResult.formerParent?[parentResult.formerParent]:[])]);for(const start of [...slugs,...(parentResult.formerParent?[parentResult.formerParent]:[])]){let cursor=start;const seen=new Set<string>();for(let depth=0;depth<8;depth++){const result=await syncSubjectParentEvidence(cursor);if(!result.parentSlug||seen.has(result.parentSlug))break;seen.add(result.parentSlug);affected.add(result.parentSlug);cursor=result.parentSlug;if(result.changed)changed=true;}}
  const pendingNarrativeSlugs:string[]=[];
  for(const slug of affected){let subject=await readSubject(slug);if(subject&&(!isCurrentSubjectOverview(subject)||subject.overview?.evidencePolicy!=='reviewed-subject-evidence-v1'))subject=await refreshSubjectOverview(slug);if(subject&&subject.nodeKind!=='navigation-parent'&&subject.paragraphs.some(p=>p.admission?.status!=='withheld'&&p.placementStatus!=='historical')&&(!isCurrentSubjectOverview(subject)||subject.overview?.evidencePolicy!=='reviewed-subject-evidence-v1'))pendingNarrativeSlugs.push(slug);}
+ const contextDirectory=await listSubjects();
+ for(const entry of contextDirectory)if(entry.context&&subjectContextTargetSlugs(entry.context).some(slug=>affected.has(slug)))affected.add(entry.slug);
+ const backgroundReferences:SubjectContextReference[]=(view.evidence?.literature?.papers||[]).filter(p=>p.url?.startsWith('https://')).slice(0,24).map(p=>({id:'literature-'+p.id.toLowerCase().replace(/[^a-z0-9]+/g,'-').slice(0,95),title:p.title,url:p.url}));
+ for(const slug of affected){try{await refreshSubjectContext(slug,{references:backgroundReferences});}catch(error){if(!pendingNarrativeSlugs.includes(slug))pendingNarrativeSlugs.push(slug);console.warn('[formal-lab] Background context remains pending; reviewed evidence is unchanged.',{slug,errorType:error instanceof Error?error.name:'unknown'});}}
  const subject=(await readSubject(placement.slug))!;const admissions={supported:0,provisional:0,withheld:0,legacy:0};for(const paragraph of subject.paragraphs.filter(p=>p.sources.some(ref=>ref.revisionId===revision.id))){const state=paragraph.admission?.status;if(state==='supported-contribution')admissions.supported++;else if(state==='provisional-contribution')admissions.provisional++;else if(state==='withheld')admissions.withheld++;else admissions.legacy++;}
  return {subjectSlugs:[...affected],changed,revisionId:revision.id,packageDigest:revision.digest,assessmentFingerprint:view.current?view.assessment!.evidenceFingerprint:null,sourceBound:true,admissions,...(pendingNarrativeSlugs.length?{pendingNarrativeSlugs}:{}),...(parentResult.createdParent?{parentCreated:parentResult.createdParent}:{}),notes:[placement.reason,'Conditional explanations are retained even when priority is undetermined. Historical firstness is never certified by this compilation.',...(pendingNarrativeSlugs.length?['Evidence placement is saved; these coherent narratives remain pending and can be retried: '+pendingNarrativeSlugs.join(', ')]:[])]};
+}
+
+export interface SubjectContextNetworkBinding {
+ submissionId:string;expectedRevisionId:string;expectedPackageDigest:string;expectedSourceSha256?:string;parentSlug:string;childSlug:string;
+}
+function contextDraft(context:SubjectContext){return {kind:context.kind,...(context.displayTitle?{displayTitle:context.displayTitle}:{}),introduction:context.introduction,topics:context.topics,referenceIds:context.references.map(r=>r.id),conceptLinks:context.conceptLinks};}
+function contextNetworkInput(nodes:readonly FormalSubject[],references:readonly SubjectContextReference[]):string{return createHash('sha256').update(canonicalJson({references,nodes:nodes.map(n=>({slug:n.slug,title:n.title,scope:n.scope||'',version:n.version,hierarchyVersion:n.hierarchyVersion||0,parentSlug:n.parentSlug||null})).sort((a,b)=>a.slug.localeCompare(b.slug))})).digest('hex');}
+async function contextNodes(client:{query:Function}=pool,lock=false):Promise<FormalSubject[]>{const {rows}=await client.query('SELECT * FROM formal_lab_subjects_v2 ORDER BY slug LIMIT 200'+(lock?' FOR UPDATE':''));return rows.map(subjectFromRow);}
+/** Append-only context versions; source/evidence tables are never rewritten. */
+async function saveSubjectContext(slug:string,draft:unknown,references:readonly SubjectContextReference[],model:string,expectedInput?:string,binding?:SubjectContextNetworkBinding,expectedContextRevision?:number,preserveNonCurated=false):Promise<{subject:FormalSubject;changed:boolean}>{
+ const client=await pool.connect();try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('formal-lab-subject-hierarchy',0))");
+  if(binding)await validateContextNetworkBinding(client,binding,true);
+  const {rows:[row]}=await client.query('SELECT * FROM formal_lab_subjects_v2 WHERE slug=$1 FOR UPDATE',[slug]);if(!row)throw new FormalError('The subject context target no longer exists.',409);
+  if(expectedContextRevision!==undefined&&(row.context_revision||0)!==expectedContextRevision)throw new FormalError('A newer subject context was saved during preparation. Retry without replacing it.',409);
+  if(preserveNonCurated&&row.context&&row.context.model!=='curated-primary-source-context'){await client.query('COMMIT');return {subject:subjectFromRow(row),changed:false};}
+  const nodes=await contextNodes(client,true),subject=subjectFromRow(row);if(expectedInput&&contextNetworkInput(nodes,references)!==expectedInput)throw new FormalError('The subject network changed during context preparation. Retry compilation.',409);
+  const context=validateSubjectContext(draft,subject,nodes,references,model,(row.context_revision||0)+1);
+  if(subject.context&&isCurrentSubjectContext(subject,nodes)&&canonicalJson(contextDraft(subject.context))===canonicalJson(contextDraft(context))){await client.query('COMMIT');return {subject,changed:false};}
+  await client.query('INSERT INTO formal_lab_subject_context_versions_v1(subject_slug,revision,scope_fingerprint,context) VALUES($1,$2,$3,$4)',[slug,context.contextRevision,context.scopeFingerprint,JSON.stringify(context)]);
+  const saved=await client.query('UPDATE formal_lab_subjects_v2 SET context=$1,context_revision=$2 WHERE slug=$3 AND version=$4 AND hierarchy_version=$5 AND context_revision=$6',[JSON.stringify(context),context.contextRevision,slug,subject.version,subject.hierarchyVersion||0,row.context_revision||0]);if(saved.rowCount!==1)throw new FormalError('The subject changed before its context could be saved.',409);
+  await client.query('COMMIT');return {subject:{...subject,context,displayTitle:context.displayTitle||subject.title,contextCurrent:true},changed:true};
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+}
+/** Explicit compilation only: no provider calls are made from account GETs. */
+export async function refreshSubjectContext(slug:string,options:{references?:SubjectContextReference[];referenceNotes?:{id:string;summary:string}[]}={}):Promise<FormalSubject>{
+ await ensureFormalSubjectSchema();const nodes=await contextNodes(),subject=nodes.find(n=>n.slug===slug);if(!subject)throw new FormalError('Subject not found.',404);
+ if(isCurrentSubjectContext(subject,nodes))return subject;
+ const references=[...new Map([...(subject.context?.references||[]),...(options.references||[])].map(r=>[r.id,r])).values()].slice(0,30);
+ const token=randomUUID(),lease=await pool.query("UPDATE formal_lab_subjects_v2 SET context_compile_token=$1,context_compile_lease_until=now()+interval '10 minutes' WHERE slug=$2 AND version=$3 AND hierarchy_version=$4 AND context_revision=$5 AND (context_compile_lease_until IS NULL OR context_compile_lease_until<now()) RETURNING slug",[token,slug,subject.version,subject.hierarchyVersion||0,subject.context?.contextRevision||0]);if(!lease.rowCount)return subject;
+ const input=contextNetworkInput(nodes,references);
+ try{const result=await callFormalAI({system:SUBJECT_CONTEXT_PROMPT,schema:subjectContextSchema,timeoutMs:120000,payload:{subject:{slug:subject.slug,title:subject.title,scope:subject.scope,parentSlug:subject.parentSlug},references,referenceNotes:(options.referenceNotes||[]).filter(n=>references.some(r=>r.id===n.id)).slice(0,30),existingNodes:nodes.map(n=>({slug:n.slug,title:n.title,parentSlug:n.parentSlug,scope:n.scope,reviewedEvidence:n.paragraphs.filter(p=>p.placementStatus!=='historical'&&p.admission?.status!=='withheld').slice(0,80).map(p=>({id:p.id,title:p.title,summary:p.text.slice(0,800),standing:p.admission?.status||'legacy-conditional'}))})),previousContext:subject.context?contextDraft(subject.context):null}});
+  return (await saveSubjectContext(slug,result.data,references,result.model,input,undefined,subject.context?.contextRevision||0)).subject;
+ }finally{await pool.query('UPDATE formal_lab_subjects_v2 SET context_compile_token=NULL,context_compile_lease_until=NULL WHERE slug=$1 AND context_compile_token=$2',[slug,token]).catch(()=>{});}
+}
+async function validateContextNetworkBinding(client:{query:Function},binding:SubjectContextNetworkBinding,lock=false):Promise<FormalSubmission>{
+ const {rows:[latest]}=await client.query('SELECT id,digest,approved_at,publish_consent,verification FROM formal_lab_revisions WHERE submission_id=$1 ORDER BY revision DESC LIMIT 1'+(lock?' FOR UPDATE':''),[binding.submissionId]);
+ if(!latest||latest.id!==binding.expectedRevisionId||latest.digest!==binding.expectedPackageDigest||!latest.approved_at||latest.publish_consent!==true||latest.verification?.packageDigest!==binding.expectedPackageDigest)throw new FormalError('The expected current approved revision changed before context preparation.',409);
+ const {rows:[publication]}=await client.query('SELECT snapshot FROM formal_lab_publications_v2 WHERE submission_id=$1 AND ($2::uuid IS NULL OR revision_id=$2) ORDER BY created_at DESC,revision_id DESC LIMIT 1',[binding.submissionId,binding.expectedRevisionId]);
+ const published=publication?.snapshot as FormalSubmission|undefined;
+ if(!published||published.currentRevision.digest!==binding.expectedPackageDigest||binding.expectedSourceSha256&&published.sourceDocument?.sha256!==binding.expectedSourceSha256)throw new FormalError('The expected immutable publication does not match this context update.',409);
+ verifyPublication(published,published.sourceDocument!,published.currentRevision.outputs!);return published;
+}
+export async function checkSubjectContextNetwork(binding:SubjectContextNetworkBinding){
+ await ensureFormalSubjectSchema();const published=await validateContextNetworkBinding(pool,binding);
+ const parent=await readSubject(binding.parentSlug),child=await readSubject(binding.childSlug);if(!parent||!child||child.parentSlug!==parent.slug)throw new FormalError('The expected published subject hierarchy does not match.',409);
+ if(!child.paragraphs.some(p=>p.sources.some(s=>s.submissionId===binding.submissionId&&s.revisionId===binding.expectedRevisionId&&s.digest===binding.expectedPackageDigest&&s.sourceId===published.sourceDocument!.id&&s.placementStatus!=='historical')))throw new FormalError('The expected public source is not active in this subject account.',409);
+ return {submissionId:published.id,revisionId:published.currentRevision.id,packageDigest:published.currentRevision.digest,sourceSha256:published.sourceDocument!.sha256,parent:{slug:parent.slug,version:parent.version,contextRevision:parent.context?.contextRevision||0,contextCurrent:parent.contextCurrent||false},child:{slug:child.slug,version:child.version,contextRevision:child.context?.contextRevision||0,contextCurrent:child.contextCurrent||false},modelCalls:0 as const};
+}
+/** Curated, no-inference maintenance for the currently published horizon network. */
+export async function initializeSubjectContextNetwork(binding:SubjectContextNetworkBinding){
+ await checkSubjectContextNetwork(binding);const client=await pool.connect(),createdSlugs:string[]=[];
+ try{await client.query('BEGIN');await client.query("SELECT pg_advisory_xact_lock(hashtextextended('formal-lab-subject-hierarchy',0))");
+  await validateContextNetworkBinding(client,binding,true);
+  const nodes=await contextNodes(client,true);const lockedChild=nodes.find(n=>n.slug===binding.childSlug);if(!nodes.some(n=>n.slug===binding.parentSlug)||lockedChild?.parentSlug!==binding.parentSlug||!lockedChild.paragraphs.some(p=>p.sources.some(s=>s.revisionId===binding.expectedRevisionId&&s.digest===binding.expectedPackageDigest&&s.placementStatus!=='historical')))throw new FormalError('The bound subject evidence changed before context initialization.',409);const force=nodes.find(n=>n.slug==='force'||n.title.trim().toLowerCase()==='force');const forceSlug=force?.slug||'force';
+  if(!force){await client.query("INSERT INTO formal_lab_subjects_v2(slug,title,node_kind,scope) VALUES($1,$2,'navigation-parent',$3) ON CONFLICT(slug) DO NOTHING RETURNING slug",[forceSlug,'Force','Background mechanics concept; it does not certify a universal result from any single horizon paper.']);createdSlugs.push(forceSlug);}
+  const boundary=nodes.find(n=>n.slug==='generalized-boundary-force'||n.title.trim().toLowerCase()==='generalized boundary force');
+  if(boundary&&boundary.parentSlug!==forceSlug)throw new FormalError('An existing boundary-force concept has a different parent; preserve it for an explicit structural review.',409);
+  if(!boundary){await client.query("INSERT INTO formal_lab_subjects_v2(slug,title,parent_slug,scope,node_kind,hierarchy_version) VALUES($1,$2,$3,$4,'navigation-parent',1) ON CONFLICT(slug) DO NOTHING",['generalized-boundary-force','Generalized boundary force',forceSlug,'A contextual concept for coordinate-conjugate work coefficients in specified boundary prescriptions.']);createdSlugs.push('generalized-boundary-force');}
+  await client.query('COMMIT');
+ }catch(error){await client.query('ROLLBACK');throw error;}finally{client.release();}
+ const nodes=await contextNodes(),parent=nodes.find(n=>n.slug===binding.parentSlug)!,child=nodes.find(n=>n.slug===binding.childSlug)!,force=nodes.find(n=>n.slug==='force'||n.title.trim().toLowerCase()==='force')!,boundary=nodes.find(n=>n.slug==='generalized-boundary-force'||n.title.trim().toLowerCase()==='generalized boundary force')!;
+ const expectedInput=contextNetworkInput(nodes,HORIZON_CONTEXT_REFERENCES);
+ const updatedSlugs:string[]=[],skippedSlugs:string[]=[],contexts:{slug:string;contextRevision:number;topics:number;reviewedParagraphs:number;kind:string}[]=[];
+ for(const {slug,draft} of curatedSubjectContextDrafts(parent,child,force,boundary)){const existing=nodes.find(n=>n.slug===slug)!;if(existing.context&&existing.context.model!=='curated-primary-source-context'){skippedSlugs.push(slug);continue;}const result=await saveSubjectContext(slug,draft,HORIZON_CONTEXT_REFERENCES,'curated-primary-source-context',expectedInput,binding,existing.context?.contextRevision||0,true);if(result.changed)updatedSlugs.push(slug);const c=result.subject.context!;contexts.push({slug,contextRevision:c.contextRevision,topics:c.topics.length,reviewedParagraphs:new Set(c.topics.flatMap(t=>t.reviewedEvidence.flatMap(e=>e.paragraphIds))).size,kind:c.kind});}
+ return {updatedSlugs,createdSlugs,skippedSlugs,contexts,modelCalls:0 as const};
 }

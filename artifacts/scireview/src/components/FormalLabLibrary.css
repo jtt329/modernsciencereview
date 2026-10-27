@@ -29,3 +29,8 @@
 .fl-library-map-canvas>a>small{display:block;font-size:7px;line-height:1.6;color:#93a5ad;margin-top:3px;font-family:Inter,ui-sans-serif,system-ui,sans-serif}
 
 .fl-library-content-heading-papers{justify-content:flex-start;gap:0;margin-bottom:14px}.fl-library-content-heading-papers+.fl-library-controls{gap:10px 18px;margin:0 0 14px}
+
+.fl-library-subject-reader{border:1px solid #dce6eb;border-radius:8px;background:#fff;padding:22px 25px;margin-top:20px}.fl-library-field-picker{display:flex;gap:10px;flex-wrap:wrap;border-bottom:1px solid #e0e8ed;padding-bottom:17px;margin-bottom:7px}.fl-library-field-picker>a{font-size:12px;line-height:1.8;padding:5px 9px;border:1px solid #dfe8ed;border-radius:4px;color:#6d8a9b}.fl-library-field-picker>a[aria-current=page]{border-color:#a4cacc;background:#eff7f6;color:#277b83}.fl-library-subject-reader .fl-context-heading h1{font-size:34px}.fl-library-subject-reader .fl-context-layout{grid-template-columns:170px minmax(0,1fr);gap:27px}.fl-library-subject-reader .fl-context-article{padding-bottom:18px}@media(max-width:800px){.fl-library-subject-reader{padding:17px}.fl-library-subject-reader .fl-context-layout{grid-template-columns:minmax(0,1fr)}.fl-library-subject-reader .fl-context-heading h1{font-size:28px}}
+
+/* Keep the longer library introduction compact without hiding its scope. */
+.fl-library-method{padding:16px 0 12px}.fl-library-method h1{font-size:34px}.fl-library-method>p{font-size:13px;line-height:1.7}@media(max-width:500px){.fl-library-method{padding:15px 0 10px}.fl-library-method h1{font-size:27px}.fl-library-method>p{font-size:12px;line-height:1.7}}

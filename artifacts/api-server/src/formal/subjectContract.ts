@@ -19,3 +19,20 @@ export interface SubjectIntegrationResult {
  admissions:{supported:number;provisional:number;withheld:number;legacy:number};
  parentCreated?:string;pendingNarrativeSlugs?:string[];notes:string[];
 }
+
+/** Editorial field context is not a paper review, mathematical proof or novelty verdict. */
+export interface SubjectContextEvidence {subjectSlug:string;paragraphIds:string[];}
+export interface SubjectContextReference {id:string;title:string;url:string;authors?:string;year?:number;}
+export interface SubjectContextTopic {
+ id:string;title:string;summary:string;referenceIds:string[];childSlugs:string[];reviewedEvidence:SubjectContextEvidence[];
+}
+export interface SubjectContextLink {
+ id:string;title:string;mode:'page'|'inspector';subjectSlug:string|null;relation:'broader'|'related'|'narrower';
+ summary:string;referenceIds:string[];reviewedEvidence:SubjectContextEvidence[];
+}
+export interface SubjectContext {
+ version:'subject-context-v1';kind:'field'|'concept'|'topic';displayTitle?:string;introduction:string;
+ topics:SubjectContextTopic[];references:SubjectContextReference[];conceptLinks:SubjectContextLink[];
+ model:string;generatedAt:string;sourceVersion:number;hierarchyVersion:number;scopeFingerprint:string;contextRevision:number;
+ standing:'background-context';evidenceDependencies?:{subjectSlug:string;version:number;hierarchyVersion:number}[];
+}

@@ -33,7 +33,7 @@ try{
   await page.setViewportSize(viewport);await page.goto(base+'/');await page.locator('.fl-library-paper').first().waitFor();await header();
   assert.equal(await page.locator('.fl-library-principles,.fl-library-hero-actions,.fl-library-hero').count(),0);
   assert.equal(await page.locator('#how-the-library-works').count(),1);
-  assert.equal(await page.getByRole('heading',{name:'Every explanation leads back to its evidence.',exact:true}).count(),1);
+  assert.equal(await page.getByRole('heading',{name:'AI-reviewed papers. Living explanations of science.',exact:true}).count(),1);
   assert.equal(await page.locator('#how-the-library-works details').getAttribute('open'),null);
   const hero=await page.locator('#how-the-library-works').boundingBox(),heading=await page.locator('#how-the-library-works h1').boundingBox(),card=await page.locator('.fl-library-paper').first().boundingBox();
   assert.ok(heading.width>=hero.width-3,'Library heading spans the former sidebar area');assert.ok(card.y<(viewport.width>700?650:850),'Paper previews appear higher on the page');
