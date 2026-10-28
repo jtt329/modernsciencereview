@@ -145,6 +145,38 @@ test('compact limits reject excess wording rather than truncating scientific sta
  f.inventory.coverage[0].reason='A stated physical premise.';f.inventory.coverage[1].statement='f=x^2=another_value';const compact=api.validateCompactInventory(f.inventory,f.source);assert.equal(compact.coverage[1].role,'unassessed');assert.equal(compact.coverage[1].statement,'f=x^2=another_value');
  const oversized=fixtures();oversized.inventory.inputs[0].justification='x'.repeat(201);assert.throws(()=>api.validateCompactInventory(oversized.inventory,oversized.source),/compact input justification/);
 });
+test('inventory and audit provider schemas require the same nonempty text as their parsers',()=>{
+ for(const schema of [api.inventorySchema,api.compactInventorySchema]){
+   for(const key of ['title','mainClaim','subjectSlug','subjectTitle'])assert.equal(schema.properties[key].minLength,1,key);
+   assert.equal(schema.properties.authors.minLength,undefined);
+   const coverage=schema.properties.coverage.items.properties,input=schema.properties.inputs.items.properties,group=schema.properties.groups.items.properties;
+   for(const key of ['id','statement','reason'])assert.equal(coverage[key].minLength,1,key);
+   for(const key of ['id','title','statement','justification'])assert.equal(input[key].minLength,1,key);
+   for(const key of ['id','title','focus'])assert.equal(group[key].minLength,1,key);
+   assert.equal(input.sourceUrl.minLength,undefined);assert.equal(schema.properties.warnings.items.minLength,1);
+ }
+ assert.equal(api.compactInventorySchema.properties.coverage.items.properties.reason.maxLength,120);
+ for(const key of ['id','statement','reason'])assert.equal(api.auditSchema.properties.additionalCoverage.items.properties[key].minLength,1,key);
+ for(const key of ['id','title','statement','justification'])assert.equal(api.auditSchema.properties.additionalInputs.items.properties[key].minLength,1,key);
+ assert.equal(api.auditSchema.properties.additionalInputs.items.properties.sourceUrl.minLength,undefined);
+ for(const key of ['coverageId','reason'])assert.equal(api.auditSchema.properties.corrections.items.properties[key].minLength,1,key);
+});
+test('empty coverage reasons remain rejected for every role without inserting scientific text',()=>{
+ for(const role of ['mathematical','physical-input','definition','interpretation','empirical','citation','scope','metadata','unassessed']){
+   const f=fixtures();f.inventory.coverage[0].role=role;f.inventory.coverage[0].reason='';const before=JSON.stringify(f.inventory);
+   assert.throws(()=>api.validateInventory(f.inventory,f.source),/coverage reason/);assert.throws(()=>api.validateCompactInventory(f.inventory,f.source),/coverage reason/);assert.equal(JSON.stringify(f.inventory),before);
+   const audit=fixtures();audit.audit.additionalCoverage[0].role=role;audit.audit.additionalCoverage[0].reason='';assert.throws(()=>api.applyCoverageAudit(valid(audit),audit.audit,audit.source),/coverage reason/);
+ }
+ const f=fixtures();f.audit.corrections=[{coverageId:'given',role:'physical-input',sourceLineIds:['p1-l002'],reason:''}];assert.throws(()=>api.applyCoverageAudit(valid(f),f.audit,f.source),/corrected coverage reason/);
+});
+test('required input wording stays nonempty while absent URLs and author metadata remain permitted',async()=>{
+ for(const key of ['id','title','statement','justification']){
+   const f=fixtures();f.inventory.inputs[0][key]='';assert.throws(()=>api.validateInventory(f.inventory,f.source));assert.equal(f.inventory.inputs[0][key],'');
+   const added=fixtures();added.audit.additionalInputs=[{...added.inventory.inputs[0],id:'new-input',[key]:''}];assert.throws(()=>api.applyCoverageAudit(valid(added),added.audit,added.source));
+ }
+ const f=fixtures();f.inventory.authors='';f.inventory.inputs[0].sourceUrl='';const {pkg,state}=await analyzed(f);assert.equal(pkg.authors,'');assert.equal(pkg.selectedInputs[0].sourceUrl,undefined);
+ assert.ok(state.calls[0].system.includes('concise NONEMPTY reason'));assert.ok(state.calls[1].system.includes('concise NONEMPTY reason'));
+});
 test('author guidance propagates without suppressing source coverage and discrepancies warn',async()=>{
   const {pkg,state,f}=await analyzed(fixtures(),{title:'An author-selected title',mainClaim:'A narrower requested focus'});assert.equal(state.calls[0].payload.request.authorGuidance.title,'An author-selected title');assert.equal(state.calls[2].payload.request.authorGuidance.mainClaim,'A narrower requested focus');assert(pkg.analysis.extractionWarnings.some(w=>w.includes('differs from the source-extracted')));assert.equal(new Set(pkg.analysis.coverage.flatMap(c=>c.sourceLineIds)).size,f.source.lines.length);
 });
