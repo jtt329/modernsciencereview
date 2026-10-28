@@ -73,6 +73,16 @@ test('review additions cannot fabricate a computation, misattribute source evide
  const failed=evidence();failed.verification.claims[0].status='contradicted';assert.throws(()=>validateScientificAssessment(v,pkg,source,failed),/actual passing checks/);
  const control=structuredClone(v);control.reviewAdditions.items[0].checkRefs=[{kind:'derivation-check',id:'potential-does-not-select-action'}];assert.throws(()=>validateScientificAssessment(control,pkg,source,evidence()),/invent computation evidence/);
 });
+test('review additions may cite actual passing negative-control computations without promoting them to positive derivations',()=>{
+ const ev=evidence(),controlIds=['theta-zero-alone-insufficient','nonexpanding-shear-control','oneform-not-full-differential','potential-does-not-select-action'];
+ ev.restrictedCanonicalDerivation={packageDigest:digest,sourceId:source.id,sourceSha256:source.sha256,checks:[{id:'actual-derivation',kind:'derivation',expected:'zero',rawResidual:'0',status:'checked'},...controlIds.map(id=>({id,kind:'negative-control',expected:'nonzero',rawResidual:'A*dL',status:'checked'}))]};
+ const v=response(ev);v.reviewAdditions.items=[{id:'computed-counterexamples',title:'Check the limits of stronger canonical claims',kind:'calculation',description:'The expected-nonzero controls show why the selected potential alone does not establish a unique action or the unrestricted canonical statement. These are checked counterexamples, not additional positive derivations.',manuscriptBasis:'not-explicit',sourceLineIds:['p1-l001'],checkRefs:controlIds.map(id=>({kind:'derivation-check',id})),paperIds:[],status:'checked-under-premises'}];
+ const before=JSON.stringify({v,ev}),result=validateScientificAssessment(v,pkg,source,ev);
+ assert.deepEqual(result.reviewAdditions.items[0].checkRefs,v.reviewAdditions.items[0].checkRefs);assert.equal(result.reviewAdditions.manuscriptChanged,false);assert.equal(JSON.stringify({v,ev}),before);
+ assert.equal(ev.restrictedCanonicalDerivation.checks.filter(check=>check.kind==='derivation').length,1);assert.equal(ev.restrictedCanonicalDerivation.checks.filter(check=>check.kind==='negative-control').length,4);assert.ok(ev.restrictedCanonicalDerivation.checks.filter(check=>check.kind==='negative-control').every(check=>check.expected==='nonzero'&&check.rawResidual!=='0'));
+ for(const status of ['contradicted','inconclusive']){const failed=structuredClone(ev);failed.restrictedCanonicalDerivation.checks.find(check=>check.id===controlIds[0]).status=status;assert.throws(()=>validateScientificAssessment(v,pkg,source,failed),/actual passing checks/);}
+ for(const change of [item=>item.checkRefs[0].id='invented-control',item=>item.checkRefs[0].kind='scalar-check']){const invalid=structuredClone(v);change(invalid.reviewAdditions.items[0]);assert.throws(()=>validateScientificAssessment(invalid,pkg,source,ev),/invent computation evidence/);}
+});
 
 
 const sectionBrowser=await build({entryPoints:[path.join(root,'artifacts/api-server/src/formal/assessmentSections.ts')],outfile:path.join(dir,'assessment-sections.mjs'),platform:'browser',bundle:true,format:'esm',metafile:true,logLevel:'silent'});
