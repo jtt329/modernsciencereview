@@ -18,7 +18,7 @@ before(async()=>{
   const outputs=path.join(root,'artifacts/api-server/src/formal/outputs.ts');
   const packages=path.join(root,'artifacts/api-server/src/formal/package.ts');
   const outfile=path.join(temp,'ingest-tests.mjs');
-  await build({stdin:{contents:`export * from ${JSON.stringify(ingest)};export {isolatedModels} from ${JSON.stringify(checker)};export {buildCoverage} from ${JSON.stringify(outputs)};export {packageDigest} from ${JSON.stringify(packages)};`,resolveDir:root,loader:'ts'},bundle:true,platform:'node',format:'esm',outfile,logLevel:'silent',plugins:[{name:'deterministic-ai-transport',setup(b){b.onLoad({filter:/[\\/]formal[\\/]subjects\.ts$/},()=>({contents:`export async function publishOutputs(){throw new Error('Database use is forbidden in pure tests');}export async function readSubject(){throw new Error('Database use is forbidden in pure tests');}export async function listSubjects(){throw new Error('Database use is forbidden in pure tests');}`,loader:'ts'}));b.onLoad({filter:/[\\/]formal[\\/]model\.ts$/},()=>({contents:`export async function callFormalAI(options){const state=globalThis[Symbol.for('msr.formal-ingest.tests')];state.calls.push(options);if(!state.responses.length)throw new Error('No deterministic response prepared');return {data:state.responses.shift(),model:'deterministic-test-model'};}`,loader:'ts'}));}}]});
+  await build({stdin:{contents:`export * from ${JSON.stringify(ingest)};export {isolatedModels} from ${JSON.stringify(checker)};export {buildCoverage} from ${JSON.stringify(outputs)};export {packageDigest} from ${JSON.stringify(packages)};`,resolveDir:root,loader:'ts'},bundle:true,platform:'node',format:'esm',outfile,logLevel:'silent',plugins:[{name:'deterministic-ai-transport',setup(b){b.onLoad({filter:/[\\/]formal[\\/]subjects\.ts$/},()=>({contents:`export async function publishOutputs(){throw new Error('Database use is forbidden in pure tests');}export async function readSubject(){throw new Error('Database use is forbidden in pure tests');}export async function listSubjects(){throw new Error('Database use is forbidden in pure tests');}`,loader:'ts'}));b.onLoad({filter:/[\\/]formal[\\/]model\.ts$/},()=>({contents:`export async function callFormalAI(options){const state=globalThis[Symbol.for('msr.formal-ingest.tests')];state.calls.push(options);if(!state.responses.length)throw new Error('No deterministic response prepared');const response=state.responses.shift();if(response?.__throw)throw Object.assign(new Error(response.message||'Deterministic provider failure'),response.__throw);return {data:response,model:'deterministic-test-model'};}`,loader:'ts'}));}}]});
   api=await import(pathToFileURL(outfile).href);
 });
 after(async()=>{if(temp)await rm(temp,{recursive:true,force:true});delete globalThis[Symbol.for('msr.formal-ingest.tests')];});
@@ -114,6 +114,36 @@ test('input wording alone never silently imposes a missing scalar constraint',()
 });
 test('complete automatic orchestration preserves all source rows and exact claim references',async()=>{
   const {pkg,state,events,f}=await analyzed();assert.equal(state.calls.length,3);assert.equal(pkg.claims.length,1);assert.equal(pkg.analysis.claimReferences[0].claimId,'b1-derivative');assert.equal(new Set(pkg.analysis.coverage.flatMap(c=>c.sourceLineIds)).size,f.source.lines.length);assert(events.some(e=>e.stage==='analysis-ready'));assert(pkg.analysis.coverage.some(c=>c.role==='unassessed'));assert(!('authorGuidance' in state.calls[0].payload.request));
+});
+test('a confirmed small-source output cap selects compact transport once with identical scientific content',async()=>{
+ const f=fixtures(),baseline=await analyzed(structuredClone(f));const state=transport([{__throw:{code:'FORMAL_MODEL_OUTPUT_LIMIT'},message:'Provider-confirmed output token limit.'},f.inventory,f.audit,f.batch]),events=[];
+ const pkg=await api.analyzeSource(f.source,Buffer.from('source bytes'),async(stage,message)=>events.push({stage,message}));
+ assert.equal(state.calls.length,4);assert.deepEqual(pkg.claims,baseline.pkg.claims);assert.deepEqual(pkg.selectedInputs,baseline.pkg.selectedInputs);assert.deepEqual(pkg.assumptions,baseline.pkg.assumptions);
+ assert.deepEqual(state.calls[1].payload.request.numberedLines,f.source.lines);assert.equal(state.calls[1].schema.properties.coverage.items.properties.reason.maxLength,120);assert.match(state.calls[1].system,/not permission to merge distinct equalities, omit claims or remove scientific conditions/);
+ assert.equal(events.filter(event=>event.message.includes('structural repair')).length,0);assert.ok(events.some(event=>event.stage==='inventory-compact'));assert.deepEqual(state.calls.map(call=>call.outputBudget),['source-inventory','source-inventory','source-coverage-audit',undefined]);
+});
+test('a 527-row complete seven-page source uses compact wording first and retains every row and equation',async()=>{
+ const f=fixtures();f.source.mimeType='application/pdf';f.source.filename='seven-page.pdf';f.source.pageCount=7;
+ for(let index=4;index<527;index++){const page=2+Math.floor((index-4)/88),line=1+(index-4)%88;f.source.lines.push({id:`p${page}-l${String(line).padStart(3,'0')}`,page,line,text:'The stated model remains restricted to its declared scalar domain.'});}
+ const mapped=new Set(f.inventory.coverage.flatMap(item=>item.sourceLineIds));
+ for(let page=1;page<=7;page++){const sourceLineIds=f.source.lines.filter(line=>line.page===page&&!mapped.has(line.id)).map(line=>line.id);if(sourceLineIds.length)f.inventory.coverage.push({id:'context-'+page,statement:'Source context and stated model scope.',role:'scope',sourceLineIds,inputIds:[],reason:'Stated domain context, not a separate proof.'});}
+ f.audit={additionalCoverage:[],additionalInputs:[],corrections:[],groups:structuredClone(f.inventory.groups),warnings:[]};
+ const {pkg,state}=await analyzed(f);assert.equal(state.calls.length,3);assert.equal(state.calls[0].schema.properties.coverage.items.properties.reason.maxLength,120);
+ assert.deepEqual(state.calls[0].payload.request.numberedLines,f.source.lines);assert.deepEqual(state.calls[1].payload.request.source.numberedLines,f.source.lines);assert.ok(state.calls.every(call=>call.pdf?.mimeType==='application/pdf'));
+ assert.equal(new Set(pkg.analysis.coverage.flatMap(item=>item.sourceLineIds)).size,527);assert.equal(pkg.claims.length,1);assert.equal(pkg.claims[0].lhs.op,'diff');assert.equal(pkg.claims[0].lhs.variable,'b1_x');assert.equal(pkg.claims[0].rhs.op,'mul');assert.equal(pkg.selectedInputs[0].statement,'f=x^2 with real dimensionless x.');assert.equal(pkg.analysis.coverage.filter(item=>item.role==='unassessed').length,0);
+});
+test('a repeated confirmed output cap stops compact analysis without a third identical request',async()=>{
+ const f=fixtures(),failure={__throw:{code:'FORMAL_MODEL_OUTPUT_LIMIT'},message:'Provider-confirmed output token limit.'},state=transport([failure,failure]);
+ await assert.rejects(()=>api.analyzeSource(f.source,Buffer.from('source'),async()=>{}),error=>error.code==='FORMAL_MODEL_OUTPUT_LIMIT');assert.equal(state.calls.length,2);
+});
+test('ordinary provider failures never select the output-limit fallback',async()=>{
+ const f=fixtures(),state=transport([{__throw:{code:'UNRELATED_FAILURE'}},{__throw:{code:'UNRELATED_FAILURE'}}]);
+ await assert.rejects(()=>api.analyzeSource(f.source,Buffer.from('source'),async()=>{}));assert.equal(state.calls.length,2);assert.ok(state.calls.every(call=>!call.system.includes('COMPACT TRANSPORT')));
+});
+test('compact limits reject excess wording rather than truncating scientific statements or changing their role',()=>{
+ const f=fixtures();f.inventory.coverage[0].reason='x'.repeat(121);assert.throws(()=>api.validateCompactInventory(f.inventory,f.source),/compact coverage reason/);assert.equal(f.inventory.coverage[0].reason.length,121);
+ f.inventory.coverage[0].reason='A stated physical premise.';f.inventory.coverage[1].statement='f=x^2=another_value';const compact=api.validateCompactInventory(f.inventory,f.source);assert.equal(compact.coverage[1].role,'unassessed');assert.equal(compact.coverage[1].statement,'f=x^2=another_value');
+ const oversized=fixtures();oversized.inventory.inputs[0].justification='x'.repeat(201);assert.throws(()=>api.validateCompactInventory(oversized.inventory,oversized.source),/compact input justification/);
 });
 test('author guidance propagates without suppressing source coverage and discrepancies warn',async()=>{
   const {pkg,state,f}=await analyzed(fixtures(),{title:'An author-selected title',mainClaim:'A narrower requested focus'});assert.equal(state.calls[0].payload.request.authorGuidance.title,'An author-selected title');assert.equal(state.calls[2].payload.request.authorGuidance.mainClaim,'A narrower requested focus');assert(pkg.analysis.extractionWarnings.some(w=>w.includes('differs from the source-extracted')));assert.equal(new Set(pkg.analysis.coverage.flatMap(c=>c.sourceLineIds)).size,f.source.lines.length);

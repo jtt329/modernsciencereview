@@ -61,7 +61,7 @@ export function openAISchema(schema:unknown):unknown {
   };
   return visit(schema);
 }
-interface FormalAIOptions {system:string;payload:unknown;schema?:unknown;pdf?:{base64:string;mimeType:string};timeoutMs?:number;}
+interface FormalAIOptions {system:string;payload:unknown;schema?:unknown;pdf?:{base64:string;mimeType:string};timeoutMs?:number;outputBudget?:'source-inventory'|'source-coverage-audit';}
 const tokenCount=(value:unknown):number|undefined=>typeof value==='number'&&Number.isSafeInteger(value)&&value>=0?value:undefined;
 function parseStructured(raw:string):any {
   const text=raw.trim().replace(/^```(?:json)?\s*/,'').replace(/\s*```$/,'');
@@ -179,7 +179,7 @@ async function openAICall(options:FormalAIOptions,config:FormalModelConfig,ms:nu
   if(options.pdf)content.push({type:'input_file',filename:'submitted-paper.pdf',file_data:`data:${options.pdf.mimeType};base64,${options.pdf.base64}`});
   const started=Date.now();
   const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${process.env.OPENAI_API_KEY}`},body:JSON.stringify({
-    model:config.model,instructions:options.system,input:[{role:'user',content}],reasoning:{effort:'high'},max_output_tokens:32768,store:false,stream:true,
+    model:config.model,instructions:options.system,input:[{role:'user',content}],reasoning:{effort:'high'},max_output_tokens:options.outputBudget?65536:32768,store:false,stream:true,
     text:{format:options.schema?{type:'json_schema',name:'formal_lab_response',strict:true,schema:openAISchema(options.schema)}:{type:'json_object'}}}),signal:AbortSignal.timeout(ms)});
   if(!response.ok){
     let metadata=safeProviderMetadata(undefined,response.headers.get('x-request-id'));
@@ -189,7 +189,13 @@ async function openAICall(options:FormalAIOptions,config:FormalModelConfig,ms:nu
   // Never surface provider bodies: they can echo source content or credentials.
   let body:any;try{body=await readOpenAIResponse(response);}catch(error){if(error&&typeof error==='object')Object.assign(error,{noRetry:true});throw error;}
   await recordUsage(config,body,Date.now()-started);
-  if(body.status!=='completed')throw new FormalError(`OpenAI did not complete the structured response. ${retainedSourceMessage}`,422);
+  if(body.status!=='completed'){
+    // Only a provider-confirmed output limit may select smaller inventory
+    // requests. Refusals, content filtering and interrupted transport must not
+    // be misclassified as safe-to-retry oversized output.
+    if(body.status==='incomplete'&&body.incomplete_details?.reason==='max_output_tokens')throw Object.assign(new FormalError(`OpenAI did not complete the structured response because its output limit was reached. ${retainedSourceMessage}`,422),{code:'FORMAL_MODEL_OUTPUT_LIMIT'});
+    throw new FormalError(`OpenAI did not complete the structured response. ${retainedSourceMessage}`,422);
+  }
   const parts=(Array.isArray(body.output)?body.output:[]).filter((item:any)=>item?.type==='message'&&item?.role==='assistant').flatMap((item:any)=>Array.isArray(item.content)?item.content:[]);
   if(parts.some((part:any)=>part?.type==='refusal'))throw new FormalError(`OpenAI could not produce a formalization for this source. ${retainedSourceMessage}`,422);
   const raw=parts.filter((part:any)=>part?.type==='output_text'&&typeof part.text==='string').map((part:any)=>part.text).join('');
@@ -197,6 +203,7 @@ async function openAICall(options:FormalAIOptions,config:FormalModelConfig,ms:nu
 }
 export async function callFormalAI(options:FormalAIOptions):Promise<{data:any;model:string}> {
   const config=getCurrentFormalModel();
+  if(options.outputBudget!==undefined&&!['source-inventory','source-coverage-audit'].includes(options.outputBudget))throw new FormalError('Unsupported internal source-analysis output budget.',500);
   // Keep the established default workflow unchanged; reasoning models need longer bounded stage deadlines.
   const ms=config.id==='current'?Math.min(options.timeoutMs||90000,120000):900000;
   if(config.provider==='openai'&&!hasKey(process.env.OPENAI_API_KEY))throw new FormalError('The OpenAI API credential is not configured on this service.',503);

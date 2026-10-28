@@ -14,6 +14,15 @@ const coverageShape = obj({id:str,statement:str,role:{type:'string',enum:ROLES},
 const inputShape = obj({id:str,title:str,statement:str,sourceUrl:str,sourceLineIds:strings,basis:{type:'string',enum:['stated','cited','inferred']},justification:str});
 const groupShape = obj({id:str,title:str,coverageIds:strings,sourceLineIds:strings,focus:str});
 export const inventorySchema = obj({title:str,authors:str,mainClaim:str,subjectSlug:str,subjectTitle:str,inputs:{type:'array',items:inputShape},coverage:{type:'array',items:coverageShape},groups:{type:'array',items:groupShape},warnings:strings});
+/** Retain all assertions and source references while bounding repetitive prose.
+ * Large sources use this first; small sources retry only after a confirmed cap. */
+export const compactInventorySchema = obj({
+  title:{...str,maxLength:300},authors:{...str,maxLength:300},mainClaim:{...str,maxLength:1500},subjectSlug:{...str,maxLength:80},subjectTitle:{...str,maxLength:200},
+  inputs:{type:'array',maxItems:INGEST_LIMITS.inputs,items:obj({...inputShape.properties,title:{...str,maxLength:160},statement:{...str,maxLength:1000},justification:{...str,maxLength:200}})},
+  coverage:{type:'array',maxItems:INGEST_LIMITS.coverage,items:obj({...coverageShape.properties,statement:{...str,maxLength:800},reason:{...str,maxLength:120}})},
+  groups:{type:'array',maxItems:INGEST_LIMITS.batches,items:obj({...groupShape.properties,title:{...str,maxLength:160},focus:{...str,maxLength:400}})},
+  warnings:{type:'array',maxItems:20,items:{...str,maxLength:600}},
+});
 export const auditSchema = obj({additionalCoverage:{type:'array',items:coverageShape},additionalInputs:{type:'array',items:inputShape},corrections:{type:'array',items:obj({coverageId:str,role:{type:'string',enum:ROLES},sourceLineIds:strings,reason:str})},groups:{type:'array',items:groupShape},warnings:strings});
 export const batchSchema = obj({
   assumptions:strings,
@@ -73,6 +82,17 @@ export function validateInventory(value:unknown,source:IngestedSource):SourceInv
   if(!coverage.length)throw new FormalError('The analysis did not inventory any source assertions.',422);
   preserveInputProposals(coverage,inputs);
   return {title:text(v.title,'paper title',300),authors:text(v.authors,'authors',300,true),mainClaim:text(v.mainClaim,'main claim',6000),subjectSlug,subjectTitle:text(v.subjectTitle,'subject title',200),inputs,coverage,groups:readGroups(v.groups,source,coverage),warnings:warningList(v.warnings)};
+}
+export function validateCompactInventory(value:unknown,source:IngestedSource):SourceInventory{
+  const result=validateInventory(value,source);
+  text(result.mainClaim,'compact main claim',1500);
+  for(const input of result.inputs){text(input.title,'compact input title',160);text(input.statement,'compact input statement',1000);text(input.justification,'compact input justification',200);}
+  // readCoverage may add an honest missing-reference/non-atomic diagnostic.
+  // Bound the actual supplied wording rather than truncating that diagnostic.
+  for(const item of (value as {coverage:any[]}).coverage){text(item.statement,'compact coverage statement',800);text(item.reason,'compact coverage reason',120);}
+  for(const group of result.groups){text(group.title,'compact group title',160);text(group.focus,'compact group focus',400);}
+  for(const warning of result.warnings)text(warning,'compact warning',600);
+  return result;
 }
 export function applyCoverageAudit(inventory:SourceInventory,value:unknown,source:IngestedSource):SourceInventory{
   const v=value as any;object(v,'coverage audit');keys(v,['additionalCoverage','additionalInputs','corrections','groups','warnings'],'coverage audit');
@@ -207,10 +227,11 @@ async function structuredStage<T>(stage:string,system:string,payload:unknown,sch
   for(let attempt=0;attempt<2;attempt++){
     let previous:unknown;
     try{
-      const result=await callFormalAI({system,payload:{request:payload,...(repair?{structuralRepair:repair,instruction:'Repair only the invalid structure/references/AST encoding. Preserve physical meaning, assumptions and coverage. Do not change a failed mathematical claim into a tautology or relax a domain to obtain a pass.'}:{})},schema,...(source.mimeType==='application/pdf'?{pdf:{mimeType:'application/pdf',base64:bytes.toString('base64')}}:{}),timeoutMs:120000});
+      const outputBudget=stage==='coverage-audit'?'source-coverage-audit' as const:['inventory','inventory-compact'].includes(stage)?'source-inventory' as const:undefined;
+      const result=await callFormalAI({system,payload:{request:payload,...(repair?{structuralRepair:repair,instruction:'Repair only the invalid structure/references/AST encoding. Preserve physical meaning, assumptions and coverage. Do not change a failed mathematical claim into a tautology or relax a domain to obtain a pass.'}:{})},schema,...(source.mimeType==='application/pdf'?{pdf:{mimeType:'application/pdf',base64:bytes.toString('base64')}}:{}),timeoutMs:120000,...(outputBudget?{outputBudget}:{})});
       previous=result.data;return validate(result.data);
     }catch(error){
-      if(attempt===1 || (error instanceof FormalError && error.statusCode>=500))throw error;
+      if(attempt===1 || (error instanceof FormalError && error.statusCode>=500) || (error as {code?:unknown})?.code==='FORMAL_MODEL_OUTPUT_LIMIT')throw error;
       const message=error instanceof Error?error.message:'Invalid structured response.';
       await onStage(stage,`The ${stage} proposal needed one bounded structural repair: ${message.slice(0,220)}`);
       repair={error:message.slice(0,1500),previous:previous??'The previous response did not contain valid bounded JSON.'};
@@ -233,7 +254,18 @@ export async function analyzeSource(source:IngestedSource,bytes:Buffer,onStage:(
   const {modelGuidance,persistentGuidance}=normalizedAuthorPointers(guidance);guidance=modelGuidance;
   const sourcePayload={sourceId:source.id,filename:source.filename,sha256:source.sha256,pageCount:source.pageCount,numberedLines:source.lines,warnings:source.warnings,...(Object.values(guidance).some(Boolean)?{authorGuidance:{...guidance,provenance:'Separately supplied author guidance. This is not source evidence, an established physical premise, or a verified finding.'}}:{})};
   await onStage('inventory',`Reading the actual uploaded ${source.filename}: ${source.lines.length} numbered source lines, ${source.pageCount} page(s). Extracting inputs and every assertion before formalization.`);
-  let inventory=await structuredStage('inventory',INVENTORY_SYSTEM,sourcePayload,inventorySchema,source,bytes,v=>validateInventory(v,source),onStage);
+  let inventory:SourceInventory;
+  const concise=INVENTORY_SYSTEM+'\nCOMPACT TRANSPORT: Keep every substantive assertion, exact formula, source reference, premise, domain and separate independent-coordinate model. State each atomic claim once. Coverage statements are at most800 characters and reasons at most120 characters; input statements are at most1000 characters and justifications at most200. Do not restate a formula in its reason or repeat general workflow warnings for each item. These are wording budgets, not permission to merge distinct equalities, omit claims or remove scientific conditions. The original full PDF and every numbered source row remain supplied. Return the same complete inventory schema with concise wording; a separate full-source audit follows.';
+  const compactInitially=source.lines.length>180||source.lines.reduce((sum,line)=>sum+line.text.length,0)>12000;
+  try{
+    if(compactInitially)await onStage('inventory-compact','Reading the complete longer source with compact atomic statements and bounded reasons. All source rows, premises, domains and coverage obligations remain present.');
+    inventory=await structuredStage(compactInitially?'inventory-compact':'inventory',compactInitially?concise:INVENTORY_SYSTEM,sourcePayload,compactInitially?compactInventorySchema:inventorySchema,source,bytes,value=>compactInitially?validateCompactInventory(value,source):validateInventory(value,source),onStage);
+  }
+  catch(error){
+    if(compactInitially||(error as {code?:unknown})?.code!=='FORMAL_MODEL_OUTPUT_LIMIT')throw error;
+    await onStage('inventory-compact','The provider confirmed its output limit was reached. Retrying the complete source with compact atomic statements and bounded reasons; no source rows, assertions, premises or domain conditions are being discarded.');
+    inventory=await structuredStage('inventory-compact',concise,sourcePayload,compactInventorySchema,source,bytes,value=>validateCompactInventory(value,source),onStage);
+  }
   const normalized=(s:string)=>s.toLowerCase().replace(/\s+/g,' ').trim();
   for(const key of ['title','authors'] as const)if(guidance[key]&&normalized(guidance[key]!)!==normalized(inventory[key]))inventory.warnings.push(`The author-supplied ${key} differs from the source-extracted ${key}. The source and guidance must be compared before approval; guidance does not establish source provenance.`);
   if(Object.values(guidance).some(Boolean))inventory.warnings.push('Author guidance was supplied separately from the uploaded source. Focus or metadata edits do not verify their physical content or remove full-paper coverage obligations.');

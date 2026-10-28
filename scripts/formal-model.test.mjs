@@ -98,6 +98,21 @@ test('incomplete, refused and malformed OpenAI outputs fail closed while keeping
    assert.equal(events.length,1);assert.equal(events[0].outputTokens,50);
  }
 });
+test('only trusted source-analysis profiles use the bounded larger Sol output allowance',async()=>{
+ const requests=[];globalThis.fetch=async(_url,options)=>{requests.push(JSON.parse(options.body));return streamReply();};
+ for(const outputBudget of [undefined,'source-inventory','source-coverage-audit'])await withFormalModel(resolveFormalModel('sol'),()=>callFormalAI({system:'Return JSON.',payload:{},...(outputBudget?{outputBudget}:{})}));
+ assert.deepEqual(requests.map(request=>request.max_output_tokens),[32768,65536,65536]);
+ assert.ok(requests.every(request=>request.reasoning.effort==='high'&&request.store===false&&request.stream===true));
+ await assert.rejects(()=>withFormalModel(resolveFormalModel('sol'),()=>callFormalAI({system:'Return JSON.',payload:{},outputBudget:'unbounded'})),/Unsupported internal/);assert.equal(requests.length,3);
+ let google;globalThis.__formalGoogle=async request=>{google=request;return googleResponse();};await withFormalModel(resolveFormalModel('argon'),()=>callFormalAI({system:'Return JSON.',payload:{},outputBudget:'source-inventory'}));assert.equal(google.config.maxOutputTokens,32768);
+});
+test('a provider-confirmed output-token stop has a safe distinct cause and is never automatically duplicated',async()=>{
+ for(const reason of ['max_output_tokens','content_filter',undefined]){
+   let requests=0;const calls=[];globalThis.fetch=async()=>{requests++;return streamReply({...openAIResponse(),status:'incomplete',incomplete_details:{reason,private_body:'must-not-escape'}});};
+   await assert.rejects(()=>withFormalModel(resolveFormalModel('sol'),()=>callFormalAI({system:'Return JSON.',payload:{}}),usage=>calls.push(usage)),error=>{assert.equal(error.code,reason==='max_output_tokens'?'FORMAL_MODEL_OUTPUT_LIMIT':undefined);assert.ok(!error.message.includes('must-not-escape'));return /did not complete/.test(error.message);});
+   assert.equal(requests,1);assert.equal(calls.length,1);assert.equal(calls[0].outputTokens,50);assert.ok(!JSON.stringify(globalThis.__formalLogs).includes('must-not-escape'));
+ }
+});
 test('Gemini truncation and oversized JSON never become successful formalization',async()=>{
  for(const response of [{...googleResponse(),candidates:[{finishReason:'MAX_TOKENS'}]},googleResponse({text:'x'.repeat(300001)})]){
    globalThis.__formalGoogle=async()=>response;
