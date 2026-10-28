@@ -1,6 +1,7 @@
 GPT handoff for the revised seven-page Horizon Boundary Mechanics paper
 
-Review: https://modernscience.space/boundary-mechanics-paper/
+Interactive review: https://modernscience.space/boundary-mechanics-paper/
+Standalone HTML (no JavaScript required): https://modernscience.space/boundary-mechanics-paper/export.html
 Full evidence JSON: https://modernscience.space/boundary-mechanics-paper/evidence.json
 Exact seven-page manuscript: https://modernscience.space/boundary-mechanics-paper/paper.pdf
 Readable summary: https://modernscience.space/boundary-mechanics-paper/review-summary.txt

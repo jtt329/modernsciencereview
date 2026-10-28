@@ -6,15 +6,18 @@ import type { CanonicalDerivationReport } from '../../../api-server/src/formal/d
 import type { ScientificAssessment } from '../../../api-server/src/formal/assessmentContract';
 import MathText from './FormalMathText';
 import { ReviewDiscussionControl } from './FormalReviewDiscussion';
+import { useSavedFormalReview } from './FormalSavedReviewContext';
 import './FormalClaimTrace.css';
 
 export interface ClaimVerificationResponse { plan: ClaimVerificationPlan | null; derivation: CanonicalDerivationReport | null; current: boolean; evidenceFingerprint?: string; sourceJudgments?: ClaimSourceJudgment[]; error?: string; }
 export function useClaimVerification(submission: FormalSubmission, viewerId: string | null, assessmentFingerprint?: string) {
+  const savedReview = useSavedFormalReview(submission);
   const [response, setResponse] = useState<ClaimVerificationResponse>({ plan: null, derivation: null, current: false });
   const [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null);
   const key = JSON.stringify([viewerId, submission.id, submission.currentRevision.id, submission.currentRevision.digest, assessmentFingerprint]);
   const current = useRef(key); current.current = key;
   useEffect(() => {
+    if (savedReview) return;
     let active = true; const controller = new AbortController();
     setLoading(true); setResponse({ plan: null, derivation: null, current: false }); setError(null);
     const read = async () => {
@@ -30,7 +33,8 @@ export function useClaimVerification(submission: FormalSubmission, viewerId: str
     const onChange = (event: Event) => { const detail = (event as CustomEvent).detail; if (detail?.submissionId === submission.id && (!detail.revisionId || detail.revisionId === submission.currentRevision.id)) void read().catch(e => { if (active && e.name !== 'AbortError') setError(e.message); }); };
     window.addEventListener('formal-lab-assessment-changed', onChange);
     return () => { active = false; controller.abort(); window.removeEventListener('formal-lab-assessment-changed', onChange); };
-  }, [key]);
+  }, [key, savedReview]);
+  if (savedReview) return { plan: savedReview.assessment.claimVerificationPlan || null, derivation: savedReview.assessment.restrictedCanonicalDerivation || null, current: true, evidenceFingerprint: savedReview.assessment.evidenceFingerprint, sourceJudgments: savedReview.assessment.claimSourceJudgments || [], loading: false, error: null };
   return { ...response, loading, error };
 }
 export type ClaimTraceData = ReturnType<typeof useClaimVerification>;

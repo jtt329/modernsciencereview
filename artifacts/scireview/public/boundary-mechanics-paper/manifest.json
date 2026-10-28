@@ -27,12 +27,12 @@
     {
       "name": "gpt-handoff.txt",
       "url": "https://modernscience.space/boundary-mechanics-paper/gpt-handoff.txt",
-      "bytes": 2569,
-      "sha256": "666d9e32d3cef7d27dabce3e0786b65c832036c299ea7ae1877be470f1d59ee5"
+      "bytes": 2688,
+      "sha256": "a3231546cc9248e5214203e3f74eb74b04cabedd83185f12e431c191960129eb"
     },
     {
-      "name": "index.html",
-      "url": "https://modernscience.space/boundary-mechanics-paper/index.html",
+      "name": "export.html",
+      "url": "https://modernscience.space/boundary-mechanics-paper/export.html",
       "bytes": 6578940,
       "sha256": "fe014ceaccb1d608e2c9d3bee4e312214d0b9d7e99c048f2e7c52ab7530a91a0"
     },
@@ -48,5 +48,8 @@
       "bytes": 14636,
       "sha256": "21af1b68d201faf678c32d7fa950bdeb599b7ccd6d1070ea557ccd74463ef4d9"
     }
-  ]
+  ],
+  "interactiveReader": true,
+  "standaloneReviewUrl": "https://modernscience.space/boundary-mechanics-paper/export.html",
+  "presentation": "The interactive reader uses the site’s existing scientific review, verification and source/log components with the exact saved evidence."
 }

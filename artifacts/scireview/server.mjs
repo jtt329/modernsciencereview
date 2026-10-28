@@ -87,6 +87,11 @@ function serveServiceWorkerCleanup(req, res) {
 
 async function serveStatic(req, res) {
   const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+  if (pathname === "/boundary-mechanics-paper/index.html") {
+    const search = new URL(req.url ?? "/", "http://localhost").search;
+    send(res, 308, "", { location: `/boundary-mechanics-paper/${search}`, "cache-control": "no-cache" });
+    return;
+  }
   const reviewRoots = ["/boundary-mechanics/report", "/boundary-mechanics-paper"];
   if (reviewRoots.includes(pathname)) {
     const search = new URL(req.url ?? "/", "http://localhost").search;
@@ -99,7 +104,7 @@ async function serveStatic(req, res) {
     return;
   }
 
-  const requestedPath = getStaticPath(req.url ?? "/");
+  const requestedPath = pathname === "/boundary-mechanics-paper/" ? indexPath : getStaticPath(req.url ?? "/");
   if (!requestedPath) {
     send(res, 403, "Forbidden");
     return;

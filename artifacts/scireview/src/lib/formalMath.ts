@@ -10,27 +10,37 @@ const namedGreek = new Set([...Object.values(greek), 'hbar']);
 const superscript: Record<string, string> = { '⁰': '0', '¹': '1', '²': '2', '³': '3', '⁴': '4', '⁵': '5', '⁶': '6', '⁷': '7', '⁸': '8', '⁹': '9', '⁺': '+', '⁻': '-', '⁼': '=', '⁽': '(', '⁾': ')' };
 const subscript: Record<string, string> = { '₀': '0', '₁': '1', '₂': '2', '₃': '3', '₄': '4', '₅': '5', '₆': '6', '₇': '7', '₈': '8', '₉': '9', '₊': '+', '₋': '-', '₌': '=', '₍': '(', '₎': ')' };
 const greekChars = 'Α-Ωα-ωϑϕϵϱϖµℏ';
+const indexSymbols = '∂⊥';
+const combiningMarks = '\u0300-\u036f';
 const scriptChars = '⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎';
-const tokenPattern = new RegExp(String.raw`[_^](?:\{[^{}\n]+\}|\([^()\n]+\)|[A-Za-z0-9${greekChars}]+)|[A-Za-z${greekChars}][A-Za-z0-9${greekChars}]*(?:(?:[_^](?:\{[^{}\n]+\}|\([^()\n]+\)|[A-Za-z0-9${greekChars}]+))|[${scriptChars}]+)*|\d+(?:\.\d+)?|!=|<=|>=|==|[=<>≈≃≠≤≥∝→←⇒±+−*/·×∂∇]|[()[\]{},|^-]|\s+|[\s\S]`, 'gu');
+const tokenPattern = new RegExp(String.raw`[_^](?:\{[^{}\n]+\}|\([^()\n]+\)|[A-Za-z0-9${greekChars}${indexSymbols}]+)|[A-Za-z${greekChars}][A-Za-z0-9${greekChars}${combiningMarks}]*(?:(?:[_^](?:\{[^{}\n]+\}|\([^()\n]+\)|[A-Za-z0-9${greekChars}${indexSymbols}]+))|[${scriptChars}]+)*|\d+(?:\.\d+)?|!=|<=|>=|==|[=<>≈≃≠≤≥∝→←⇒≡±+−*/·×∂∇∫∮]|[()[\]{},|^-]|\s+|[\s\S]`, 'gu');
 const proseWords = new Set(['an', 'as', 'at', 'be', 'by', 'do', 'go', 'he', 'if', 'in', 'is', 'it', 'me', 'my', 'no', 'of', 'on', 'or', 'so', 'to', 'up', 'us', 'we']);
 const acronyms = new Set(['AI', 'API', 'AST', 'FRW', 'PDF', 'PDE', 'ODE', 'QFT', 'GR', 'SI', 'URL', 'JSON', 'LHS', 'RHS', 'GPT', 'SHA', 'HTTP', 'HTTPS', 'TXT']);
 const protectedPattern = /(```[\s\S]*?```|`[^`\n]*`|https?:\/\/[^\s<>]+|\b[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\b|\b[a-f0-9]{32,64}\b|\b[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+\b|\b(?:p\d+-l\d+|[ic]\d{2,3}|b[1-5]-[\w-]+)\b|\$\$[\s\S]*?\$\$|\$[^$\n]+\$|\\+\[[\s\S]*?\\+\]|\\+\([\s\S]*?\\+\)|\\+begin\{(equation\*?|align\*?|gather\*?|multline\*?)\}[\s\S]*?\\+end\{\2\})/g;
+
+const inferredIndex = (sub: string) => sub.length > 1 && /^[A-Za-z]+$/.test(sub) && !namedGreek.has(sub) ? `\\mathrm{${sub}}` : sub;
 
 /** Typography only: never changes the source, formal AST, or approved digest. */
 export function formalMathLatex(value: string, inferred = false): string {
   let result = value;
   if (inferred) {
-    result = result.replace(/\^\(([^()]+)\)/g, '^{($1)}').replace(/_([A-Za-z][A-Za-z0-9]*|[Α-Ωα-ωϑϕϵϱϖµ]|[0-9]+)/g, (_all, sub: string) => `_{${sub.length > 1 && /^[A-Za-z]+$/.test(sub) && !namedGreek.has(sub) ? `\\mathrm{${sub}}` : sub}}`);
+    // In inferred prose, an unbraced short index followed by another indexed
+    // capital denotes adjacent factors (F_LL_κ, P_scrV_A). Explicit braces and
+    // compound labels such as L_CK stay exactly as supplied.
+    result = result.replace(/_([A-Z]|[a-z]+)(d?[A-Z])(?=_)/g, (_all, sub: string, factor: string) => `_{${inferredIndex(sub)}}${factor}`);
+    result = result.replace(/\^\(([^()]+)\)/g, '^{($1)}').replace(/_([A-Za-z][A-Za-z0-9]*|[Α-Ωα-ωϑϕϵϱϖµ∂⊥]|[0-9]+)/g, (_all, sub: string) => `_{${inferredIndex(sub)}}`);
     result = result.replace(/\\[A-Za-z]+|\b[A-Za-z]+\b/g, word => namedGreek.has(word) ? `\\${word}{}` : word);
     result = result.replace(/!=/g, '\\ne ').replace(/<=/g, '\\le ').replace(/>=/g, '\\ge ').replace(/\*\*/g, '^').replace(/\*/g, '\\cdot ');
     result = result.replace(/\^(-?\d+(?:\.\d+)?|[A-Za-z]+|[Α-Ωα-ωϑϕϵϱϖµ])/g, '^{$1}');
   }
   return result
+    .replace(/([A-Za-zΑ-Ωα-ω])([\u0302\u0307\u0308])/g, (_all, base: string, accent: string) => `\\${accent === '\u0302' ? 'widehat' : accent === '\u0307' ? 'dot' : 'ddot'}{${base}}`)
     .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾]+/g, run => `^{${[...run].map(char => superscript[char]).join('')}}`)
     .replace(/[₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎]+/g, run => `_{${[...run].map(char => subscript[char]).join('')}}`)
     .replace(/[α-ωΑ-Ωϑϕϵϱϖµℏ]/g, char => greek[char] ? `\\${greek[char]}{}` : char)
     .replace(/−/g, '-').replace(/·/g, '\\cdot ').replace(/×/g, '\\times ')
     .replace(/∂/g, '\\partial ').replace(/∇/g, '\\nabla ')
+    .replace(/∫/g, '\\int ').replace(/∮/g, '\\oint ').replace(/⊥/g, '\\perp ').replace(/≡/g, '\\equiv ')
     .replace(/≠/g, '\\ne ').replace(/≤/g, '\\le ').replace(/≥/g, '\\ge ')
     .replace(/≈/g, '\\approx ').replace(/≃/g, '\\simeq ').replace(/∝/g, '\\propto ')
     .replace(/→/g, '\\to ').replace(/←/g, '\\leftarrow ').replace(/⇒/g, '\\Rightarrow ');
@@ -39,7 +49,7 @@ function mathToken(token: string): boolean {
   if (/^\d+(?:\.\d+)?$/.test(token)) return true;
   if (new RegExp(`[${greekChars}${scriptChars}_^]`, 'u').test(token)) return true;
   if (proseWords.has(token.toLowerCase())) return false;
-  if (/^[A-Za-z]$/.test(token) || namedGreek.has(token)) return true;
+  if (/^[A-Za-z][\u0300-\u036f]*$/.test(token) || namedGreek.has(token)) return true;
   return !acronyms.has(token) && (/^[A-Z]{2,3}$/.test(token) || /^d[A-Za-z]$/.test(token) || /^[A-Z][a-z]$/.test(token) || /^[a-z][A-Z]$/.test(token));
 }
 function bareMath(text: string): FormalMathSegment[] {
@@ -48,7 +58,7 @@ function bareMath(text: string): FormalMathSegment[] {
   let plainStart = 0;
   for (let i = 0; i < tokens.length; i++) {
     const first = tokens[i];
-    if (!mathToken(first.text) && !/^[([{∂∇]$/.test(first.text)) continue;
+    if (!mathToken(first.text) && !/^[([{∂∇∫∮]$/.test(first.text)) continue;
     let j = i, end = i, atoms = 0, depth = 0;
     for (; j < tokens.length && tokens[j].start - first.start < 400; j++) {
       const t = tokens[j].text;
@@ -61,7 +71,7 @@ function bareMath(text: string): FormalMathSegment[] {
       }
       if (/^[([{]$/.test(t)) { depth++; continue; }
       if (/^[)\]}]$/.test(t)) { if (!depth) break; depth--; end = j + 1; continue; }
-      if (/^(?:!=|<=|>=|==|[=<>≈≃≠≤≥∝→←⇒±+−*/·×∂∇,|^-])$/.test(t)) continue;
+      if (/^(?:!=|<=|>=|==|[=<>≈≃≠≤≥∝→←⇒≡±+−*/·×∂∇∫∮,|^-])$/.test(t)) continue;
       break;
     }
     if (!atoms || depth !== 0 || end <= i) continue;
@@ -92,7 +102,7 @@ function segments(value: string, infer: boolean): FormalMathSegment[] {
     // Mathematical subscripts belong to the surrounding expression, whereas
     // multiword checker identifiers stay literal.
     const parts = match[0].split('_');
-    if (/^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+$/.test(match[0]) && parts.length === 2 && (parts[0].length === 1 || namedGreek.has(parts[0]))) continue;
+    if (/^[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+$/.test(match[0]) && (parts[0].length === 1 || namedGreek.has(parts[0])) && (parts.length === 2 || parts.slice(1, -1).every(part => /^(?:[A-Z]|[a-z]+)d?[A-Z]$/.test(part)))) continue;
     if (match.index! > start) out.push(...plain(value.slice(start, match.index), infer));
     const token = match[0], math = mathBody(token);
     if (token.startsWith('`')) out.push({ kind: 'code', text: token.replace(/^`{1,3}|`{1,3}$/g, ''), source: token });

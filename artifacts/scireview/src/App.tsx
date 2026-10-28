@@ -14,6 +14,7 @@ import HowItWorksModal from './components/HowItWorksModal';
 import SandboxViewer from './components/SandboxViewer';
 import FieldOverviewPage from './components/FieldOverviewPage';
 import FormalLabPage from './components/FormalLabPage';
+import SavedFormalReviewPage from './components/SavedFormalReviewPage';
 import PaperExplanation from './components/PaperExplanation';
 import { ReviewSource } from './services/reviewService';
 import { StoredReviewModelFamily, storedReviewModelFamily, storedReviewModelFamilyLabel } from './lib/modelLabels';
@@ -288,7 +289,8 @@ function readRoute() {
     fieldSlug: fieldMatch ? decodeURIComponent(fieldMatch[1]) : null,
     showHowItWorks: path === '/how-it-works',
     showSandbox: path === '/admin/sandbox',
-    showFormalLab: ((path === '/' && !paperId) || /^\/formal-lab(?:\/|$)/.test(path) || /^\/boundary-mechanics\/?$/.test(path)) && !path.endsWith('.pdf'),
+    showSavedFormalReview: /^\/boundary-mechanics-paper\/?$/.test(path),
+    showFormalLab: ((path === '/' && !paperId) || /^\/formal-lab(?:\/|$)/.test(path) || /^\/boundary-mechanics\/?$/.test(path) || /^\/boundary-mechanics-paper\/?$/.test(path)) && !path.endsWith('.pdf'),
     usedLegacyPaperQuery: !paperMatch && !!queryPaper,
   };
 }
@@ -314,6 +316,7 @@ export default function App() {
   const [showHowItWorks, setShowHowItWorks] = useState(initialRoute.showHowItWorks);
   const [showSandbox, setShowSandbox] = useState(initialRoute.showSandbox);
   const [showFormalLab, setShowFormalLab] = useState(initialRoute.showFormalLab);
+  const [showSavedFormalReview, setShowSavedFormalReview] = useState(initialRoute.showSavedFormalReview);
   const [papersLoading, setPapersLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -361,6 +364,7 @@ export default function App() {
       setShowHowItWorks(route.showHowItWorks);
       setShowSandbox(route.showSandbox);
       setShowFormalLab(route.showFormalLab);
+      setShowSavedFormalReview(route.showSavedFormalReview);
       if (route.paperId && route.usedLegacyPaperQuery) {
         window.history.replaceState({}, '', paperPath(route.paperId));
       }
@@ -728,7 +732,7 @@ export default function App() {
     );
   }
 
-  if (showFormalLab) return <FormalLabPage />;
+  if (showFormalLab) return showSavedFormalReview ? <SavedFormalReviewPage /> : <FormalLabPage />;
 
   if (fieldSlug) {
     return (

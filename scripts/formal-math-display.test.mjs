@@ -72,3 +72,58 @@ test('rendering leaves malformed author TeX visible instead of losing scientific
   assert.match(html, /notARealCommand/);
   assert.match(html, /before approval/);
 });
+
+test('author-supplied canonical notation renders using its fixed macro definitions', () => {
+  const html = renderToStaticMarkup(React.createElement(FormalMathText, { text: '$\\hkap=\\kappa/c^2$ and $\\epsS=\\sqrt{\\det q}\\,d^2x$' }));
+  assert.ok(!html.includes('fl-math-fallback'));
+  assert.equal((html.match(/class="katex"/g) || []).length, 2);
+  assert.match(html, /<mover accent="true"><mi>κ<\/mi>/);
+  assert.match(html, /<msub><mi>ϵ<\/mi><mi>S<\/mi>/);
+});
+
+test('saved seven-page boundary notation keeps adjacent indexed factors and symbolic indices intact', () => {
+  const examples = [
+    ['U_∂', 'U_{\\partial }'],
+    ['κ_EΠ_∂', '\\kappa{}_{E}\\Pi{}_{\\partial }'],
+    ['F_LL_κ', 'F_{L}L_{\\kappa{}}'],
+    ['F_LdL_κ', 'F_{L}dL_{\\kappa{}}'],
+    ['2P_RdV_H', '2P_{R}dV_{H}'],
+    ['κ_EP_L', '\\kappa{}_{E}P_{L}'],
+    ['3P_scrV_A', '3P_{\\mathrm{scr}}V_{A}'],
+    ['P_scrV_A', 'P_{\\mathrm{scr}}V_{A}'],
+    ['L_CK', 'L_{\\mathrm{CK}}'],
+  ];
+  for (const [source, expected] of examples) {
+    const found = math(source);
+    assert.equal(found.map(segment => segment.source).join(''), source);
+    assert.equal(found.map(segment => segment.text).join(''), expected, source);
+    checkMath(source);
+    const html = renderToStaticMarkup(React.createElement(FormalMathText, { text: source }));
+    assert.doesNotMatch(html, /fl-math-fallback/);
+  }
+  const integral = math('Θ_L^(0) = −∫dτ∫_S ε_SP_LδL_s.');
+  assert.equal(integral.length, 1);
+  assert.match(integral[0].text, /\\int _\{S\}/);
+  assert.match(integral[0].text, /\\epsilon\{\}_\{S\}P_\{L\}\\delta\{\}L_\{s\}/);
+  checkMath('Θ_L^(0) = −∫dτ∫_S ε_SP_LδL_s.');
+  const curvature = math('⁽²⁾R_⊥ ≡ 2ä/(ac²).');
+  assert.equal(curvature.length, 1);
+  assert.match(curvature[0].text, /R_\{\\perp \} \\equiv  2\\ddot\{a\}/);
+  checkMath('⁽²⁾R_⊥ ≡ 2ä/(ac²).');
+  assert.equal(math('b1_F_L schw_pressure_kappa u_time_series').length, 0);
+  assert.equal(math('$F_{LL_κ}$')[0].text, 'F_{LL_\\kappa{}}');
+});
+
+
+test('Unicode hat and time derivatives retain their accent and following factors', () => {
+  const formulas = ['μ = κ̂ + θ/2', 'κ̂ξ', 'δκ̂=δκ/c²', 'ρ̇+3H(ρ+p_m)=0'];
+  for (const formula of formulas) {
+    const found = math(formula);
+    assert.equal(found.length, 1, formula);
+    assert.equal(found[0].source, formula);
+    checkMath(formula);
+    assert.doesNotMatch(renderToStaticMarkup(React.createElement(FormalMathText, { text: formula })), /fl-math-fallback/);
+  }
+  assert.match(math('κ̂ξ')[0].text, /\\widehat\{\\kappa\{\}\}\\xi\{\}/);
+  assert.match(math('ρ̇')[0].text, /\\dot\{\\rho\{\}\}/);
+});
