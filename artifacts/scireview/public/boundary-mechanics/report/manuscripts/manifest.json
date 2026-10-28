@@ -1,0 +1,30 @@
+{
+  "release": "2026-10-22-consolidated-mechanics-v2",
+  "lastConfirmedAt": "2026-10-28T16:27:05.882963+00:00",
+  "sourceManifestUrl": "https://jttyler.com/release-manifest.json",
+  "copiedUnchanged": true,
+  "papers": [
+    {
+      "title": "Horizon Boundary Mechanics: Force, Pressure, and Work from the Einstein Boundary Potential",
+      "edition": "Seven-page paper",
+      "author": "J. T. Tyler",
+      "date": "2026-10-22",
+      "pages": 7,
+      "bytes": 145529,
+      "sha256": "5f175a7f60a62465fb525e4f492535fc37f1f62c3130aadbb4d2320130b7a58f",
+      "url": "https://modernscience.space/boundary-mechanics/report/manuscripts/horizon-boundary-mechanics-seven-page-2026-10-22.pdf",
+      "sourceUrl": "https://jttyler.com/papers/releases/2026-10-22-consolidated-mechanics-v2/horizon-pressure-paper.pdf"
+    },
+    {
+      "title": "Horizon Boundary Mechanics: Force, Pressure, and Work from the Einstein Boundary Potential",
+      "edition": "Full technical manuscript",
+      "author": "J. T. Tyler",
+      "date": "2026-10-22",
+      "pages": 52,
+      "bytes": 770667,
+      "sha256": "093abcee3c4336b70a41fdb83780894525ed93bcbaf6ca5748a244c49d4497c1",
+      "url": "https://modernscience.space/boundary-mechanics/report/manuscripts/horizon-boundary-mechanics-full-52-page-2026-10-22.pdf",
+      "sourceUrl": "https://jttyler.com/papers/releases/2026-10-22-consolidated-mechanics-v2/acceleration-length-full.pdf"
+    }
+  ]
+}
