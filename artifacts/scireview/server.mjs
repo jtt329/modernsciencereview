@@ -86,6 +86,11 @@ function serveServiceWorkerCleanup(req, res) {
 
 async function serveStatic(req, res) {
   const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+  if (pathname === "/boundary-mechanics/report") {
+    send(res, 308, "", { location: "/boundary-mechanics/report/", "cache-control": "no-cache" });
+    return;
+  }
+  const isReviewReport = pathname.startsWith("/boundary-mechanics/report/");
   if (pathname === "/sw.js" || pathname === "/service-worker.js") {
     serveServiceWorkerCleanup(req, res);
     return;
@@ -118,7 +123,8 @@ async function serveStatic(req, res) {
     res.writeHead(200, {
       "content-type": contentType,
       "content-length": fileStat.size,
-      "cache-control": filePath === indexPath ? "no-cache" : "public, max-age=31536000, immutable",
+      "cache-control": filePath === indexPath || isReviewReport ? "no-cache" : "public, max-age=31536000, immutable",
+      ...(isReviewReport ? { "x-content-type-options": "nosniff" } : {}),
     });
     if (req.method === "HEAD") {
       res.end();
