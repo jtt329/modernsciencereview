@@ -1,0 +1,112 @@
+PUBLIC SAVED REVIEW — SHARED AT THE AUTHOR’S REQUEST, 28 OCTOBER 2026
+
+Canonical review URL: https://modernscience.space/boundary-mechanics-paper/
+Full evidence JSON: https://modernscience.space/boundary-mechanics-paper/evidence.json
+Exact reviewed seven-page PDF: https://modernscience.space/boundary-mechanics-paper/paper.pdf
+
+The following preserves historical run status and exact model judgments. Separate editorial QA and the later FRW reference comparison are identified below.
+
+# Horizon Boundary Mechanics: Force, Pressure, and Work from the Einstein Boundary Potential
+
+**Private complete review · proposed formulation · author approval pending**
+
+J. T. Tyler · Seven-page source revised **28 October 2026** · Model: **gpt-6.1-sol**
+
+This is a private review of an AI-proposed formulation. No author approval, source upload or publication was recorded. Generic “approved” terminology in raw application records is a static library convention and does not establish author approval. Findings remain conditional on the translation faithfully representing the source.
+
+## Exact final overall judgment
+
+**Acceleration length supports a generalized horizon-boundary force, pressure and work response within the selected prescription**
+
+Conditional on the proposed translation faithfully representing the numbered manuscript, its principal construction is scientifically coherent and supported in its stated restricted domain. The supplied evidence goes beyond differentiating an assumed energy: it includes a direct local Einstein–Hilbert boundary-current computation, the selected polarization exchange, endpoint treatment and physical-clock conversion. These support the length-conjugate response, while the exact scalar checks support the Schwarzschild and separately assigned Cai–Kim screen identities. No remaining sign or normalization inconsistency is identified in that principal chain. One specific convention needs clarification: the Hayward radial pressure following equation (39) is its volume-work coefficient at fixed equation-of-state parameter, not generally the entire response along a history with varying parameter. Historical priority and the precise Kong comparison remain bounded evidence questions. This is a private assessment dated 28 October 2026, not author approval, publication consent or verification of every manuscript assertion.
+
+- All 60 submitted scalar candidates have supplied passing exact checks, with zero residuals, consistent dimensions and established mathematical domain restrictions.
+- The restricted symbolic derivation constructs all 64 connection variations and directly computes the local Einstein–Hilbert null-boundary flux in the stated fixed Gaussian-null chart; the gravitational starting projection is not merely assumed downstream.
+- The fixed Minkowski pullback, acceleration, orthogonality, distance and independent-area checks establish the stated Rindler normalization for its specified observer and slice.
+- The manuscript explicitly preserves the distinctions between independent-coordinate derivatives and family restrictions, selected action response and full energy differential, and screen pressure and bulk matter pressure.
+- The closest examined literature already supplies the rate response, scalar polarizations, inverse-distance energy and area–boost foundations. The identifiable contribution is their explicit length-work and normal-pressure interpretation, not a newly discovered canonical pair.
+- The remaining Hayward issue concerns a missing fixed-variable label at p6-l027–p6-l031, not an evidenced algebraic contradiction or a failure of the main restricted construction.
+
+## Exact final overview
+
+### A mechanical coordinate for the scalar horizon-boundary response
+
+Using the normalized acceleration length $L_s=c^2/\kappa$, the manuscript identifies $F_L=Ac^4/(8\pi G L_s^2)$, its normal-scale density $P_L=F_L/A$, and the work response $-F_L\,\delta L_s$. The supplied local action calculation supports this identification under the specified boundary prescription. Schwarzschild radius work acquires a factor-two Jacobian; the separate instantaneous Cai–Kim screen has a unit Jacobian and $P_{\rm scr}=\rho/3$. The conceptual distinction is defensible relative to examined antecedents, with historical firstness unresolved.
+
+Established within the stated scope:
+
+- The common-potential derivative identities and selected family identities are exact under their declared inputs.
+- The stated Rindler distance normalization is supported by actual coordinate and tensor calculations.
+- The restricted local action-to-length-response chain has substantial computed support under explicit geometric and variational premises.
+- Neither a new interaction nor new Einstein–Friedmann dynamics is asserted.
+
+Proposed contribution: An explicit, geometrically normalized length-work interpretation of the established scalar rate response, including its generalized boundary force, normal-scale pressure and work-coordinate transformations.
+
+## What was actually checked
+
+- Automatic scalar checks: **60/60** proposed candidates checked (60 identities; 0 definition restatements), under their explicit premises/domains.
+- Canonical prerequisites: **8/8**; fixed geometry: **6/6**, covering 26 component identities.
+- Restricted derivation: **19/19** derivation checks; **4/4** expected-nonzero controls, counted separately. Status: conditional-checked; not a general covariant/global-corner certificate.
+- Separate fresh manual/SymPy audit: **24/24** source-transcribed identities with zero residuals. These overlap in subject matter and are not added to the automatic count.
+- Source: all **527** numbered rows across **7** pages retained; **29** proposed inputs. Original source coverage has **326** units and **71** unresolved units; that is not a count of paper errors.
+
+The original coverage ledger and its unresolved count classify the pipeline’s translation/checking scope; they are not a count of false claims or manuscript defects. The later integrated assessment and source judgments take precedence for the current scientific interpretation. The separate AST audit identifies bookkeeping cases without changing the saved original package or checker report.
+
+## Material issues and next steps
+
+The final integrated assessment records no open issue classified as material. Any narrower clarifications, tool limits and scope restrictions remain in the complete report.
+
+Readiness: **author-clarification-needed**. The main restricted construction does not require a mathematical correction on the supplied evidence. Before public reading, the Hayward extension should state the fixed-variable meaning of its radial pressure at p6-l027–p6-l031, because equation (39) also contains an independent dw response. This readiness judgment is scientific advice, not publication authorization.
+
+- Label the Hayward radial coefficient as fixed-w, or provide the intended alternative variation protocol including the dw contribution.
+- Keep the companion Appendix I accessible and separately identified, with its action, clock, orientation and controlled-sector premises.
+- Keep novelty language scoped to the examined comparisons; obtain the exact Kong passage before presenting that attribution as independently established.
+- Optional, not blocking: identify Table 2's null inaffinity notation and mark Ong's geometrized units.
+
+## Separate editorial QA context
+
+Independent editorial and source-faithfulness QA; separate from the saved model assessment.
+
+The response makes at-fixed-w notation its only readiness blocker. Eq39 already explicitly retains the independent dw term and the paper does not claim P_R^H is the full total history slope. An explicit label would improve precision, but treating this as a missing scientific convention is debatable; distinguish optional wording from a demonstrated error.
+
+No model verdict, issue, readiness label, original checkpoint or manuscript text has been altered by this editorial QA. The final model asks for a fixed-w clarification; the independent QA regards that wording as useful precision rather than a demonstrated mathematical or physical error.
+
+Equation (39) source-transcribed QA: eq39_Hayward_dR = 0; eq39_Hayward_dw = 0; eq39_Hayward_quadratic = 0; eq39_matter_reconstruction = 0. The complete JSON retains the QA artifact identity, its scope and the unmodified saved-model issue/readiness side by side.
+
+## Novelty and literature scope
+
+The explicit nonthermal length-source force and normal-pressure interpretation appears distinctive relative to the examined earlier passages, but its ingredients have close precedents. The supplied claim-specific comparisons support a partly novel conceptual contribution with moderate qualitative confidence, not first priority or a new canonical structure. The Schwarzschild application overlaps earlier half-mass energy and pressure-work laws; its distinguishable feature is the selected action-response provenance and explicit work Jacobian. Exact FRW priority is not established by the supplied comparison set.
+
+Insight: The useful insight is to identify the displacement accompanying an established boundary rate response and to distinguish area stress, normal pressure and radius-work pressure through their actual source coordinates and measures.
+
+Field contribution: If adopted, this formulation could improve explanations and comparisons of boundary mechanics and horizon thermodynamics by making clock, polarization and displacement choices explicit and preventing redundant work additions. It does not alter Einstein dynamics. A broader dynamical action treatment or a specified physical source-variation realization would extend its significance, but neither is necessary to recognize the present scoped conceptual distinction.
+
+24 records were assessed after bounded scholarly search and 69 records were retained in the discovery registry. This is a disclosed bounded search, not an exhaustive historical-priority certificate.
+
+Discovered records were screened by identifiers, titles and available abstracts. Only the listed assessed records were supplied for model comparison; only registered selected passages were read. Citation neighborhoods and at most one alternative-query round expand this finite search. The unavailable list contains only unresolved latest attempts per provider/URL; the full searches list preserves failed and successful historical attempts. This is neither a full-corpus reading nor an exhaustive priority certificate.
+
+- **For the selected Einstein boundary potential and nonexpanding-null rate action, L_s=c^2/kappa is a geometrically normalized work coordinate whose response is F_L=c^4 A/(8pi G L_s^2), with normal pressure P_L=F_L/A and work leg -F_L dL_s.** — partly-novel; earlier-precedent-found; confidence moderate. Earlier read passages establish the exact rate-response antecedent and closely related operational inverse-distance and corner constructions. The manuscript adds an explicit length-source force/density interpretation and connects it across those constructions. This supports a scoped conceptual distinction while substantially limiting its novelty.
+- **The length response yields Schwarzschild horizon-size work F_L dL_kappa=M kappa dR_H=P_R dV_H, with P_R=2P_L, and a boundary-potential law distinct from the mass first law.** — partly-novel; earlier-precedent-found; confidence moderate. The scalar work Jacobian and pressure relation are supported by checked claims, while earlier read work already contains half-ADM energy and a Schwarzschild pressure-work law. The potential distinction is the action-source provenance and explicit displacement transformation, not the bare existence of pressure work.
+- **A separately assigned instantaneous Cai–Kim FRW screen realizes the boundary potential as Misner–Sharp energy and has F_R=F_L=c^4/(2G), P_R=P_L=P_scr=rho/3, with a screen-state work law distinct from matter heat supply and from signed Hayward work.** — insufficient-evidence; undetermined; confidence moderate. The supplied report supports the mechanical Cai–Kim scalar consequences under the assigned rate and Einstein energy-density input. Earlier selected passages establish closely related cosmological pressure constructions and prescription dependence, but the closest cited Cai–Kim and Kong primary comparisons are not supplied, preventing a sufficiently specific originality judgment.
+
+## Appendix I and evidence stages
+
+The author supplied the revised seven-page manuscript, a full-length companion and Appendix I in the handoff. The scalar analysis and original canonical subreport inspected the seven-page manuscript. A statement in that subreport that Appendix I was “not supplied” describes that stage’s evidence, not an absence from the author’s handoff. The final integrated scientific assessment additionally inspected the explicitly listed bounded Appendix I excerpts and a freshly computed restricted symbolic derivation. This is not a review or certification of the entire full-length companion.
+
+## Later FRW primary-reference check
+
+Later independent primary-reference retrieval/comparison supplement. It was not an input to the saved automatic pipeline or integrated scientific assessment and does not rewrite their original findings.
+
+Cai–Kim and the Kong DOI were explicitly cited in the seven-page paper. Their absence from the automatic primary-passage context is a retrieval limitation of this run, not an absence from the author’s manuscript.
+
+The attached complete report includes this separately attributed supplement; no new conclusion is silently substituted into the original model assessment.
+
+## Complete files and provenance
+
+The accompanying standalone HTML contains the readable full assessment, explanation, verification, canonical/literature subreports, complete source and log. The JSON contains all validated current scientific checkpoints, the exact original seven-page PDF, supporting author Appendix I excerpts and the separate QA. External primary-source prose is omitted with exact locators and source hashes preserved. No public site URL or production submission exists for this private proposed formulation.
+
+- Source SHA-256: `3f093f45e6b91a04030fc5fc862aeb20df30363373d806d2a8cb7c0e0246304f`
+- Formulation digest: `d57cd0e9c2bcf64a7096d1fbb85ce06062531b149ed7f262054ed161eaf4bf47`
+- Final assessment fingerprint: `e3572172fd49851440bd5a1900465773622e554362af87bf082762fce67b54f0`
+- Source code: `869b5343e763a5868c104144a3900de708a9bd69`
+- Exported: 2026-10-28T20:17:01.454Z

@@ -1,0 +1,16 @@
+GPT handoff for the revised seven-page Horizon Boundary Mechanics paper
+
+Review: https://modernscience.space/boundary-mechanics-paper/
+Full evidence JSON: https://modernscience.space/boundary-mechanics-paper/evidence.json
+Exact seven-page manuscript: https://modernscience.space/boundary-mechanics-paper/paper.pdf
+Readable summary: https://modernscience.space/boundary-mechanics-paper/review-summary.txt
+
+The evidence JSON is the complete saved review record. It includes the exact seven-page PDF as base64, numbered source, proposed formulation and adopted inputs, 60 conditional scalar-check results, explanation, canonical and literature assessments, integrated scientific assessment, supporting Appendix I excerpts, source log and separately identified QA. All 60 selected scalar candidates passed under their stated assumptions; this does not certify every claim in the manuscript.
+
+For the final overall judgment, start with scientificAssessment and runSummary. Original earlier-stage outputs and canonical findings remain preserved for provenance. They may contain stage-specific limitations superseded by the later integrated assessment or separate QA. The independent FRW primary-source supplement inspected previously missed Cai–Kim and Kong references; it was not consumed by the original model assessment. The coverage ledger’s unresolved units are not a count of false paper claims.
+
+Use the review to assess possible manuscript improvements, preserving the author’s intended claims and explicit domains. Distinguish an actual mathematical error, a physical premise, a checker limitation, a literature comparison and an optional wording clarification. In particular, the final model asks for an explicit fixed-w label near Eq. 39, while separate source-faithfulness QA observes that Eq. 39 already retains the dw term and treats the label as useful precision rather than an identified mathematical error.
+
+The JSON includes only five bounded Appendix I excerpts as supporting context. To edit the full-length paper, also use its latest PDF or, preferably, editable TeX source supplied by the author. The revised full companion in the October 28 package is 56 pages; the older published version was 52 pages. This review covers the seven-page paper.
+
+The author authorized public sharing of this report on 28 October 2026. Historical private/unpublished/no-approval fields remain exact snapshot facts. Public hosting preserves the AI-extracted formulation’s recorded approval status and the distinction between interpretation and independent proof.

@@ -1,0 +1,52 @@
+{
+  "format": "modernscience-public-seven-page-review-v1",
+  "publicReviewRecord": true,
+  "sharedAt": "2026-10-28T23:20:53.187219+00:00",
+  "authorization": "The author explicitly requested a public review URL on modernscience.space in this chat on 28 October 2026.",
+  "reviewUrl": "https://modernscience.space/boundary-mechanics-paper/",
+  "reviewedManuscriptDate": "2026-10-28",
+  "pages": 7,
+  "sourceSha256": "3f093f45e6b91a04030fc5fc862aeb20df30363373d806d2a8cb7c0e0246304f",
+  "originalEvidenceUnchanged": true,
+  "approvalStatusUnchanged": true,
+  "originalReviewAuthorApprovalRecorded": false,
+  "scope": "Seven-page manuscript plus bounded Appendix I supporting excerpts. The full 56-page companion was not reviewed.",
+  "files": [
+    {
+      "name": "KaTeX-LICENSE.txt",
+      "url": "https://modernscience.space/boundary-mechanics-paper/KaTeX-LICENSE.txt",
+      "bytes": 1107,
+      "sha256": "766ccc1f306c885aa45542a9846bbd0a505b27a0374f146778171c2254ce18e3"
+    },
+    {
+      "name": "evidence.json",
+      "url": "https://modernscience.space/boundary-mechanics-paper/evidence.json",
+      "bytes": 4551621,
+      "sha256": "8c25caa549e697c17916b14a8409fb52cc03eac2f4f10aa2f23ce2db7a09d593"
+    },
+    {
+      "name": "gpt-handoff.txt",
+      "url": "https://modernscience.space/boundary-mechanics-paper/gpt-handoff.txt",
+      "bytes": 2569,
+      "sha256": "666d9e32d3cef7d27dabce3e0786b65c832036c299ea7ae1877be470f1d59ee5"
+    },
+    {
+      "name": "index.html",
+      "url": "https://modernscience.space/boundary-mechanics-paper/index.html",
+      "bytes": 6578940,
+      "sha256": "fe014ceaccb1d608e2c9d3bee4e312214d0b9d7e99c048f2e7c52ab7530a91a0"
+    },
+    {
+      "name": "paper.pdf",
+      "url": "https://modernscience.space/boundary-mechanics-paper/paper.pdf",
+      "bytes": 123678,
+      "sha256": "3f093f45e6b91a04030fc5fc862aeb20df30363373d806d2a8cb7c0e0246304f"
+    },
+    {
+      "name": "review-summary.txt",
+      "url": "https://modernscience.space/boundary-mechanics-paper/review-summary.txt",
+      "bytes": 14636,
+      "sha256": "21af1b68d201faf678c32d7fa950bdeb599b7ccd6d1070ea557ccd74463ef4d9"
+    }
+  ]
+}

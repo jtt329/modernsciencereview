@@ -42,6 +42,7 @@ const mimeTypes = new Map([
   [".css", "text/css; charset=utf-8"],
   [".json", "application/json; charset=utf-8"],
   [".pdf", "application/pdf"],
+  [".txt", "text/plain; charset=utf-8"],
   [".svg", "image/svg+xml"],
   [".png", "image/png"],
   [".jpg", "image/jpeg"],
@@ -86,11 +87,13 @@ function serveServiceWorkerCleanup(req, res) {
 
 async function serveStatic(req, res) {
   const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-  if (pathname === "/boundary-mechanics/report") {
-    send(res, 308, "", { location: "/boundary-mechanics/report/", "cache-control": "no-cache" });
+  const reviewRoots = ["/boundary-mechanics/report", "/boundary-mechanics-paper"];
+  if (reviewRoots.includes(pathname)) {
+    const search = new URL(req.url ?? "/", "http://localhost").search;
+    send(res, 308, "", { location: `${pathname}/${search}`, "cache-control": "no-cache" });
     return;
   }
-  const isReviewReport = pathname.startsWith("/boundary-mechanics/report/");
+  const isReviewReport = reviewRoots.some((root) => pathname.startsWith(`${root}/`));
   if (pathname === "/sw.js" || pathname === "/service-worker.js") {
     serveServiceWorkerCleanup(req, res);
     return;
