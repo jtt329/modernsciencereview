@@ -15,3 +15,6 @@ Use the review to assess possible manuscript improvements, preserving the author
 The JSON includes only five bounded Appendix I excerpts as supporting context. To edit the full-length paper, also use its latest PDF or, preferably, editable TeX source supplied by the author. The revised full companion in the October 28 package is 56 pages; the older published version was 52 pages. This review covers the seven-page paper.
 
 The author authorized public sharing of this report on 28 October 2026. Historical private/unpublished/no-approval fields remain exact snapshot facts. Public hosting preserves the AI-extracted formulation’s recorded approval status and the distinction between interpretation and independent proof.
+
+Current review wording
+The full evidence JSON now includes editorialAmendments. The current displayed contribution uses that amendment’s replacementText. It removes a condition about community adoption and states the scientific contribution directly. The scientificAssessment object and all mathematical, source, literature and processing records are unchanged historical results. This is an editorial clarification requested by the author, not a new Sol assessment or checker run. The unchanged original evidence file is at https://modernscience.space/boundary-mechanics-paper/original-evidence.json

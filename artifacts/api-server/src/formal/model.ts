@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { ai } from '@workspace/integrations-gemini-ai';
 import { FormalError } from './package';
 import { logger } from '../lib/logger';
+import { withScientificJudgmentInstruction } from './scientificJudgment';
 
 export const formalModel = process.env.FORMAL_LAB_MODEL || process.env.SCIREVIEW_GEMINI_REVIEW_MODEL || 'gemini-3.5-flash';
 export type FormalModelId = 'current' | 'sol' | 'argon';
@@ -203,6 +204,8 @@ async function openAICall(options:FormalAIOptions,config:FormalModelConfig,ms:nu
 }
 export async function callFormalAI(options:FormalAIOptions):Promise<{data:any;model:string}> {
   const config=getCurrentFormalModel();
+  // Every generation stage and provider shares the same evidential standard.
+  const governedOptions={...options,system:withScientificJudgmentInstruction(options.system)};
   if(options.outputBudget!==undefined&&!['source-inventory','source-coverage-audit'].includes(options.outputBudget))throw new FormalError('Unsupported internal source-analysis output budget.',500);
   // Keep the established default workflow unchanged; reasoning models need longer bounded stage deadlines.
   const ms=config.id==='current'?Math.min(options.timeoutMs||90000,120000):900000;
@@ -210,7 +213,7 @@ export async function callFormalAI(options:FormalAIOptions):Promise<{data:any;mo
   const deadline=Date.now()+ms;
   for(let attempt=0;attempt<2;attempt++){try{
     const remaining=deadline-Date.now();if(remaining<=0)throw new DOMException('Formal Lab stage deadline exceeded','TimeoutError');
-    return config.provider==='openai'?await openAICall(options,config,remaining):await googleCall(options,config,remaining);
+    return config.provider==='openai'?await openAICall(governedOptions,config,remaining):await googleCall(governedOptions,config,remaining);
   }catch(error){
     if(isTransportTimeout(error)){
       logger.warn({provider:config.provider,model:config.model,errorType:error instanceof Error?error.name:'unknown',status:504},'Formal Lab model stage timed out; no automatic retry');

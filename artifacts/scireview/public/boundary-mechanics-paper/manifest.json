@@ -21,20 +21,20 @@
     {
       "name": "evidence.json",
       "url": "https://modernscience.space/boundary-mechanics-paper/evidence.json",
-      "bytes": 4551621,
-      "sha256": "8c25caa549e697c17916b14a8409fb52cc03eac2f4f10aa2f23ce2db7a09d593"
+      "bytes": 4553760,
+      "sha256": "a0b60f511959e59852df38154e29e7f3be29cdae431b36b2096bf78a27aa67f0"
     },
     {
       "name": "gpt-handoff.txt",
       "url": "https://modernscience.space/boundary-mechanics-paper/gpt-handoff.txt",
-      "bytes": 2688,
-      "sha256": "a3231546cc9248e5214203e3f74eb74b04cabedd83185f12e431c191960129eb"
+      "bytes": 3292,
+      "sha256": "80825889c028a9a95e5223edb15042cb03ef0f1b78b74e8b8a8770dc5971059e"
     },
     {
       "name": "export.html",
       "url": "https://modernscience.space/boundary-mechanics-paper/export.html",
-      "bytes": 6578940,
-      "sha256": "fe014ceaccb1d608e2c9d3bee4e312214d0b9d7e99c048f2e7c52ab7530a91a0"
+      "bytes": 6580294,
+      "sha256": "6d31c3b8bf9d409f145925f1d5ac68dd1a5b27ad31d73d8d375254ca11efa50e"
     },
     {
       "name": "paper.pdf",
@@ -45,11 +45,22 @@
     {
       "name": "review-summary.txt",
       "url": "https://modernscience.space/boundary-mechanics-paper/review-summary.txt",
-      "bytes": 14636,
-      "sha256": "21af1b68d201faf678c32d7fa950bdeb599b7ccd6d1070ea557ccd74463ef4d9"
+      "bytes": 15844,
+      "sha256": "c2171e91117460f109a0f587ad502b85887b6bc0d4ecd8ee05f75d2502ffe34b"
+    },
+    {
+      "name": "original-evidence.json",
+      "url": "https://modernscience.space/boundary-mechanics-paper/original-evidence.json",
+      "bytes": 4551621,
+      "sha256": "8c25caa549e697c17916b14a8409fb52cc03eac2f4f10aa2f23ce2db7a09d593"
     }
   ],
   "interactiveReader": true,
   "standaloneReviewUrl": "https://modernscience.space/boundary-mechanics-paper/export.html",
-  "presentation": "The interactive reader uses the site’s existing scientific review, verification and source/log components with the exact saved evidence."
+  "presentation": "The interactive reader uses the existing scientific review, verification and source/log components; its separately attributed contribution-wording amendment is included alongside the unchanged original scientific records.",
+  "originalEvidenceUrl": "https://modernscience.space/boundary-mechanics-paper/original-evidence.json",
+  "originalEvidenceSha256": "8c25caa549e697c17916b14a8409fb52cc03eac2f4f10aa2f23ce2db7a09d593",
+  "originalScientificRecordsUnchanged": true,
+  "fullEvidenceContainsEditorialAmendments": true,
+  "editorialAmendmentCount": 1
 }

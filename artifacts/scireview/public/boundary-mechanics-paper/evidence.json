@@ -123463,5 +123463,23 @@
       "externalPassageRedactionApplied": false
     }
   ],
-  "redactions": []
+  "redactions": [],
+  "editorialAmendments": [
+    {
+      "version": "review-editorial-amendment-v1",
+      "kind": "wording-clarification",
+      "id": "contribution-scientific-value-2026-10-28",
+      "createdAt": "2026-10-29T00:07:53.041265+00:00",
+      "attribution": "Editorial wording clarification at the author’s request; no new model or checker run",
+      "sourceSha256": "3f093f45e6b91a04030fc5fc862aeb20df30363373d806d2a8cb7c0e0246304f",
+      "packageDigest": "d57cd0e9c2bcf64a7096d1fbb85ce06062531b149ed7f262054ed161eaf4bf47",
+      "assessmentFingerprint": "e3572172fd49851440bd5a1900465773622e554362af87bf082762fce67b54f0",
+      "field": "scientificAssessment.novelty.fieldContribution",
+      "originalText": "If adopted, this formulation could improve explanations and comparisons of boundary mechanics and horizon thermodynamics by making clock, polarization and displacement choices explicit and preventing redundant work additions. It does not alter Einstein dynamics. A broader dynamical action treatment or a specified physical source-variation realization would extend its significance, but neither is necessary to recognize the present scoped conceptual distinction.",
+      "replacementText": "Within its stated boundary prescription, this formulation clarifies boundary mechanics and horizon thermodynamics by making clock, polarization and displacement choices explicit, identifying the corresponding length-conjugate force and normal-scale pressure, and preventing redundant work additions. It leaves Einstein dynamics unchanged. Its contribution is the scoped conceptual and mechanical distinction supported by the calculations and examined literature. A broader dynamical action treatment or specified physical source-variation realization would establish additional claims beyond that result.",
+      "reason": "State the contribution from its scientific content and examined literature instead of making its value conditional on community adoption. Physical premises, literature limits and the recorded scientific findings are unchanged.",
+      "newModelRun": false,
+      "scientificEvidenceUnchanged": true
+    }
+  ]
 }

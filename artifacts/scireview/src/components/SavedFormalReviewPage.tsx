@@ -27,7 +27,7 @@ export default function SavedFormalReviewPage() {
     setError(null);
     void fetch(prefix + 'evidence.json', { credentials: 'omit', cache: 'no-cache', signal: controller.signal })
       .then(async response => { if (!response.ok) throw new Error('The saved review could not be loaded.'); return response.json(); })
-      .then(value => createSavedReviewSnapshot(value, { evidenceUrl: prefix + 'evidence.json', paperUrl: prefix + 'paper.pdf', standaloneUrl: prefix + 'export.html', expectedSourceSha256: '3f093f45e6b91a04030fc5fc862aeb20df30363373d806d2a8cb7c0e0246304f', expectedPackageDigest: 'd57cd0e9c2bcf64a7096d1fbb85ce06062531b149ed7f262054ed161eaf4bf47' }))
+      .then(value => createSavedReviewSnapshot(value, { evidenceUrl: prefix + 'evidence.json', paperUrl: prefix + 'paper.pdf', standaloneUrl: prefix + 'export.html', originalEvidenceUrl: prefix + 'original-evidence.json', expectedSourceSha256: '3f093f45e6b91a04030fc5fc862aeb20df30363373d806d2a8cb7c0e0246304f', expectedPackageDigest: 'd57cd0e9c2bcf64a7096d1fbb85ce06062531b149ed7f262054ed161eaf4bf47' }))
       .then(value => { if (active) setSnapshot(value); })
       .catch(reason => { if (active && reason.name !== 'AbortError') setError(reason instanceof Error ? reason.message : 'The saved review could not be loaded.'); });
     return () => { active = false; controller.abort(); };

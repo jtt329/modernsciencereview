@@ -18,3 +18,10 @@ export default function SavedReviewSupplement() {
     <a href={saved.evidenceUrl}>Download the complete evidence and QA records</a>
   </div></ReviewDisclosure>;
 }
+
+
+export function SavedReviewWordingHistory() {
+  const saved = useSavedFormalReview();
+  if (!saved?.editorialAmendments.length) return null;
+  return <details className="fl-saved-wording-history"><summary>Wording history</summary>{saved.editorialAmendments.map(amendment => <div key={amendment.id}><p>{amendment.attribution}. {amendment.reason}</p><p>Original wording:</p><blockquote><MathText text={amendment.originalText} /></blockquote><p>The model assessment, mathematical results and source record are preserved. This wording clarification is recorded separately in the full evidence JSON.</p></div>)}{saved.originalEvidenceUrl && <a href={saved.originalEvidenceUrl}>Original evidence archive</a>}</details>;
+}

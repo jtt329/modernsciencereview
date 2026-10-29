@@ -79,7 +79,7 @@ The explicit nonthermal length-source force and normal-pressure interpretation a
 
 Insight: The useful insight is to identify the displacement accompanying an established boundary rate response and to distinguish area stress, normal pressure and radius-work pressure through their actual source coordinates and measures.
 
-Field contribution: If adopted, this formulation could improve explanations and comparisons of boundary mechanics and horizon thermodynamics by making clock, polarization and displacement choices explicit and preventing redundant work additions. It does not alter Einstein dynamics. A broader dynamical action treatment or a specified physical source-variation realization would extend its significance, but neither is necessary to recognize the present scoped conceptual distinction.
+Field contribution: Within its stated boundary prescription, this formulation clarifies boundary mechanics and horizon thermodynamics by making clock, polarization and displacement choices explicit, identifying the corresponding length-conjugate force and normal-scale pressure, and preventing redundant work additions. It leaves Einstein dynamics unchanged. Its contribution is the scoped conceptual and mechanical distinction supported by the calculations and examined literature. A broader dynamical action treatment or specified physical source-variation realization would establish additional claims beyond that result.
 
 24 records were assessed after bounded scholarly search and 69 records were retained in the discovery registry. This is a disclosed bounded search, not an exhaustive historical-priority certificate.
 
@@ -110,3 +110,9 @@ The accompanying standalone HTML contains the readable full assessment, explanat
 - Final assessment fingerprint: `e3572172fd49851440bd5a1900465773622e554362af87bf082762fce67b54f0`
 - Source code: `869b5343e763a5868c104144a3900de708a9bd69`
 - Exported: 2026-10-28T20:17:01.454Z
+
+Editorial wording history
+Editorial wording clarification at the author’s request; no new model or checker run.
+State the contribution from its scientific content and examined literature instead of making its value conditional on community adoption. Physical premises, literature limits and the recorded scientific findings are unchanged.
+Original contribution wording: If adopted, this formulation could improve explanations and comparisons of boundary mechanics and horizon thermodynamics by making clock, polarization and displacement choices explicit and preventing redundant work additions. It does not alter Einstein dynamics. A broader dynamical action treatment or a specified physical source-variation realization would extend its significance, but neither is necessary to recognize the present scoped conceptual distinction.
+The full evidence JSON preserves the original assessment plus this separately attributed amendment. The byte-exact original review record is available at https://modernscience.space/boundary-mechanics-paper/original-evidence.json

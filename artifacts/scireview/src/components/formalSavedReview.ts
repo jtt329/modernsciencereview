@@ -3,6 +3,23 @@ import type { ScientificAssessment } from '../../../api-server/src/formal/assess
 import type { CanonicalAssessment } from '../../../api-server/src/formal/canonicalContract';
 import type { LiteratureAssessment } from '../../../api-server/src/formal/literatureContract';
 
+export interface SavedReviewEditorialAmendment {
+  version: 'review-editorial-amendment-v1';
+  kind: 'wording-clarification';
+  id: string;
+  createdAt: string;
+  attribution: string;
+  sourceSha256: string;
+  packageDigest: string;
+  assessmentFingerprint: string;
+  field: 'scientificAssessment.novelty.fieldContribution';
+  originalText: string;
+  replacementText: string;
+  reason: string;
+  newModelRun: false;
+  scientificEvidenceUnchanged: true;
+}
+
 export interface SavedFormalReviewSnapshot {
   readonly submission: FormalSubmission;
   readonly assessment: ScientificAssessment;
@@ -14,11 +31,14 @@ export interface SavedFormalReviewSnapshot {
   readonly independentQA: unknown;
   readonly events: FormalJob['events'];
   readonly createdAt: string;
+  readonly editorialAmendments: readonly SavedReviewEditorialAmendment[];
+  readonly originalEvidenceUrl: string | null;
 }
 export interface SavedFormalReviewOptions {
   evidenceUrl: string;
   paperUrl: string;
   standaloneUrl: string;
+  originalEvidenceUrl?: string;
   expectedSourceSha256?: string;
   expectedPackageDigest?: string;
 }
@@ -136,8 +156,32 @@ export function createSavedReviewSnapshot(value: unknown, options: SavedFormalRe
   for (const event of events) { const item = record(event, 'processing event'); timestamp(item.at, 'event date'); text(item.stage, 'event stage'); text(item.message, 'event message'); }
   if (!('independentQA' in raw)) fail('independent QA');
 
-  // Keep the immutable scientific results verbatim; only these two display links change.
+  // Editorial wording changes remain separately attributed; they cannot alter
+  // checker results, premises, originality labels, readiness or the model history.
+  const amendments = array(raw.editorialAmendments ?? [], 'editorial amendments');
+  if (amendments.length > 1) fail('unsupported editorial amendment count');
+  const editorialAmendments = amendments.map(value => {
+    const item = record(value, 'editorial amendment');
+    same(item.version, 'review-editorial-amendment-v1', 'editorial amendment version');
+    same(item.kind, 'wording-clarification', 'editorial amendment kind');
+    same(item.sourceSha256, sourceSha256, 'editorial source hash');
+    same(item.packageDigest, digest, 'editorial package digest');
+    same(item.assessmentFingerprint, fingerprint, 'editorial assessment fingerprint');
+    same(item.field, 'scientificAssessment.novelty.fieldContribution', 'editorial field');
+    same(item.originalText, record(assessment.novelty, 'novelty').fieldContribution, 'editorial original wording');
+    same(item.newModelRun, false, 'editorial model run');
+    same(item.scientificEvidenceUnchanged, true, 'editorial evidence scope');
+    text(item.id, 'editorial ID'); timestamp(item.createdAt, 'editorial date');
+    for (const key of ['attribution', 'originalText', 'replacementText', 'reason']) text(item[key], `editorial ${key}`);
+    return structuredClone(item) as unknown as SavedReviewEditorialAmendment;
+  });
+  const originalEvidenceUrl = options.originalEvidenceUrl ? artifactUrl(options.originalEvidenceUrl, 'original evidence URL') : null;
+  if (editorialAmendments.length && !originalEvidenceUrl) fail('editorial original evidence URL');
+
+  // Keep original scientific records in the download. This view changes only
+  // two PDF display links and an explicitly recorded contribution-wording field.
   const saved = structuredClone(raw);
+  for (const amendment of editorialAmendments) record(record(saved.scientificAssessment, 'scientific assessment').novelty, 'novelty').fieldContribution = amendment.replacementText;
   const savedPacket = saved.proposedFormulation as unknown as FormalPackage;
   const savedSource = record(saved.source, 'source').numberedSnapshot as unknown as IngestedSource;
   savedPacket.source.url = paperUrl;
@@ -153,7 +197,7 @@ export function createSavedReviewSnapshot(value: unknown, options: SavedFormalRe
       outputs: saved.originalGeneratedOutputs as unknown as FormalOutputs,
     },
   };
-  return freeze({ submission, assessment: saved.scientificAssessment as unknown as ScientificAssessment, canonical: saved.canonicalAssessment as unknown as CanonicalAssessment, literature: saved.literatureAssessment as unknown as LiteratureAssessment, evidenceUrl, paperUrl, standaloneUrl, independentQA: saved.independentQA, events: record(saved.sourceAndProcessingLog, 'processing log').events as FormalJob['events'], createdAt });
+  return freeze({ submission, assessment: saved.scientificAssessment as unknown as ScientificAssessment, canonical: saved.canonicalAssessment as unknown as CanonicalAssessment, literature: saved.literatureAssessment as unknown as LiteratureAssessment, evidenceUrl, paperUrl, standaloneUrl, independentQA: saved.independentQA, events: record(saved.sourceAndProcessingLog, 'processing log').events as FormalJob['events'], createdAt, editorialAmendments, originalEvidenceUrl });
 }
 
 /** A snapshot may never supply evidence to another source, revision or approved submission. */
